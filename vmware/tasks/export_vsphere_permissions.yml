@@ -1,0 +1,163 @@
+# Exports vSphere object permissions (principal, role, propagate) to JSON + CSV.
+# Safe to run read-only. Stores files on the controller.
+#
+# Vars you must set somewhere (vault/env/vars):
+#   vcenter_hostname, vcenter_username, vcenter_password
+#
+# Optional:
+#   vcenter_validate_certs (bool, default false)
+#   export_json_path (default ./vsphere_permissions.json)
+#   export_csv_path  (default ./vsphere_permissions.csv)
+
+- name: Set defaults
+  ansible.builtin.set_fact:
+    vcenter_validate_certs: "{{ vcenter_validate_certs | default(false) }}"
+    export_json_path: "{{ export_json_path | default('./vsphere_permissions.json') }}"
+    export_csv_path:  "{{ export_csv_path  | default('./vsphere_permissions.csv') }}"
+
+# --- Discover inventory we’ll read permissions from ---
+
+- name: Always include the vCenter root folder
+  ansible.builtin.set_fact:
+    _objects: [{ "object_type": "Folder", "object_name": "rootFolder" }]
+
+- name: Get all datacenters
+  community.vmware.vmware_datacenter_info:
+    hostname: "{{ vcenter_hostname }}"
+    username: "{{ vcenter_username }}"
+    password: "{{ vcenter_password }}"
+    validate_certs: "{{ vcenter_validate_certs }}"
+  delegate_to: localhost
+  register: _dc
+
+- name: Add datacenters to target list
+  ansible.builtin.set_fact:
+    _objects: "{{ _objects + (_dc.datacenter_info | map(attribute='name') | list | map('community.general.dict_kv', 'object_type', 'Datacenter', 'object_name') | list) }}"
+  vars:
+    # helper filter: convert each name to {"object_type":"Datacenter","object_name":name}
+    # if you don't have community.general, replace with a map('regex_replace',...) approach.
+  when: _dc.datacenter_info is defined
+
+- name: For each DC, get all VM/Host/Datastore/Network folders
+  community.vmware.vmware_folder_info:
+    hostname: "{{ vcenter_hostname }}"
+    username: "{{ vcenter_username }}"
+    password: "{{ vcenter_password }}"
+    validate_certs: "{{ vcenter_validate_certs }}"
+    datacenter: "{{ item.name }}"
+  loop: "{{ _dc.datacenter_info | default([]) }}"
+  loop_control:
+    label: "{{ item.name }}"
+  delegate_to: localhost
+  register: _folders
+
+- name: Add discovered folders to target list
+  ansible.builtin.set_fact:
+    _objects: >-
+      {{
+        _objects +
+        (
+          _folders.results
+          | map(attribute='folders') | select('defined') | map('default', []) | list
+          | sum(start=[])                                       # flatten results
+          | map(attribute='folder') | select('defined') | list  # folder path names
+          | unique
+          | map('community.general.dict_kv', 'object_type', 'Folder', 'object_name')
+          | list
+        )
+      }}
+
+# --- Collect permissions for each target object ---
+
+- name: Gather permissions for each object (VC root, DCs, and folders)
+  community.vmware.vmware_object_role_permission_info:
+    hostname: "{{ vcenter_hostname }}"
+    username: "{{ vcenter_username }}"
+    password: "{{ vcenter_password }}"
+    validate_certs: "{{ vcenter_validate_certs }}"
+    object_type: "{{ item.object_type }}"
+    object_name: "{{ item.object_name }}"
+  loop: "{{ _objects | unique }}"
+  loop_control:
+    label: "{{ item.object_type }} {{ item.object_name }}"
+  delegate_to: localhost
+  register: _perm_info
+
+# Normalize into flat rows
+- name: Build flat permission rows
+  ansible.builtin.set_fact:
+    vsphere_permission_rows: >-
+      {{
+        _perm_info.results
+        | selectattr('permission_info','defined')
+        | map('combine', {'object_type': None, 'object_name': None})
+        | map('combine', {
+            'object_type': _.item.object_type,
+            'object_name': _.item.object_name,
+            'rows': (_.permission_info | default([]))
+          })
+        | list
+        | map('community.general.json_query', '{object_type: object_type, object_name: object_name, principal: rows[].principal, role_name: rows[].role_name, propagate: rows[].propagate, role_id: rows[].role_id}')
+        | list
+        | map('community.general.flatten') | list
+      }}
+
+# Optional: export all role definitions found on vCenter (role_id -> privileges)
+- name: Export vCenter local roles (role_id, role_name, privileges)
+  community.vmware.vmware_local_role_info:
+    hostname: "{{ vcenter_hostname }}"
+    username: "{{ vcenter_username }}"
+    password: "{{ vcenter_password }}"
+    validate_certs: "{{ vcenter_validate_certs }}"
+  delegate_to: localhost
+  register: _roles
+
+- name: Compose final export object
+  ansible.builtin.set_fact:
+    vsphere_permissions_export:
+      generated_at: "{{ ansible_date_time.iso8601 }}"
+      vcenter: "{{ vcenter_hostname }}"
+      objects_considered: "{{ _objects | length }}"
+      rows: "{{ vsphere_permission_rows | default([]) }}"
+      roles: "{{ _roles.local_role_info | default([]) }}"
+
+# --- Write files on the controller ---
+
+- name: Write JSON export
+  ansible.builtin.copy:
+    dest: "{{ export_json_path }}"
+    content: "{{ vsphere_permissions_export | to_nice_json }}"
+    mode: '0640'
+  delegate_to: localhost
+
+- name: Render CSV body (header + rows)
+  ansible.builtin.set_fact:
+    _csv_lines: >-
+      {%- set header = 'object_type,object_name,principal,role_name,role_id,propagate' -%}
+      {%- set lines = [header] -%}
+      {%- for r in (vsphere_permission_rows | default([])) -%}
+      {%-   set _ = lines.append('%s,%s,%s,%s,%s,%s' | format(
+               (r.object_type|default(''))|replace(',',' '),
+               (r.object_name|default(''))|replace(',',' '),
+               (r.principal|default(''))|replace(',',' '),
+               (r.role_name|default(''))|replace(',',' '),
+               (r.role_id|default('')),
+               (r.propagate|default(''))
+             )) -%}
+      {%- endfor -%}
+      {{ lines | join('\n') }}
+
+- name: Write CSV export
+  ansible.builtin.copy:
+    dest: "{{ export_csv_path }}"
+    content: "{{ _csv_lines }}\n"
+    mode: '0640'
+  delegate_to: localhost
+
+- name: Summary
+  ansible.builtin.debug:
+    msg:
+      json: "{{ export_json_path }}"
+      csv:  "{{ export_csv_path }}"
+      objects_scanned: "{{ _objects | length }}"
+      entries: "{{ vsphere_permission_rows | length }}"
