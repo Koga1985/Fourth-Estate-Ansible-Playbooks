@@ -1,0 +1,181 @@
+# Enforce VM Encryption in vSphere using a storage policy
+#
+# What this does
+#  - (Optional) Creates/updates a Standard Key Provider (external KMS) and trusts it
+#  - Confirms an encryption storage policy (default: "VM Encryption Policy") exists
+#  - Applies the policy to VM Home + all VMDKs for each VM in vm_names
+#
+# Inputs you provide:
+#   vcenter_hostname, vcenter_username, vcenter_password, vcenter_validate_certs
+#   vcenter_datacenter
+#   vm_names: [ "vm01", "vm02", ... ]
+#
+#   encryption_policy_name: "VM Encryption Policy"   # change if you use a custom policy
+#
+#   # Optional: define a Standard Key Provider and trust it (skip if KMS already configured)
+#   kms_config:
+#     enabled: false
+#     name: "corp-standard-kp"
+#     mark_default: true
+#     kms_info:
+#       - kms_name: "corp-kms1"
+#         kms_ip: "10.10.10.50"
+#         kms_port: 5696
+#     # choose ONE trust path (see vcenter_standard_key_provider docs)
+#     trust:
+#       upload_client_cert: "/path/client_cert.pem"
+#       upload_client_key:  "/path/client_key.pem"
+#     # OR:
+#     # trust:
+#     #   download_client_csr: "/tmp/vc.csr"
+#     #   upload_kms_signed_client_csr: "/path/kms_signed_vc_cert.pem"
+#     # OR:
+#     # trust:
+#     #   download_self_signed_cert: "/tmp/vc_self_signed_client_cert.pem"
+#
+# Notes:
+# - This task enforces encryption via a storage policy. vSphere handles keying.
+# - Disks must be offline-resignature-safe for policy moves if your storage enforces that.
+
+- name: Set sane defaults
+  ansible.builtin.set_fact:
+    encryption_policy_name: "{{ encryption_policy_name | default('VM Encryption Policy') }}"
+    vcenter_validate_certs: "{{ vcenter_validate_certs | default(false) }}"
+    kms_config: "{{ kms_config | default({'enabled': false}) }}"
+
+- name: Validate inputs
+  ansible.builtin.assert:
+    that:
+      - vcenter_hostname | length > 0
+      - vcenter_username | length > 0
+      - vcenter_password | length > 0
+      - vcenter_datacenter | length > 0
+      - vm_names is defined
+      - vm_names | length > 0
+    fail_msg: "Missing required inputs: vCenter creds/datacenter and at least one VM name."
+
+# ------------------------------------------------------------------
+# (Optional) Configure a Standard Key Provider (external KMS)
+# ------------------------------------------------------------------
+- name: "KMS | Ensure Standard Key Provider exists and is trusted"
+  community.vmware.vcenter_standard_key_provider:
+    hostname: "{{ vcenter_hostname }}"
+    username: "{{ vcenter_username }}"
+    password: "{{ vcenter_password }}"
+    validate_certs: "{{ vcenter_validate_certs }}"
+    name: "{{ kms_config.name }}"
+    state: present
+    kms_info: "{{ kms_config.kms_info | default([]) }}"
+    mark_default: "{{ kms_config.mark_default | default(true) }}"
+    make_kms_trust_vc: "{{ kms_config.trust | default(omit) }}"
+  when: kms_config.enabled | default(false) | bool
+  delegate_to: localhost
+  register: kms_result
+
+# ------------------------------------------------------------------
+# Verify an encryption storage policy is available
+# ------------------------------------------------------------------
+- name: "Policy | Gather available VM storage policies"
+  community.vmware.vmware_vm_storage_policy_info:
+    hostname: "{{ vcenter_hostname }}"
+    username: "{{ vcenter_username }}"
+    password: "{{ vcenter_password }}"
+    validate_certs: "{{ vcenter_validate_certs }}"
+  delegate_to: localhost
+  register: sp_info
+
+- name: "Policy | Fail if encryption policy not found"
+  ansible.builtin.assert:
+    that:
+      - sp_info is defined
+      - (sp_info.policies | selectattr('name','equalto', encryption_policy_name) | list | length) > 0
+    fail_msg: "Storage policy '{{ encryption_policy_name }}' not found. Create or publish an encryption policy in vCenter."
+
+# ------------------------------------------------------------------
+# Apply policy to each VM: VM Home + all disks
+# ------------------------------------------------------------------
+- name: "VM | Gather disk layout for each VM (vsphere schema)"
+  community.vmware.vmware_guest_info:
+    hostname: "{{ vcenter_hostname }}"
+    username: "{{ vcenter_username }}"
+    password: "{{ vcenter_password }}"
+    validate_certs: "{{ vcenter_validate_certs }}"
+    datacenter: "{{ vcenter_datacenter }}"
+    name: "{{ item }}"
+    schema: "vsphere"
+    properties:
+      - "config.hardware.device"
+  loop: "{{ vm_names }}"
+  delegate_to: localhost
+  register: vm_hw
+
+- name: "VM | Build disk maps (controller/unit) for each VM"
+  ansible.builtin.set_fact:
+    _vm_disks: >-
+      {{
+        dict(vm_hw.results |
+        map('extract', 'item') |
+        list |
+        zip(
+          vm_hw.results |
+          map(attribute='instance.config.hardware.device') |
+          map('selectattr','_wsdlName','equalto','VirtualDisk') |
+          map('map','extract', ['controllerKey','unitNumber']) |
+          map('list') |
+          list
+        ))
+      }}
+
+# Helper to translate controllerKey -> controller_number (0..3).
+# We derive by ordering controllers as they appear.
+- name: "VM | Map controller keys to (0..3) index"
+  ansible.builtin.set_fact:
+    _vm_ctrl_index: >-
+      {{
+        dict(vm_hw.results |
+          map(attribute='item') | list |
+          zip(
+            vm_hw.results |
+            map(attribute='instance.config.hardware.device') |
+            map('selectattr','_wsdlName','in',['VirtualLsiLogicController','ParaVirtualSCSIController','VirtualLsiLogicSASController']) |
+            map('list') |
+            map('map','extract',['key']) |
+            map('list') |
+            map('community.general.lists_set_index')  # produces dict {key: idx}
+          )
+        )
+      }}
+
+- name: "VM | Apply encryption policy to VM Home + all disks"
+  community.vmware.vmware_guest_storage_policy:
+    hostname: "{{ vcenter_hostname }}"
+    username: "{{ vcenter_username }}"
+    password: "{{ vcenter_password }}"
+    validate_certs: "{{ vcenter_validate_certs }}"
+    datacenter: "{{ vcenter_datacenter }}"
+    name: "{{ item.key }}"
+    vm_home: "{{ encryption_policy_name }}"
+    disk: >-
+      {{
+        item.value | map('extract', ['controllerKey','unitNumber']) | list
+        | map('combine', {'policy': encryption_policy_name})
+        | map('combine', {'controller_number':
+              (_vm_ctrl_index[item.key][item.1.controllerKey]
+               if (_vm_ctrl_index[item.key] is defined and _vm_ctrl_index[item.key][item.1.controllerKey] is defined)
+               else 0) })
+        | map('combine', {'unit_number': item.1.unitNumber})
+        | list
+      }}
+  loop: "{{ dict(_vm_disks) | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+  delegate_to: localhost
+  register: enc_apply
+
+# (Optional) Retrieve compliance after policy application (REST)
+# - Requires vmware.vmware_rest collection and vSphere 7.0.3+
+# - Uncomment to check compliance
+# - name: "VM | Check storage policy compliance"
+#   vmware.vmware_rest.vcenter_vm_storage_policy_compliance:
+#     vm: "{{ some_vm_id }}"
+#   delegate_to: localhost
