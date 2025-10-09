@@ -1,0 +1,114 @@
+---
+- name: Validate required variables
+  ansible.builtin.assert:
+    that:
+      - vcenter_hostname | length > 0
+      - vcenter_username | length > 0
+      - vcenter_password | length > 0
+      - vm_template | length > 0
+      - vm_name | length > 0
+    fail_msg: "Missing one or more required variables (vCenter creds, vm_template, vm_name)."
+
+- name: Clone Windows VM from template (with network + optional customization)
+  community.vmware.vmware_guest:
+    hostname: "{{ vcenter_hostname }}"
+    username: "{{ vcenter_username }}"
+    password: "{{ vcenter_password }}"
+    validate_certs: "{{ vcenter_validate_certs }}"
+    datacenter: "{{ vcenter_datacenter }}"
+    cluster: "{{ vcenter_cluster | default(omit) }}"
+    folder: "{{ vcenter_folder | default(omit) }}"
+    datastore: "{{ vcenter_datastore | default(omit) }}"
+    name: "{{ vm_name }}"
+    template: "{{ vm_template }}"
+    state: poweredon
+    hardware:
+      num_cpus: "{{ vm_cpu }}"
+      memory_mb: "{{ vm_memory_mb }}"
+    disk:
+      - size_gb: "{{ vm_disk_gb }}"
+    annotation: "{{ vm_annotation }}"
+    networks: "{{ vm_networks }}"
+    wait_for_ip_address: "{{ vm_wait_for_ip | bool }}"
+    customization: >-
+      {{
+        (
+          join_method == 'vmware'
+          | ternary(
+              dict(
+                hostname=win_hostname,
+                timezone=win_timezone,
+                domain=ad_domain,
+                joindomain=ad_domain,
+                domainadmin=ad_domain_user,
+                domainadminpassword=ad_domain_password,
+                domain_ou=(ad_domain_ou if (ad_domain_ou | length > 0) else omit),
+                dns_servers=(vm_networks[0].dns_servers if (vm_networks[0] is mapping and vm_networks[0].get('dns_servers')) else omit)
+              ),
+              dict(
+                hostname=win_hostname,
+                timezone=win_timezone,
+                domain=ad_domain,
+                dns_servers=(vm_networks[0].dns_servers if (vm_networks[0] is mapping and vm_networks[0].get('dns_servers')) else omit)
+              )
+            )
+        )
+      }}
+  delegate_to: localhost
+  register: vm_result
+
+- name: Extract primary IPv4 address from clone result
+  ansible.builtin.set_fact:
+    new_vm_ipv4: >-
+      {{
+        vm_result.instance.ipv4 if (vm_result.instance is defined and vm_result.instance.ipv4 is defined)
+        else (vm_result.instance.guest_ip_address if (vm_result.instance is defined and vm_result.instance.guest_ip_address is defined) else omit)
+      }}
+
+- name: Show new VM details
+  ansible.builtin.debug:
+    msg:
+      name: "{{ vm_name }}"
+      ipv4: "{{ new_vm_ipv4 | default('unknown') }}"
+      more: "{{ vm_result.instance | default({}) }}"
+
+- name: Stop here if join handled by VMware customization
+  ansible.builtin.meta: end_play
+  when: join_method == 'vmware'
+
+# ---- Ansible-driven domain join path (requires WinRM reachable on the guest) ----
+- name: Wait for WinRM to be available on the new VM
+  ansible.builtin.wait_for:
+    host: "{{ new_vm_ipv4 | default(vm_name) }}"
+    port: "{{ win_port }}"
+    timeout: 1200
+
+- name: Join domain using microsoft.ad.membership (delegated to the guest)
+  microsoft.ad.membership:
+    dns_domain_name: "{{ ad_domain }}"
+    domain_admin_user: "{{ ad_domain_user }}"
+    domain_admin_password: "{{ ad_domain_password }}"
+    state: domain
+    domain_ou_path: "{{ ad_domain_ou | default(omit) }}"
+  vars:
+    ansible_connection: winrm
+    ansible_port: "{{ win_port }}"
+    ansible_user: "{{ win_user }}"
+    ansible_password: "{{ win_password }}"
+    ansible_winrm_scheme: "{{ 'https' if win_use_https else 'http' }}"
+    ansible_winrm_server_cert_validation: "{{ 'validate' if win_validate_certs else 'ignore' }}"
+  delegate_to: "{{ new_vm_ipv4 | default(vm_name) }}"
+  register: ad_join
+
+- name: Reboot after domain join (if needed)
+  ansible.windows.win_reboot:
+    reboot_timeout: "{{ reboot_timeout }}"
+  when: reboot_after_domain_join | bool
+  vars:
+    ansible_connection: winrm
+    ansible_port: "{{ win_port }}"
+    ansible_user: "{{ win_user }}"
+    ansible_password: "{{ win_password }}"
+    ansible_winrm_scheme: "{{ 'https' if win_use_https else 'http' }}"
+    ansible_winrm_server_cert_validation: "{{ 'validate' if win_validate_certs else 'ignore' }}"
+  delegate_to: "{{ new_vm_ipv4 | default(vm_name) }}"
