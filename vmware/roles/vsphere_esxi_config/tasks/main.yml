@@ -1,0 +1,175 @@
+---
+- name: Validate basics
+  ansible.builtin.assert:
+    that:
+      - esxi_hostname | length > 0
+      - esxi_username | length > 0
+    fail_msg: "esxi_hostname and esxi credentials are required."
+
+- name: Validate vCenter variables when esxi_mode is vcenter
+  ansible.builtin.assert:
+    that:
+      - vcenter_hostname | length > 0
+      - vcenter_username | length > 0
+      - vcenter_password | length > 0
+      - vcenter_datacenter | length > 0
+    fail_msg: "vcenter_* variables and vcenter_datacenter are required for esxi_mode=vcenter."
+  when: esxi_mode == 'vcenter'
+
+# Build connection context for modules
+- name: Set API connection context
+  ansible.builtin.set_fact:
+    _api_hostname: "{{ (esxi_mode == 'vcenter') | ternary(vcenter_hostname, esxi_hostname) }}"
+    _api_username: "{{ (esxi_mode == 'vcenter') | ternary(vcenter_username, esxi_username) }}"
+    _api_password: "{{ (esxi_mode == 'vcenter') | ternary(vcenter_password, esxi_password) }}"
+    _api_validate: "{{ (esxi_mode == 'vcenter') | ternary(vcenter_validate_certs, esxi_validate_certs) }}"
+
+- name: Put host in maintenance mode (idempotent)
+  community.vmware.vmware_maintenancemode:
+    hostname: "{{ _api_hostname }}"
+    username: "{{ _api_username }}"
+    password: "{{ _api_password }}"
+    validate_certs: "{{ _api_validate }}"
+    esxi_hostname: "{{ esxi_hostname if esxi_mode == 'vcenter' else omit }}"
+    state: present
+  delegate_to: localhost
+
+# Optional: add/register host to vCenter (only when esxi_mode=vcenter)
+- name: Add ESXi host to vCenter (Datacenter/Cluster)
+  community.vmware.vmware_host:
+    hostname: "{{ vcenter_hostname }}"
+    username: "{{ vcenter_username }}"
+    password: "{{ vcenter_password }}"
+    validate_certs: "{{ vcenter_validate_certs }}"
+    datacenter: "{{ vcenter_datacenter }}"
+    cluster: "{{ vcenter_cluster | default(omit) }}"
+    folder: "{{ vcenter_folder | default(omit) }}"
+    esxi_hostname: "{{ esxi_hostname }}"
+    esxi_username: "{{ esxi_username }}"
+    esxi_password: "{{ esxi_password }}"
+    state: present
+  when: esxi_mode == 'vcenter'
+  delegate_to: localhost
+
+# Acceptance level
+- name: Set acceptance level
+  community.vmware.vmware_host_acceptance:
+    hostname: "{{ _api_hostname }}"
+    username: "{{ _api_username }}"
+    password: "{{ _api_password }}"
+    validate_certs: "{{ _api_validate }}"
+    esxi_hostname: "{{ esxi_hostname if esxi_mode == 'vcenter' else omit }}"
+    acceptance_level: "{{ esxi_acceptance_level }}"
+  delegate_to: localhost
+
+# DNS
+- name: Configure DNS settings
+  community.vmware.vmware_host_dns:
+    hostname: "{{ _api_hostname }}"
+    username: "{{ _api_username }}"
+    password: "{{ _api_password }}"
+    validate_certs: "{{ _api_validate }}"
+    esxi_hostname: "{{ esxi_hostname if esxi_mode == 'vcenter' else omit }}"
+    domain: "{{ esxi_dns_domain | default(omit) }}"
+    dns_servers: "{{ esxi_dns_servers | default(omit) }}"
+    hostname: "{{ esxi_hostname_fqdn | default(omit) }}"
+    state: present
+  when: (esxi_dns_servers | length) > 0 or (esxi_dns_domain | length) > 0 or (esxi_hostname_fqdn | length) > 0
+  delegate_to: localhost
+
+# NTP
+- name: Configure NTP servers
+  community.vmware.vmware_host_ntp:
+    hostname: "{{ _api_hostname }}"
+    username: "{{ _api_username }}"
+    password: "{{ _api_password }}"
+    validate_certs: "{{ _api_validate }}"
+    esxi_hostname: "{{ esxi_hostname if esxi_mode == 'vcenter' else omit }}"
+    ntp_servers: "{{ esxi_ntp_servers }}"
+    state: present
+  when: (esxi_ntp_servers | length) > 0
+  delegate_to: localhost
+
+- name: Ensure ntpd service policy/state
+  community.vmware.vmware_host_service_manager:
+    hostname: "{{ _api_hostname }}"
+    username: "{{ _api_username }}"
+    password: "{{ _api_password }}"
+    validate_certs: "{{ _api_validate }}"
+    esxi_hostname: "{{ esxi_hostname if esxi_mode == 'vcenter' else omit }}"
+    service_name: "ntpd"
+    service_policy: "{{ (esxi_ntp_start_policy | default('on')) }}"
+    state: "{{ (esxi_ntp_start_policy == 'on') | ternary('on','off') }}"
+  when: (esxi_ntp_servers | length) > 0
+  delegate_to: localhost
+
+# Syslog
+- name: Configure remote syslog
+  community.vmware.vmware_host_syslog:
+    hostname: "{{ _api_hostname }}"
+    username: "{{ _api_username }}"
+    password: "{{ _api_password }}"
+    validate_certs: "{{ _api_validate }}"
+    esxi_hostname: "{{ esxi_hostname if esxi_mode == 'vcenter' else omit }}"
+    syslog_config:
+      loghost: "{{ esxi_syslog_remote }}"
+    state: present
+  when: esxi_syslog_remote | length > 0
+  delegate_to: localhost
+
+# Services
+- name: Configure service policies
+  community.vmware.vmware_host_service_manager:
+    hostname: "{{ _api_hostname }}"
+    username: "{{ _api_username }}"
+    password: "{{ _api_password }}"
+    validate_certs: "{{ _api_validate }}"
+    esxi_hostname: "{{ esxi_hostname if esxi_mode == 'vcenter' else omit }}"
+    service_name: "{{ item.name }}"
+    service_policy: "{{ item.policy | default('on') }}"
+    state: "{{ (item.policy | default('on')) in ['on','automatic'] | ternary('on','off') }}"
+  loop: "{{ esxi_services }}"
+  delegate_to: localhost
+
+# Networking
+- name: Ensure vSwitches exist
+  community.vmware.vmware_host_vswitch:
+    hostname: "{{ _api_hostname }}"
+    username: "{{ _api_username }}"
+    password: "{{ _api_password }}"
+    validate_certs: "{{ _api_validate }}"
+    esxi_hostname: "{{ esxi_hostname if esxi_mode == 'vcenter' else omit }}"
+    switch_name: "{{ item.name }}"
+    mtu: "{{ item.mtu | default(1500) }}"
+    nics: "{{ item.nics | default(omit) }}"
+    state: present
+  loop: "{{ esxi_vswitches }}"
+  when: esxi_vswitches | length > 0
+  delegate_to: localhost
+
+- name: Ensure Portgroups exist
+  community.vmware.vmware_host_portgroup:
+    hostname: "{{ _api_hostname }}"
+    username: "{{ _api_username }}"
+    password: "{{ _api_password }}"
+    validate_certs: "{{ _api_validate }}"
+    esxi_hostname: "{{ esxi_hostname if esxi_mode == 'vcenter' else omit }}"
+    switch_name: "{{ item.vswitch }}"
+    portgroup_name: "{{ item.name }}"
+    vlan_id: "{{ item.vlan_id | default(0) }}"
+    allow_promiscuous: "{{ item.allow_promiscuous | default(False) }}"
+    state: present
+  loop: "{{ esxi_portgroups }}"
+  when: esxi_portgroups | length > 0
+  delegate_to: localhost
+
+- name: Exit maintenance mode (if requested)
+  community.vmware.vmware_maintenancemode:
+    hostname: "{{ _api_hostname }}"
+    username: "{{ _api_username }}"
+    password: "{{ _api_password }}"
+    validate_certs: "{{ _api_validate }}"
+    esxi_hostname: "{{ esxi_hostname if esxi_mode == 'vcenter' else omit }}"
+    state: absent
+  when: exit_maintenance_mode | bool
+  delegate_to: localhost
