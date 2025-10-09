@@ -1,0 +1,171 @@
+# Manage vSphere datastores (VMFS or NFS) on one or many ESXi hosts.
+#
+# Expected vars (examples below):
+#   vcenter_hostname: "vcenter.example.local"
+#   vcenter_username: "{{ lookup('env','VCENTER_USERNAME') }}"
+#   vcenter_password: "{{ lookup('env','VCENTER_PASSWORD') }}"
+#   vcenter_validate_certs: false
+#   vcenter_datacenter: "DC1"
+#
+#   esxi_hosts: ["esxi01.example.local","esxi02.example.local"]  # targets
+#
+#   ds_state: present      # present|absent
+#   ds_type: vmfs          # vmfs|nfs
+#   ds_name: "DS_Prod01"
+#
+#   # VMFS-specific
+#   vmfs_device_name: "naa.6000C29d0f1..."     # device naa.* seen by the host
+#   vmfs_version: 6                            # optional (5/6), host determines if omitted
+#
+#   # NFS-specific
+#   nfs_server: "10.0.10.20"
+#   nfs_path: "/export/prod01"
+#   nfs_version: "4.1"                         # "3" or "4.1"
+#   nfs_readonly: false
+#   nfs_security: "AUTH_SYS"                   # or "KERBEROS"
+#
+#   # Optional: datastore maintenance mode
+#   ds_maintenance:
+#     enabled: false
+#     mode: evacuateAllData    # evacuateAllData|ensureObjectAccessibility
+#     action: enter            # enter|exit
+#
+#   # Optional: Datastore Cluster (SDRS)
+#   sdrs:
+#     enabled: false
+#     name: "SDRS-Prod"
+#     state: present           # present|absent
+#     add_members: true        # add ds_name to the cluster if present
+
+- name: Ensure collection vars default
+  ansible.builtin.set_fact:
+    vcenter_validate_certs: "{{ vcenter_validate_certs | default(false) }}"
+    ds_state: "{{ ds_state | default('present') }}"
+    ds_type: "{{ ds_type | default('vmfs') }}"
+    nfs_version: "{{ nfs_version | default('3') }}"
+    nfs_readonly: "{{ nfs_readonly | default(false) }}"
+    nfs_security: "{{ nfs_security | default('AUTH_SYS') }}"
+
+- name: Validate common vars
+  ansible.builtin.assert:
+    that:
+      - vcenter_hostname | length > 0
+      - vcenter_username | length > 0
+      - vcenter_password | length > 0
+      - vcenter_datacenter | length > 0
+      - esxi_hosts is defined
+      - esxi_hosts | length > 0
+      - ds_name | length > 0
+      - ds_type in ['vmfs','nfs']
+      - ds_state in ['present','absent']
+    fail_msg: "Missing or invalid inputs. Check vCenter/Datacenter/esxi_hosts/ds_name/ds_type/ds_state."
+
+- name: Validate VMFS vars when needed
+  ansible.builtin.assert:
+    that:
+      - vmfs_device_name | length > 0
+    fail_msg: "vmfs_device_name is required for VMFS operations."
+  when: ds_type == 'vmfs' and ds_state == 'present'
+
+- name: Validate NFS vars when needed
+  ansible.builtin.assert:
+    that:
+      - nfs_server | length > 0
+      - nfs_path | length > 0
+      - nfs_version in ['3','4.1']
+    fail_msg: "nfs_server, nfs_path and valid nfs_version ('3' or '4.1') are required for NFS."
+  when: ds_type == 'nfs'
+
+# -----------------------
+# VMFS DATASTORE (create/remove/mount)
+# -----------------------
+- name: "VMFS | Ensure datastore {{ ds_name }} on {{ item }}"
+  community.vmware.vmware_host_vmfs_datastore:
+    hostname: "{{ vcenter_hostname }}"
+    username: "{{ vcenter_username }}"
+    password: "{{ vcenter_password }}"
+    validate_certs: "{{ vcenter_validate_certs }}"
+    datacenter: "{{ vcenter_datacenter }}"
+    esxi_hostname: "{{ item }}"
+    datastore_name: "{{ ds_name }}"
+    state: "{{ ds_state }}"
+    device_name: "{{ vmfs_device_name }}"
+    vmfs_version: "{{ vmfs_version | default(omit) }}"
+  loop: "{{ esxi_hosts }}"
+  when: ds_type == 'vmfs'
+  delegate_to: localhost
+  tags: ['datastore','vmfs']
+
+# -----------------------
+# NFS DATASTORE (mount/unmount)
+# -----------------------
+- name: "NFS | Ensure datastore {{ ds_name }} on {{ item }}"
+  community.vmware.vmware_host_nfs_datastore:
+    hostname: "{{ vcenter_hostname }}"
+    username: "{{ vcenter_username }}"
+    password: "{{ vcenter_password }}"
+    validate_certs: "{{ vcenter_validate_certs }}"
+    datacenter: "{{ vcenter_datacenter }}"
+    esxi_hostname: "{{ item }}"
+    datastore_name: "{{ ds_name }}"
+    nfs_server: "{{ nfs_server }}"
+    nfs_path: "{{ nfs_path }}"
+    nfs_ro: "{{ nfs_readonly | bool }}"
+    nfs_version: "{{ nfs_version }}"
+    security_type: "{{ nfs_security }}"
+    state: "{{ ds_state }}"
+  loop: "{{ esxi_hosts }}"
+  when: ds_type == 'nfs'
+  delegate_to: localhost
+  tags: ['datastore','nfs']
+
+# -----------------------
+# Optional: Datastore maintenance mode
+# -----------------------
+- name: "Datastore Maintenance | {{ ds_maintenance.action | default('enter') }} mode for {{ ds_name }}"
+  community.vmware.vmware_datastore_maintenancemode:
+    hostname: "{{ vcenter_hostname }}"
+    username: "{{ vcenter_username }}"
+    password: "{{ vcenter_password }}"
+    validate_certs: "{{ vcenter_validate_certs }}"
+    datacenter: "{{ vcenter_datacenter }}"
+    datastore_name: "{{ ds_name }}"
+    evacuation_mode: "{{ ds_maintenance.mode | default('evacuateAllData') }}"
+    state: "{{ (ds_maintenance.action | default('enter')) == 'enter' | ternary('present','absent') }}"
+  when: ds_maintenance is defined and ds_maintenance.enabled | default(false) | bool
+  delegate_to: localhost
+  tags: ['datastore','maintenance']
+
+# -----------------------
+# Optional: Datastore Cluster (SDRS) create/update and membership
+# -----------------------
+- name: "SDRS | Ensure Datastore Cluster {{ sdrs.name }}"
+  community.vmware.vmware_datastore_cluster:
+    hostname: "{{ vcenter_hostname }}"
+    username: "{{ vcenter_username }}"
+    password: "{{ vcenter_password }}"
+    validate_certs: "{{ vcenter_validate_certs }}"
+    datacenter: "{{ vcenter_datacenter }}"
+    name: "{{ sdrs.name }}"
+    state: "{{ sdrs.state | default('present') }}"
+  when: sdrs is defined and sdrs.enabled | default(false) | bool
+  delegate_to: localhost
+  tags: ['datastore','sdrs']
+
+- name: "SDRS | Add {{ ds_name }} as a member"
+  community.vmware.vmware_datastore_cluster:
+    hostname: "{{ vcenter_hostname }}"
+    username: "{{ vcenter_username }}"
+    password: "{{ vcenter_password }}"
+    validate_certs: "{{ vcenter_validate_certs }}"
+    datacenter: "{{ vcenter_datacenter }}"
+    name: "{{ sdrs.name }}"
+    member_datastores:
+      - "{{ ds_name }}"
+    state: present
+  when:
+    - sdrs is defined and sdrs.enabled | default(false) | bool
+    - sdrs.add_members | default(true) | bool
+    - ds_state == 'present'
+  delegate_to: localhost
+  tags: ['datastore','sdrs']
