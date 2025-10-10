@@ -1,0 +1,64 @@
+# cluster_baseline (role)
+
+Enforce a **cluster baseline** for vSphere:
+- **DRS** (mode, aggressiveness)
+- **HA** (admission control, host isolation response, VM monitoring, default VM restart priority)
+- **EVC** mode
+
+## Requirements
+- Ansible >= 2.15
+- Collection: `community.vmware`
+
+## Variables (defaults)
+See `defaults/main.yml`. Minimal override:
+```yaml
+vcenter_hostname: "vcenter.example.local"
+vcenter_username: "{{ lookup('env','VCENTER_USERNAME') }}"
+vcenter_password: "{{ lookup('env','VCENTER_PASSWORD') }}"
+vcenter_validate_certs: false
+vcenter_datacenter: "DC1"
+cluster_name: "Compute-Cluster"
+
+create_cluster_if_missing: false
+
+drs:
+  enabled: true
+  mode: fullyAutomated
+  vmotion_rate: 3
+
+ha:
+  enabled: true
+  admission_control:
+    policy: percentage
+    cpu_failover_percent: 25
+    mem_failover_percent: 25
+  host_isolation_response: restartHost
+  vm_monitoring: vmAndAppMonitoring
+  default_vm_restart_priority: medium
+
+evc:
+  mode: "intel-broadwell"   # or "disabled"
+```
+
+## Example Play
+```yaml
+- hosts: localhost
+  gather_facts: false
+  roles:
+    - role: cluster_baseline
+      vars:
+        vcenter_hostname: "vcenter.example.local"
+        vcenter_username: "{{ lookup('env','VCENTER_USERNAME') }}"
+        vcenter_password: "{{ lookup('env','VCENTER_PASSWORD') }}"
+        vcenter_validate_certs: false
+        vcenter_datacenter: "DC1"
+        cluster_name: "Compute-Cluster"
+        drs: { enabled: true, mode: fullyAutomated, vmotion_rate: 3 }
+        ha:
+          enabled: true
+          admission_control: { policy: percentage, cpu_failover_percent: 25, mem_failover_percent: 25 }
+          host_isolation_response: restartHost
+          vm_monitoring: vmAndAppMonitoring
+          default_vm_restart_priority: medium
+        evc: { mode: intel-broadwell }
+```
