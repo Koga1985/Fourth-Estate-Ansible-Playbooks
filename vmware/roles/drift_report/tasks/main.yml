@@ -1,0 +1,199 @@
+---
+- name: Assert vCenter inputs
+  ansible.builtin.assert:
+    that:
+      - vcenter_hostname | length > 0
+      - vcenter_username | length > 0
+      - vcenter_password | length > 0
+
+- name: Set defaults
+  ansible.builtin.set_fact:
+    vcenter_validate_certs: "{{ vcenter_validate_certs | default(false) }}"
+    desired_cluster_baseline: "{{ desired_cluster_baseline | default({}) }}"
+    desired_vds_portgroups: "{{ desired_vds_portgroups | default([]) }}"
+    dvs_name: "{{ dvs_name | default('') }}"
+    report_path: "{{ report_path | default('/tmp/%s-drift-report.json' | format(cluster_name|default('cluster'))) }}"
+    fail_when_drift: "{{ fail_when_drift | default(false) }}"
+
+- name: Collect and compare (PowerCLI)
+  ansible.builtin.command:
+    cmd: >-
+      pwsh -NoLogo -NoProfile -NonInteractive -Command
+      "$ErrorActionPreference='Stop';
+       Import-Module VMware.PowerCLI -ErrorAction Stop;
+       Set-PowerCLIConfiguration -InvalidCertificateAction {{ vcenter_validate_certs | ternary('Ignore','Fail') }} -Confirm:$false | Out-Null;
+       $null = Connect-VIServer -Server '{{ vcenter_hostname }}' -User '{{ vcenter_username }}' -Password '{{ vcenter_password }}';
+
+       function Compare-Field { param($actual, $expected)
+         $eq = ($expected -is [array]) ? (Compare-Object ($expected|Sort-Object) (($actual|Sort-Object)) | Measure-Object).Count -eq 0 : ($actual -eq $expected);
+         return @{ actual=$actual; expected=$expected; equal=$eq }
+       }
+
+       $drift = @()
+       $actual = @{}; $desired = @{};
+
+       # Cluster baseline
+       $clusterName = '{{ cluster_name | default('') }}'
+       if (-not [string]::IsNullOrWhiteSpace($clusterName) -and {{ (desired_cluster_baseline|length) > 0 | ternary('$true','$false') }}) {
+         $cluster = Get-Cluster -Name $clusterName -ErrorAction Stop
+         $desiredCluster = @{
+           drs = @{
+             enabled = {{ (desired_cluster_baseline.drs.enabled | default(true)) | ternary('$true','$false') }}
+             mode = '{{ desired_cluster_baseline.drs.mode | default('fullyAutomated') }}'
+             vmotion_rate = [int]'{{ desired_cluster_baseline.drs.vmotion_rate | default(3) }}'
+           }
+           ha = @{
+             enabled = {{ (desired_cluster_baseline.ha.enabled | default(true)) | ternary('$true','$false') }}
+             admission_control = @{
+               policy = '{{ desired_cluster_baseline.ha.admission_control.policy | default('percentage') }}'
+               cpu_failover_percent = [int]'{{ desired_cluster_baseline.ha.admission_control.cpu_failover_percent | default(25) }}'
+               mem_failover_percent = [int]'{{ desired_cluster_baseline.ha.admission_control.mem_failover_percent | default(25) }}'
+             }
+             host_isolation_response = '{{ desired_cluster_baseline.ha.host_isolation_response | default('restartHost') }}'
+             vm_monitoring = '{{ desired_cluster_baseline.ha.vm_monitoring | default('vmAndAppMonitoring') }}'
+             default_vm_restart_priority = '{{ desired_cluster_baseline.ha.default_vm_restart_priority | default('medium') }}'
+           }
+           evc = @{ mode = '{{ desired_cluster_baseline.evc.mode | default('disabled') }}' }
+         }
+         $desired.cluster_baseline = $desiredCluster
+
+         $drsMode = ($cluster.DrsAutomationLevel).ToString()
+         $drsEnabled = [bool]$cluster.DrsEnabled
+         $drsThreshold = [int]$cluster.DrsMigrationThreshold
+
+         $das = $cluster.ExtensionData.Configuration.DasConfig
+         $haEnabled = [bool]$cluster.HAEnabled
+         $isolation = if ($das -and $das.HostIsolationResponse) { $das.HostIsolationResponse.ToString() } else { '' }
+         $vmMon = if ($das) { $das.VmMonitoring.ToString() } else { '' }
+         $admissionPolicy = if ($das) { $das.AdmissionControlPolicy } else { $null }
+         $policy = 'disabled'
+         $cpuPct = 0; $memPct = 0
+         if ($admissionPolicy -ne $null) {
+           if ($admissionPolicy.GetType().Name -like '*Percentage*') {
+             $policy = 'percentage'
+             $cpuPct = [int]$admissionPolicy.CpuFailoverResourcesPercent
+             $memPct = [int]$admissionPolicy.MemoryFailoverResourcesPercent
+           } else {
+             $policy = 'slots'
+           }
+         }
+         $evcMode = ($cluster.EVCMode); if ([string]::IsNullOrWhiteSpace($evcMode)) { $evcMode = 'disabled' }
+
+         $actualCluster = @{
+           drs = @{ enabled=$drsEnabled; mode=($drsMode -replace 'Manual','manual' -replace 'PartiallyAutomated','partiallyAutomated' -replace 'FullyAutomated','fullyAutomated'); vmotion_rate=$drsThreshold }
+           ha  = @{ enabled=$haEnabled; admission_control=@{ policy=$policy; cpu_failover_percent=$cpuPct; mem_failover_percent=$memPct }; host_isolation_response=$isolation; vm_monitoring=$vmMon; default_vm_restart_priority='' }
+           evc = @{ mode=($evcMode) }
+         }
+         $actual.cluster_baseline = $actualCluster
+
+         $cbDrift = @()
+         $cbDrift += @{ field='drs.enabled';      result=(Compare-Field $actualCluster.drs.enabled $desiredCluster.drs.enabled) }
+         $cbDrift += @{ field='drs.mode';         result=(Compare-Field $actualCluster.drs.mode $desiredCluster.drs.mode) }
+         $cbDrift += @{ field='drs.vmotion_rate'; result=(Compare-Field $actualCluster.drs.vmotion_rate $desiredCluster.drs.vmotion_rate) }
+         $cbDrift += @{ field='ha.enabled';       result=(Compare-Field $actualCluster.ha.enabled $desiredCluster.ha.enabled) }
+         $cbDrift += @{ field='ha.admission_control.policy'; result=(Compare-Field $actualCluster.ha.admission_control.policy $desiredCluster.ha.admission_control.policy) }
+         $cbDrift += @{ field='ha.admission_control.cpu_failover_percent'; result=(Compare-Field $actualCluster.ha.admission_control.cpu_failover_percent $desiredCluster.ha.admission_control.cpu_failover_percent) }
+         $cbDrift += @{ field='ha.admission_control.mem_failover_percent'; result=(Compare-Field $actualCluster.ha.admission_control.mem_failover_percent $desiredCluster.ha.admission_control.mem_failover_percent) }
+         $cbDrift += @{ field='ha.host_isolation_response'; result=(Compare-Field $actualCluster.ha.host_isolation_response $desiredCluster.ha.host_isolation_response) }
+         $cbDrift += @{ field='ha.vm_monitoring'; result=(Compare-Field $actualCluster.ha.vm_monitoring $desiredCluster.ha.vm_monitoring) }
+         $cbDrift += @{ field='evc.mode';         result=(Compare-Field $actualCluster.evc.mode $desiredCluster.evc.mode) }
+
+         $clusterDrift = $cbDrift | Where-Object { -not $_.result.equal }
+         if ($clusterDrift.Count -gt 0) { $drift += [pscustomobject]@{ section='cluster_baseline'; items=$clusterDrift } }
+       }
+
+       # VDS Portgroups
+       $dvsName = '{{ dvs_name | default('') }}'
+       if (-not [string]::IsNullOrWhiteSpace($dvsName) -and {{ (desired_vds_portgroups|length) > 0 | ternary('$true','$false') }}) {
+         $vds = Get-VDSwitch -Name $dvsName -ErrorAction Stop
+         $desiredPg = @()
+         {% for pg in desired_vds_portgroups %}
+         $desiredPg += @{
+           name='{{ pg.name }}'
+           port_binding='{{ pg.port_binding | default('static') }}'
+           num_ports=[int]'{{ pg.num_ports | default(128) }}'
+           vlanMode='{{ pg.vlan.mode | default('access') }}'
+           vlanId=[int]'{{ pg.vlan.id | default(0) }}'
+           trunks='{{ (pg.vlan.trunks | default([])) | join(',') }}'
+           allow_promiscuous={{ (pg.security.allow_promiscuous | default(false)) | ternary('$true','$false') }}
+           mac_changes={{ (pg.security.mac_changes | default(false)) | ternary('$true','$false') }}
+           forged_transmits={{ (pg.security.forged_transmits | default(false)) | ternary('$true','$false') }}
+         }
+         {% endfor %}
+         $desired.vds_portgroups = $desiredPg
+
+         $pgActuals = @()
+         foreach ($d in $desiredPg) {
+           $pg = Get-VDPortgroup -VDSwitch $vds -Name $d.name -ErrorAction SilentlyContinue
+           if (-not $pg) { $pgActuals += @{ name=$d.name; present=$false }; continue }
+           $present = $true
+           $spec = $pg.ExtensionData.Config.DefaultPortConfig
+           $vType = $spec.Vlan.GetType().Name
+           if ($vType -like '*Trunk*') {
+             $vlanMode='trunk'
+             $ranges = $spec.Vlan.VlanId | ForEach-Object { if ($_.Start -eq $_.End) { $_.Start } else { \"{0}-{1}\" -f $_.Start,$_.End } }
+             $vlanTrunks = ($ranges -join ',')
+             $vlanId = 0
+           } else {
+             $vlanMode='access'; $vlanId = [int]$spec.Vlan.VlanId; $vlanTrunks = ''
+           }
+           $allowProm = [bool]$spec.SecurityPolicy.AllowPromiscuous.Value
+           $macChg    = [bool]$spec.SecurityPolicy.MacChanges.Value
+           $forgedTx  = [bool]$spec.SecurityPolicy.ForgedTransmits.Value
+           $pgActuals += @{
+             name=$pg.Name; present=$present;
+             port_binding=($pg.PortBinding.ToString().ToLower());
+             num_ports=[int]$pg.NumPorts;
+             vlanMode=$vlanMode; vlanId=$vlanId; trunks=$vlanTrunks;
+             allow_promiscuous=$allowProm; mac_changes=$macChg; forged_transmits=$forgedTx
+           }
+         }
+         $actual.vds_portgroups = $pgActuals
+
+         $pgDrifts = @()
+         foreach ($d in $desiredPg) {
+           $a = $pgActuals | Where-Object { $_.name -eq $d.name } | Select-Object -First 1
+           if (-not $a) { $pgDrifts += [pscustomobject]@{ name=$d.name; missing=$true; fields=@() }; continue }
+           $fields = @()
+           $fields += @{ field='port_binding';       result=(Compare-Field $a.port_binding $d.port_binding) }
+           $fields += @{ field='num_ports';          result=(Compare-Field $a.num_ports $d.num_ports) }
+           $fields += @{ field='vlan.mode';          result=(Compare-Field $a.vlanMode $d.vlanMode) }
+           if ($d.vlanMode -eq 'access') { $fields += @{ field='vlan.id'; result=(Compare-Field $a.vlanId $d.vlanId) } }
+           else { $fields += @{ field='vlan.trunks'; result=(Compare-Field $a.trunks $d.trunks) } }
+           $fields += @{ field='security.allow_promiscuous'; result=(Compare-Field $a.allow_promiscuous $d.allow_promiscuous) }
+           $fields += @{ field='security.mac_changes';       result=(Compare-Field $a.mac_changes $d.mac_changes) }
+           $fields += @{ field='security.forged_transmits';  result=(Compare-Field $a.forged_transmits $d.forged_transmits) }
+           $off = $fields | Where-Object { -not $_.result.equal }
+           if ($off.Count -gt 0) { $pgDrifts += [pscustomobject]@{ name=$d.name; missing=$false; fields=$off } }
+         }
+         if ($pgDrifts.Count -gt 0) { $drift += [pscustomobject]@{ section='vds_portgroups'; items=$pgDrifts } }
+       }
+
+       $summary = [pscustomobject]@{
+         vcenter='{{ vcenter_hostname }}'
+         cluster=$clusterName
+         vds=$dvsName
+         desired=$desired
+         actual=$actual
+         drift=$drift
+         drift_count=($drift | ForEach-Object { $_.items.Count } | Measure-Object -Sum).Sum
+         timestamp=(Get-Date).ToString('s')
+       }
+       $json = $summary | ConvertTo-Json -Depth 8
+       Set-Content -Path '{{ report_path }}' -Value $json -Encoding UTF8
+       $json"
+  register: drift_cmd
+  changed_when: false
+  delegate_to: localhost
+
+- name: Show drift summary (truncated)
+  ansible.builtin.debug:
+    msg: "{{ drift_cmd.stdout[:1500] }}... (see full at {{ report_path }})"
+
+- name: Fail if drift detected (optional)
+  ansible.builtin.fail:
+    msg: "Drift detected. See {{ report_path }}"
+  when:
+    - fail_when_drift | bool
+    - (drift_cmd.stdout | length) > 0
+    - (drift_cmd.stdout | from_json).drift_count | int > 0
