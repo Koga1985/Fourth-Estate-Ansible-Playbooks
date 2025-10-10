@@ -1,0 +1,103 @@
+---
+- name: Assert required inputs
+  ansible.builtin.assert:
+    that:
+      - vcenter_hostname | length > 0
+      - vcenter_username | length > 0
+      - vcenter_password | length > 0
+      - content_library.name | length > 0
+    fail_msg: "vCenter creds and content_library.name are required."
+
+- name: Set defaults
+  ansible.builtin.set_fact:
+    vcenter_validate_certs: "{{ vcenter_validate_certs | default(false) }}"
+    intake: "{{ intake | default([]) }}"
+    report_path: "{{ report_path | default('/tmp/template-pipeline-report.json') }}"
+
+- name: Run template pipeline (Content Library + intake + pin + prune)
+  ansible.builtin.command:
+    cmd: >-
+      pwsh -NoLogo -NoProfile -NonInteractive -Command
+      "$ErrorActionPreference='Stop';
+       Import-Module VMware.PowerCLI -ErrorAction Stop;
+       Set-PowerCLIConfiguration -InvalidCertificateAction {{ vcenter_validate_certs | ternary('Ignore','Fail') }} -Confirm:$false | Out-Null;
+       $null = Connect-VIServer -Server '{{ vcenter_hostname }}' -User '{{ vcenter_username }}' -Password '{{ vcenter_password }}';
+
+       # --- Ensure Content Library ---
+       $libName = '{{ content_library.name }}'
+       $lib = Get-ContentLibrary -Name $libName -ErrorAction SilentlyContinue
+       if (-not $lib) {
+         if (-not {{ content_library.create_if_missing | default(true) | ternary('$true','$false') }}) {
+           throw 'Content Library not found and create_if_missing=false'
+         }
+         $dsName = '{{ content_library.datastore | default('') }}'
+         if ($dsName -eq '') { throw 'content_library.datastore is required to create a local library' }
+         $ds = Get-Datastore -Name $dsName -ErrorAction Stop
+         $pub = {{ content_library.publication | default(False) | ternary('$true','$false') }}
+         $lib = New-ContentLibrary -Name $libName -Datastore $ds -Description '{{ content_library.description | default('Golden images') }}' -Publish $pub
+       }
+
+       function Resolve-Version([string]$v) { if ([string]::IsNullOrWhiteSpace($v)) { return (Get-Date -Format 'yyyy.MM.dd') } else { return $v } }
+
+       function Update-AliasItem($Library, [string]$BaseName, [string]$Version, [string]$Alias) {
+         $aliasName = \"$BaseName-$Alias\"; $verName = \"$BaseName-$Version\"
+         $src = Get-ContentLibraryItem -ContentLibrary $Library -Name $verName -ErrorAction Stop
+         $existing = Get-ContentLibraryItem -ContentLibrary $Library -Name $aliasName -ErrorAction SilentlyContinue
+         if ($existing) { Remove-ContentLibraryItem -ContentLibraryItem $existing -Confirm:$false }
+         Copy-ContentLibraryItem -ContentLibraryItem $src -Name $aliasName -ContentLibrary $Library | Out-Null
+       }
+
+       function Prune-Versions($Library, [string]$BaseName, [int]$Keep) {
+         if ($Keep -lt 1) { return }
+         $items = Get-ContentLibraryItem -ContentLibrary $Library | Where-Object { $_.Name -like \"$BaseName-*\" } | Sort-Object Name
+         $versions = $items | Where-Object { $_.Name -notlike \"$BaseName-current\" }
+         if ($versions.Count -gt $Keep) {
+           $toRemove = $versions | Select-Object -First ($versions.Count - $Keep)
+           foreach ($i in $toRemove) { try { Remove-ContentLibraryItem -ContentLibraryItem $i -Confirm:$false } catch { Write-Host \"WARN prune: $($i.Name) -> $_\" } }
+         }
+       }
+
+       $report = @()
+
+       {% for item in intake %}
+       $name = '{{ item.name }}'
+       $ver  = Resolve-Version('{{ item.version | default('') }}')
+       $srcType = '{{ item.source_type | default('ova') }}'.ToLower()
+       $srcPath = '{{ item.source_path | default('') }}'
+       $pin = '{{ item.pin_alias | default('current') }}'
+       $keep = [int]'{{ item.keep_versions | default(3) }}'
+
+       if ([string]::IsNullOrWhiteSpace($name)) { throw 'intake.name is required' }
+       if ([string]::IsNullOrWhiteSpace($srcPath)) { throw 'intake.source_path is required' }
+
+       $destName = \"$name-$ver\"
+       $exists = Get-ContentLibraryItem -ContentLibrary $lib -Name $destName -ErrorAction SilentlyContinue
+
+       if (-not $exists) {
+         if ($srcType -eq 'ova') {
+           Import-ContentLibraryItem -ContentLibrary $lib -Name $destName -Source $srcPath | Out-Null
+         } elseif ($srcType -eq 'ovf') {
+           Import-ContentLibraryItem -ContentLibrary $lib -Name $destName -OvfPath $srcPath | Out-Null
+         } else {
+           throw 'Unsupported source_type (use ova|ovf)'
+         }
+       }
+
+       if (-not [string]::IsNullOrWhiteSpace($pin)) { Update-AliasItem -Library $lib -BaseName $name -Version $ver -Alias $pin }
+       if ($keep -gt 0) { Prune-Versions -Library $lib -BaseName $name -Keep $keep }
+
+       $report += [pscustomobject]@{ name=$name; version=$ver; imported=$(-not $exists); alias=$pin; kept=$keep }
+       {% endfor %}
+
+       $all = Get-ContentLibraryItem -ContentLibrary $lib | Select-Object Name, SizeMB, Type
+       $out = [pscustomobject]@{ vcenter='{{ vcenter_hostname }}'; library=$lib.Name; processed=$report; inventory=$all; timestamp=(Get-Date).ToString('s') }
+       $json = $out | ConvertTo-Json -Depth 6
+       Set-Content -Path '{{ report_path }}' -Value $json -Encoding UTF8
+       $json"
+  register: pipeline_cmd
+  changed_when: true
+  delegate_to: localhost
+
+- name: Show summary JSON (truncated)
+  ansible.builtin.debug:
+    msg: "{{ pipeline_cmd.stdout[:1500] }}... (see full at {{ report_path }})"
