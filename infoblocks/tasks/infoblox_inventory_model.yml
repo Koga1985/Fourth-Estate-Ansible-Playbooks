@@ -1,0 +1,92 @@
+# tasks/infoblox_inventory_model.yml
+---
+- name: Validate Infoblox connection vars
+  ansible.builtin.assert:
+    that:
+      - nios_host | length > 0
+      - nios_username | length > 0
+      - nios_password | length > 0
+    fail_msg: "Set nios_host / nios_username / nios_password."
+
+- name: Build Infoblox provider
+  ansible.builtin.set_fact:
+    nios_provider:
+      host: "{{ nios_host }}"
+      username: "{{ nios_username }}"
+      password: "{{ nios_password }}"
+      validate_certs: "{{ nios_validate_certs | default(false) }}"
+
+# -------------------- Extensible Attribute DEFINITIONS --------------------
+# Standardize EA schema first, so all objects can use the same keys/flags.
+# Types: string | integer | date | list | url | email | checkbox (per docs)
+- name: Ensure EA definitions exist
+  infoblox.nios_modules.nios_extensible_attribute:
+    name: "{{ item.name }}"
+    type: "{{ item.type | default('string') }}"
+    comment: "{{ item.comment | default(omit) }}"
+    default_value: "{{ item.default_value | default(omit) }}"
+    flags: "{{ item.flags | default(omit) }}"  # e.g., "CI" (Cloud API + Inheritable)
+    list_values: "{{ item.list_values | default(omit) }}"  # when type: list
+    state: "{{ item.state | default('present') }}"
+    provider: "{{ nios_provider }}"
+  loop: "{{ ea_definitions | default([]) }}"
+
+# -------------------- NETWORK (DHCP/IPAM) VIEWS --------------------------
+- name: Ensure Network Views (DHCP/IPAM views)
+  infoblox.nios_modules.nios_network_view:
+    name: "{{ item.name }}"
+    comment: "{{ item.comment | default(omit) }}"
+    extattrs: "{{ item.extattrs | default(omit) }}"
+    state: "{{ item.state | default('present') }}"
+    provider: "{{ nios_provider }}"
+  loop: "{{ network_views | default([]) }}"
+
+# -------------------- DNS VIEWS ------------------------------------------
+- name: Ensure DNS Views
+  infoblox.nios_modules.nios_dns_view:
+    name: "{{ item.name }}"
+    comment: "{{ item.comment | default(omit) }}"
+    extattrs: "{{ item.extattrs | default(omit) }}"
+    state: "{{ item.state | default('present') }}"
+    provider: "{{ nios_provider }}"
+  loop: "{{ dns_views | default([]) }}"
+
+# -------------------- VLANs ----------------------------------------------
+# If you use VLAN views/ranges, set parent accordingly (defaults to 'default').
+- name: Ensure VLANs
+  infoblox.nios_modules.nios_vlan:
+    name: "{{ item.name }}"
+    id: "{{ item.id }}"
+    parent: "{{ item.parent | default('default') }}"   # vlanview or vlanrange
+    description: "{{ item.description | default(omit) }}"
+    contact: "{{ item.contact | default(omit) }}"
+    department: "{{ item.department | default(omit) }}"
+    reserved: "{{ item.reserved | default(omit) }}"
+    extattrs: "{{ item.extattrs | default(omit) }}"
+    state: "{{ item.state | default('present') }}"
+    provider: "{{ nios_provider }}"
+  loop: "{{ vlans | default([]) }}"
+
+# -------------------- NETWORK CONTAINERS ---------------------------------
+# Create/maintain supernets (containers) per network view and tag with EAs.
+- name: Ensure IPv4 Network CONTAINERS
+  infoblox.nios_modules.nios_network:
+    network: "{{ item.cidr }}"
+    network_view: "{{ item.view | default('default') }}"
+    comment: "{{ item.comment | default(omit) }}"
+    container: true           # <-- creates a network *container* (not a leaf network)
+    extattrs: "{{ item.extattrs | default(omit) }}"
+    state: "{{ item.state | default('present') }}"
+    provider: "{{ nios_provider }}"
+  loop: "{{ network_containers_v4 | default([]) }}"
+
+- name: Ensure IPv6 Network CONTAINERS
+  infoblox.nios_modules.nios_network:
+    network: "{{ item.cidr }}"
+    network_view: "{{ item.view | default('default') }}"
+    comment: "{{ item.comment | default(omit) }}"
+    container: true
+    extattrs: "{{ item.extattrs | default(omit) }}"
+    state: "{{ item.state | default('present') }}"
+    provider: "{{ nios_provider }}"
+  loop: "{{ network_containers_v6 | default([]) }}"
