@@ -1,0 +1,132 @@
+---
+# Configure vLCM Desired Image for a cluster, then scan & report compliance.
+#
+# Requires:
+#   - Controller has PowerShell Core (pwsh) + VMware.PowerCLI installed.
+#   - vCenter privileges for vLCM image operations.
+#
+# Vars you provide:
+#   vcenter_hostname: "vcsa.example.local"
+#   vcenter_username: "administrator@vsphere.local"
+#   vcenter_password: "..."
+#   vcenter_validate_certs: false
+#   cluster_name: "Compute-Cluster"
+#
+#   # Option A: build desired image by parts (base + optional vendor add-on + components):
+#   vlcm_image:
+#     base_image_version: "8.0 U3c"        # string matched against Get-LcmImage -Type BaseImage
+#     vendor_addon_name: ""                # optional: e.g. "DellEMC Addon 8.0.3-xx"
+#     components: []                       # optional list of strings matched against component names/versions
+#
+#   # Option B: import a saved desired-state JSON (from Export-LcmClusterDesiredState):
+#   vlcm_desired_state_file: ""            # e.g. "/tmp/cluster-desired-state.json"
+#
+#   run_prechecks: true                    # Test-LcmClusterHealth before compliance
+#   remediate: false                       # if true, Set-Cluster -Remediate -AcceptEULA
+#   compliance_report_path: "/tmp/{{ cluster_name }}-vlcm-compliance.json"
+
+- name: Assert required inputs
+  ansible.builtin.assert:
+    that:
+      - vcenter_hostname | length > 0
+      - vcenter_username | length > 0
+      - vcenter_password | length > 0
+      - cluster_name | length > 0
+    fail_msg: "Set vcenter_hostname/username/password and cluster_name."
+
+- name: Defaults
+  ansible.builtin.set_fact:
+    vcenter_validate_certs: "{{ vcenter_validate_certs | default(false) }}"
+    run_prechecks: "{{ run_prechecks | default(true) }}"
+    remediate: "{{ remediate | default(false) }}"
+    compliance_report_path: "{{ compliance_report_path | default('/tmp/%s-vlcm-compliance.json' | format(cluster_name)) }}"
+
+#####################################################################
+# PowerCLI block: configure desired image (by parts OR import spec),
+# then run health & compliance checks and optional remediation.
+#####################################################################
+- name: Configure vLCM desired image, scan & report
+  ansible.builtin.command:
+    cmd: >-
+      pwsh -NoLogo -NoProfile -NonInteractive -Command
+      "$ErrorActionPreference='Stop';
+       Import-Module VMware.PowerCLI -ErrorAction Stop;
+       Set-PowerCLIConfiguration -InvalidCertificateAction {{ vcenter_validate_certs | ternary('Ignore','Fail') }} -Confirm:$false | Out-Null;
+       $null = Connect-VIServer -Server '{{ vcenter_hostname }}' -User '{{ vcenter_username }}' -Password '{{ vcenter_password }}';
+
+       $cluster = Get-Cluster -Name '{{ cluster_name }}' -ErrorAction Stop;
+
+       # --- Desired Image configuration ---
+       if ('{{ vlcm_desired_state_file | default('') }}' -ne '') {
+         # Option B: import a saved desired-state spec JSON
+         Import-LcmClusterDesiredState -Cluster $cluster -Path '{{ vlcm_desired_state_file }}' | Out-Null
+       }
+       elseif ({{ vlcm_image is defined | ternary('$true','$false') }}) {
+         # Option A: pick BaseImage, optional VendorAddOn & Components
+         $base = if ('{{ vlcm_image.base_image_version | default('') }}' -ne '') {
+           Get-LcmImage -Type BaseImage -Version '{{ vlcm_image.base_image_version | default('') }}'
+         } else { $null }
+
+         $vendor = if ('{{ vlcm_image.vendor_addon_name | default('') }}' -ne '') {
+           Get-LcmImage -Type VendorAddOn | Where-Object { $_.DisplayName -like '*{{ vlcm_image.vendor_addon_name | default('') }}*' } | Select-Object -First 1
+         } else { $null }
+
+         $components = @()
+         {{ (vlcm_image.components | default([])) | length }}
+         {{ (vlcm_image.components | default([])) | map('regex_replace','\'','\'\'') | list }}
+         {{''}}
+         {% for comp in (vlcm_image.components | default([])) %}
+         $c = Get-LcmImage -Type Component | Where-Object { $_.DisplayName -like '*{{ comp }}*' -or $_.Version -like '*{{ comp }}*' } | Select-Object -First 1;
+         if ($c) { $components += $c }
+         {% endfor %}
+
+         # Apply to cluster; this enables Image-based mgmt if needed
+         if ($base -or $vendor -or $components.Count -gt 0) {
+           Set-Cluster -Cluster $cluster `
+             {{ vlcm_image.base_image_version is defined and vlcm_image.base_image_version|length>0 | ternary('-BaseImage $base','') }} `
+             {{ vlcm_image.vendor_addon_name is defined and vlcm_image.vendor_addon_name|length>0 | ternary('-VendorAddOn $vendor','') }} `
+             {{ (vlcm_image.components | default([])) | length > 0 | ternary('-Component $components','') }} `
+             -Confirm:$false | Out-Null
+         }
+       }
+
+       # --- Pre-checks (optional) ---
+       $health = $null
+       if ({{ run_prechecks | ternary('$true','$false') }}) {
+         $health = Test-LcmClusterHealth -Cluster $cluster  # vLCM health precheck
+       }
+
+       # --- Compliance scan ---
+       $comp = Test-LcmClusterCompliance -Cluster $cluster   # compliance w/ desired image
+
+       # --- Optional remediation (cluster-wide) ---
+       $remediateResult = $null
+       if ({{ remediate | ternary('$true','$false') }}) {
+         $remediateResult = ($cluster | Set-Cluster -Remediate -AcceptEULA -Confirm:$false)
+       }
+
+       # Build a compact report
+       $report = [pscustomobject]@{
+         vcenter   = '{{ vcenter_hostname }}';
+         cluster   = '{{ cluster_name }}';
+         precheck  = if ($health) { ($health | Select-Object -Property *) } else { $null };
+         compliance= ($comp | Select-Object -Property * );
+         remediated= {{ remediate | ternary('$true','$false') }};
+         timestamp = (Get-Date).ToString('s');
+       };
+
+       $json = $report | ConvertTo-Json -Depth 6;
+       Set-Content -Path '{{ compliance_report_path }}' -Value $json -Encoding UTF8;
+       $json
+      "
+  register: vlcm_cmd
+  changed_when: true
+  delegate_to: localhost
+
+- name: Show compliance summary
+  ansible.builtin.debug:
+    var: vlcm_cmd.stdout
+
+- name: Note where report was written
+  ansible.builtin.debug:
+    msg: "Compliance report saved to {{ compliance_report_path }}"
