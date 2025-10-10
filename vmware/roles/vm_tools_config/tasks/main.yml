@@ -1,0 +1,134 @@
+---
+- name: Assert vCenter inputs
+  ansible.builtin.assert:
+    that:
+      - vcenter_hostname | length > 0
+      - vcenter_username | length > 0
+      - vcenter_password | length > 0
+    fail_msg: "vcenter_hostname/username/password are required."
+
+- name: Set defaults
+  ansible.builtin.set_fact:
+    vcenter_validate_certs: "{{ vcenter_validate_certs | default(false) }}"
+    vm_names: "{{ vm_names | default([]) }}"
+    cluster_name: "{{ cluster_name | default('') }}"
+    folder_name: "{{ folder_name | default('') }}"
+    tag_name: "{{ tag_name | default('') }}"
+    tools: "{{ tools | default({}) }}"
+    report_path: "{{ report_path | default('/tmp/vmtools-report.json') }}"
+
+- name: Enforce VMware Tools settings and report stale tools (PowerCLI)
+  ansible.builtin.command:
+    cmd: >-
+      pwsh -NoLogo -NoProfile -NonInteractive -Command
+      "$ErrorActionPreference='Stop';
+       Import-Module VMware.PowerCLI -ErrorAction Stop;
+       Set-PowerCLIConfiguration -InvalidCertificateAction {{ vcenter_validate_certs | ternary('Ignore','Fail') }} -Confirm:$false | Out-Null;
+       $null = Connect-VIServer -Server '{{ vcenter_hostname }}' -User '{{ vcenter_username }}' -Password '{{ vcenter_password }}';
+
+       # --- Resolve target VMs ---
+       $targets = @();
+       if (@('{{ vm_names | join(\"','\") }}').Length -gt 0) {
+         $targets += @('{{ vm_names | join(\"','\") }}' | ForEach-Object { Get-VM -Name $_ -ErrorAction SilentlyContinue }) | Where-Object { $_ }
+       }
+       if ('{{ cluster_name }}' -ne '') {
+         $targets += (Get-Cluster -Name '{{ cluster_name }}' | Get-VM)
+       }
+       if ('{{ folder_name }}' -ne '') {
+         $targets += (Get-Folder -Name '{{ folder_name }}' | Get-VM)
+       }
+       if ('{{ tag_name }}' -ne '') {
+         try { $targets += (Get-VM -Tag '{{ tag_name }}') } catch { }
+       }
+       $targets = $targets | Sort-Object -Unique
+
+       # --- Build desired Tools config ---
+       $spec = New-Object VMware.Vim.VirtualMachineConfigSpec
+       $spec.tools = New-Object VMware.Vim.ToolsConfigInfo
+
+       # Time sync
+       $timeSync = [bool]{{ tools.time_sync | default(true) | ternary('1','0') }}
+       $spec.tools.syncTimeWithHost = $timeSync
+
+       # Scripts controls
+       $spec.tools.afterPowerOn = [bool]{{ tools.scripts.after_power_on | default(true) | ternary('1','0') }}
+       $spec.tools.afterResume   = [bool]{{ tools.scripts.after_resume | default(true) | ternary('1','0') }}
+       $spec.tools.beforeGuestStandby = [bool]{{ tools.scripts.before_guest_standby | default(true) | ternary('1','0') }}
+       $spec.tools.beforeGuestShutdown = [bool]{{ tools.scripts.before_guest_shutdown | default(true) | ternary('1','0') }}
+
+       # Upgrade policy
+       $upgradePolicy = '{{ tools.upgrade_policy | default('') }}'
+       if ($upgradePolicy -ne '') {
+         $spec.tools.toolsUpgradePolicy = $upgradePolicy  # e.g., UpgradeAtPowerCycle
+       }
+
+       # Advanced setting: disk.EnableUUID (supports app-consistent snapshots)
+       $setUUID = [bool]{{ tools.set_disk_enable_uuid | default(true) | ternary('1','0') }}
+
+       function Set-AdvancedSetting($vm, $key, $val) {
+         $cfg = New-Object VMware.Vim.VirtualMachineConfigSpec
+         $opt = New-Object VMware.Vim.OptionValue
+         $opt.Key = $key; $opt.Value = $val
+         $cfg.ExtraConfig += $opt
+         $vm.ExtensionData.ReconfigVM_Task($cfg) | Out-Null
+       }
+
+       # Apply config to each VM (idempotent-ish; vSphere handles no-op)
+       foreach ($vm in $targets) {
+         try {
+           $vm.ExtensionData.ReconfigVM_Task($spec) | Out-Null
+           if ($setUUID) { Set-AdvancedSetting -vm $vm -key 'disk.enableUUID' -val 'TRUE' }
+         } catch {
+           Write-Host ('WARN: Failed to reconfigure VM ' + $vm.Name + ' : ' + $_.Exception.Message)
+         }
+       }
+
+       # --- Report VMware Tools status ---
+       $report = @()
+       foreach ($vm in $targets) {
+         $ext = $vm.ExtensionData
+         $guest = $ext.Guest
+         $item = [pscustomobject]@{
+           Name = $vm.Name
+           PowerState = $vm.PowerState.ToString()
+           ToolsStatus = $guest.ToolsStatus
+           ToolsVersionStatus2 = $guest.ToolsVersionStatus2
+           ToolsRunningStatus = $guest.ToolsRunningStatus
+           ToolsVersion = $guest.ToolsVersion
+           GuestFamily = $guest.GuestFamily
+           TimeSyncWithHost = $ext.Config.Tools.SyncTimeWithHost
+           Scripts = @{
+             AfterPowerOn = $ext.Config.Tools.AfterPowerOn
+             AfterResume = $ext.Config.Tools.AfterResume
+             BeforeGuestStandby = $ext.Config.Tools.BeforeGuestStandby
+             BeforeGuestShutdown = $ext.Config.Tools.BeforeGuestShutdown
+           }
+         }
+         $report += $item
+       }
+
+       # Stale tools = need upgrade or not running
+       $stale = $report | Where-Object {
+         $_.ToolsVersionStatus2 -in @('guestToolsNeedUpgrade','guestToolsSupportedOld') -or
+         $_.ToolsRunningStatus -ne 'guestToolsRunning'
+       }
+
+       $out = [pscustomobject]@{
+         vcenter = '{{ vcenter_hostname }}'
+         total = $report.Count
+         stale_count = $stale.Count
+         stale = $stale
+         details = $report
+         timestamp = (Get-Date).ToString('s')
+       }
+
+       $json = $out | ConvertTo-Json -Depth 6
+       Set-Content -Path '{{ report_path }}' -Value $json -Encoding UTF8
+       $json"
+  register: vmtools_cmd
+  changed_when: true
+  delegate_to: localhost
+
+- name: Show summary JSON (truncated)
+  ansible.builtin.debug:
+    msg: "{{ vmtools_cmd.stdout[:1500] }}... (see full at {{ report_path }})"
