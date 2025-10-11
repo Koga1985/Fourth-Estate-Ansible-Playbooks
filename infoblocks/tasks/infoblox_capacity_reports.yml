@@ -1,0 +1,289 @@
+# tasks/infoblox_capacity_reports.yml
+---
+- name: Validate Infoblox connection vars
+  ansible.builtin.assert:
+    that:
+      - nios_host | length > 0
+      - nios_username | length > 0
+      - nios_password | length > 0
+    fail_msg: "Set nios_host / nios_username / nios_password."
+
+- name: Defaults
+  ansible.builtin.set_fact:
+    nios_validate_certs: "{{ nios_validate_certs | default(false) }}"
+    nios_wapi_version: "{{ nios_wapi_version | default('v2.12') }}"
+    report_dir: "{{ report_dir | default('/tmp/infoblox-capacity') }}"
+    dns_view: "{{ dns_view | default('default') }}"
+    group_by_container_cidrs: "{{ group_by_container_cidrs | default([]) }}"
+    site_ea_key: "{{ site_ea_key | default('Site') }}"
+
+- name: Ensure report directory
+  ansible.builtin.file:
+    path: "{{ report_dir }}"
+    state: directory
+    mode: "0755"
+
+- name: Build WAPI base & creds
+  ansible.builtin.set_fact:
+    _wapi_base: "https://{{ nios_host }}/wapi/{{ nios_wapi_version }}"
+    _creds:
+      user: "{{ nios_username }}"
+      password: "{{ nios_password }}"
+      force_basic_auth: true
+      validate_certs: "{{ nios_validate_certs }}"
+
+# ------------------------- INVENTORY -------------------------
+- name: Get IPv4 networks (with EAs)
+  ansible.builtin.uri:
+    url: "{{ _wapi_base }}/network"
+    method: GET
+    return_content: true
+    status_code: [200]
+    params:
+      _return_as_object: 1
+      _max_results: 5000
+      "_return_fields+": "network,network_view,comment,extattrs"
+    **_creds
+  register: networks_v4
+
+- name: Get DHCP ranges (with utilization if supported)
+  ansible.builtin.uri:
+    url: "{{ _wapi_base }}/range"
+    method: GET
+    return_content: true
+    status_code: [200]
+    params:
+      _return_as_object: 1
+      _max_results: 5000
+      "_return_fields+": "network,start_addr,end_addr,view,comment,utilization,extattrs"
+    **_creds
+  register: dhcp_ranges
+  failed_when: false
+
+- name: Get DNS members (for stats)
+  ansible.builtin.uri:
+    url: "{{ _wapi_base }}/member:dns"
+    method: GET
+    return_content: true
+    status_code: [200]
+    params: { _return_as_object: 1, _max_results: 5000, "_return_fields+": "name,host_name,enable_dns" }
+    **_creds
+  register: dns_members
+  failed_when: false
+
+# ---------------------- ADDRESS UTILIZATION -------------------
+- name: Compute per-network utilization (best-effort via WAPI function)
+  vars:
+    net: "{{ item.network }}"
+    view: "{{ item.network_view }}"
+  ansible.builtin.uri:
+    url: "{{ _wapi_base }}/network?_function=get_utilization"
+    method: POST
+    headers: { Content-Type: "application/json" }
+    body_format: json
+    body:
+      network: "{{ net }}"
+      network_view: "{{ view }}"
+      utilization: "FULL"
+    status_code: [200,400]
+    **_creds
+  loop: "{{ (networks_v4.json.result | default([])) }}"
+  loop_control: { label: "{{ item.network_view }}::{{ item.network }}" }
+  register: net_util
+  failed_when: false
+
+- name: Build flat rows for networks
+  ansible.builtin.set_fact:
+    _net_rows: >-
+      {%- set rows = [] -%}
+      {%- for idx, n in (networks_v4.json.result | default([])) | enumerate -%}
+        {%- set util = (net_util.results[idx].json | default({})) -%}
+        {%- set site = (n.extattrs[site_ea_key].value if (n.extattrs is defined and n.extattrs[site_ea_key] is defined) else '') -%}
+        {%- set used = (util.utilization | default({})).used | default(util.used | default(omit)) -%}
+        {%- set total = (util.utilization | default({})).total | default(util.total | default(omit)) -%}
+        {%- set free = (util.utilization | default({})).free | default(util.free | default(omit)) -%}
+        {%- set pct = ( (used | float(0)) / ((total | float(0)) if (total|float>0) else 1) * 100.0 ) | round(2) -%}
+        {%- set _ = rows.append({
+              "network": n.network,
+              "view": n.network_view,
+              "site": site,
+              "used": used | default(''),
+              "free": free | default(''),
+              "total": total | default(''),
+              "pct_used": pct,
+              "comment": n.comment | default('')
+            }) -%}
+      {%- endfor -%}
+      {{ rows }}
+
+# Optional grouping by container CIDRs
+- name: Aggregate by declared container CIDRs (optional)
+  ansible.builtin.set_fact:
+    _container_rows: >-
+      {%- set agg = {} -%}
+      {%- for c in group_by_container_cidrs -%}
+        {%- set _ = agg.update( { c: {"used":0,"free":0,"total":0,"pct_used":0,"net_count":0} } ) -%}
+      {%- endfor -%}
+      {%- for r in _net_rows -%}
+        {%- for c in group_by_container_cidrs -%}
+          {%- if r.network.startswith(c.split('/')[0]) -%}
+            {%- set bucket = agg[c] -%}
+            {%- set _ = bucket.update({
+                  "used": (bucket.used|int) + (r.used|int(0)),
+                  "free": (bucket.free|int) + (r.free|int(0)),
+                  "total": (bucket.total|int) + (r.total|int(0)),
+                  "net_count": (bucket.net_count|int) + 1
+                }) -%}
+          {%- endif -%}
+        {%- endfor -%}
+      {%- endfor -%}
+      {%- for k,v in agg.items() -%}
+        {%- set _ = v.update({"pct_used": ( (v.used|float(0)) / ((v.total|float(0)) if (v.total|float>0 else 1) ) * 100.0 ) | round(2) }) -%}
+      {%- endfor -%}
+      {{ agg }}
+
+- name: Aggregate by Site EA
+  ansible.builtin.set_fact:
+    _site_rows: >-
+      {%- set agg = {} -%}
+      {%- for r in _net_rows -%}
+        {%- set key = r.site | default('') -%}
+        {%- if key|length == 0 -%}{%- set key = 'UNSPECIFIED' -%}{%- endif -%}
+        {%- if key not in agg -%}{%- set _ = agg.update({ key: {"used":0,"free":0,"total":0,"pct_used":0,"net_count":0} }) -%}{%- endif -%}
+        {%- set b = agg[key] -%}
+        {%- set _ = b.update({
+              "used": (b.used|int) + (r.used|int(0)),
+              "free": (b.free|int) + (r.free|int(0)),
+              "total": (b.total|int) + (r.total|int(0)),
+              "net_count": (b.net_count|int) + 1
+            }) -%}
+      {%- endfor -%}
+      {%- for k,v in agg.items() -%}
+        {%- set _ = v.update({"pct_used": ( (v.used|float(0)) / ((v.total|float(0)) if (v.total|float>0 else 1) ) * 100.0 ) | round(2) }) -%}
+      {%- endfor -%}
+      {{ agg }}
+
+# ---------------------- DHCP UTILIZATION ----------------------
+- name: Build DHCP range rows (utilization may be empty on some versions)
+  ansible.builtin.set_fact:
+    _dhcp_rows: >-
+      {%- set rows = [] -%}
+      {%- for r in (dhcp_ranges.json.result | default([])) -%}
+        {%- set util = r.utilization | default({}) -%}
+        {%- set used = util.used | default(omit) -%}
+        {%- set total = util.total | default(omit) -%}
+        {%- set pct = ( (used | float(0)) / ((total | float(0)) if (total|float>0 else 1) ) * 100.0 ) | round(2) -%}
+        {%- set site = (r.extattrs[site_ea_key].value if (r.extattrs is defined and r.extattrs[site_ea_key] is defined) else '') -%}
+        {%- set _ = rows.append({
+              "network": r.network | default(''),
+              "range": r.start_addr ~ "-" ~ r.end_addr,
+              "view": r.view | default('default'),
+              "site": site,
+              "used": used | default(''),
+              "total": total | default(''),
+              "pct_used": pct,
+              "comment": r.comment | default('')
+            }) -%}
+      {%- endfor -%}
+      {{ rows }}
+  failed_when: false
+
+# ---------------------- DNS QUERY STATS -----------------------
+- name: Query DNS stats per member (best-effort; API varies by NIOS)
+  vars:
+    mref: "{{ item._ref | default(omit) }}"
+    mname: "{{ item.name | default(item.host_name | default('member')) }}"
+  ansible.builtin.uri:
+    url: "{{ _wapi_base }}/member:dns?_function=get_statistics"
+    method: POST
+    headers: { Content-Type: "application/json" }
+    body_format: json
+    body: { "member": "{{ mname }}", "view": "{{ dns_view }}" }
+    status_code: [200,400]
+    **_creds
+  loop: "{{ (dns_members.json.result | default([])) }}"
+  loop_control: { label: "{{ item.name | default(item.host_name) }}" }
+  register: dns_stats
+  failed_when: false
+
+# ---------------------- WRITE ARTIFACTS -----------------------
+- name: Save raw JSON artifacts
+  ansible.builtin.copy:
+    dest: "{{ report_dir }}/capacity_raw.json"
+    mode: "0644"
+    content: >-
+      {{
+        {
+          "networks": (networks_v4.json.result | default([])),
+          "net_util": (net_util.results | default([]) | map(attribute='json') | list),
+          "dhcp_ranges": (dhcp_ranges.json.result | default([])),
+          "dns_members": (dns_members.json.result | default([])),
+          "dns_stats": (dns_stats.results | default([]) | map(attribute='json') | list)
+        } | to_nice_json
+      }}
+
+- name: Save rollups (JSON)
+  ansible.builtin.copy:
+    dest: "{{ report_dir }}/capacity_rollup.json"
+    mode: "0644"
+    content: >-
+      {{
+        {
+          "per_network": _net_rows,
+          "by_site": _site_rows,
+          "by_container": _container_rows,
+          "dhcp_ranges": _dhcp_rows
+        } | to_nice_json
+      }}
+
+# CSV helpers (simple, header + rows)
+- name: Write per-network CSV
+  ansible.builtin.copy:
+    dest: "{{ report_dir }}/address_utilization_per_network.csv"
+    mode: "0644"
+    content: |-
+      network,view,site,used,free,total,pct_used,comment
+      {% for r in _net_rows -%}
+      {{ r.network }},{{ r.view }},{{ r.site }},{{ r.used }},{{ r.free }},{{ r.total }},{{ r.pct_used }},{{ (r.comment | replace(',', ' ')) }}
+      {% endfor %}
+
+- name: Write site rollup CSV
+  ansible.builtin.copy:
+    dest: "{{ report_dir }}/address_utilization_by_site.csv"
+    mode: "0644"
+    content: |-
+      site,used,free,total,pct_used,net_count
+      {% for k,v in _site_rows.items() -%}
+      {{ k }},{{ v.used }},{{ v.free }},{{ v.total }},{{ v.pct_used }},{{ v.net_count }}
+      {% endfor %}
+
+- name: Write container rollup CSV (only if containers provided)
+  when: group_by_container_cidrs | length > 0
+  ansible.builtin.copy:
+    dest: "{{ report_dir }}/address_utilization_by_container.csv"
+    mode: "0644"
+    content: |-
+      container_cidr,used,free,total,pct_used,net_count
+      {% for k,v in _container_rows.items() -%}
+      {{ k }},{{ v.used }},{{ v.free }},{{ v.total }},{{ v.pct_used }},{{ v.net_count }}
+      {% endfor %}
+
+- name: Write DHCP utilization CSV
+  ansible.builtin.copy:
+    dest: "{{ report_dir }}/dhcp_utilization.csv"
+    mode: "0644"
+    content: |-
+      network,range,view,site,used,total,pct_used,comment
+      {% for r in _dhcp_rows -%}
+      {{ r.network }},{{ r.range }},{{ r.view }},{{ r.site }},{{ r.used }},{{ r.total }},{{ r.pct_used }},{{ (r.comment | replace(',', ' ')) }}
+      {% endfor %}
+
+- name: Summary
+  ansible.builtin.debug:
+    msg:
+      - "Wrote JSON: {{ report_dir }}/capacity_raw.json"
+      - "Wrote JSON: {{ report_dir }}/capacity_rollup.json"
+      - "Wrote CSV:  {{ report_dir }}/address_utilization_per_network.csv"
+      - "Wrote CSV:  {{ report_dir }}/address_utilization_by_site.csv"
+      - "Wrote CSV:  {{ report_dir }}/address_utilization_by_container.csv (if requested)"
+      - "Wrote CSV:  {{ report_dir }}/dhcp_utilization.csv"
