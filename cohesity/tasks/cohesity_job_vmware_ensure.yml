@@ -1,0 +1,83 @@
+---
+- name: Lookup vCenter source id
+  ansible.builtin.uri:
+    url: "{{ cohesity_url }}/v2/data-protect/sources?environment=VMware"
+    method: GET
+    headers: { Authorization: "Bearer {{ cohesity_token }}" }
+    return_content: true
+    status_code: [200]
+    validate_certs: "{{ cohesity_verify_tls }}"
+  register: vm_sources
+
+- name: Lookup policy id
+  ansible.builtin.uri:
+    url: "{{ cohesity_url }}/v2/policies"
+    method: GET
+    headers: { Authorization: "Bearer {{ cohesity_token }}" }
+    return_content: true
+    status_code: [200]
+    validate_certs: "{{ cohesity_verify_tls }}"
+  register: pols
+
+- name: Assemble job payload
+  vars:
+    vcenter_id: "{{ (vm_sources.json | selectattr('name','equalto', vcenter_name) | list | first).id }}"
+    policy_id: "{{ (pols.json | selectattr('name','equalto', policy_name) | list | first).id }}"
+  ansible.builtin.set_fact:
+    _job_payload:
+      name: "{{ job_name }}"
+      environment: "VMware"
+      policyId: "{{ policy_id }}"
+      sources:
+        - id: "{{ vcenter_id }}"
+          includeTags: "{{ include_tags | default(['Prod']) }}"
+          excludeTags: "{{ exclude_tags | default(['NoBackup']) }}"
+      indexSettings:
+        enableIndexing: true
+      vmwareParameters:
+        quiesce: true                    # app-consistent if tools present
+        changedBlockTracking: "Enable"   # ensure CBT
+        backupNetwork:
+          networkType: "Auto"            # or "Custom" + networkName
+      slaParameters:
+        priority: "{{ job_priority | default('High') }}"
+      concurrency:
+        maxConcurrentTasks: "{{ max_concurrency | default(4) }}"
+      blackoutPeriods: "{{ blackout_periods | default([]) }}"
+
+- name: Create or update protection group
+  ansible.builtin.uri:
+    url: "{{ cohesity_url }}/v2/data-protect/protection-groups"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ cohesity_token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body: "{{ _job_payload }}"
+    status_code: [200,201,409]    # 409 if exists
+    validate_certs: "{{ cohesity_verify_tls }}"
+  register: job_create
+
+- name: Update existing job when 409 (idempotent)
+  when: job_create.status == 409
+  block:
+    - name: Find job id
+      ansible.builtin.uri:
+        url: "{{ cohesity_url }}/v2/data-protect/protection-groups?environment=VMware&names={{ job_name | urlencode }}"
+        method: GET
+        headers: { Authorization: "Bearer {{ cohesity_token }}" }
+        return_content: true
+        status_code: [200]
+        validate_certs: "{{ cohesity_verify_tls }}"
+      register: job_list
+    - name: PUT job
+      ansible.builtin.uri:
+        url: "{{ cohesity_url }}/v2/data-protect/protection-groups/{{ (job_list.json|first).id }}"
+        method: PUT
+        headers:
+          Authorization: "Bearer {{ cohesity_token }}"
+          Content-Type: "application/json"
+        body_format: json
+        body: "{{ _job_payload }}"
+        status_code: [200]
+        validate_certs: "{{ cohesity_verify_tls }}"
