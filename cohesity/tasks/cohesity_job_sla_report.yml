@@ -1,0 +1,19 @@
+---
+- name: Get runs in last 24h
+  ansible.builtin.uri:
+    url: "{{ cohesity_url }}/v2/data-protect/runs?environment=VMware&timeRange=Last24Hours"
+    method: GET
+    headers: { Authorization: "Bearer {{ cohesity_token }}" }
+    return_content: true
+    status_code: [200]
+    validate_certs: "{{ cohesity_verify_tls }}"
+  register: runs
+
+- name: Write CSV
+  ansible.builtin.copy:
+    dest: "/tmp/cohesity_vmware_sla_24h.csv"
+    content: |
+      job,runId,status,SLA_violation,start,end
+      {% for r in runs.json %}
+      {{ r.protectionGroupName }},{{ r.id }},{{ r.status }},{{ (r.slaMet | default(true)) | ternary('No','Yes') }},{{ r.startTime }},{{ r.endTime }}
+      {% endfor %}
