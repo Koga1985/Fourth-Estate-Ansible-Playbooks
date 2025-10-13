@@ -1,0 +1,88 @@
+# tasks/infoblox_dhcp_reservations.yml
+---
+- name: Validate Infoblox connection vars
+  ansible.builtin.assert:
+    that:
+      - nios_host | length > 0
+      - nios_username | length > 0
+      - nios_password | length > 0
+    fail_msg: "Set nios_host / nios_username / nios_password."
+
+- name: Defaults
+  ansible.builtin.set_fact:
+    nios_wapi_version: "{{ nios_wapi_version | default('v2.12') }}"
+    nios_validate_certs: "{{ nios_validate_certs | default(false) }}"
+    network_view: "{{ network_view | default('default') }}"
+    dhcp_reservations: "{{ dhcp_reservations | default([]) }}"
+    artifact_dir: "{{ artifact_dir | default('/tmp/infoblox-dhcp-reservations') }}"
+
+- name: Ensure artifact directory
+  ansible.builtin.file:
+    path: "{{ artifact_dir }}"
+    state: directory
+    mode: "0755"
+
+- name: Provider (Infoblox SDK)
+  ansible.builtin.set_fact:
+    nios_provider:
+      host: "{{ nios_host }}"
+      username: "{{ nios_username }}"
+      password: "{{ nios_password }}"
+      wapi_version: "{{ nios_wapi_version }}"
+      ssl_verify: "{{ nios_validate_certs }}"
+
+# Create / update / delete fixed-address reservations by MAC
+- name: Ensure DHCP fixed-address reservations
+  vars:
+    _opts: >-
+      {{
+        (item.options | default([])) + (
+          item.routers is defined
+            | ternary([{'name': 'routers', 'value': (item.routers | join(','))}], [])
+        ) + (
+          item.domain_name is defined
+            | ternary([{'name': 'domain-name', 'value': item.domain_name}], [])
+        ) + (
+          item.dns_servers is defined
+            | ternary([{'name': 'domain-name-servers', 'value': (item.dns_servers | join(','))}], [])
+        )
+      }}
+  infoblox.nios_modules.nios_fixed_address:
+    provider: "{{ nios_provider }}"
+    name: "{{ item.name | default(omit) }}"                 # Hostname (optional but recommended)
+    mac: "{{ item.mac | lower }}"                           # Reservation key
+    match_type: "{{ item.match_type | default('MAC_ADDRESS') }}"
+    ipv4addr: "{{ item.ip | default(omit) }}"               # Optional if you want static IP; omit to let NIOS pick
+    network_view: "{{ item.network_view | default(network_view) }}"
+    comment: "{{ item.comment | default(omit) }}"
+    extattrs: "{{ item.extattrs | default(omit) }}"
+    options: "{{ _opts if _opts | length > 0 else omit }}"
+    # Other useful knobs you may use as needed:
+    # bootfile: "{{ item.bootfile | default(omit) }}"
+    # next_server: "{{ item.next_server | default(omit) }}"
+    # use_bootfile: "{{ item.use_bootfile | default(omit) }}"
+    # use_next_server: "{{ item.use_next_server | default(omit) }}"
+    state: "{{ item.state | default('present') }}"
+  loop: "{{ dhcp_reservations }}"
+  loop_control:
+    label: "{{ item.name | default(item.mac) }}"
+
+- name: Save summary artifact (names/MACs only)
+  ansible.builtin.copy:
+    dest: "{{ artifact_dir }}/dhcp_reservations_summary.json"
+    mode: "0644"
+    content: >-
+      {{
+        {
+          "count": (dhcp_reservations | length),
+          "items": dhcp_reservations
+                  | map('extract', attribute='mac')
+                  | list
+        } | to_nice_json
+      }}
+
+- name: Done
+  ansible.builtin.debug:
+    msg:
+      - "Managed {{ dhcp_reservations | length }} fixed-address reservation(s)"
+      - "Artifact: {{ artifact_dir }}/dhcp_reservations_summary.json"
