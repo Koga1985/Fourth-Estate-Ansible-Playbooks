@@ -1,0 +1,37 @@
+---
+# Minimal example for a Windows repo. For Linux hardened, change type and add immutability settings.
+- name: Get repositories
+  ansible.builtin.uri:
+    url: "{{ veeam_base_url }}/api/v1/backupInfrastructure/repositories"
+    method: GET
+    headers: { Authorization: "Bearer {{ veeam_token }}" }
+    status_code: [200]
+    return_content: true
+    validate_certs: "{{ veeam_verify_tls }}"
+  register: repos
+
+- name: Create/Update repository
+  vars:
+    current: "{{ (repos.json.data | default([])) | selectattr('name','equalto', repo_name) | list | first }}"
+  ansible.builtin.uri:
+    url: >-
+      {{
+        veeam_base_url ~ '/api/v1/backupInfrastructure/repositories' if (current is not defined)
+        else veeam_base_url ~ '/api/v1/backupInfrastructure/repositories/' ~ current.id
+      }}
+    method: "{{ 'POST' if (current is not defined) else 'PUT' }}"
+    headers:
+      Authorization: "Bearer {{ veeam_token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      type: "WinLocal"
+      name: "{{ repo_name }}"
+      description: "Ansible-managed Windows repo"
+      hostId: "{{ windows_host_id }}"     # pre-added managed server GUID
+      path: "{{ repo_path }}"             # e.g. D:\\Backups
+      limitConcurrentTasks: true
+      maxConcurrentTasks: 4
+      rotateDrives: false
+    status_code: [200,201,204]
+    validate_certs: "{{ veeam_verify_tls }}"
