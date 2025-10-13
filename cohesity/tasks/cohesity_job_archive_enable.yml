@@ -1,0 +1,27 @@
+---
+# Vars: job_name, cloud_archive_target_id, tier_after_days
+- name: Get job id
+  ansible.builtin.uri:
+    url: "{{ cohesity_url }}/v2/data-protect/protection-groups?environment=VMware&names={{ job_name | urlencode }}"
+    method: GET
+    headers: { Authorization: "Bearer {{ cohesity_token }}" }
+    return_content: true
+    status_code: [200]
+    validate_certs: "{{ cohesity_verify_tls }}"
+  register: job
+
+- name: PATCH archive settings
+  ansible.builtin.uri:
+    url: "{{ cohesity_url }}/v2/data-protect/protection-groups/{{ (job.json|first).id }}"
+    method: PATCH
+    headers:
+      Authorization: "Bearer {{ cohesity_token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      archiveSettings:
+        enabled: true
+        targetId: "{{ cloud_archive_target_id }}"
+        tierAfterDays: "{{ tier_after_days | default(30) }}"
+    status_code: [200]
+    validate_certs: "{{ cohesity_verify_tls }}"
