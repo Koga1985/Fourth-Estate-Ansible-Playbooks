@@ -1,0 +1,244 @@
+# tasks/infoblox_subnet_lifecycle.yml
+---
+- name: Validate Infoblox connection vars
+  ansible.builtin.assert:
+    that:
+      - nios_host | length > 0
+      - nios_username | length > 0
+      - nios_password | length > 0
+    fail_msg: "Set nios_host / nios_username / nios_password."
+
+- name: Defaults
+  ansible.builtin.set_fact:
+    nios_validate_certs: "{{ nios_validate_certs | default(false) }}"
+    nios_wapi_version: "{{ nios_wapi_version | default('v2.12') }}"
+    network_view: "{{ network_view | default('default') }}"
+    subnet_requests: "{{ subnet_requests | default([]) }}"
+    artifact_dir: "{{ artifact_dir | default('/tmp/infoblox-subnet-lifecycle') }}"
+    lifecycle_ea_key: "{{ lifecycle_ea_key | default('Lifecycle') }}"      # EA to mark: requested/approved/active/deprecated
+    ticket_ea_key: "{{ ticket_ea_key | default('RequestID') }}"            # EA to stash ticket/change id
+
+- name: Ensure artifact directory
+  ansible.builtin.file:
+    path: "{{ artifact_dir }}"
+    state: directory
+    mode: "0755"
+
+- name: Build WAPI base & creds
+  ansible.builtin.set_fact:
+    _wapi_base: "https://{{ nios_host }}/wapi/{{ nios_wapi_version }}"
+    _creds:
+      user: "{{ nios_username }}"
+      password: "{{ nios_password }}"
+      force_basic_auth: true
+      validate_certs: "{{ nios_validate_certs }}"
+
+# Helper lookups ------------------------------------------------------
+- name: Lookup all network containers (for next_available network)
+  ansible.builtin.uri:
+    url: "{{ _wapi_base }}/networkcontainer"
+    method: GET
+    return_content: true
+    status_code: [200]
+    params:
+      _return_as_object: 1
+      _max_results: 10000
+      "_return_fields+": "network,network_view,_ref,extattrs,comment"
+    **_creds
+  register: _containers
+  failed_when: false
+
+- name: Map containers by CIDR
+  ansible.builtin.set_fact:
+    _cont_by_cidr: "{{ dict( ((_containers.json.result | default([])) | map(attribute='network') | list) | zip(_containers.json.result | default([])) ) }}"
+
+- name: Lookup existing networks snapshot
+  ansible.builtin.uri:
+    url: "{{ _wapi_base }}/network"
+    method: GET
+    return_content: true
+    status_code: [200]
+    params:
+      _return_as_object: 1
+      _max_results: 20000
+      "_return_fields+": "network,network_view,_ref,comment,extattrs"
+    **_creds
+  register: _nets
+  failed_when: false
+
+- name: Map networks by CIDR
+  ansible.builtin.set_fact:
+    _net_by_cidr: "{{ dict( ((_nets.json.result | default([])) | map(attribute='network') | list) | zip(_nets.json.result | default([])) ) }}"
+
+# Work log
+- name: Init lifecycle log
+  ansible.builtin.set_fact:
+    _lifecycle_log: []
+
+# ---------------------------------------------------------------------
+# Handler per request item
+# Each item supports keys (use what applies):
+#   action: request|approve|create|deprecate|subdivide
+#   cidr: "10.50.0.0/24"             # for approve/create/deprecate/subdivide
+#   container: "10.50.0.0/16"        # for create (next_available)
+#   new_prefix: 26                    # for subdivide (new child prefix)
+#   view: "default"
+#   comment: "why/what"
+#   request_id: "CHG0123456"
+#   extattrs: { Site: { value: "BR50" }, App: { value: "Retail" } }  # merged on create/approve/deprecate
+# ---------------------------------------------------------------------
+- name: Process subnet lifecycle items
+  vars:
+    VIEW: "{{ item.view | default(network_view) }}"
+  block:
+    # ---------------- request (no changes, just log / artifact) -----------
+    - name: Record REQUEST
+      when: item.action == "request"
+      ansible.builtin.set_fact:
+        _lifecycle_log: "{{ _lifecycle_log + [ {'action':'request','requested':item} ] }}"
+
+    # ---------------- approve -> set EA on an existing network ------------
+    - name: APPROVE: set EAs on existing network
+      when: item.action == "approve" and item.cidr is defined and _net_by_cidr.get(item.cidr) is defined
+      vars:
+        _ref: "{{ _net_by_cidr[item.cidr]._ref }}"
+        _merged_ea: >-
+          {{
+            (_net_by_cidr[item.cidr].extattrs | default({}))
+              | combine({ lifecycle_ea_key: {'value': 'approved'} }, recursive=True)
+              | combine( item.extattrs | default({}), recursive=True )
+              | combine( { ticket_ea_key: {'value': item.request_id } } if item.request_id is defined else {}, recursive=True )
+          }}
+      ansible.builtin.uri:
+        url: "{{ _wapi_base }}/{{ _ref }}"
+        method: PUT
+        headers: { Content-Type: "application/json" }
+        body_format: json
+        body: { extattrs: "{{ _merged_ea }}" }
+        status_code: [200,400]
+        **_creds
+      register: approve_put
+      failed_when: false
+
+    - name: APPROVE: log when network missing
+      when: item.action == "approve" and (item.cidr is not defined or _net_by_cidr.get(item.cidr) is not defined)
+      ansible.builtin.set_fact:
+        _lifecycle_log: "{{ _lifecycle_log + [ {'action':'approve','skipped':'network-not-found','item':item} ] }}"
+
+    # ---------------- create -> cidr or next_available --------------------
+    - name: CREATE: get next available network (if container & prefix given)
+      when: item.action == "create" and (item.cidr is not defined) and (item.container is defined) and (item.new_prefix is defined) and (_cont_by_cidr.get(item.container) is defined)
+      vars:
+        _cref: "{{ _cont_by_cidr[item.container]._ref }}"
+      ansible.builtin.uri:
+        url: "{{ _wapi_base }}/{{ _cref }}?_function=next_available_network"
+        method: POST
+        headers: { Content-Type: "application/json" }
+        body_format: json
+        body:
+          num: 1
+          cidr: "{{ item.new_prefix }}"
+        status_code: [200,400]
+        **_creds
+      register: navn
+      failed_when: false
+
+    - name: CREATE: compute target CIDR
+      when: item.action == "create"
+      ansible.builtin.set_fact:
+        _target_cidr: >-
+          {% if item.cidr is defined %}{{ item.cidr }}
+          {% elif (navn.json | default({})).networks is defined and (navn.json.networks | length) > 0 %}{{ navn.json.networks[0] }}
+          {% else %}{{ omit }}{% endif %}
+
+    - name: CREATE: ensure network present
+      when: item.action == "create" and _target_cidr is defined
+      infoblox.nios_modules.nios_network:
+        network: "{{ _target_cidr }}"
+        network_view: "{{ VIEW }}"
+        comment: "{{ item.comment | default(omit) }}"
+        extattrs: >-
+          {{
+            (item.extattrs | default({}))
+              | combine({ lifecycle_ea_key: {'value': 'active'} }, recursive=True)
+              | combine( { ticket_ea_key: {'value': item.request_id } } if item.request_id is defined else {}, recursive=True )
+          }}
+        state: present
+
+    - name: CREATE: log insufficient info
+      when: item.action == "create" and (_target_cidr is not defined)
+      ansible.builtin.set_fact:
+        _lifecycle_log: "{{ _lifecycle_log + [ {'action':'create','skipped':'no-cidr-nor-next_available','item':item} ] }}"
+
+    # ---------------- deprecate -> mark EAs (non-destructive) -------------
+    - name: DEPRECATE: set EA on existing network
+      when: item.action == "deprecate" and item.cidr is defined and _net_by_cidr.get(item.cidr) is defined
+      vars:
+        _ref: "{{ _net_by_cidr[item.cidr]._ref }}"
+        _merged_ea: >-
+          {{
+            (_net_by_cidr[item.cidr].extattrs | default({}))
+              | combine({ lifecycle_ea_key: {'value': 'deprecated'} }, recursive=True)
+              | combine( item.extattrs | default({}), recursive=True )
+              | combine( { ticket_ea_key: {'value': item.request_id } } if item.request_id is defined else {}, recursive=True )
+          }}
+      ansible.builtin.uri:
+        url: "{{ _wapi_base }}/{{ _ref }}"
+        method: PUT
+        headers: { Content-Type: "application/json" }
+        body_format: json
+        body: { extattrs: "{{ _merged_ea }}" }
+        status_code: [200,400]
+        **_creds
+      register: deprecate_put
+      failed_when: false
+
+    - name: DEPRECATE: log when network missing
+      when: item.action == "deprecate" and (item.cidr is not defined or _net_by_cidr.get(item.cidr) is not defined)
+      ansible.builtin.set_fact:
+        _lifecycle_log: "{{ _lifecycle_log + [ {'action':'deprecate','skipped':'network-not-found','item':item} ] }}"
+
+    # ---------------- subdivide -> split network to smaller prefix --------
+    - name: SUBDIVIDE: split network via WAPI (best-effort)
+      when: item.action == "subdivide" and item.cidr is defined and item.new_prefix is defined and _net_by_cidr.get(item.cidr) is defined
+      vars:
+        _nref: "{{ _net_by_cidr[item.cidr]._ref }}"
+      ansible.builtin.uri:
+        url: "{{ _wapi_base }}/{{ _nref }}?_function=split_network"
+        method: POST
+        headers: { Content-Type: "application/json" }
+        body_format: json
+        body:
+          prefix: "{{ item.new_prefix }}"     # desired child prefix (e.g., 26 to split /24 into /26s)
+        status_code: [200,400]
+        **_creds
+      register: split_post
+      failed_when: false
+
+    - name: SUBDIVIDE: log when missing bits
+      when: item.action == "subdivide" and (item.cidr is not defined or item.new_prefix is not defined or _net_by_cidr.get(item.cidr) is not defined)
+      ansible.builtin.set_fact:
+        _lifecycle_log: "{{ _lifecycle_log + [ {'action':'subdivide','skipped':'missing-cidr-or-prefix-or-network-not-found','item':item} ] }}"
+  loop: "{{ subnet_requests }}"
+  loop_control: { label: "{{ item.action }} {{ item.cidr | default(item.container | default('')) }}" }
+
+# ---------------------------------------------------------------------
+# Artifact
+# ---------------------------------------------------------------------
+- name: Save subnet lifecycle artifact
+  ansible.builtin.copy:
+    dest: "{{ artifact_dir }}/subnet_lifecycle_summary.json"
+    mode: "0644"
+    content: >-
+      {{
+        {
+          "requests": subnet_requests,
+          "log": _lifecycle_log
+        } | to_nice_json
+      }}
+
+- name: Done
+  ansible.builtin.debug:
+    msg:
+      - "Processed {{ subnet_requests | length }} subnet lifecycle item(s)"
+      - "Artifact: {{ artifact_dir }}/subnet_lifecycle_summary.json"
