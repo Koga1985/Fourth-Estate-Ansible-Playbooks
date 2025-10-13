@@ -1,0 +1,23 @@
+---
+- name: Get all VMware objects Cohesity sees
+  ansible.builtin.uri:
+    url: "{{ cohesity_url }}/v2/data-protect/objects?environment=VMware"
+    method: GET
+    headers: { Authorization: "Bearer {{ cohesity_token }}" }
+    return_content: true
+    status_code: [200]
+    validate_certs: "{{ cohesity_verify_tls }}"
+  register: objs
+
+- name: Filter VMs that are unprotected
+  ansible.builtin.set_fact:
+    _unprotected: "{{ objs.json | selectattr('type','equalto','VM') | rejectattr('isProtected','equalto', true) | list }}"
+
+- name: Write CSV
+  ansible.builtin.copy:
+    dest: "/tmp/unprotected_vms.csv"
+    content: |
+      name,moid,folder,resourcePool,tags
+      {% for vm in _unprotected %}
+      {{ vm.name }},{{ vm.id }},{{ vm.folderPath | default('') }},{{ vm.resourcePoolPath | default('') }},{{ (vm.tags | map(attribute='name') | list | join('|')) if vm.tags is defined else '' }}
+      {% endfor %}
