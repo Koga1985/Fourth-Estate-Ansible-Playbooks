@@ -1,0 +1,47 @@
+---
+- name: Get job id by name
+  ansible.builtin.uri:
+    url: "{{ cohesity_url }}/v2/data-protect/protection-groups?environment=VMware&names={{ job_name | urlencode }}"
+    method: GET
+    headers: { Authorization: "Bearer {{ cohesity_token }}" }
+    return_content: true
+    status_code: [200]
+    validate_certs: "{{ cohesity_verify_tls }}"
+  register: job
+
+- name: Start on-demand backup
+  ansible.builtin.uri:
+    url: "{{ cohesity_url }}/v2/data-protect/protection-groups/{{ (job.json|first).id }}/run"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ cohesity_token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body: { runType: "OnDemand" }
+    status_code: [200,202]
+    validate_certs: "{{ cohesity_verify_tls }}"
+  register: run_start
+
+- name: Wait until run completes (poll)
+  vars:
+    run_timeout_sec: "{{ run_timeout_sec | default(3600) }}"
+    poll_every_sec: "{{ poll_every_sec | default(15) }}"
+  until: run_state.status in ['Succeeded','Failed','Canceled','Warning']
+  retries: "{{ (run_timeout_sec // poll_every_sec) | int }}"
+  delay: "{{ poll_every_sec }}"
+  ansible.builtin.uri:
+    url: "{{ cohesity_url }}/v2/data-protect/runs?protectionGroupIds={{ (job.json|first).id }}"
+    method: GET
+    headers: { Authorization: "Bearer {{ cohesity_token }}" }
+    return_content: true
+    status_code: [200]
+    validate_certs: "{{ cohesity_verify_tls }}"
+  register: runs
+  changed_when: false
+  vars:
+    run_state: "{{ (runs.json | sort(attribute='startTime') | last) | default({}) }}"
+
+- name: Fail if the run did not succeed
+  when: run_state.status not in ['Succeeded','Warning']
+  ansible.builtin.fail:
+    msg: "Cohesity run ended with status {{ run_state.status }}"
