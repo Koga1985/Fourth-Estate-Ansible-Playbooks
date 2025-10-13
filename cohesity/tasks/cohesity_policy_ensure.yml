@@ -1,0 +1,38 @@
+---
+- name: Get Cohesity policies
+  ansible.builtin.uri:
+    url: "{{ cohesity_url }}/v2/policies"
+    method: GET
+    headers: { Authorization: "Bearer {{ cohesity_token }}" }
+    return_content: true
+    status_code: [200]
+    validate_certs: "{{ cohesity_verify_tls }}"
+  register: pols
+
+- name: Create or update policy
+  vars:
+    cur: "{{ (pols.json | selectattr('name','equalto', policy_name) | list | first) | default({}) }}"
+  ansible.builtin.uri:
+    url: "{{ cohesity_url }}/v2/policies{{ '' if (cur|length)==0 else '/' + cur.id }}"
+    method: "{{ 'POST' if (cur|length)==0 else 'PUT' }}"
+    headers:
+      Authorization: "Bearer {{ cohesity_token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      name: "{{ policy_name }}"
+      description: "{{ policy_description | default('VM nightly + archive') }}"
+      backupSchedule:
+        periodic: { frequency: "Daily", hour: 1 }     # 01:00 nightly
+      retention:
+        local: { days: "{{ local_retention_days | default(30) }}" }
+        archive: >-
+          {{
+            (archive_enabled | default(false)) |
+            ternary( {'months': archive_retention_months | default(12)}, omit )
+          }}
+      # Optional extras:
+      priority: "High"
+      qosPolicy: "BackupHDD"                          # or "BackupSSD" depending on platform
+    status_code: [200,201]
+    validate_certs: "{{ cohesity_verify_tls }}"
