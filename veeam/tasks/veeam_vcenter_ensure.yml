@@ -1,0 +1,39 @@
+---
+- name: Get existing vCenters
+  ansible.builtin.uri:
+    url: "{{ veeam_base_url }}/api/v1/virtualizationServers?type=Vmware"
+    method: GET
+    headers: { Authorization: "Bearer {{ veeam_token }}" }
+    status_code: [200]
+    return_content: true
+    validate_certs: "{{ veeam_verify_tls }}"
+  register: vc_list
+
+- name: Create/Update vCenter
+  vars:
+    found: "{{ (vc_list.json.data | default([])) | selectattr('name','equalto', vcenter_name) | list | first }}"
+  ansible.builtin.uri:
+    url: >-
+      {{
+        veeam_base_url ~ '/api/v1/virtualizationServers' if (found is not defined)
+        else veeam_base_url ~ '/api/v1/virtualizationServers/' ~ found.id
+      }}
+    method: "{{ 'POST' if (found is not defined) else 'PUT' }}"
+    headers:
+      Authorization: "Bearer {{ veeam_token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      type: "Vmware"
+      name: "{{ vcenter_name }}"
+      description: "Managed by Ansible"
+      connectionSettings:
+        serverName: "{{ vcenter_fqdn }}"
+        port: 443
+        credentials:
+          type: "UsernameAndPassword"
+          username: "{{ vcenter_username }}"
+          password: "{{ vcenter_password }}"
+      throttlingEnabled: false
+    status_code: [200,201,204]
+    validate_certs: "{{ veeam_verify_tls }}"
