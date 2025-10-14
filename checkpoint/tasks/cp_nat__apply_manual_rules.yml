@@ -1,0 +1,80 @@
+---
+# Create/Update manual NAT rules from YAML.
+# Optional pre-clean by name prefix.
+#
+# Vars:
+#   policy_package: "Standard"
+#   nat_rules:
+#     - name: "WEB_SNAT_Prod"
+#       position: "top"  # or "below <rule/section name>" etc.
+#       original_source: ["web-servers"]
+#       original_destination: ["Any"]
+#       original_service: ["http","https"]
+#       translated_source: "Original"       # or "Hide", "192.0.2.10"
+#       translated_destination: "Original"  # or IP/FQDN object name
+#       translated_service: "Original"      # rarely changed
+#       method: "static"  # or "hide"
+#       enabled: true
+#       comments: "SNAT web to egress VIP"
+#   remove_by_name_prefix: []   # e.g. ["WEB_SNAT_"]
+#   publish_changes: true|false
+
+- name: Defaults
+  ansible.builtin.set_fact:
+    _pkg: "{{ policy_package | default('Standard') }}"
+    _rules: "{{ nat_rules | default([]) }}"
+    _prefixes: "{{ remove_by_name_prefix | default([]) }}"
+
+- name: (Optional) fetch NAT rulebase for cleanup
+  when: _prefixes | length > 0
+  check_point.mgmt.cp_mgmt_show_nat_rulebase:
+    package: "{{ _pkg }}"
+    details_level: "standard"
+  register: _nat_rb_for_delete
+
+- name: (Optional) gather rule UIDs to delete by name prefix
+  when: _prefixes | length > 0
+  ansible.builtin.set_fact:
+    _delete_uids: >-
+      {%- set out = [] -%}
+      {%- for r in _nat_rb_for_delete.rulebase | default([]) -%}
+        {%- if r.get('type') == 'nat-rule' -%}
+          {%- set n = r.get('name','') -%}
+          {%- for p in _prefixes -%}
+            {%- if n.startswith(p) -%}{%- set _ = out.append({'uid': r.uid, 'name': n, 'position': r.position}) -%}{%- endif -%}
+          {%- endfor -%}
+        {%- endif -%}
+      {%- endfor -%}
+      {{ out | unique }}
+
+- name: (Optional) delete selected rules by UID
+  when: _prefixes | length > 0 and (_delete_uids | length) > 0
+  check_point.mgmt.cp_mgmt_delete_nat_rule:
+    package: "{{ _pkg }}"
+    uid: "{{ item.uid }}"
+  loop: "{{ _delete_uids }}"
+  loop_control: { label: "{{ item.name }}" }
+
+- name: Create/Update manual NAT rules
+  check_point.mgmt.cp_mgmt_nat_rule:
+    package: "{{ _pkg }}"
+    state: present
+    name: "{{ item.name }}"
+    position: "{{ item.position | default('top') }}"
+    method: "{{ item.method | default('static') }}"
+    enabled: "{{ item.enabled | default(true) }}"
+    comments: "{{ item.comments | default(omit) }}"
+
+    original_source: "{{ item.original_source | default(['Any']) }}"
+    original_destination: "{{ item.original_destination | default(['Any']) }}"
+    original_service: "{{ item.original_service | default(['Any']) }}"
+
+    translated_source: "{{ item.translated_source | default('Original') }}"
+    translated_destination: "{{ item.translated_destination | default('Original') }}"
+    translated_service: "{{ item.translated_service | default('Original') }}"
+  loop: "{{ _rules }}"
+  loop_control: { label: "{{ item.name }}" }
+
+- name: Publish NAT rule changes
+  when: publish_changes | default(false) | bool
+  check_point.mgmt.cp_mgmt_publish:
