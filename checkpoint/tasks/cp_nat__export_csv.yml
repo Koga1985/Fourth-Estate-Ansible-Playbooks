@@ -1,0 +1,44 @@
+---
+# Export full NAT rulebase to CSV for auditing.
+#
+# Vars:
+#   policy_package: "Standard"
+#   artifacts_dir: "/tmp/checkpoint-artifacts"
+
+- name: Defaults
+  ansible.builtin.set_fact:
+    _pkg: "{{ policy_package | default('Standard') }}"
+    _art: "{{ artifacts_dir | default('/tmp/checkpoint-artifacts') }}"
+
+- name: Ensure artifact folder
+  ansible.builtin.file:
+    path: "{{ _art }}"
+    state: directory
+    mode: "0755"
+
+- name: Fetch NAT rulebase (standard)
+  check_point.mgmt.cp_mgmt_show_nat_rulebase:
+    package: "{{ _pkg }}"
+    details_level: "standard"
+  register: _nat
+
+- name: Write NAT CSV
+  ansible.builtin.copy:
+    dest: "{{ _art }}/nat_rulebase_{{ _pkg | lower }}.csv"
+    mode: "0644"
+    content: |
+      position,name,uid,enabled,method,original_source,original_destination,original_service,translated_source,translated_destination,translated_service,comments
+      {% for r in _nat.rulebase | default([]) if r.get('type') == 'nat-rule' %}
+      {{ r.position }},
+      {{ (r.name | default('') ) | replace(',',';') }},
+      {{ r.uid }},
+      {{ r.enabled }},
+      {{ r.method }},
+      "{{ (r['original-source'] | default([]) | map(attribute='name') | list) | join('|') }}",
+      "{{ (r['original-destination'] | default([]) | map(attribute='name') | list) | join('|') }}",
+      "{{ (r['original-service'] | default([]) | map(attribute='name') | list) | join('|') }}",
+      {{ r.get('translated-source','Original') }},
+      {{ r.get('translated-destination','Original') }},
+      {{ r.get('translated-service','Original') }},
+      {{ r.get('comments','') | replace(',',';') }}
+      {% endfor %}
