@@ -1,0 +1,47 @@
+---
+# Create/Update reusable IKE/IPsec profiles to reference in communities.
+# Uses generic API to be release-agnostic.
+# Vars:
+#   ike_profiles:
+#     - name: "IKEv2-Strong"
+#       encryption: ["aes-256","aes-128"]
+#       integrity: ["sha256"]
+#       dh_groups: [14,19]
+#       lifetime_minutes: 1440
+#   ipsec_profiles:
+#     - name: "ESP-Strong"
+#       encryption: ["aes-256","aes-128"]
+#       integrity: ["sha256"]
+#       pfs_groups: [14]
+#       lifetime_minutes: 60
+#   publish_changes: false
+
+- name: Create/Update IKE profiles
+  when: (ike_profiles | default([])) | length > 0
+  check_point.mgmt.cp_mgmt_api_call:
+    command: "set-vpn-ike-profile"
+    parameters:
+      name: "{{ item.name }}"
+      encryption: "{{ item.encryption | default(omit) }}"
+      integrity: "{{ item.integrity | default(omit) }}"
+      diffie_hellman_group: "{{ item.dh_groups | default(omit) }}"
+      life_time_minutes: "{{ item.lifetime_minutes | default(omit) }}"
+  loop: "{{ ike_profiles | default([]) }}"
+  loop_control: { label: "{{ item.name }}" }
+
+- name: Create/Update IPsec (ESP) profiles
+  when: (ipsec_profiles | default([])) | length > 0
+  check_point.mgmt.cp_mgmt_api_call:
+    command: "set-vpn-ikev2-ipsec-profile"
+    parameters:
+      name: "{{ item.name }}"
+      encryption: "{{ item.encryption | default(omit) }}"
+      integrity: "{{ item.integrity | default(omit) }}"
+      pfs_dh_group: "{{ item.pfs_groups | default(omit) }}"
+      life_time_minutes: "{{ item.lifetime_minutes | default(omit) }}"
+  loop: "{{ ipsec_profiles | default([]) }}"
+  loop_control: { label: "{{ item.name }}" }
+
+- name: Publish crypto profiles
+  when: publish_changes | default(false) | bool
+  check_point.mgmt.cp_mgmt_publish:
