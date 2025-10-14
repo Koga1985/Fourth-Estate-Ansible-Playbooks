@@ -1,0 +1,208 @@
+---
+- name: Defaults for protection and artifacts
+  ansible.builtin.set_fact:
+    _protected: "{{ protected_names | default(['Any','Internet','External','LocalNetwork']) }}"
+    _art_dir: "{{ artifacts_dir | default('/tmp/checkpoint-artifacts') }}"
+
+- name: Ensure artifact folder
+  ansible.builtin.file:
+    path: "{{ _art_dir }}"
+    state: directory
+    mode: "0755"
+
+- name: Get existing hosts
+  check_point.mgmt.cp_mgmt_show_objects:
+    type: host
+    limit: 1000
+  register: _hosts_all
+
+- name: Compute stale hosts
+  ansible.builtin.set_fact:
+    _hosts_desired: "{{ (cp_hosts | default([])) | map(attribute='name') | list }}"
+    _hosts_stale: >-
+      {{ (_hosts_all.objects | map(attribute='name') | list)
+          | difference(_hosts_desired)
+          | difference(_protected) }}
+
+- name: Write preview — hosts
+  ansible.builtin.copy:
+    dest: "{{ _art_dir }}/stale_hosts.csv"
+    mode: "0644"
+    content: |
+      name
+      {% for n in _hosts_stale %}{{ n }}
+      {% endfor %}
+
+- name: Get existing networks
+  check_point.mgmt.cp_mgmt_show_objects:
+    type: network
+    limit: 1000
+  register: _nets_all
+
+- name: Compute stale networks
+  ansible.builtin.set_fact:
+    _nets_desired: "{{ (cp_networks | default([])) | map(attribute='name') | list }}"
+    _nets_stale: >-
+      {{ (_nets_all.objects | map(attribute='name') | list)
+          | difference(_nets_desired)
+          | difference(_protected) }}
+
+- name: Write preview — networks
+  ansible.builtin.copy:
+    dest: "{{ _art_dir }}/stale_networks.csv"
+    mode: "0644"
+    content: |
+      name
+      {% for n in _nets_stale %}{{ n }}
+      {% endfor %}
+
+- name: Get address ranges
+  check_point.mgmt.cp_mgmt_show_objects:
+    type: address-range
+    limit: 1000
+  register: _ranges_all
+
+- name: Compute stale ranges
+  ansible.builtin.set_fact:
+    _ranges_desired: "{{ (cp_address_ranges | default([])) | map(attribute='name') | list }}"
+    _ranges_stale: >-
+      {{ (_ranges_all.objects | map(attribute='name') | list)
+          | difference(_ranges_desired)
+          | difference(_protected) }}
+
+- name: Write preview — address ranges
+  ansible.builtin.copy:
+    dest: "{{ _art_dir }}/stale_address_ranges.csv"
+    mode: "0644"
+    content: |
+      name
+      {% for n in _ranges_stale %}{{ n }}
+      {% endfor %}
+
+- name: Get groups
+  check_point.mgmt.cp_mgmt_show_objects:
+    type: group
+    limit: 1000
+  register: _groups_all
+
+- name: Compute stale groups
+  ansible.builtin.set_fact:
+    _groups_desired: "{{ (cp_groups | default([])) | map(attribute='name') | list }}"
+    _groups_stale: >-
+      {{ (_groups_all.objects | map(attribute='name') | list)
+          | difference(_groups_desired)
+          | difference(_protected) }}
+
+- name: Write preview — groups
+  ansible.builtin.copy:
+    dest: "{{ _art_dir }}/stale_groups.csv"
+    mode: "0644"
+    content: |
+      name
+      {% for n in _groups_stale %}{{ n }}
+      {% endfor %}
+
+- name: Get TCP services
+  check_point.mgmt.cp_mgmt_show_objects:
+    type: service-tcp
+    limit: 1000
+  register: _svc_tcp_all
+
+- name: Get UDP services
+  check_point.mgmt.cp_mgmt_show_objects:
+    type: service-udp
+    limit: 1000
+  register: _svc_udp_all
+
+- name: Compute stale TCP/UDP
+  ansible.builtin.set_fact:
+    _svc_tcp_desired: "{{ (cp_services_tcp | default([])) | map(attribute='name') | list }}"
+    _svc_udp_desired: "{{ (cp_services_udp | default([])) | map(attribute='name') | list }}"
+    _svc_tcp_stale: "{{ (_svc_tcp_all.objects | map(attribute='name') | list) | difference(_svc_tcp_desired) | difference(_protected) }}"
+    _svc_udp_stale: "{{ (_svc_udp_all.objects | map(attribute='name') | list) | difference(_svc_udp_desired) | difference(_protected) }}"
+
+- name: Write preview — services tcp
+  ansible.builtin.copy:
+    dest: "{{ _art_dir }}/stale_services_tcp.csv"
+    mode: "0644"
+    content: |
+      name
+      {% for n in _svc_tcp_stale %}{{ n }}
+      {% endfor %}
+
+- name: Write preview — services udp
+  ansible.builtin.copy:
+    dest: "{{ _art_dir }}/stale_services_udp.csv"
+    mode: "0644"
+    content: |
+      name
+      {% for n in _svc_udp_stale %}{{ n }}
+      {% endfor %}
+
+- name: Summarize counts
+  ansible.builtin.debug:
+    msg:
+      - "Hosts stale: {{ _hosts_stale | length }}"
+      - "Networks stale: {{ _nets_stale | length }}"
+      - "Address ranges stale: {{ _ranges_stale | length }}"
+      - "Groups stale: {{ _groups_stale | length }}"
+      - "TCP services stale: {{ _svc_tcp_stale | length }}"
+      - "UDP services stale: {{ _svc_udp_stale | length }}"
+      - "CSV previews at {{ _art_dir }}/stale_*.csv"
+
+- name: Stop here if dry_run is true
+  when: dry_run | default(true) | bool
+  ansible.builtin.debug:
+    msg: "Dry-run enabled — no deletions performed."
+
+- name: Guardrail — explicit opt-in required
+  when: not (dry_run | default(true) | bool)
+  ansible.builtin.assert:
+    that: [ cp_allow_delete | default(false) | bool ]
+    fail_msg: "Deletion blocked. Set cp_allow_delete: true to proceed."
+
+- name: Delete stale hosts
+  when: not (dry_run | default(true) | bool) and (_hosts_stale | length > 0)
+  check_point.mgmt.cp_mgmt_host:
+    state: absent
+    name: "{{ item }}"
+  loop: "{{ _hosts_stale }}"
+
+- name: Delete stale networks
+  when: not (dry_run | default(true) | bool) and (_nets_stale | length > 0)
+  check_point.mgmt.cp_mgmt_network:
+    state: absent
+    name: "{{ item }}"
+  loop: "{{ _nets_stale }}"
+
+- name: Delete stale address ranges
+  when: not (dry_run | default(true) | bool) and (_ranges_stale | length > 0)
+  check_point.mgmt.cp_mgmt_address_range:
+    state: absent
+    name: "{{ item }}"
+  loop: "{{ _ranges_stale }}"
+
+- name: Delete stale groups
+  when: not (dry_run | default(true) | bool) and (_groups_stale | length > 0)
+  check_point.mgmt.cp_mgmt_group:
+    state: absent
+    name: "{{ item }}"
+  loop: "{{ _groups_stale }}"
+
+- name: Delete stale TCP services
+  when: not (dry_run | default(true) | bool) and (_svc_tcp_stale | length > 0)
+  check_point.mgmt.cp_mgmt_service_tcp:
+    state: absent
+    name: "{{ item }}"
+  loop: "{{ _svc_tcp_stale }}"
+
+- name: Delete stale UDP services
+  when: not (dry_run | default(true) | bool) and (_svc_udp_stale | length > 0)
+  check_point.mgmt.cp_mgmt_service_udp:
+    state: absent
+    name: "{{ item }}"
+  loop: "{{ _svc_udp_stale }}"
+
+- name: Publish deletions (if any)
+  when: not (dry_run | default(true) | bool) and (publish_changes | default(false) | bool)
+  check_point.mgmt.cp_mgmt_publish:
