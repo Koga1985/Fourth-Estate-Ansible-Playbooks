@@ -1,0 +1,27 @@
+
+- name: Prepare batches
+  ansible.builtin.set_fact:
+    _targets: "{{ install_targets | default([]) }}"
+    _batch: "{{ parallel_batches | default(1) | int }}"
+- name: Assert targets
+  ansible.builtin.assert:
+    that: [ _targets | length > 0 ]
+    fail_msg: "install_targets not provided."
+- name: Compute batches
+  ansible.builtin.set_fact:
+    _target_batches: >-
+      {% set out = [] %}
+      {% for i in range(0, (_targets | length), _batch) %}
+      {% set _ = out.append(_targets[i:(i+_batch)]) %}
+      {% endfor %}
+      {{ out }}
+- name: Install policy
+  check_point.mgmt.cp_mgmt_install_policy:
+    policy_package: "{{ policy_package }}"
+    targets: "{{ item }}"
+    access: true
+    threat_prevention: false
+    install_on_all_cluster_members_or_fail: true
+    evaluate_policy: true
+  loop: "{{ _target_batches }}"
+  loop_control: { label: "{{ item | join(',') }}" }

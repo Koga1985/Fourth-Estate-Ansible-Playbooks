@@ -1,0 +1,24 @@
+
+- name: Ensure artifact folder
+  ansible.builtin.file:
+    path: "{{ artifacts_dir }}"
+    state: directory
+    mode: "0755"
+- name: Get existing hosts
+  check_point.mgmt.cp_mgmt_show_objects: { type: host, limit: 1000 }
+  register: _hosts_all
+- name: Compute stale hosts
+  ansible.builtin.set_fact:
+    _hosts_desired: "{{ (cp_hosts | default([])) | map(attribute='name') | list }}"
+    _hosts_stale: "{{ (_hosts_all.objects | map(attribute='name') | list) | difference(_hosts_desired) | difference(protected_names) }}"
+- name: Preview hosts
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/stale_hosts.csv"
+    mode: "0644"
+    content: |
+      name
+      {% for n in _hosts_stale %}{{ n }}{% endfor %}
+- name: Dry-run stop
+  when: dry_run | default(true) | bool
+  ansible.builtin.debug:
+    msg: "Dry-run — no deletions."

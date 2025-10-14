@@ -1,0 +1,31 @@
+
+- name: Ensure artifact dir
+  ansible.builtin.file:
+    path: "{{ artifacts_dir }}"
+    state: directory
+    mode: "0755"
+- name: Show rulebase
+  check_point.mgmt.cp_mgmt_show_access_rulebase:
+    name: "{{ cp_layer }}"
+    details_level: "standard"
+  register: _rb
+- name: Normalize + detect (heuristic) and write CSV
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/policy_shadowing_{{ cp_layer | lower }}.csv"
+    mode: "0644"
+    content: |
+      earlier_name,earlier_uid,earlier_pos,later_name,later_uid,later_pos
+      {% set rules = [] %}
+      {% for r in _rb.access_rulebase | default([]) %}
+      {% set _ = rules.append({'idx': loop.index0, 'name': r.name, 'uid': r.uid, 'position': r.position,
+                               'src': r.get('source',[]) | map(attribute='name') | list,
+                               'dst': r.get('destination',[]) | map(attribute='name') | list,
+                               'svc': r.get('service',[]) | map(attribute='name') | list }) %}
+      {% endfor %}
+      {% for r in rules %}{% for e in rules if e.idx < r.idx %}
+      {% set src_ok = ('Any' in e.src) or (e.src == r.src) %}
+      {% set dst_ok = ('Any' in e.dst) or (e.dst == r.dst) %}
+      {% set svc_ok = ('Any' in e.svc) or (e.svc == r.svc) %}
+      {% if src_ok and dst_ok and svc_ok %}
+      {{ e.name | replace(',',';') }},{{ e.uid }},{{ e.position }},{{ r.name | replace(',',';') }},{{ r.uid }},{{ r.position }}
+      {% endif %}{% endfor %}{% endfor %}

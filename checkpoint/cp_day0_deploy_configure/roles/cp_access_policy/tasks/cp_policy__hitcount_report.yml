@@ -1,0 +1,21 @@
+
+- name: Ensure artifact dir
+  ansible.builtin.file:
+    path: "{{ artifacts_dir }}"
+    state: directory
+    mode: "0755"
+- name: Show rulebase with hits
+  check_point.mgmt.cp_mgmt_show_access_rulebase:
+    name: "{{ cp_layer }}"
+    details_level: "standard"
+    show_hits: true
+  register: _rb
+- name: Write hitcount CSV
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/policy_hitcount_{{ cp_layer | lower }}.csv"
+    mode: "0644"
+    content: |
+      name,uid,position,hits,last_hit,enabled,action
+      {% for r in _rb.access_rulebase | default([]) %}
+      {{ r.name | replace(',',';') }},{{ r.uid }},{{ r.position }},{{ r.get('hits',{}).get('value',0) }},{{ r.get('hits',{}).get('last-date','') }},{{ r.enabled }},{{ r.action }}
+      {% endfor %}
