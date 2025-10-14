@@ -1,0 +1,69 @@
+---
+# Create/Update star VPN communities.
+# Vars:
+#   vpn_communities:
+#     - name: "HUB-SPOKES"
+#       center_gateways: ["dc-gw1"]           # CP gateways/cluster objects
+#       satellite_gateways: ["peer-branch1","peer-branch2"]  # peers or CP GWs
+#       encryption_method: "ikev2"
+#       shared_secrets:                       # optional per-satellite overrides
+#         - { peer: "peer-branch1", psk: "{{ vault_branch1_psk }}" }
+#       ike_phase1:
+#         ike_encryption: ["aes-256","aes-128"]
+#         ike_integrity: ["sha256"]
+#         ike_dh_groups: [14,19]
+#         ike_lifetime_minutes: 1440
+#       ipsec_phase2:
+#         enc: ["aes-256","aes-128"]
+#         int: ["sha256"]
+#         pfs_groups: [14]
+#         lifetime_minutes: 60
+#       vpn_domain_type: "community"          # "community" or "user-defined"
+#       vpn_perform_nat_traversal: true
+#   publish_changes: false
+
+- name: Create/Update star communities
+  check_point.mgmt.cp_mgmt_vpn_community_star:
+    state: present
+    name: "{{ item.name }}"
+    center_gateways: "{{ item.center_gateways }}"
+    satellite_gateways: "{{ item.satellite_gateways }}"
+    encryption_method: "{{ item.encryption_method | default('ikev2') }}"
+    ike_phase_1:
+      encryption: "{{ item.ike_phase1.ike_encryption | default(omit) }}"
+      integrity: "{{ item.ike_phase1.ike_integrity | default(omit) }}"
+      diffie_hellman_group: "{{ item.ike_phase1.ike_dh_groups | default(omit) }}"
+      life_time_minutes: "{{ item.ike_phase1.ike_lifetime_minutes | default(omit) }}"
+    ike_phase_2:
+      encryption: "{{ item.ipsec_phase2.enc | default(omit) }}"
+      integrity: "{{ item.ipsec_phase2.int | default(omit) }}"
+      pfs_dh_group: "{{ item.ipsec_phase2.pfs_groups | default(omit) }}"
+      life_time_minutes: "{{ item.ipsec_phase2.lifetime_minutes | default(omit) }}"
+    vpn_domain_type: "{{ item.vpn_domain_type | default('community') }}"
+    nat_traversal: "{{ item.vpn_perform_nat_traversal | default(true) }}"
+  loop: "{{ vpn_communities | default([]) }}"
+  loop_control: { label: "{{ item.name }}" }
+
+- name: (Optional) set per-peer PSKs via generic API
+  when: (item.shared_secrets | default([])) | length > 0
+  loop: "{{ vpn_communities | default([]) }}"
+  loop_control: { label: "{{ item.name }}" }
+  vars:
+    _shared: "{{ item.shared_secrets }}"
+  block:
+    - name: Apply peer PSKs
+      check_point.mgmt.cp_mgmt_api_call:
+        command: "set-vpn-community-star"
+        parameters:
+          name: "{{ item.name }}"
+          tunnels: >
+            {{
+              _shared | map('combine', {'shared-secret': 'psk'}) | list
+              | map('combine', {'peer-object': attribute('peer')}) | list
+            }}
+      vars:
+        attribute: "peer"
+
+- name: Publish community changes
+  when: publish_changes | default(false) | bool
+  check_point.mgmt.cp_mgmt_publish:
