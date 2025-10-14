@@ -1,0 +1,136 @@
+---
+# Heuristic validation of NAT overlaps/conflicts.
+# Flags:
+#  • Duplicate original tuple (Src/Dst/Svc) used in multiple rules
+#  • Earlier broader rule (Any or equal) that may shadow a later specific rule
+#  • Same original tuple but different translation (potential conflict)
+#
+# Vars:
+#   policy_package: "Standard"
+#   artifacts_dir: "/tmp/checkpoint-artifacts"
+
+- name: Defaults
+  ansible.builtin.set_fact:
+    _pkg: "{{ policy_package | default('Standard') }}"
+    _art: "{{ artifacts_dir | default('/tmp/checkpoint-artifacts') }}"
+
+- name: Ensure artifact folder
+  ansible.builtin.file:
+    path: "{{ _art }}"
+    state: directory
+    mode: "0755"
+
+- name: Fetch NAT rulebase (standard)
+  check_point.mgmt.cp_mgmt_show_nat_rulebase:
+    package: "{{ _pkg }}"
+    details_level: "standard"
+  register: _nat
+
+- name: Normalize NAT rules
+  ansible.builtin.set_fact:
+    _nat_rules: >-
+      {%- set out = [] -%}
+      {%- for r in _nat.rulebase | default([]) if r.get('type') == 'nat-rule' -%}
+        {%- set osrc = (r.get('original-source',[]) | map(attribute='name') | list) | default(['Any']) -%}
+        {%- set odst = (r.get('original-destination',[]) | map(attribute='name') | list) | default(['Any']) -%}
+        {%- set osvc = (r.get('original-service',[]) | map(attribute='name') | list) | default(['Any']) -%}
+        {%- set tsrc = r.get('translated-source','Original') -%}
+        {%- set tdst = r.get('translated-destination','Original') -%}
+        {%- set tsvc = r.get('translated-service','Original') -%}
+        {%- set meth = r.get('method','static') -%}
+        {%- set _ = out.append({
+            'idx': loop.index0,
+            'uid': r.get('uid',''),
+            'name': r.get('name',''),
+            'position': r.get('position',''),
+            'enabled': r.get('enabled', true),
+            'method': meth,
+            'osrc': osrc, 'odst': odst, 'osvc': osvc,
+            'tsrc': tsrc, 'tdst': tdst, 'tsvc': tsvc
+          }) -%}
+      {%- endfor -%}
+      {{ out }}
+
+- name: Find duplicate original tuples
+  ansible.builtin.set_fact:
+    _dupes: >-
+      {%- set seen = {} -%}
+      {%- set out = [] -%}
+      {%- for r in _nat_rules -%}
+        {%- set key = (r.osrc | join('|')) ~ '|' ~ (r.odst | join('|')) ~ '|' ~ (r.osvc | join('|')) -%}
+        {%- if key in seen -%}
+          {%- set _ = out.append(seen[key]) -%}
+          {%- set _ = out.append(r) -%}
+        {%- else -%}
+          {%- set _ = seen.update({key: r}) -%}
+        {%- endif -%}
+      {%- endfor -%}
+      {{ out | unique }}
+
+- name: Find conflicts (same original, different translation)
+  ansible.builtin.set_fact:
+    _conflicts: >-
+      {%- set out = [] -%}
+      {%- for a in _nat_rules -%}
+        {%- for b in _nat_rules if b.idx > a.idx -%}
+          {%- set same_orig = (a.osrc == b.osrc) and (a.odst == b.odst) and (a.osvc == b.osvc) -%}
+          {%- set diff_trans = (a.tsrc != b.tsrc) or (a.tdst != b.tdst) or (a.tsvc != b.tsvc) -%}
+          {%- if same_orig and diff_trans -%}
+            {%- set _ = out.append({'first': a, 'second': b}) -%}
+          {%- endif -%}
+        {%- endfor -%}
+      {%- endfor -%}
+      {{ out }}
+
+- name: Find potential shadowing (earlier broader)
+  ansible.builtin.set_fact:
+    _shadow: >-
+      {%- set out = [] -%}
+      {%- for r in _nat_rules -%}
+        {%- for e in _nat_rules if e.idx < r.idx -%}
+          {%- set src_ok = ('Any' in e.osrc) or (e.osrc == r.osrc) -%}
+          {%- set dst_ok = ('Any' in e.odst) or (e.odst == r.odst) -%}
+          {%- set svc_ok = ('Any' in e.osvc) or (e.osvc == r.osvc) -%}
+          {%- if src_ok and dst_ok and svc_ok and r.enabled -%}
+            {%- set _ = out.append({'earlier': e, 'later': r}) -%}
+          {%- endif -%}
+        {%- endfor -%}
+      {%- endfor -%}
+      {{ out }}
+
+- name: Write CSV — duplicates
+  ansible.builtin.copy:
+    dest: "{{ _art }}/nat_duplicates.csv"
+    mode: "0644"
+    content: |
+      uid,name,position,osrc,odst,osvc,method,tsrc,tdst,tsvc
+      {% for r in _dupes %}
+      {{ r.uid }},{{ r.name | replace(',',';') }},{{ r.position }},"{{ r.osrc | join('|') }}","{{ r.odst | join('|') }}","{{ r.osvc | join('|') }}",{{ r.method }},{{ r.tsrc }},{{ r.tdst }},{{ r.tsvc }}
+      {% endfor %}
+
+- name: Write CSV — conflicts
+  ansible.builtin.copy:
+    dest: "{{ _art }}/nat_conflicts.csv"
+    mode: "0644"
+    content: |
+      first_uid,first_name,second_uid,second_name,osrc,odst,osvc,first_trans,second_trans
+      {% for p in _conflicts %}
+      {{ p.first.uid }},{{ p.first.name | replace(',',';') }},{{ p.second.uid }},{{ p.second.name | replace(',',';') }},"{{ p.first.osrc | join('|') }}","{{ p.first.odst | join('|') }}","{{ p.first.osvc | join('|') }}","{{ p.first.tsrc }}|{{ p.first.tdst }}|{{ p.first.tsvc }}","{{ p.second.tsrc }}|{{ p.second.tdst }}|{{ p.second.tsvc }}"
+      {% endfor %}
+
+- name: Write CSV — shadowing (heuristic)
+  ansible.builtin.copy:
+    dest: "{{ _art }}/nat_shadowing.csv"
+    mode: "0644"
+    content: |
+      earlier_name,earlier_pos,later_name,later_pos,osrc,odst,osvc,earlier_trans,later_trans
+      {% for s in _shadow %}
+      {{ s.earlier.name | replace(',',';') }},{{ s.earlier.position }},{{ s.later.name | replace(',',';') }},{{ s.later.position }},"{{ s.later.osrc | join('|') }}","{{ s.later.odst | join('|') }}","{{ s.later.osvc | join('|') }}","{{ s.earlier.tsrc }}|{{ s.earlier.tdst }}|{{ s.earlier.tsvc }}","{{ s.later.tsrc }}|{{ s.later.tdst }}|{{ s.later.tsvc }}"
+      {% endfor %}
+
+- name: Summary
+  ansible.builtin.debug:
+    msg:
+      - "Duplicates: {{ _dupes | length }} → {{ _art }}/nat_duplicates.csv"
+      - "Conflicts: {{ _conflicts | length }} → {{ _art }}/nat_conflicts.csv"
+      - "Shadowing: {{ _shadow | length }} → {{ _art }}/nat_shadowing.csv"
