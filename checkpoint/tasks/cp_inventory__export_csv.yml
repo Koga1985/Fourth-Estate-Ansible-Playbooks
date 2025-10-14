@@ -1,0 +1,59 @@
+---
+# Exports objects/services/groups to CSV files under artifacts directory.
+# Vars expected:
+#   artifacts_dir: "/tmp/checkpoint-artifacts"   # default below if not set
+#   export_types: ["host","network","address-range","group","service-tcp","service-udp","application-site","application-site-category"]
+
+- name: Defaults
+  ansible.builtin.set_fact:
+    _art_dir: "{{ artifacts_dir | default('/tmp/checkpoint-artifacts') }}"
+    _export_types: "{{ export_types | default(['host','network','address-range','group','service-tcp','service-udp','application-site','application-site-category']) }}"
+
+- name: Ensure artifact folder
+  ansible.builtin.file:
+    path: "{{ _art_dir }}"
+    state: directory
+    mode: "0755"
+
+- name: Fetch objects by type
+  check_point.mgmt.cp_mgmt_show_objects:
+    type: "{{ item }}"
+    limit: 1000
+    details_level: standard
+  loop: "{{ _export_types }}"
+  register: _objs
+
+- name: Build type→rows map
+  ansible.builtin.set_fact:
+    _rows: >-
+      {%- set out = {} -%}
+      {%- for r in _objs.results -%}
+        {%- set t = r['item'] -%}
+        {%- set arr = [] -%}
+        {%- for o in r['objects'] | default([]) -%}
+          {%- set _ = arr.append({
+            'name': o.get('name',''),
+            'type': t,
+            'ip': o.get('ip-address','') or o.get('subnet4','') or o.get('ip-address-first',''),
+            'mask_or_end': o.get('mask-length','') or o.get('ip-address-last',''),
+            'port': o.get('port',''),
+            'color': o.get('color',''),
+            'comments': o.get('comments','')
+          }) -%}
+        {%- endfor -%}
+        {%- set _ = out.update({ t: arr }) -%}
+      {%- endfor -%}
+      {{ out }}
+
+- name: Write CSV files per type
+  ansible.builtin.copy:
+    dest: "{{ _art_dir }}/{{ item.key }}.csv"
+    mode: "0644"
+    content: |
+      name,type,ip,mask_or_end,port,color,comments
+      {% for row in item.value %}
+      {{ row.name | replace(',',';') }},{{ row.type }},{{ row.ip }},{{ row.mask_or_end }},{{ row.port }},{{ row.color }},{{ row.comments | replace(',',';') }}
+      {% endfor %}
+  loop: "{{ _rows | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
