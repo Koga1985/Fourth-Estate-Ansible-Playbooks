@@ -1,0 +1,42 @@
+---
+# Create TP exceptions with optional expiry and ticket tagging.
+# Vars:
+#   tp_layer: "Threat Prevention"
+#   tp_exceptions:
+#     - name: "Allow Legacy SMB Scanner"
+#       position: "top"
+#       source: ["legacy-scanner"]
+#       destination: ["fileservers"]
+#       service: ["microsoft-ds"]
+#       protections: ["IPS","Anti-Virus"]    # or ["Any"]
+#       track: "log"                         # log | none
+#       expiration: "2026-03-31"             # ISO date (optional)
+#       comments: "CHG-12345 temporary exception"
+#       enabled: true
+#       tags: ["ticket:CHG-12345","owner:netops"]
+
+- name: Defaults
+  ansible.builtin.set_fact:
+    _tp_layer: "{{ tp_layer | default('Threat Prevention') }}"
+
+- name: Create/Update TP exceptions
+  check_point.mgmt.cp_mgmt_threat_exception:
+    layer: "{{ _tp_layer }}"
+    name: "{{ item.name }}"
+    position: "{{ item.position | default('top') }}"
+    source: "{{ item.source | default(['Any']) }}"
+    destination: "{{ item.destination | default(['Any']) }}"
+    service: "{{ item.service | default(['Any']) }}"
+    protections: "{{ item.protections | default(['Any']) }}"
+    track: "{{ item.track | default('log') }}"
+    comments: "{{ item.comments | default(omit) }}"
+    tags: "{{ item.tags | default(omit) }}"
+    time: >-
+      {{
+        (item.expiration is defined)
+          | ternary({ 'type': 'range', 'to': item.expiration }, omit)
+      }}
+    enabled: "{{ item.enabled | default(true) }}"
+    state: present
+  loop: "{{ tp_exceptions | default([]) }}"
+  loop_control: { label: "{{ item.name }}" }

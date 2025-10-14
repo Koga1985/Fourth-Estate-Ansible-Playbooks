@@ -1,0 +1,56 @@
+---
+# Create/replace Threat Prevention rules in the TP layer.
+# Optional pre-clean by managed tag.
+#
+# Vars:
+#   tp_layer: "Threat Prevention"
+#   tp_managed_tag: "tp-managed"       # optional: delete existing rules with this tag before applying
+#   tp_rules:
+#     - name: "Prod Servers TP"
+#       position: "top"
+#       source: ["Any"]
+#       destination: ["prod-servers"]
+#       protected_scope: ["prod-servers"]     # commonly same as destination
+#       action: "Optimized"                   # Optimized | Strict | Custom
+#       profile: "{{ tp_profile_name }}"      # profile to use (from create_profile)
+#       install_on: ["Policy Targets"]
+#       enabled: true
+#       tags: ["tp-managed","owner:secops","app:payments"]
+
+- name: Defaults
+  ansible.builtin.set_fact:
+    _tp_layer: "{{ tp_layer | default('Threat Prevention') }}"
+    _managed_tag: "{{ tp_managed_tag | default(omit) }}"
+
+- name: (Optional) fetch TP rules with managed tag
+  when: _managed_tag is defined
+  check_point.mgmt.cp_mgmt_show_threat_rulebase:
+    name: "{{ _tp_layer }}"
+    details_level: "standard"
+    filter: "{{ _managed_tag }}"
+  register: _existing_tagged
+
+- name: (Optional) delete previously managed TP rules
+  when: _managed_tag is defined and (_existing_tagged.rulebase | default([])) | length > 0
+  check_point.mgmt.cp_mgmt_delete_threat_rule:
+    layer: "{{ _tp_layer }}"
+    uid: "{{ item.uid }}"
+  loop: "{{ _existing_tagged.rulebase | list }}"
+  loop_control: { label: "{{ item.name | default(item.uid) }}" }
+
+- name: Create/Update TP rules
+  check_point.mgmt.cp_mgmt_threat_rule:
+    layer: "{{ _tp_layer }}"
+    name: "{{ item.name }}"
+    position: "{{ item.position | default('top') }}"
+    source: "{{ item.source | default(['Any']) }}"
+    destination: "{{ item.destination | default(['Any']) }}"
+    protected_scope: "{{ item.protected_scope | default(item.destination | default(['Any'])) }}"
+    action: "{{ item.action | default('Optimized') }}"
+    profile: "{{ item.profile | default(omit) }}"
+    install_on: "{{ item.install_on | default(['Policy Targets']) }}"
+    enabled: "{{ item.enabled | default(true) }}"
+    tags: "{{ item.tags | default(omit) }}"
+    state: present
+  loop: "{{ tp_rules | default([]) }}"
+  loop_control: { label: "{{ item.name }}" }
