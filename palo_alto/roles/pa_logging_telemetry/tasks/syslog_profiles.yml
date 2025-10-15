@@ -1,0 +1,28 @@
+---
+- name: Create/Update SYSLOG server profiles
+  paloaltonetworks.panos.panos_syslog_server_profile:
+    name: "{{ item.name }}"
+    description: "{{ item.description | default(omit) }}"
+    device_group: "{{ device_group if pa_use_panorama | bool else omit }}"
+    vsys: "{{ vsys if not (pa_use_panorama | bool) else omit }}"
+    state: "present"
+  loop: "{{ pa_syslog_profiles | default([]) }}"
+  loop_control: { label: "{{ item.name }}" }
+
+- name: Manage SYSLOG servers for each profile
+  vars:
+    _profile: "{{ item.0 }}"
+    _srv: "{{ item.1 }}"
+  paloaltonetworks.panos.panos_syslog_server:
+    syslog_profile: "{{ _profile.name }}"
+    name: "{{ _srv.name }}"
+    server: "{{ _srv.ip_address }}"
+    transport: "{{ _srv.transport | default('UDP') }}"
+    port: "{{ _srv.port | default(514) }}"
+    format: "{{ _srv.format | default('BSD') }}"
+    device_group: "{{ device_group if pa_use_panorama | bool else omit }}"
+    vsys: "{{ vsys if not (pa_use_panorama | bool) else omit }}"
+    state: "present"
+  loop: "{{ pa_syslog_profiles | subelements('servers', skip_missing=True) }}"
+  loop_control:
+    label: "{{ _profile.name }} / {{ _srv.name }}"

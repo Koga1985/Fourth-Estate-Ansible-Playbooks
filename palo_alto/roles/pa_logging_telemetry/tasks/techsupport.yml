@@ -1,0 +1,43 @@
+---
+- name: Generate Tech-Support bundle
+  when: techsupport.enabled | default(true) | bool
+  paloaltonetworks.panos.panos_op:
+    cmd: |-
+      <request>
+        <tech-support>
+          <system>
+            <all></all>
+            {% if techsupport.exclude_logs | default(false) %}<exclude-logs>yes</exclude-logs>{% endif %}
+          </system>
+        </tech-support>
+      </request>
+  register: _ts_job
+
+- name: Show job result (tech-support)
+  when: techsupport.enabled | default(true) | bool
+  paloaltonetworks.panos.panos_op:
+    cmd: "<show><jobs><id>{{ (_ts_job.stdout_xml.response.result.job | default('')) }}</id></jobs></show>"
+  register: _ts_status
+
+- name: Save job status to artifact
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/techsupport_job_status.txt"
+    mode: "0644"
+    content: "{{ _ts_status.stdout | default('') }}"
+
+- name: (Optional) SCP Tech-Support bundle off-box (device executes SCP)
+  when: techsupport.enabled | default(true) | bool and (techsupport.scp.enabled | default(false) | bool)
+  paloaltonetworks.panos.panos_op:
+    cmd: |-
+      <request>
+        <tech-support>
+          <send>
+            <scp>
+              <server>{{ techsupport.scp.server }}</server>
+              <user>{{ techsupport.scp.username }}</user>
+              <password>{{ techsupport.scp.password }}</password>
+              <path>{{ techsupport.scp.path }}</path>
+            </scp>
+          </send>
+        </tech-support>
+      </request>

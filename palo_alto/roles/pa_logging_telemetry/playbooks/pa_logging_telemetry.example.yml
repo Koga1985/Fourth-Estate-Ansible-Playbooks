@@ -1,0 +1,29 @@
+---
+- hosts: pan_firewalls
+  gather_facts: false
+  roles:
+    - role: pa_logging_telemetry
+      vars:
+        pa_syslog_profiles:
+          - name: "SIEM"
+            servers:
+              - { name: "siem1", ip_address: "192.0.2.50" }
+        pa_http_profiles:
+          - name: "Splunk-HEC"
+            servers:
+              - { name: "hec1", address: "splunk.example", http_port: 8088, https: true, uri_format: "/services/collector", http_method: "POST", tls_verify: false, http_headers: ["Authorization: Splunk <token>"] }
+        pa_log_forwarding_profiles:
+          - name: "Default-Forward"
+            match_list:
+              - name: "Threats"
+                log_type: "THREAT"
+                actions:
+                  - { type: "syslog", syslog_profile: "SIEM" }
+                  - { type: "panorama" }
+        pa_bind_log_profile:
+          enabled: true
+          profile_name: "Default-Forward"
+          rule_tags: ["owner:secops"]
+        telemetry:
+          enabled: true
+          passive_dns: false

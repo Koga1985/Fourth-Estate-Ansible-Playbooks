@@ -1,0 +1,31 @@
+---
+- name: Create/Update HTTP server profiles
+  paloaltonetworks.panos.panos_http_server_profile:
+    name: "{{ item.name }}"
+    description: "{{ item.description | default(omit) }}"
+    device_group: "{{ device_group if pa_use_panorama | bool else omit }}"
+    vsys: "{{ vsys if not (pa_use_panorama | bool) else omit }}"
+    state: "present"
+  loop: "{{ pa_http_profiles | default([]) }}"
+  loop_control: { label: "{{ item.name }}" }
+
+- name: Manage HTTP servers for each profile
+  vars:
+    _profile: "{{ item.0 }}"
+    _srv: "{{ item.1 }}"
+  paloaltonetworks.panos.panos_http_server:
+    http_profile: "{{ _profile.name }}"
+    name: "{{ _srv.name }}"
+    address: "{{ _srv.address }}"
+    http_port: "{{ _srv.http_port | default(80) }}"
+    https: "{{ _srv.https | default(false) }}"
+    uri_format: "{{ _srv.uri_format | default('/') }}"
+    http_method: "{{ _srv.http_method | default('POST') }}"
+    tls_verify: "{{ _srv.tls_verify | default(false) }}"
+    http_headers: "{{ _srv.http_headers | default(omit) }}"
+    device_group: "{{ device_group if pa_use_panorama | bool else omit }}"
+    vsys: "{{ vsys if not (pa_use_panorama | bool) else omit }}"
+    state: "present"
+  loop: "{{ pa_http_profiles | subelements('servers', skip_missing=True) }}"
+  loop_control:
+    label: "{{ _profile.name }} / {{ _srv.name }}"

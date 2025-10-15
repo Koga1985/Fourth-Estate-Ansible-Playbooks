@@ -1,0 +1,15 @@
+---
+- name: Bind Log Forwarding profile to security rules by tag
+  when: pa_bind_log_profile.enabled | default(false) | bool
+  vars:
+    _prof: "{{ pa_bind_log_profile.profile_name }}"
+  paloaltonetworks.panos.panos_security_rule:
+    rule_name: "{{ item.name }}"
+    rulebase: "{{ 'pre-rulebase' if pa_use_panorama | bool else omit }}"
+    device_group: "{{ device_group if pa_use_panorama | bool else omit }}"
+    vsys: "{{ vsys if not (pa_use_panorama | bool) else omit }}"
+    log_setting: "{{ _prof }}"
+    state: "present"
+  loop: "{{ query('paloaltonetworks.panos.panos_security_rule_facts', device_group=(device_group if pa_use_panorama | bool else omit), vsys=(vsys if not (pa_use_panorama | bool) else omit))['rules'] | default([]) }}"
+  loop_control: { label: "{{ item.name | default('rule') }}" }
+  when: item.tag is defined and (pa_bind_log_profile.rule_tags | intersect(item.tag)) | length > 0
