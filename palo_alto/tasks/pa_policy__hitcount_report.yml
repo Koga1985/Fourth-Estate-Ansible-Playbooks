@@ -1,0 +1,70 @@
+---
+# Requires: paloaltonetworks.panos collection
+# Inputs (examples):
+#   artifacts_dir: "/tmp/pan-artifacts"
+#   vsys: "vsys1"                       # for firewalls
+#   pa_use_panorama: false              # true if running against Panorama
+#   device_group: "Shared-Services"     # when pa_use_panorama: true
+# Notes:
+#   Uses an operational command via panos_op to fetch hit counts.
+
+- name: Ensure artifacts dir exists
+  ansible.builtin.file:
+    path: "{{ artifacts_dir | default('/tmp/pan-artifacts') }}"
+    state: directory
+    mode: "0755"
+
+- name: Fetch security rule hit counts (firewall)
+  when: not (pa_use_panorama | default(false)) | bool
+  paloaltonetworks.panos.panos_op:
+    cmd: |-
+      <show>
+        <rule-hit-count>
+          <vsys>{{ vsys | default('vsys1') }}</vsys>
+          <rulebase>security</rulebase>
+          <type>all</type>
+        </rule-hit-count>
+      </show>
+  register: _hc_fw
+
+- name: Fetch security rule hit counts (Panorama)
+  when: pa_use_panorama | default(false) | bool
+  paloaltonetworks.panos.panos_op:
+    cmd: |-
+      <show>
+        <device-group>
+          <name>{{ device_group }}</name>
+          <pre-rulebase>
+            <security>
+              <hit-count>
+                <type>all</type>
+              </hit-count>
+            </security>
+          </pre-rulebase>
+        </device-group>
+      </show>
+  register: _hc_pano
+
+- name: Normalize hitcount XML to list
+  ansible.builtin.set_fact:
+    _hc_rules: >-
+      {{
+        (_hc_fw.stdout_xml.response.result | default({})) 
+        | default((_hc_pano.stdout_xml.response.result | default({}))) 
+      }}
+
+# NOTE: The exact XML structure can differ by PAN-OS. We handle common cases.
+- name: Build CSV from common hitcount fields
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir | default('/tmp/pan-artifacts') }}/policy_hitcount.csv"
+    mode: "0644"
+    content: |
+      name,hit_count,last_hit,first_hit,rule_uuid
+      {% set rules = (_hc_rules.rule | default(_hc_rules.rules | default([]))) %}
+      {% for r in (rules if rules is iterable else []) %}
+      {{ (r.name | default('')) | replace(',',';') }},{{ r.hit-count | default('0') }},{{ r.get('last-hit-timestamp','') }},{{ r.get('first-hit-timestamp','') }},{{ r.get('uuid','') }}
+      {% endfor %}
+
+- name: Tell user where CSV is
+  ansible.builtin.debug:
+    msg: "Hitcount CSV written to {{ artifacts_dir | default('/tmp/pan-artifacts') }}/policy_hitcount.csv"
