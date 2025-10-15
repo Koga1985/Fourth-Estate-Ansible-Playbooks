@@ -1,0 +1,53 @@
+---
+# Inputs:
+#   artifacts_dir: "/tmp/pan-artifacts"
+
+- name: Ensure artifacts dir
+  ansible.builtin.file:
+    path: "{{ artifacts_dir | default('/tmp/pan-artifacts') }}"
+    state: directory
+    mode: "0755"
+
+- name: Show IKE SAs
+  paloaltonetworks.panos.panos_op:
+    cmd: "<show><vpn><ike-sa></ike-sa></vpn></show>"
+  register: _ike
+
+- name: Show IPsec SAs
+  paloaltonetworks.panos.panos_op:
+    cmd: "<show><vpn><ipsec-sa></ipsec-sa></vpn></show>"
+  register: _ipsec
+
+- name: Build CSV for DOWN IKE peers
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir | default('/tmp/pan-artifacts') }}/vpn_ike_down.csv"
+    mode: "0644"
+    content: |
+      peer,state,local_ip,peer_ip,phase1
+      {% set entries = _ike.stdout_xml.response.result.ike-sa | default([]) %}
+      {% for e in (entries if entries is iterable else [entries]) %}
+      {% set st = e.state | default('') %}
+      {% if st|lower not in ['established','ready','up'] %}
+      {{ e.peer | default('') }},{{ st }},{{ e.localip | default('') }},{{ e.peerip | default('') }},{{ e.version | default('') }}
+      {% endif %}
+      {% endfor %}
+
+- name: Build CSV for DOWN IPsec peers
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir | default('/tmp/pan-artifacts') }}/vpn_ipsec_down.csv"
+    mode: "0644"
+    content: |
+      peer,state,tunnel,spi_encr,spi_auth
+      {% set entries = _ipsec.stdout_xml.response.result.tunnel | default([]) %}
+      {% for t in (entries if entries is iterable else [entries]) %}
+      {% set st = t.state | default('') %}
+      {% if st|lower not in ['active','established','ready','up'] %}
+      {{ t.peer | default('') }},{{ st }},{{ t.name | default('') }},{{ t.enc | default('') }},{{ t.auth | default('') }}
+      {% endif %}
+      {% endfor %}
+
+- name: Report files
+  ansible.builtin.debug:
+    msg:
+      - "IKE down: {{ artifacts_dir | default('/tmp/pan-artifacts') }}/vpn_ike_down.csv"
+      - "IPsec down: {{ artifacts_dir | default('/tmp/pan-artifacts') }}/vpn_ipsec_down.csv"
