@@ -1,0 +1,71 @@
+---
+# Inputs:
+#   artifacts_dir: "/tmp/pan-artifacts"
+#   pa_use_panorama: false
+#   device_group: null
+#   vsys: "vsys1"
+#   rulebase_location: "pre-rulebase"   # Panorama only: pre-rulebase/post-rulebase
+
+- name: Ensure artifacts dir exists
+  ansible.builtin.file:
+    path: "{{ artifacts_dir | default('/tmp/pan-artifacts') }}"
+    state: directory
+    mode: "0755"
+
+# Fetch full rulebase (running config) as XML via op command.
+- name: Get running config (XML)
+  paloaltonetworks.panos.panos_op:
+    cmd: "<show><config><running/></config></show>"
+  register: _cfg
+
+- name: Parse security rules from config (best effort)
+  vars:
+    _xml: "{{ _cfg.stdout_xml | default('') }}"
+  ansible.builtin.set_fact:
+    _rules_raw: >-
+      {{
+        _xml.response.result.configuration.devices.entry.device-group.entry
+          if (pa_use_panorama | default(false)) else
+        _xml.response.result.configuration.devices.entry.vsys.entry.rulebase.security.rules
+      }}
+    _rules_list: >-
+      {{
+        (
+          (_rules_raw.pre-rulebase.security.rules.entry if (pa_use_panorama | default(false)) else _rules_raw.entry)
+          | default([])
+        )
+      }}
+
+# Build a simple heuristic shadowing report:
+# earlier rule shadows later if each of source/destination/service is 'any'
+# OR lists are identical; you can refine as needed.
+- name: Write shadowing CSV
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir | default('/tmp/pan-artifacts') }}/policy_shadowing.csv"
+    mode: "0644"
+    content: |
+      earlier_name,earlier_idx,later_name,later_idx,reason
+      {% set rules = [] %}
+      {% for r in _rules_list | default([]) %}
+      {% set _ = rules.append({
+           'idx': loop.index0,
+           'name': r.name,
+           'src': (r.source.member if r.source is mapping else r.source | default(['any'])),
+           'dst': (r.destination.member if r.destination is mapping else r.destination | default(['any'])),
+           'svc': (r.service.member if r.service is mapping else r.service | default(['application-default']))
+         }) %}
+      {% endfor %}
+      {% for later in rules %}
+      {% for earlier in rules if earlier.idx < later.idx %}
+      {% set src_ok = ('any' in earlier.src) or (earlier.src == later.src) %}
+      {% set dst_ok = ('any' in earlier.dst) or (earlier.dst == later.dst) %}
+      {% set svc_ok = ('any' in earlier.svc) or (earlier.svc == later.svc) or ('application-default' in earlier.svc) %}
+      {% if src_ok and dst_ok and svc_ok %}
+      {{ earlier.name | replace(',',';') }},{{ earlier.idx }},{{ later.name | replace(',',';') }},{{ later.idx }},heuristic
+      {% endif %}
+      {% endfor %}
+      {% endfor %}
+
+- name: Tell user where CSV is
+  ansible.builtin.debug:
+    msg: "Shadowing report CSV written to {{ artifacts_dir | default('/tmp/pan-artifacts') }}/policy_shadowing.csv"
