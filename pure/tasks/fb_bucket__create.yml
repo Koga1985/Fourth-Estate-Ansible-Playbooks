@@ -1,0 +1,30 @@
+---
+# vars example:
+# buckets:
+#   - name: bkt-logs
+#     versioning: enabled
+#     object_lock: governance         # compliance|governance
+#     lifecycle: [{id:'expire-90d', action:'expire', days:90, prefix:'logs/'}]
+- name: Create/update buckets
+  purestorage.flashblade.purefb_bucket:
+    fb_url: "{{ fb_url }}"
+    api_token: "{{ fb_token }}"
+    name: "{{ item.name }}"
+    versioning: "{{ item.versioning | default(omit) }}"
+    object_lock: "{{ item.object_lock | default(omit) }}"
+    state: present
+  loop: "{{ buckets | default([]) }}"
+  loop_control: { label: "{{ item.name }}" }
+
+- name: Configure lifecycle rules (fallback via REST)
+  when: item.lifecycle is defined
+  ansible.builtin.uri:
+    url: "{{ fb_url }}/api/1.12/object-store/buckets/{{ item.name }}/lifecycle"
+    method: POST
+    headers: { "api-token": "{{ fb_token }}", "Content-Type": "application/json" }
+    body_format: json
+    body: { rules: "{{ item.lifecycle }}" }
+    status_code: [200,201,204]
+    validate_certs: "{{ fb_validate_certs | default(false) }}"
+  loop: "{{ buckets | default([]) }}"
+  loop_control: { label: "Lifecycle {{ item.name }}" }

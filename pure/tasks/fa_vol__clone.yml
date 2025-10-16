@@ -1,0 +1,34 @@
+---
+# vars example:
+# clones:
+#   - source_vol: app01-db01
+#     snapshot: pre-patch
+#     target_vol: app01-db01-clone
+#     overwrite: true
+#     map_to:
+#       host: esx-01
+#       lun: 210
+- name: Clone volume from snapshot (instant)
+  purestorage.flasharray.purefa_volume:
+    fa_url: "{{ fa_url }}"
+    api_token: "{{ api_token }}"
+    name: "{{ item.target_vol }}"
+    source: "{{ item.source_vol }}"
+    snapshot: "{{ item.snapshot | default(omit) }}"
+    overwrite: "{{ item.overwrite | default(false) }}"
+    state: present
+  loop: "{{ clones | default([]) }}"
+  loop_control: { label: "{{ item.source_vol }}@{{ item.snapshot | default('latest') }} -> {{ item.target_vol }}" }
+
+- name: (Optional) Map cloned volume to host/hostgroup
+  when: item.map_to is defined
+  purestorage.flasharray.purefa_connect:
+    fa_url: "{{ fa_url }}"
+    api_token: "{{ api_token }}"
+    volume: "{{ item.target_vol }}"
+    host: "{{ item.map_to.host | default(omit) }}"
+    hgroup: "{{ item.map_to.hgroup | default(omit) }}"
+    lun: "{{ item.map_to.lun | default(omit) }}"
+    state: present
+  loop: "{{ clones | default([]) }}"
+  loop_control: { label: "{{ item.target_vol }} -> map" }

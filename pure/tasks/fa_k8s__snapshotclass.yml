@@ -1,0 +1,64 @@
+---
+# Purpose: Configure VolumeSnapshotClass and (optional) scheduled snapshots using a CronJob.
+# Example vars:
+# snapshots:
+#   namespace: "pure-csi"
+#   snapshotclass_name: "pure-snapclass"
+#   deletion_policy: "Delete"     # Delete | Retain
+#   schedule:
+#     cron: "0 */6 * * *"
+#     pvc_selector:
+#       matchLabels: { backup: "true" }
+#
+- name: Create/Update VolumeSnapshotClass
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: snapshot.storage.k8s.io/v1
+      kind: VolumeSnapshotClass
+      metadata:
+        name: "{{ snapshots.snapshotclass_name }}"
+      driver: pure-csi
+      deletionPolicy: "{{ snapshots.deletion_policy | default('Delete') }}"
+
+- name: (Optional) Install CronJob to snapshot labeled PVCs
+  when: snapshots.schedule is defined
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: batch/v1
+      kind: CronJob
+      metadata:
+        name: pvc-snapshotter
+        namespace: "{{ snapshots.namespace | default('pure-csi') }}"
+      spec:
+        schedule: "{{ snapshots.schedule.cron }}"
+        jobTemplate:
+          spec:
+            template:
+              spec:
+                serviceAccountName: default
+                restartPolicy: OnFailure
+                containers:
+                - name: snap
+                  image: bitnami/kubectl:latest
+                  command:
+                    - /bin/sh
+                    - -c
+                    - |
+                      # Create VolumeSnapshots for all PVCs matching the selector
+                      for pvc in $(kubectl get pvc -A -l {{ snapshots.schedule.pvc_selector | to_json }} -o jsonpath='{range .items[*]}{.metadata.namespace}:{.metadata.name}{"\n"}{end}'); do
+                        ns=$(echo $pvc | cut -d: -f1); name=$(echo $pvc | cut -d: -f2);
+                        ts=$(date -u +%Y%m%d%H%M%S);
+                        cat <<EOF | kubectl apply -f -
+                        apiVersion: snapshot.storage.k8s.io/v1
+                        kind: VolumeSnapshot
+                        metadata:
+                          name: ${name}-snap-${ts}
+                          namespace: ${ns}
+                        spec:
+                          volumeSnapshotClassName: {{ snapshots.snapshotclass_name }}
+                          source:
+                            persistentVolumeClaimName: ${name}
+                        EOF
+                      done

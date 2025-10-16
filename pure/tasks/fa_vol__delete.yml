@@ -1,0 +1,38 @@
+---
+# vars:
+# volumes_to_delete: [ "app01-old1" ]
+# dry_run: true
+- name: Gather current connections for safety
+  purestorage.flasharray.purefa_info:
+    fa_url: "{{ fa_url }}"
+    api_token: "{{ api_token }}"
+    gather_subset: [ connections, volumes ]
+  register: fa_conns
+
+- name: Build set of mapped volumes
+  set_fact:
+    _mapped_vols: "{{ (fa_conns.connection_info.mapped_volumes | default([])) | map(attribute='name') | list | unique }}"
+
+- name: Fail if any target volumes are still mapped (unless force_delete)
+  fail:
+    msg: "Refusing to delete mapped volume {{ item }} (set force_delete: true to override)"
+  when: (item in _mapped_vols) and not (force_delete | default(false))
+  loop: "{{ volumes_to_delete | default([]) }}"
+  loop_control: { label: "{{ item }}" }
+
+- name: (Dry run) Show volumes that would be deleted
+  debug:
+    msg: "Would delete {{ item }}"
+  when: dry_run | default(true)
+  loop: "{{ volumes_to_delete | default([]) }}"
+
+- name: Delete volumes
+  when: not (dry_run | default(true))
+  purestorage.flasharray.purefa_volume:
+    fa_url: "{{ fa_url }}"
+    api_token: "{{ api_token }}"
+    name: "{{ item }}"
+    eradicate: "{{ eradicate | default(false) }}"
+    state: absent
+  loop: "{{ volumes_to_delete | default([]) }}"
+  loop_control: { label: "{{ item }}" }

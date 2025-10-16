@@ -1,0 +1,40 @@
+---
+# Purpose: Resignature and mount a snapshot VMFS datastore safely across hosts.
+# Example vars:
+# resignature:
+#   datastore_label: "snap-DS-app01"    # human-readable snapshot label
+#   target_name: "ds_app01_recovered"   # new datastore name after resignature
+#   cluster: "{{ vcenter_cluster }}"
+#
+- name: Rescan HBAs before resignature
+  community.vmware.vmware_host_scanhba:
+    hostname: "{{ vcenter_hostname }}"
+    username: "{{ vcenter_username }}"
+    password: "{{ vcenter_password }}"
+    validate_certs: false
+    cluster_name: "{{ resignature.cluster | default(vcenter_cluster) }}"
+    esxi_hostname: null
+
+- name: Resignature VMFS snapshot via esxcli (per-host)
+  community.vmware.vmware_host_esxcli:
+    hostname: "{{ vcenter_hostname }}"
+    username: "{{ vcenter_username }}"
+    password: "{{ vcenter_password }}"
+    validate_certs: false
+    cluster_name: "{{ resignature.cluster | default(vcenter_cluster) }}"
+    esxi_hostname: null
+    esxcli_namespace: "storage.vmfs.snapshot"
+    esxcli_command: "resignature"
+    esxcli_options:
+      volumeLabel: "{{ resignature.datastore_label }}"
+  register: _rsig
+
+- name: Mount datastore on hosts (idempotent)
+  community.vmware.vmware_host_datastore:
+    hostname: "{{ vcenter_hostname }}"
+    username: "{{ vcenter_username }}"
+    password: "{{ vcenter_password }}"
+    validate_certs: false
+    datastore_name: "{{ resignature.target_name }}"
+    datastore_type: vmfs
+    state: present

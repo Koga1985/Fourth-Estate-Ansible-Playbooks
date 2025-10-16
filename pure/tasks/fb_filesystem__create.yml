@@ -1,0 +1,59 @@
+---
+# vars example:
+# filesystems:
+#   - name: fs-app01
+#     size: 20T
+#     nfs: { enabled: true, export_rules: [{client:'10.10.0.0/16', access:'rw', root_squash: true}] }
+#     smb: { enabled: true, share_name: 'share-app01', encryption: required, signing: required }
+#     quotas: [{ path: '/', hard_limit: '18T' }]
+- name: Create/resize filesystems
+  purestorage.flashblade.purefb_fs:
+    fb_url: "{{ fb_url }}"
+    api_token: "{{ fb_token }}"
+    name: "{{ item.name }}"
+    size: "{{ item.size | default(omit) }}"
+    state: present
+  loop: "{{ filesystems | default([]) }}"
+  loop_control: { label: "{{ item.name }}" }
+
+- name: Configure NFS export rules (fallback via REST)
+  when: item.nfs.enabled | default(false)
+  ansible.builtin.uri:
+    url: "{{ fb_url }}/api/1.12/file-systems/{{ item.name }}/nfs/exports"
+    method: POST
+    headers: { "api-token": "{{ fb_token }}", "Content-Type": "application/json" }
+    body_format: json
+    body: { rules: "{{ item.nfs.export_rules | default([]) }}" }
+    status_code: [200,201,204]
+    validate_certs: "{{ fb_validate_certs | default(false) }}"
+  loop: "{{ filesystems | default([]) }}"
+  loop_control: { label: "NFS rules {{ item.name }}" }
+
+- name: Configure SMB share (fallback via REST)
+  when: item.smb.enabled | default(false)
+  ansible.builtin.uri:
+    url: "{{ fb_url }}/api/1.12/file-systems/{{ item.name }}/smb/shares"
+    method: POST
+    headers: { "api-token": "{{ fb_token }}", "Content-Type": "application/json" }
+    body_format: json
+    body:
+      name: "{{ item.smb.share_name | default(item.name) }}"
+      encryption: "{{ item.smb.encryption | default('desired') }}"
+      signing: "{{ item.smb.signing | default('desired') }}"
+    status_code: [200,201,204]
+    validate_certs: "{{ fb_validate_certs | default(false) }}"
+  loop: "{{ filesystems | default([]) }}"
+  loop_control: { label: "SMB share {{ item.name }}" }
+
+- name: Apply filesystem quotas (fallback via REST)
+  when: item.quotas is defined
+  ansible.builtin.uri:
+    url: "{{ fb_url }}/api/1.12/file-systems/{{ item.name }}/quotas"
+    method: POST
+    headers: { "api-token": "{{ fb_token }}", "Content-Type": "application/json" }
+    body_format: json
+    body: { entries: "{{ item.quotas }}" }
+    status_code: [200,201,204]
+    validate_certs: "{{ fb_validate_certs | default(false) }}"
+  loop: "{{ filesystems | default([]) }}"
+  loop_control: { label: "Quotas {{ item.name }}" }

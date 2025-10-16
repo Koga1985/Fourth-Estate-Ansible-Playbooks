@@ -1,0 +1,80 @@
+---
+# Purpose: Provision a FlashArray volume, map it to ESXi (host or hostgroup), rescan HBAs,
+# and create a VMFS datastore. vVol path includes VASA registration placeholder.
+#
+# Example vars:
+# datastore:
+#   name: ds_app01
+#   type: vmfs                # vmfs | vvol
+#   size: 1T
+#   hostgroup: "esx-prod-a"   # or host: "esx-01"
+#   vmfs_version: 6
+#   lun: 210
+#
+# vvol (optional):
+#   vasa:
+#     url: "https://array.example.com:8084"
+#     username: "pureuser"
+#     password: "{{ vault_pure_vasa_pass }}"
+#   spbm_policy: "Pure-Default-vVol"
+#
+- name: Ensure FA volume exists (for VMFS path)
+  when: datastore.type | lower == 'vmfs'
+  purestorage.flasharray.purefa_volume:
+    fa_url: "{{ fa_url }}"
+    api_token: "{{ api_token }}"
+    name: "{{ datastore.name }}"
+    size: "{{ datastore.size }}"
+    state: present
+
+- name: Map LUN to host/hostgroup
+  when: datastore.type | lower == 'vmfs'
+  purestorage.flasharray.purefa_connect:
+    fa_url: "{{ fa_url }}"
+    api_token: "{{ api_token }}"
+    volume: "{{ datastore.name }}"
+    host: "{{ datastore.host | default(omit) }}"
+    hgroup: "{{ datastore.hostgroup | default(omit) }}"
+    lun: "{{ datastore.lun | default(omit) }}"
+    state: present
+
+- name: Rescan HBAs on all hosts in cluster
+  when: datastore.type | lower == 'vmfs'
+  community.vmware.vmware_host_scanhba:
+    hostname: "{{ vcenter_hostname }}"
+    username: "{{ vcenter_username }}"
+    password: "{{ vcenter_password }}"
+    validate_certs: false
+    cluster_name: "{{ vcenter_cluster }}"
+    esxi_hostname: null
+
+- name: Create VMFS datastore on each host (implicitly attached to cluster)
+  when: datastore.type | lower == 'vmfs'
+  community.vmware.vmware_host_datastore:
+    hostname: "{{ vcenter_hostname }}"
+    username: "{{ vcenter_username }}"
+    password: "{{ vcenter_password }}"
+    validate_certs: false
+    datastore_name: "{{ datastore.name }}"
+    datastore_type: vmfs
+    vmfs_version: "{{ datastore.vmfs_version | default(6) }}"
+    state: present
+    # If your module supports disk selection, specify canonical name(s):
+    # disk_name: "naa.624a9370f1b5..."
+
+# --- vVol path (guarded / requires VASA registered) ---
+- name: (vVol) Register VASA provider (placeholder if module not present)
+  when: datastore.type | lower == 'vvol' and vvol.vasa is defined
+  community.vmware.vmware_storage_profile_info:
+    hostname: "{{ vcenter_hostname }}"
+    username: "{{ vcenter_username }}"
+    password: "{{ vcenter_password }}"
+    validate_certs: false
+  register: _spbm
+  # NOTE: If your environment needs provider registration, add a separate task using
+  # the appropriate module (varies by collection version). Keep credentials in vault.
+
+- name: (vVol) Create vVol datastore (requires Pure VASA registered in vCenter)
+  when: datastore.type | lower == 'vvol'
+  ansible.builtin.debug:
+    msg: "Create vVol datastore '{{ datastore.name }}' via vCenter once VASA is registered. Attach policy '{{ vvol.spbm_policy | default('default') }}'."

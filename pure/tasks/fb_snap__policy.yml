@@ -1,0 +1,34 @@
+---
+# vars example:
+# snap_policies:
+#   - scope: filesystem
+#     name: fs-app01
+#     schedule: { per_hour: 2, per_day: 24, per_week: 8 }
+#   - scope: bucket
+#     name: bkt-logs
+#     schedule: { per_day: 7 }
+- name: Enforce snapshot policy for filesystems (fallback via REST)
+  when: item.scope | lower == 'filesystem'
+  ansible.builtin.uri:
+    url: "{{ fb_url }}/api/1.12/file-systems/{{ item.name }}/snapshots/policy"
+    method: POST
+    headers: { "api-token": "{{ fb_token }}", "Content-Type": "application/json" }
+    body_format: json
+    body: "{{ item.schedule }}"
+    status_code: [200,201,204]
+    validate_certs: "{{ fb_validate_certs | default(false) }}"
+  loop: "{{ snap_policies | default([]) }}"
+  loop_control: { label: "FS policy {{ item.name }}" }
+
+- name: Enforce snapshot policy for buckets (fallback via REST)
+  when: item.scope | lower == 'bucket'
+  ansible.builtin.uri:
+    url: "{{ fb_url }}/api/1.12/object-store/buckets/{{ item.name }}/snapshots/policy"
+    method: POST
+    headers: { "api-token": "{{ fb_token }}", "Content-Type": "application/json" }
+    body_format: json
+    body: "{{ item.schedule }}"
+    status_code: [200,201,204]
+    validate_certs: "{{ fb_validate_certs | default(false) }}"
+  loop: "{{ snap_policies | default([]) }}"
+  loop_control: { label: "Bucket policy {{ item.name }}" }

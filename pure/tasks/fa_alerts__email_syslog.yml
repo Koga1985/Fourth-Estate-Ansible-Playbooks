@@ -1,0 +1,54 @@
+---
+# vars example:
+# alerts:
+#   email:
+#     enabled: true
+#     recipients: [ "storops@example.com" ]
+#     sender_domain: "example.com"
+#     relay_host: "smtp.example.com"
+#   syslog:
+#     enabled: true
+#     servers:
+#       - host: "syslog1.example.com"
+#         port: 514
+#         protocol: udp
+#   snmp:
+#     enabled: false
+#     v3_users: []
+- name: Configure email alerts (fallback via REST)
+  ansible.builtin.uri:
+    url: "https://{{ fa_url }}/api/1.0/array/alert"
+    method: POST
+    headers:
+      api-token: "{{ api_token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      enabled: "{{ alerts.email.enabled | default(true) }}"
+      recipients: "{{ alerts.email.recipients | default([]) }}"
+      sender_domain: "{{ alerts.email.sender_domain | default(omit) }}"
+      relay_host: "{{ alerts.email.relay_host | default(omit) }}"
+    status_code: [200, 201, 204]
+    validate_certs: "{{ validate_certs | default(false) }}"
+
+- name: Configure syslog targets (fallback via REST)
+  when: alerts.syslog.enabled | default(false)
+  ansible.builtin.uri:
+    url: "https://{{ fa_url }}/api/1.0/array/syslog"
+    method: POST
+    headers: { api-token: "{{ api_token }}", Content-Type: "application/json" }
+    body_format: json
+    body: { servers: "{{ alerts.syslog.servers | default([]) }}" }
+    status_code: [200,201,204]
+    validate_certs: "{{ validate_certs | default(false) }}"
+
+- name: Configure SNMP (placeholder/fallback)
+  when: alerts.snmp.enabled | default(false)
+  ansible.builtin.uri:
+    url: "https://{{ fa_url }}/api/1.0/array/snmp"
+    method: POST
+    headers: { api-token: "{{ api_token }}", Content-Type: "application/json" }
+    body_format: json
+    body: "{{ alerts.snmp | default({}) }}"
+    status_code: [200,201,204]
+    validate_certs: "{{ validate_certs | default(false) }}"

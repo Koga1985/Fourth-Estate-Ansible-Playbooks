@@ -1,0 +1,59 @@
+---
+# vars example:
+# alerts:
+#   email:
+#     enabled: true
+#     recipients: [ "storops@example.com" ]
+#     sender_domain: "example.com"
+#     relay_host: "smtp.example.com"
+#   syslog:
+#     enabled: true
+#     servers:
+#       - host: "syslog1.example.com"
+#         port: 514
+#         protocol: "udp"     # udp|tcp|tls
+#   snmp:
+#     enabled: false
+#     managers: [ "snmp1.example.com" ]
+#     version: "v3"
+#     v3_users: []
+- name: Configure email alerts (fallback via REST)
+  ansible.builtin.uri:
+    url: "{{ fb_url }}/api/1.12/array/alert"
+    method: POST
+    headers:
+      api-token: "{{ fb_token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      enabled: "{{ alerts.email.enabled | default(true) }}"
+      recipients: "{{ alerts.email.recipients | default([]) }}"
+      sender_domain: "{{ alerts.email.sender_domain | default(omit) }}"
+      relay_host: "{{ alerts.email.relay_host | default(omit) }}"
+    status_code: [200,201,204]
+    validate_certs: "{{ fb_validate_certs | default(false) }}"
+
+- name: Configure syslog targets (fallback via REST)
+  when: alerts.syslog.enabled | default(false)
+  ansible.builtin.uri:
+    url: "{{ fb_url }}/api/1.12/array/syslog"
+    method: POST
+    headers: { api-token: "{{ fb_token }}", Content-Type: "application/json" }
+    body_format: json
+    body: { servers: "{{ alerts.syslog.servers | default([]) }}" }
+    status_code: [200,201,204]
+    validate_certs: "{{ fb_validate_certs | default(false) }}"
+
+- name: Configure SNMP (fallback via REST)
+  when: alerts.snmp.enabled | default(false)
+  ansible.builtin.uri:
+    url: "{{ fb_url }}/api/1.12/array/snmp"
+    method: POST
+    headers: { api-token: "{{ fb_token }}", Content-Type: "application/json" }
+    body_format: json
+    body:
+      managers: "{{ alerts.snmp.managers | default([]) }}"
+      version: "{{ alerts.snmp.version | default('v3') }}"
+      v3_users: "{{ alerts.snmp.v3_users | default([]) }}"
+    status_code: [200,201,204]
+    validate_certs: "{{ fb_validate_certs | default(false) }}"

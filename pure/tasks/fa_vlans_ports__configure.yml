@@ -1,0 +1,40 @@
+---
+# vars example:
+# iscsi:
+#   - { name: ct0.eth4, address: 10.10.10.10/24, gateway: 10.10.10.1, vlan: 110, mtu: 9000 }
+# fc:
+#   - { wwn: "20:00:00:25:b5:xx:xx:xx", speed: "16G" }
+# nvme_tcp: { enabled: true }
+- name: Configure iSCSI network interfaces
+  purestorage.flasharray.purefa_network:
+    fa_url: "{{ fa_url }}"
+    api_token: "{{ api_token }}"
+    interface: "{{ item.name }}"
+    address: "{{ item.address }}"
+    gateway: "{{ item.gateway | default(omit) }}"
+    vlan: "{{ item.vlan | default(omit) }}"
+    mtu: "{{ item.mtu | default(omit) }}"
+    services: ["iscsi"]
+    state: present
+  loop: "{{ iscsi | default([]) }}"
+  loop_control: { label: "{{ item.name }}" }
+
+- name: (Optional) Configure FC port speed
+  when: fc is defined
+  purestorage.flasharray.purefa_network:
+    fa_url: "{{ fa_url }}"
+    api_token: "{{ api_token }}"
+    fc_wwn: "{{ item.wwn }}"
+    speed: "{{ item.speed | default(omit) }}"
+    services: ["fc"]
+    state: present
+  loop: "{{ fc | default([]) }}"
+  loop_control: { label: "{{ item.wwn }}" }
+
+- name: (Optional) Toggle NVMe/TCP at array level
+  when: nvme_tcp is defined
+  purestorage.flasharray.purefa_network:
+    fa_url: "{{ fa_url }}"
+    api_token: "{{ api_token }}"
+    nvme_tcp: "{{ nvme_tcp.enabled | bool }}"
+    state: present

@@ -1,0 +1,31 @@
+---
+# vars example:
+# snap_jobs:
+#   - type: volume         # volume | pgroup
+#     name: app01-db01     # volume or pgroup name
+#     suffix: "pre-patch"
+#     apply_retention: true
+#     retention: { days: 7 }   # or hours/minutes depending on policy
+- name: Create on-demand snapshots
+  purestorage.flasharray.purefa_snap:
+    fa_url: "{{ fa_url }}"
+    api_token: "{{ api_token }}"
+    target: "{{ item.name }}"
+    snap: "{{ item.suffix | default(omit) }}"
+    pgroup: "{{ (item.type | lower) == 'pgroup' }}"
+    state: present
+  loop: "{{ snap_jobs | default([]) }}"
+  loop_control: { label: "{{ item.type }}:{{ item.name }}@{{ item.suffix | default('now') }}" }
+
+- name: (Optional) Apply retention tag to snapshot (best-effort)
+  when: item.apply_retention | default(false)
+  purestorage.flasharray.purefa_snap:
+    fa_url: "{{ fa_url }}"
+    api_token: "{{ api_token }}"
+    target: "{{ item.name }}"
+    snap: "{{ item.suffix }}"
+    attributes:
+      retention: "{{ item.retention | default(omit) }}"
+    state: present
+  loop: "{{ snap_jobs | default([]) }}"
+  loop_control: { label: "{{ item.type }}:{{ item.name }}@{{ item.suffix }}" }

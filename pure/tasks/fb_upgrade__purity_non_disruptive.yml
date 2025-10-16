@@ -1,0 +1,36 @@
+---
+# vars example:
+# upgrade:
+#   target_version: "x.y.z"
+#   maintenance_window_ok: true
+#   dry_run: true
+- name: Gather array health (fallback via REST)
+  ansible.builtin.uri:
+    url: "{{ fb_url }}/api/1.12/array/health"
+    method: GET
+    headers: { api-token: "{{ fb_token }}" }
+    return_content: true
+    status_code: 200
+    validate_certs: "{{ fb_validate_certs | default(false) }}"
+  register: fb_health
+
+- name: Guardrail — abort if any component unhealthy
+  ansible.builtin.fail:
+    msg: "Array health not green; refusing to upgrade"
+  when: fb_health.json.status | lower != 'healthy'
+
+- name: (Dry run) Show intended upgrade
+  when: upgrade.dry_run | default(true)
+  ansible.builtin.debug:
+    msg: "Would upgrade Purity//FB to {{ upgrade.target_version }} (current health: {{ fb_health.json.status }})"
+
+- name: Trigger Purity//FB upgrade (fallback via REST)
+  when: not (upgrade.dry_run | default(true)) and upgrade.maintenance_window_ok | default(false)
+  ansible.builtin.uri:
+    url: "{{ fb_url }}/api/1.12/array/upgrade"
+    method: POST
+    headers: { api-token: "{{ fb_token }}", Content-Type: "application/json" }
+    body_format: json
+    body: { target: "{{ upgrade.target_version }}" }
+    status_code: [200,202]
+    validate_certs: "{{ fb_validate_certs | default(false) }}"

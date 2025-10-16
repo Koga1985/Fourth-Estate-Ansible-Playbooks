@@ -1,0 +1,39 @@
+---
+- name: Ensure artifacts directory exists
+  ansible.builtin.file:
+    path: "{{ artifacts_dir | default('/tmp/pure-artifacts') }}"
+    state: directory
+    mode: "0755"
+
+- name: Collect FlashBlade facts
+  purestorage.flashblade.purefb_info:
+    fb_url: "{{ fb_url }}"
+    api_token: "{{ fb_token }}"
+    gather_subset:
+      - array
+      - blades
+      - networks
+      - buckets
+      - filesystems
+      - smb
+      - nfs
+  register: fb_facts
+
+- name: Write JSON facts
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir | default('/tmp/pure-artifacts') }}/fb_facts.json"
+    mode: "0644"
+    content: "{{ fb_facts | to_nice_json }}"
+
+- name: Write quick CSV summary
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir | default('/tmp/pure-artifacts') }}/fb_facts_summary.csv"
+    mode: "0644"
+    content: |
+      model,purity_fb,capacity_total,capacity_used,blades,mgmt_ip
+      {{ fb_facts.array_info.model | default('') }},
+      {{ fb_facts.array_info.version | default('') }},
+      {{ fb_facts.space_info.total_space | default('') | default('') }},
+      {{ fb_facts.space_info.total_used | default('') | default('') }},
+      {{ (fb_facts.blades_info | default([])) | length }},
+      {{ fb_facts.networks_info.management_ip | default('') | default('') }}
