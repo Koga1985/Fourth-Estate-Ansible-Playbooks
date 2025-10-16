@@ -1,0 +1,17 @@
+---
+- name: Export currently connected GlobalProtect users
+  when: gp_monitoring.enabled | default(true) | bool
+  paloaltonetworks.panos.panos_op:
+    cmd: "<show><global-protect-gateway><current-user></current-user></global-protect-gateway></show>"
+  register: _gp_users
+- name: Write GP users CSV
+  when: gp_monitoring.enabled | default(true) | bool
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/{{ gp_monitoring.csv_prefix | default('gp_status') }}_users.csv"
+    mode: "0644"
+    content: |
+      user,public_ip,private_ip,login_time,gateway
+      {% set entries = _gp_users.stdout_xml.response.result.entry | default([]) %}
+      {% for e in (entries if entries is iterable else [entries]) %}
+      {{ e.user | default('') }},{{ e.public-ip | default('') }},{{ e.private-ip | default('') }},{{ e.login-time | default('') }},{{ e.gw | default('') }}
+      {% endfor %}

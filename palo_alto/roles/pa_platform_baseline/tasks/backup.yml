@@ -1,0 +1,25 @@
+---
+- name: Export running-config to local flash
+  when: backup.running_config.enabled | default(true) | bool
+  paloaltonetworks.panos.panos_op:
+    cmd: "<save><config><to>flash:/ansible-running.xml</to></config></save>"
+
+- name: SCP export running-config (device-initiated)
+  when: backup.running_config.enabled | default(true) | bool and (backup.running_config.scp.enabled | default(false) | bool)
+  paloaltonetworks.panos.panos_op:
+    cmd: |-
+      <scp>
+        <export>
+          <configuration>
+            <from>running-config.xml</from>
+            <to>{{ backup.running_config.scp.username }}@{{ backup.running_config.scp.server }}:{{ backup.running_config.scp.path }}</to>
+            <password>{{ backup.running_config.scp.password }}</password>
+          </configuration>
+        </export>
+      </scp>
+
+- name: Generate Tech-Support bundle (optional)
+  when: backup.tech_support.enabled | default(false) | bool
+  paloaltonetworks.panos.panos_op:
+    cmd: "<request><tech-support><system><all/></system></tech-support></request>"
+  register: _ts_job
