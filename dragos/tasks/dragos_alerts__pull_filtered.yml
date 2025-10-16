@@ -1,0 +1,28 @@
+---
+
+- name: Ensure artifacts directory exists
+  ansible.builtin.file:
+    path: "{{ artifacts_dir | default('/tmp/dragos-artifacts') }}"
+    state: directory
+    mode: "0755"
+
+# vars: alert_filter: { severity: ["high","critical"], category: ["policy"], since_iso: "2025-01-01T00:00:00Z" }
+- name: Pull alerts
+  ansible.builtin.uri:
+    url: >-
+      {{ dragos_base_url }}/api/alerts?limit={{ page_size | default(500) }}
+      {{'&severity=' + (alert_filter.severity | join(',')) if alert_filter.severity is defined else ''}}
+      {{'&category=' + (alert_filter.category | join(',')) if alert_filter.category is defined else ''}}
+      {{'&created_after=' + alert_filter.since_iso if alert_filter.since_iso is defined else ''}}
+    method: GET
+    headers: { Authorization: "Bearer {{ dragos_token }}" }
+    return_content: true
+    status_code: 200
+    validate_certs: "{{ dragos_verify_ssl | default(true) }}"
+  register: alerts_now
+
+- name: Save alerts JSON
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir | default('/tmp/dragos-artifacts') }}/alerts_filtered.json"
+    mode: "0644"
+    content: "{{ alerts_now.content }}"

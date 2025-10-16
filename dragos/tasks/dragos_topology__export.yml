@@ -1,0 +1,34 @@
+---
+
+- name: Ensure artifacts directory exists
+  ansible.builtin.file:
+    path: "{{ artifacts_dir | default('/tmp/dragos-artifacts') }}"
+    state: directory
+    mode: "0755"
+
+- name: Export flows/topology
+  ansible.builtin.uri:
+    url: "{{ dragos_base_url }}/api/flows?limit={{ page_size | default(500) }}"
+    method: GET
+    headers: { Authorization: "Bearer {{ dragos_token }}" }
+    return_content: true
+    status_code: 200
+    validate_certs: "{{ dragos_verify_ssl | default(true) }}"
+  register: flows_now
+
+- name: Save topology JSON
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir | default('/tmp/dragos-artifacts') }}/topology.json"
+    mode: "0644"
+    content: "{{ flows_now.content }}"
+
+- name: Save edges CSV
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir | default('/tmp/dragos-artifacts') }}/topology_edges.csv"
+    mode: "0644"
+    content: |
+      src,dst,proto,port
+      {% set edges = (flows_now.json.items if flows_now.json.items is defined else flows_now.json.data | default([])) %}
+      {% for f in edges %}
+      {{ (f.src.ip or f.src) | default('') }},{{ (f.dst.ip or f.dst) | default('') }},{{ f.proto | default('') }},{{ f.port | default('') }}
+      {% endfor %}

@@ -1,0 +1,27 @@
+---
+
+- name: Ensure artifacts directory exists
+  ansible.builtin.file:
+    path: "{{ artifacts_dir | default('/tmp/dragos-artifacts') }}"
+    state: directory
+    mode: "0755"
+
+- name: Read flows CSV
+  ansible.builtin.slurp:
+    src: "{{ artifacts_dir | default('/tmp/dragos-artifacts') }}/flows.csv"
+  register: _flows
+
+- name: Build allowlist intents
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir | default('/tmp/dragos-artifacts') }}/allowlist.json"
+    mode: "0644"
+    content: |
+      {{
+        [
+          {{
+            'src': (line.split(',')[0]), 'dst': (line.split(',')[1]),
+            'service': (line.split(',')[2] ~ '/' ~ line.split(',')[3])
+          }}
+          for line in (_flows.content | b64decode | splitlines)[1:]
+        ] | to_nice_json
+      }}

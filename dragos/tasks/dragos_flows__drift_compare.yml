@@ -1,0 +1,24 @@
+---
+
+- name: Ensure artifacts directory exists
+  ansible.builtin.file:
+    path: "{{ artifacts_dir | default('/tmp/dragos-artifacts') }}"
+    state: directory
+    mode: "0755"
+
+# vars: deployed_policy_csv: "/path/to/deployed/policy.csv"
+- name: Load intent & deployed policy
+  ansible.builtin.set_fact:
+    intent: "{{ lookup('ansible.builtin.file', artifacts_dir | default('/tmp/dragos-artifacts') + '/allowlist.json') | from_json }}"
+    deployed: "{{ lookup('ansible.builtin.file', deployed_policy_csv) | splitlines }}"
+- name: Save drift JSON
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir | default('/tmp/dragos-artifacts') }}/policy_drift.json"
+    mode: "0644"
+    content: |
+      {{
+        {
+          'missing': [ i for i in intent if (i.service not in (deployed | join('\n'))) ],
+          'extra': []
+        } | to_nice_json
+      }}

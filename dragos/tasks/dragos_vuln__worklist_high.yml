@@ -1,0 +1,36 @@
+---
+
+- name: Ensure artifacts directory exists
+  ansible.builtin.file:
+    path: "{{ artifacts_dir | default('/tmp/dragos-artifacts') }}"
+    state: directory
+    mode: "0755"
+
+# vars: risk_threshold: 7.0
+- name: Pull live findings (or load from JSON path if provided)
+  ansible.builtin.uri:
+    url: "{{ dragos_base_url }}/api/vuln/findings?limit={{ page_size | default(500) }}"
+    method: GET
+    headers: { Authorization: "Bearer {{ dragos_token }}" }
+    return_content: true
+    status_code: 200
+    validate_certs: "{{ dragos_verify_ssl | default(true) }}"
+  register: _vf_live
+  when: findings_json_path is not defined
+
+- name: Set items from source
+  ansible.builtin.set_fact:
+    vf_items: >-
+      {{ (_vf_live.json.items if _vf_live is defined and _vf_live.json.items is defined
+          else (_vf_live.json.data if _vf_live is defined else (lookup('ansible.builtin.file', findings_json_path) | from_json).items))
+      | default([]) }}
+
+- name: Save remediation CSV
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir | default('/tmp/dragos-artifacts') }}/vuln_worklist_high.csv"
+    mode: "0644"
+    content: |
+      id,asset,risk,owner,action
+      {% for v in vf_items if (v.risk | default(0)) | float >= (risk_threshold | default(7.0) | float) %}
+      {{ v.id | default('') }},{{ (v.asset.hostname or v.asset.ip) | default('') }},{{ v.risk | default('') }},{{ v.owner | default('') }},remediate
+      {% endfor %}

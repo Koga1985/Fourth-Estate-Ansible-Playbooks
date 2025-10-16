@@ -1,0 +1,18 @@
+---
+# vars: syslog: { use_logger: true, facility: "user", priority: "info", cef_vendor: "Dragos", cef_product: "xDome" }
+- name: Load alerts for syslog
+  ansible.builtin.set_fact:
+    _alerts: "{{ alerts_now.json if alerts_now is defined else (lookup('ansible.builtin.file', alerts_json_path) | from_json) }}"
+- name: Render CEF to file
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir | default('/tmp/dragos-artifacts') }}/alerts.cef"
+    mode: "0644"
+    content: |
+      {% set items = (_alerts.items if _alerts.items is defined else _alerts.data | default([])) %}
+      {% for a in items %}
+      CEF:0|{{ syslog.cef_vendor | default('Dragos') }}|{{ syslog.cef_product | default('xDome') }}|1.0|{{ a.category | default('') }}|{{ a.summary | default('') | regex_replace('\n',' ') }}|{{ (a.severity | default('low')) | lower }}|src={{ (a.asset.ip) | default('') }} cs1Label=site cs1={{ a.site | default('') }}
+      {% endfor %}
+- name: Ship via logger (optional)
+  when: syslog.use_logger | default(false)
+  ansible.builtin.shell: |
+    while IFS= read -r line; do logger -p {{ syslog.facility | default('user') }}.{{ syslog.priority | default('info') }} "$line"; done < "{{ artifacts_dir | default('/tmp/dragos-artifacts') }}/alerts.cef"

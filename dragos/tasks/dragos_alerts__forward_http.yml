@@ -1,0 +1,19 @@
+---
+# vars: siem: { url: "https://siem.example/intake", token: "xxx" }
+- name: Load alerts for forward
+  ansible.builtin.set_fact:
+    _alerts: "{{ alerts_now.json if alerts_now is defined else (lookup('ansible.builtin.file', alerts_json_path) | from_json) }}"
+- name: Forward alerts to SIEM/SOAR
+  ansible.builtin.uri:
+    url: "{{ siem.url }}"
+    method: POST
+    headers: { Authorization: "Bearer {{ siem.token | default('') }}", Content-Type: "application/json" }
+    body_format: json
+    body: "{{ item }}"
+    status_code: [200,201,202,204]
+    validate_certs: true
+  loop: "{{ (_alerts.items if _alerts.items is defined else _alerts.data | default([])) }}"
+  register: _push
+  retries: 3
+  delay: 2
+  until: _push is succeeded

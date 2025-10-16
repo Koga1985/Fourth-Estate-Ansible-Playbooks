@@ -1,0 +1,30 @@
+---
+
+- name: Ensure artifacts directory exists
+  ansible.builtin.file:
+    path: "{{ artifacts_dir | default('/tmp/dragos-artifacts') }}"
+    state: directory
+    mode: "0755"
+
+- name: Load assets
+  ansible.builtin.uri:
+    url: "{{ dragos_base_url }}/api/assets?limit={{ page_size | default(500) }}"
+    method: GET
+    headers: { Authorization: "Bearer {{ dragos_token }}" }
+    return_content: true
+    status_code: 200
+    validate_certs: "{{ dragos_verify_ssl | default(true) }}"
+  register: assets_now
+
+- name: Save coverage CSV
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir | default('/tmp/dragos-artifacts') }}/coverage_report.csv"
+    mode: "0644"
+    content: |
+      site,type,count
+      {% set items = (assets_now.json.items if assets_now.json.items is defined else assets_now.json.data | default([])) %}
+      {% for s in (items | map(attribute='site') | list | unique) %}
+      {% for t in (items | map(attribute='type') | list | unique) %}
+      {{ s | default('') }},{{ t | default('') }},{{ (items | selectattr('site','equalto',s) | selectattr('type','equalto',t) | list | length) }}
+      {% endfor %}
+      {% endfor %}

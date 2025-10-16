@@ -1,0 +1,48 @@
+---
+
+- name: Ensure artifacts directory exists
+  ansible.builtin.file:
+    path: "{{ artifacts_dir | default('/tmp/dragos-artifacts') }}"
+    state: directory
+    mode: "0755"
+
+# vars: topology_gold_path: "/path/to/gold/topology.json"
+- name: Current topology
+  ansible.builtin.uri:
+    url: "{{ dragos_base_url }}/api/flows?limit={{ page_size | default(500) }}"
+    method: GET
+    headers: { Authorization: "Bearer {{ dragos_token }}" }
+    return_content: true
+    status_code: 200
+    validate_certs: "{{ dragos_verify_ssl | default(true) }}"
+  register: flows_now
+
+- name: Load gold
+  ansible.builtin.set_fact:
+    gold_topology: "{{ lookup('ansible.builtin.file', topology_gold_path) | from_json }}"
+
+- name: Diff edges (best-effort)
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir | default('/tmp/dragos-artifacts') }}/topology_drift.json"
+    mode: "0644"
+    content: |
+      {{
+        {
+          'added': (
+            (flows_now.json.items if flows_now.json.items is defined else flows_now.json.data | default([]))
+            | map('extract', {'src':'src','dst':'dst','proto':'proto','port':'port'}) | list
+          )
+          | difference(
+            (gold_topology.items if gold_topology.items is defined else gold_topology.data | default([]))
+            | map('extract', {'src':'src','dst':'dst','proto':'proto','port':'port'}) | list
+          ),
+          'removed': (
+            (gold_topology.items if gold_topology.items is defined else gold_topology.data | default([]))
+            | map('extract', {'src':'src','dst':'dst','proto':'proto','port':'port'}) | list
+          )
+          | difference(
+            (flows_now.json.items if flows_now.json.items is defined else flows_now.json.data | default([]))
+            | map('extract', {'src':'src','dst':'dst','proto':'proto','port':'port'}) | list
+          )
+        } | to_nice_json
+      }}

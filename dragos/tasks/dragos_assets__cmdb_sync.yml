@@ -1,0 +1,48 @@
+---
+# vars example:
+# cmdb: { provider: servicenow, url: "...", token: "...", table: "cmdb_ci_computer",
+#         jira_url: "...", jira_token: "...", jira_project: "OT" }
+- name: Load assets
+  ansible.builtin.uri:
+    url: "{{ dragos_base_url }}/api/assets?limit={{ page_size | default(500) }}"
+    method: GET
+    headers: { Authorization: "Bearer {{ dragos_token }}" }
+    return_content: true
+    status_code: 200
+    validate_certs: "{{ dragos_verify_ssl | default(true) }}"
+  register: assets_now
+
+- name: Upsert to ServiceNow
+  when: cmdb.provider | lower == 'servicenow'
+  ansible.builtin.uri:
+    url: "{{ cmdb.url }}/api/now/table/{{ cmdb.table }}"
+    method: POST
+    headers: { Authorization: "Bearer {{ cmdb.token }}", Content-Type: "application/json" }
+    body_format: json
+    body:
+      name: "{{ item.hostname | default(item.name) }}"
+      ip_address: "{{ item.primary_ip | default(item.ip) }}"
+      u_site: "{{ item.site | default('') }}"
+      u_zone: "{{ item.zone | default('') }}"
+      u_vendor: "{{ item.vendor | default('') }}"
+      u_model: "{{ item.model | default('') }}"
+    status_code: [200,201]
+  loop: "{{ (assets_now.json.items if assets_now.json.items is defined else assets_now.json.data | default([])) }}"
+  loop_control: { label: "{{ item.id | default('') }}" }
+
+- name: Create Jira issues (CI stand-in)
+  when: cmdb.provider | lower == 'jira'
+  ansible.builtin.uri:
+    url: "{{ cmdb.jira_url }}/rest/api/2/issue"
+    method: POST
+    headers: { Authorization: "Bearer {{ cmdb.jira_token }}", Content-Type: "application/json" }
+    body_format: json
+    body:
+      fields:
+        project: { key: "{{ cmdb.jira_project }}" }
+        summary: "Asset {{ item.hostname | default(item.name) }} ({{ item.primary_ip | default(item.ip) }})"
+        issuetype: { name: "Task" }
+        labels: [ "cmdb", "{{ item.site | default('unknown') }}" ]
+    status_code: [200,201]
+  loop: "{{ (assets_now.json.items if assets_now.json.items is defined else assets_now.json.data | default([])) }}"
+  loop_control: { label: "{{ item.id | default('') }}" }

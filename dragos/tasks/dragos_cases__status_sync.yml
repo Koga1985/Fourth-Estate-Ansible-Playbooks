@@ -1,0 +1,55 @@
+---
+
+- name: Ensure artifacts directory exists
+  ansible.builtin.file:
+    path: "{{ artifacts_dir | default('/tmp/dragos-artifacts') }}"
+    state: directory
+    mode: "0755"
+
+# vars example:
+# external:
+#   provider: servicenow|jira
+#   url: "https://now.example"   # for ServiceNow
+#   token: "SNOW_TOKEN"
+#   jira_url: "https://jira.example"
+#   jira_token: "JIRA_TOKEN"
+#   mapping:
+#     closed_states: ["Resolved","Closed","Done"]
+#     in_progress_states: ["In Progress","Work in progress"]
+- name: Load open cases
+  ansible.builtin.uri:
+    url: "{{ dragos_base_url }}/api/cases?status=open"
+    method: GET
+    headers: { Authorization: "Bearer {{ dragos_token }}" }
+    return_content: true
+    status_code: 200
+    validate_certs: "{{ dragos_verify_ssl | default(true) }}"
+  register: cases_open
+
+- name: Build external key (placeholder: assume case has external_id field)
+  ansible.builtin.set_fact:
+    _ext_ids: "{{ (cases_open.json.items if cases_open.json.items is defined else cases_open.json.data | default([])) | map(attribute='external_id') | list | select('string') | list }}"
+
+- name: Fetch ServiceNow states (placeholder batched)
+  when: external.provider | lower == 'servicenow'
+  ansible.builtin.uri:
+    url: "{{ external.url }}/api/now/table/incident?sysparm_query=numberIN{{ _ext_ids | join(',') }}"
+    method: GET
+    headers: { Authorization: "Bearer {{ external.token }}" }
+    return_content: true
+    status_code: 200
+  register: snow_inc
+
+- name: Fetch Jira states (placeholder batched)
+  when: external.provider | lower == 'jira'
+  ansible.builtin.uri:
+    url: "{{ external.jira_url }}/rest/api/2/search?jql=issuekey%20in%20({{ _ext_ids | join(',') }})&fields=status"
+    method: GET
+    headers: { Authorization: "Bearer {{ external.jira_token }}" }
+    return_content: true
+    status_code: 200
+  register: jira_iss
+
+- name: Sync to Dragos (close or progress) — pseudo map
+  ansible.builtin.debug:
+    msg: "Map external statuses to Dragos via PATCH /api/cases/<id>. Adjust to your tenant fields."

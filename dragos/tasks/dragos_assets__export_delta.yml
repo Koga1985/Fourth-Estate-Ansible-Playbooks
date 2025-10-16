@@ -1,0 +1,25 @@
+---
+
+- name: Ensure artifacts directory exists
+  ansible.builtin.file:
+    path: "{{ artifacts_dir | default('/tmp/dragos-artifacts') }}"
+    state: directory
+    mode: "0755"
+
+# vars:
+# delta_since_iso: "2025-01-01T00:00:00Z"
+- name: Export asset changes since marker
+  ansible.builtin.uri:
+    url: "{{ dragos_base_url }}/api/assets?updated_after={{ delta_since_iso }}&limit={{ page_size | default(500) }}"
+    method: GET
+    headers: { Authorization: "Bearer {{ dragos_token }}" }
+    return_content: true
+    status_code: 200
+    validate_certs: "{{ dragos_verify_ssl | default(true) }}"
+  register: assets_delta
+
+- name: Save delta JSON
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir | default('/tmp/dragos-artifacts') }}/assets_delta.json"
+    mode: "0644"
+    content: "{{ assets_delta.content }}"

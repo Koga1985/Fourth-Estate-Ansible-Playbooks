@@ -1,0 +1,34 @@
+---
+
+- name: Ensure artifacts directory exists
+  ansible.builtin.file:
+    path: "{{ artifacts_dir | default('/tmp/dragos-artifacts') }}"
+    state: directory
+    mode: "0755"
+
+- name: Export full asset inventory
+  ansible.builtin.uri:
+    url: "{{ dragos_base_url }}/api/assets?limit={{ page_size | default(500) }}"
+    method: GET
+    headers: { Authorization: "Bearer {{ dragos_token }}" }
+    return_content: true
+    status_code: 200
+    validate_certs: "{{ dragos_verify_ssl | default(true) }}"
+  register: assets_resp
+
+- name: Save assets JSON
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir | default('/tmp/dragos-artifacts') }}/assets_full.json"
+    mode: "0644"
+    content: "{{ assets_resp.content }}"
+
+- name: Save assets CSV
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir | default('/tmp/dragos-artifacts') }}/assets_full.csv"
+    mode: "0644"
+    content: |
+      id,hostname,ip,site,zone,type,vendor,model,os,criticality
+      {% set items = (assets_resp.json.items if assets_resp.json.items is defined else assets_resp.json.data | default([])) %}
+      {% for a in items %}
+      {{ a.id | default('') }},{{ (a.hostname or a.name) | default('') }},{{ (a.primary_ip or a.ip) | default('') }},{{ a.site | default('') }},{{ a.zone | default('') }},{{ a.type | default('') }},{{ a.vendor | default('') }},{{ a.model | default('') }},{{ a.os | default('') }},{{ a.criticality | default('') }}
+      {% endfor %}

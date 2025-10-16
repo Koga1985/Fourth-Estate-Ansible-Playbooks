@@ -1,0 +1,15 @@
+---
+- name: Read alerts JSON
+  ansible.builtin.set_fact:
+    _alerts: "{{ alerts_now.json if alerts_now is defined else (lookup('ansible.builtin.file', alerts_json_path) | from_json) }}"
+
+- name: Save CSV
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir | default('/tmp/dragos-artifacts') }}/alerts_filtered.csv"
+    mode: "0644"
+    content: |
+      id,created,severity,category,site,asset,summary
+      {% set items = (_alerts.items if _alerts.items is defined else _alerts.data | default([])) %}
+      {% for a in items %}
+      {{ a.id | default('') }},{{ a.created | default('') }},{{ a.severity | default('') }},{{ a.category | default('') }},{{ a.site | default('') }},{{ (a.asset.hostname or a.asset.ip) | default('') }},{{ a.summary | default('') | replace(',', ';') }}
+      {% endfor %}

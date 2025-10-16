@@ -1,0 +1,38 @@
+---
+
+- name: Ensure artifacts directory exists
+  ansible.builtin.file:
+    path: "{{ artifacts_dir | default('/tmp/dragos-artifacts') }}"
+    state: directory
+    mode: "0755"
+
+# vars:
+# assign:
+#   owner: "ot-team"
+#   dedupe_keys: ["site","asset.ip","category"]  # simplistic nested key support: asset.ip
+# alerts_json_path: optional path if not using in-memory alerts_now
+- name: Load alerts
+  ansible.builtin.set_fact:
+    _alerts: "{{ alerts_now.json if alerts_now is defined else (lookup('ansible.builtin.file', alerts_json_path) | from_json) }}"
+
+- name: Build dedupe key
+  ansible.builtin.set_fact:
+    _dedupe_map: "{{ _dedupe_map | default({}) | combine({ (item.id | string): (item[assign.dedupe_keys[0]] | default(item.site | default(''))) ~ ':' ~ ((item.asset.ip | default('')) if 'asset.ip' in assign.dedupe_keys else '') ~ ':' ~ (item.category | default('')) }) }}"
+  loop: "{{ (_alerts.items if _alerts.items is defined else _alerts.data | default([])) }}"
+  loop_control: { label: "{{ item.id }}" }
+
+- name: Open cases for alerts (dedup by first seen key)
+  ansible.builtin.uri:
+    url: "{{ dragos_base_url }}/api/cases"
+    method: POST
+    headers: { Authorization: "Bearer {{ dragos_token }}", Content-Type: "application/json" }
+    body_format: json
+    body:
+      title: "Alert {{ item.id }} — {{ item.summary | default('') }}"
+      alert_id: "{{ item.id }}"
+      owner: "{{ assign.owner | default('') }}"
+      dedupe_key: "{{ _dedupe_map[item.id | string] | default(item.id) }}"
+    status_code: [200,201,202]
+    validate_certs: "{{ dragos_verify_ssl | default(true) }}"
+  loop: "{{ (_alerts.items if _alerts.items is defined else _alerts.data | default([])) }}"
+  loop_control: { label: "{{ item.id }}" }
