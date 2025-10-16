@@ -1,0 +1,24 @@
+---
+- name: Ensure artifacts dir
+  file: { path: "{{ artifacts_dir }}", state: directory, mode: "0755" }
+
+- name: Install delta-sync wrapper
+  copy:
+    dest: "{{ artifacts_dir }}/claroty_delta_sync.sh"
+    mode: "0755"
+    content: |
+      #!/usr/bin/env bash
+      export PATH=/usr/local/bin:/usr/bin:/bin
+      {{ cron_env | dict2items | map('join','=','') | map('regex_replace','^(.*)$','export \1') | join('\n') }}
+      {{ ansible_cmd }} {{ scheduled_playbook }} >> {{ artifacts_dir }}/delta_sync.log 2>&1
+
+- name: Create cron entry
+  cron:
+    name: "Claroty xDome delta sync"
+    minute: "{{ cron_schedule.split()[0] }}"
+    hour: "{{ cron_schedule.split()[1] | default('*') }}"
+    day: "{{ cron_schedule.split()[2] | default('*') }}"
+    month: "{{ cron_schedule.split()[3] | default('*') }}"
+    weekday: "{{ cron_schedule.split()[4] | default('*') }}"
+    job: "{{ artifacts_dir }}/claroty_delta_sync.sh"
+    state: present

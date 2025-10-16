@@ -1,0 +1,79 @@
+---
+- name: Read exported JSON
+  slurp: { src: "{{ artifacts_dir }}/{{ source_json }}" }
+  register: _raw
+
+- name: Parse JSON content
+  set_fact: { _assets: "{{ (_raw.content | b64decode) | from_json }}" }
+
+- name: Normalize (site/zone/criticality)
+  set_fact:
+    _assets_norm: "{{ _assets | map('combine', {
+        'site_norm': normalize.site_map.get(item.site.name, item.site.name) if item.get('site') else None,
+        'zone': (normalize.zone_rules | selectattr('match','defined') | selectattr('set','defined')
+                 | selectattr('match.site','==', (normalize.site_map.get(item.site.name, item.site.name) if item.get('site') else None), default=False)
+                 | selectattr('match.type','==', item.type, default=False) | list | first | default({'set':{}})).set.get('zone'),
+        'criticality': normalize.criticality.by_type.get(item.type, normalize.criticality.default)
+      }) | list }}"
+  vars: { item: "{{ item }}" }
+  loop: "{{ _assets }}"
+  loop_control: { label: "{{ item.name | default('asset') }}" }
+  register: _norm
+
+- name: Collect normalized list
+  set_fact: { _assets_norm: "{{ _norm.results | map(attribute='ansible_facts._assets_norm') | list | sum(start=[]) }}" }
+
+- name: Write normalized CSV
+  copy:
+    dest: "{{ artifacts_dir }}/xdome_assets_normalized.csv"
+    mode: "0644"
+    content: |
+      id,name,site,site_norm,zone,criticality,type,ip,mac,vendor,model,firmware,risk
+      {% for a in _assets_norm %}
+      {{ a.id | default('') }},{{ a.name | default('') }},{{ a.site.name | default('') }},
+      {{ a.site_norm | default('') }},{{ a.zone | default('') }},{{ a.criticality | default('') }},
+      {{ a.type | default('') }},{{ a.ip | default('') }},{{ a.mac | default('') }},
+      {{ a.vendor | default('') }},{{ a.model | default('') }},{{ a.firmware | default('') }},
+      {{ a.riskScore | default('') }}
+      {% endfor %}
+
+- name: (Optional) Tag assets back in xDome
+  when: tag_in_xdome | bool
+  uri:
+    url: "{{ claroty.base_url }}/v1/assets/{{ item.id }}"
+    method: PATCH
+    headers:
+      Authorization: "Bearer {{ claroty.token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      tags:
+        - "zone:{{ item.zone | default('') }}"
+        - "crit:{{ item.criticality | default('') }}"
+      site: "{{ item.site_norm | default(omit) }}"
+    status_code: [200,204]
+    validate_certs: "{{ claroty.verify_ssl | default(true) }}"
+  loop: "{{ _assets_norm }}"
+  loop_control: { label: "{{ item.name | default(item.id) }}" }
+
+- name: (Optional) Push to ServiceNow CMDB
+  when: cmdb_push | bool and cmdb_system == 'servicenow'
+  uri:
+    url: "https://{{ servicenow.instance }}/api/now/table/{{ servicenow.table }}"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ servicenow.token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body: >-
+      {%- set m = sn_payload_map -%}
+      {%- set payload = {} -%}
+      {%- for k,v in m.items() -%}
+      {%-   set _ = payload.update({k: item.get(v) }) -%}
+      {%- endfor -%}
+      {{ payload | combine({'u_claroty_id': item.get('id'), 'u_claroty_zone': item.get('zone'), 'u_claroty_criticality': item.get('criticality')}) }}
+    status_code: [200,201]
+    return_content: true
+    validate_certs: "{{ servicenow.verify_ssl | default(true) }}"
+  loop: "{{ _assets_norm }}"
+  loop_control: { label: "{{ item.name | default(item.id) }}" }

@@ -1,0 +1,84 @@
+---
+- name: Ensure artifacts dir
+  file: { path: "{{ artifacts_dir }}", state: directory, mode: "0755" }
+
+- name: Determine effective delta_since
+  set_fact:
+    _delta_since_eff: >-
+      {%- if delta_since == 'auto' -%}
+      {%- set f = artifacts_dir + '/' + marker_filename -%}
+      {%- if lookup('ansible.builtin.file', f, errors='ignore') | length > 0 -%}
+      {{ lookup('ansible.builtin.file', f) | trim }}
+      {%- else -%}
+      {{ omit }}
+      {%- endif -%}
+      {%- elif delta_since is string and delta_since|length > 0 -%}
+      {{ delta_since }}
+      {%- else -%}
+      {{ omit }}
+      {%- endif -%}
+
+- name: Init results list
+  set_fact: { _assets_all: [] }
+
+- name: Fetch assets (paginated)
+  vars:
+    _page: "{{ item }}"
+    _body: >-
+      {{
+        dict2items({'page': _page, 'pageSize': page_size}) |
+        items2dict | combine( {'updatedSince': _delta_since_eff} if _delta_since_eff is defined else {} )
+      }}
+  uri:
+    url: "{{ claroty.base_url }}/v1/assets/search"
+    method: POST
+    body_format: json
+    body: "{{ _body }}"
+    headers:
+      Authorization: "Bearer {{ claroty.token }}"
+      Content-Type: "application/json"
+    return_content: true
+    status_code: 200
+    validate_certs: "{{ claroty.verify_ssl | default(true) }}"
+    timeout: "{{ request_timeout }}"
+  register: _page_resp
+  loop: "{{ range(1, max_pages + 1) | list }}"
+  loop_control: { label: "page {{ item }}" }
+  until: (_page_resp.json.items | default([])) | length == 0
+  retries: 1
+  delay: 0
+
+- name: Flatten asset results
+  set_fact:
+    _assets_all: "{{ _assets_all + (_page_resp.results | map(attribute='json') | map(attribute='items') | list | sum(start=[])) }}"
+
+- name: Write JSON export
+  when: inventory_format in ['json','both']
+  copy:
+    dest: "{{ artifacts_dir }}/{{ json_filename }}"
+    mode: "0644"
+    content: "{{ _assets_all | to_nice_json }}"
+
+- name: Write CSV export
+  when: inventory_format in ['csv','both']
+  copy:
+    dest: "{{ artifacts_dir }}/{{ csv_filename }}"
+    mode: "0644"
+    content: |
+      {%- set fields = include_fields if include_fields|length>0 else
+          ['id','name','site','type','ip','mac','vendor','model','firmware','riskScore'] -%}
+      {{ fields | join(',') }}
+      {%- for a in _assets_all -%}
+      {%- set row = [] -%}
+      {%- for f in fields -%}
+      {%- set v = a.get(f, a.get('site',{}).get('name','') if f=='site' else '') -%}
+      {%- set _ = row.append((v|string).replace(',', ' ')) -%}
+      {%- endfor -%}
+      {{ row | join(',') }}
+      {%- endfor -%}
+
+- name: Update last_run marker (UTC ISO8601)
+  copy:
+    dest: "{{ artifacts_dir }}/{{ marker_filename }}"
+    mode: "0644"
+    content: "{{ lookup('ansible.builtin.pipe','date -u +%Y-%m-%dT%H:%M:%SZ') }}"
