@@ -1,0 +1,30 @@
+---
+
+- name: Ensure artifacts directory exists
+  ansible.builtin.file:
+    path: "{{ artifacts_dir }}"
+    state: directory
+    mode: "0755"
+
+
+- name: Label namespaces for cost allocation
+  kubernetes.core.k8s:
+    kubeconfig: "{{ kubeconfig }}"
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: "{{ item.namespace }}"
+        labels: "{{ item.labels | default({}) }}"
+  loop: "{{ cost_labels }}"
+  loop_control: { label: "{{ item.namespace }}" }
+
+- name: Apply cost CRs / PrometheusRules
+  kubernetes.core.k8s:
+    kubeconfig: "{{ kubeconfig }}"
+    state: present
+    definition: "{{ item }}"
+  loop: "{{ cost_crs }}"
+  loop_control: { label: "{{ item.kind }}:{{ item.metadata.name }}" }
+

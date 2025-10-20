@@ -1,0 +1,32 @@
+---
+
+- name: Ensure artifacts directory exists
+  ansible.builtin.file:
+    path: "{{ artifacts_dir }}"
+    state: directory
+    mode: "0755"
+
+
+- name: Apply Knative/Serverless manifests
+  kubernetes.core.k8s:
+    kubeconfig: "{{ kubeconfig }}"
+    state: present
+    definition: "{{ item }}"
+  loop: "{{ knative_manifests }}"
+  loop_control: { label: "{{ item.kind }}:{{ item.metadata.name }}" }
+
+- name: Configure domain mapping (example ConfigMap pattern)
+  when: knative_domain | length > 0
+  kubernetes.core.k8s:
+    kubeconfig: "{{ kubeconfig }}"
+    namespace: knative-serving
+    state: present
+    definition:
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: config-domain
+        namespace: knative-serving
+      data:
+        "{{ knative_domain }}": ""
+

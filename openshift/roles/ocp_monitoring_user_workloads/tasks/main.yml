@@ -1,0 +1,40 @@
+---
+
+- name: Ensure artifacts directory exists
+  ansible.builtin.file:
+    path: "{{ artifacts_dir }}"
+    state: directory
+    mode: "0755"
+
+
+- name: Enable User Workload Monitoring (UWM)
+  when: uwm_enable | bool
+  kubernetes.core.k8s:
+    kubeconfig: "{{ kubeconfig }}"
+    namespace: openshift-monitoring
+    state: present
+    definition:
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: cluster-monitoring-config
+        namespace: openshift-monitoring
+      data:
+        config.yaml: |
+          enableUserWorkload: true
+
+- name: Apply Alertmanager Config (secret or CR)
+  when: alertmanager_config | length > 0
+  kubernetes.core.k8s:
+    kubeconfig: "{{ kubeconfig }}"
+    state: present
+    definition: "{{ alertmanager_config }}"
+
+- name: Apply PrometheusRules (recording/alerting)
+  kubernetes.core.k8s:
+    kubeconfig: "{{ kubeconfig }}"
+    state: present
+    definition: "{{ item }}"
+  loop: "{{ recording_rules }}"
+  loop_control: { label: "{{ item.metadata.name }}" }
+
