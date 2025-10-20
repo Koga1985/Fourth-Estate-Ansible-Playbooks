@@ -1,0 +1,28 @@
+---
+
+- name: Ensure artifacts directory exists
+  ansible.builtin.file:
+    path: "{{ artifacts_dir }}"
+    state: directory
+    mode: "0755"
+
+
+- name: Collect current objects
+  kubernetes.core.k8s_info:
+    kubeconfig: "{{ kubeconfig }}"
+    kind: "{{ item.kind }}"
+    namespace: "{{ item.namespace | default(omit) }}"
+    name: "{{ item.name | default(omit) }}"
+  loop: "{{ report_targets }}"
+  register: _live
+
+- name: Write drift CSV scaffold
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/preflight_drift.csv"
+    mode: "0644"
+    content: |
+      kind,namespace,name,observed
+      {% for r in _live.results %}
+      {{ r.resource.kind }},{{ (r.resources[0].metadata.namespace if r.resources | length > 0 and r.resources[0].metadata is defined and r.resources[0].metadata.namespace is defined else '') }},{{ (r.resources[0].metadata.name if r.resources | length > 0 else '') }},{{ (r.resources | length) }}
+      {% endfor %}
+
