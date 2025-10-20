@@ -1,0 +1,19 @@
+
+---
+- name: Load alerts for syslog
+  ansible.builtin.set_fact:
+    _alerts: "{{ alerts_now.json if alerts_now is defined else (lookup('ansible.builtin.file', artifacts_dir + '/alerts_filtered.json') | from_json) }}"
+
+- name: Render CEF to file
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/alerts.cef"
+    mode: "0644"
+    content: |
+      {% set items = (_alerts.items if _alerts.items is defined else _alerts.data | default([])) %}
+      {% for a in items %}
+      CEF:0|{{ syslog.cef_vendor | default('Dragos') }}|{{ syslog.cef_product | default('xDome') }}|1.0|{{ a.category | default('') }}|{{ a.summary | default('') | regex_replace('\n',' ') }}|{{ (a.severity | default('low')) | lower }}|src={{ (a.asset.ip) | default('') }} cs1Label=site cs1={{ a.site | default('') }}
+      {% endfor %}
+
+- name: Ship via logger
+  ansible.builtin.shell: |
+    while IFS= read -r line; do logger -p {{ syslog.facility | default('user') }}.{{ syslog.priority | default('info') }} "$line"; done < "{{ artifacts_dir }}/alerts.cef"

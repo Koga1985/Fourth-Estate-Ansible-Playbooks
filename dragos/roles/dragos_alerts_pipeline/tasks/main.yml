@@ -1,0 +1,21 @@
+
+---
+- name: Ensure artifacts directory exists
+  ansible.builtin.file:
+    path: "{{ artifacts_dir }}"
+    state: directory
+    mode: "0755"
+
+- name: Pull alerts with filters
+  ansible.builtin.include_tasks: pull_filtered.yml
+
+- name: Export alerts to CSV
+  ansible.builtin.include_tasks: export_csv.yml
+
+- name: Forward to SIEM/SOAR (HTTP) if configured
+  when: siem is defined and (siem | length) > 0 and (not dry_run | default(true)) == true
+  ansible.builtin.include_tasks: forward_http.yml
+
+- name: Forward via syslog (CEF) if enabled
+  when: syslog.use_logger | default(false)
+  ansible.builtin.include_tasks: forward_syslog.yml

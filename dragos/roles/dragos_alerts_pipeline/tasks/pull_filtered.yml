@@ -1,0 +1,21 @@
+
+---
+- name: Pull alerts from Dragos API with filters
+  ansible.builtin.uri:
+    url: >-
+      {{ dragos_base_url }}/api/alerts?limit={{ page_size }}
+      {{ '&severity=' + (alert_filter.severity | join(',')) if alert_filter.severity | length > 0 else '' }}
+      {{ '&category=' + (alert_filter.category | join(',')) if alert_filter.category | length > 0 else '' }}
+      {{ '&created_after=' + alert_filter.since_iso if alert_filter.since_iso is not none else '' }}
+    method: GET
+    headers: { Authorization: "Bearer {{ dragos_token }}" }
+    return_content: true
+    status_code: 200
+    validate_certs: "{{ dragos_verify_ssl }}"
+  register: alerts_now
+
+- name: Save alerts JSON
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/alerts_filtered.json"
+    mode: "0644"
+    content: "{{ alerts_now.content }}"
