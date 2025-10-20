@@ -1,0 +1,28 @@
+---
+- name: Ensure artifacts directory exists
+  ansible.builtin.file:
+    path: "{{ artifacts_dir | default('/tmp/dragos-artifacts') }}"
+    state: directory
+    mode: "0755"
+
+# vars: since_iso: "2025-01-01T00:00:00Z"
+- name: Export audit events
+  ansible.builtin.uri:
+    url: "{{ dragos_base_url }}/api/audit/events?limit={{ page_size | default(500) }}{{'&after=' + since_iso if since_iso is defined else ''}}"
+    method: GET
+    headers: { Authorization: "Bearer {{ dragos_token }}" }
+    return_content: true
+    status_code: 200
+    validate_certs: "{{ dragos_verify_ssl | default(true) }}"
+  register: _audit
+
+- name: Save audit CSV
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir | default('/tmp/dragos-artifacts') }}/audit_events.csv"
+    mode: "0644"
+    content: |
+      ts,user,action,target,details
+      {% set items = (_audit.json.items if _audit.json.items is defined else _audit.json.data | default([])) %}
+      {% for e in items %}
+      {{ e.timestamp | default('') }},{{ e.user | default('') }},{{ e.action | default('') }},{{ e.target | default('') }},{{ (e.details | to_json) | replace(',', ';') }}
+      {% endfor %}

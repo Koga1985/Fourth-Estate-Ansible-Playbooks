@@ -1,0 +1,37 @@
+---
+# vars: target_version: "x.y.z", maintenance_window_ok: true, dry_run: true
+- name: Preflight sensor health
+  ansible.builtin.uri:
+    url: "{{ dragos_base_url }}/api/sensors/health"
+    method: GET
+    headers: { Authorization: "Bearer {{ dragos_token }}" }
+    return_content: true
+    status_code: 200
+    validate_certs: "{{ dragos_verify_ssl | default(true) }}"
+  register: s_health
+
+- name: Guardrail — any sensor unhealthy
+  ansible.builtin.fail:
+    msg: "Unhealthy sensors present; aborting upgrade."
+  when: (s_health.json.healthy | default(false)) | bool == false
+
+- name: Trigger upgrade (guarded)
+  when: not (dry_run | default(true)) and (maintenance_window_ok | default(false))
+  ansible.builtin.uri:
+    url: "{{ dragos_base_url }}/api/sensors/upgrade"
+    method: POST
+    headers: { Authorization: "Bearer {{ dragos_token }}", Content-Type: "application/json" }
+    body_format: json
+    body: { target: "{{ target_version }}" }
+    status_code: [200,202]
+    validate_certs: "{{ dragos_verify_ssl | default(true) }}"
+
+- name: Post-upgrade health check
+  ansible.builtin.uri:
+    url: "{{ dragos_base_url }}/api/sensors/health"
+    method: GET
+    headers: { Authorization: "Bearer {{ dragos_token }}" }
+    return_content: true
+    status_code: 200
+    validate_certs: "{{ dragos_verify_ssl | default(true) }}"
+  register: s_health_post
