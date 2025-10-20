@@ -1,0 +1,21 @@
+---
+# Common vars expected (override via -e or vars files):
+# kubeconfig: ~/.kube/config
+# context: ""
+# artifacts_dir: /tmp/ocp-artifacts
+# This pack assumes the kubernetes.core collection is installed.
+
+- name: Assert baseline_policies provided
+  ansible.builtin.assert:
+    that:
+      - baseline_policies is defined
+      - baseline_policies | length > 0
+    fail_msg: "Provide baseline_policies (NetworkPolicy objects)."
+
+- name: Apply NetworkPolicy baselines
+  kubernetes.core.k8s:
+    kubeconfig: "{{ kubeconfig | default(lookup('env','KUBECONFIG')) }}"
+    state: present
+    definition: "{{ item }}"
+  loop: "{{ baseline_policies }}"
+  loop_control: { label: "{{ item.metadata.namespace }}:{{ item.metadata.name }}" }

@@ -1,0 +1,21 @@
+---
+# Common vars expected (override via -e or vars files):
+# kubeconfig: ~/.kube/config
+# context: ""
+# artifacts_dir: /tmp/ocp-artifacts
+# This pack assumes the kubernetes.core collection is installed.
+
+- name: Assert gatekeeper_objects provided
+  ansible.builtin.assert:
+    that:
+      - gatekeeper_objects is defined
+      - gatekeeper_objects | length > 0
+    fail_msg: "Provide gatekeeper_objects (ConstraintTemplate/Constraint)."
+
+- name: Apply Gatekeeper objects
+  kubernetes.core.k8s:
+    kubeconfig: "{{ kubeconfig | default(lookup('env','KUBECONFIG')) }}"
+    state: present
+    definition: "{{ item }}"
+  loop: "{{ gatekeeper_objects }}"
+  loop_control: { label: "{{ item.kind }}:{{ item.metadata.name }}" }

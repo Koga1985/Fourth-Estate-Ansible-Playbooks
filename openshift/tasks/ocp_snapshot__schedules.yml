@@ -1,0 +1,21 @@
+---
+# Common vars expected (override via -e or vars files):
+# kubeconfig: ~/.kube/config
+# context: ""
+# artifacts_dir: /tmp/ocp-artifacts
+# This pack assumes the kubernetes.core collection is installed.
+
+- name: Assert snapshot_schedules provided
+  ansible.builtin.assert:
+    that:
+      - snapshot_schedules is defined
+      - snapshot_schedules | length > 0
+    fail_msg: "Provide snapshot_schedules (CronJobs creating VolumeSnapshots)."
+
+- name: Apply snapshot schedule CronJobs
+  kubernetes.core.k8s:
+    kubeconfig: "{{ kubeconfig | default(lookup('env','KUBECONFIG')) }}"
+    state: present
+    definition: "{{ item }}"
+  loop: "{{ snapshot_schedules }}"
+  loop_control: { label: "{{ item.metadata.namespace }}:{{ item.metadata.name }}" }

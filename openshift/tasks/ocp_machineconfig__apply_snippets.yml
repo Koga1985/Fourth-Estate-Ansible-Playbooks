@@ -1,0 +1,30 @@
+---
+# Common vars expected (override via -e or vars files):
+# kubeconfig: ~/.kube/config
+# context: ""
+# artifacts_dir: /tmp/ocp-artifacts
+# This pack assumes the kubernetes.core collection is installed.
+
+- name: Assert mc_snippets provided
+  ansible.builtin.assert:
+    that:
+      - mc_snippets is defined
+      - mc_snippets | length > 0
+    fail_msg: "Provide mc_snippets: [ { name, spec } ]"
+
+- name: Ensure artifacts dir
+  ansible.builtin.file:
+    path: "{{ artifacts_dir | default('/tmp/ocp-artifacts') }}"
+    state: directory
+    mode: "0755"
+
+- name: Apply MachineConfigs
+  kubernetes.core.k8s:
+    kubeconfig: "{{ kubeconfig | default(lookup('env','KUBECONFIG')) }}"
+    context: "{{ context | default(omit) }}"
+    state: present
+    definition: >-
+      {{ { 'apiVersion':'machineconfiguration.openshift.io/v1', 'kind':'MachineConfig',
+           'metadata': {'name': item.name}, 'spec': item.spec } }}
+  loop: "{{ mc_snippets }}"
+  loop_control: { label: "{{ item.name }}" }

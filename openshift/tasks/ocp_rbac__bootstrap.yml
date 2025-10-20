@@ -1,0 +1,21 @@
+---
+# Common vars expected (override via -e or vars files):
+# kubeconfig: ~/.kube/config
+# context: ""
+# artifacts_dir: /tmp/ocp-artifacts
+# This pack assumes the kubernetes.core collection is installed.
+
+- name: Assert rbac_objects provided
+  ansible.builtin.assert:
+    that:
+      - rbac_objects is defined
+      - rbac_objects | length > 0
+    fail_msg: "Provide rbac_objects (Role/ClusterRole/RoleBinding/ClusterRoleBinding)."
+
+- name: Apply RBAC objects
+  kubernetes.core.k8s:
+    kubeconfig: "{{ kubeconfig | default(lookup('env','KUBECONFIG')) }}"
+    state: present
+    definition: "{{ item }}"
+  loop: "{{ rbac_objects }}"
+  loop_control: { label: "{{ item.kind }}:{{ item.metadata.name }}" }

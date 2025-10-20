@@ -1,0 +1,21 @@
+---
+# Common vars expected (override via -e or vars files):
+# kubeconfig: ~/.kube/config
+# context: ""
+# artifacts_dir: /tmp/ocp-artifacts
+# This pack assumes the kubernetes.core collection is installed.
+
+- name: Assert odf_manifests provided
+  ansible.builtin.assert:
+    that:
+      - odf_manifests is defined
+      - odf_manifests | length > 0
+    fail_msg: "Provide odf_manifests (Subscription/StorageSystem/StorageCluster...)."
+
+- name: Apply ODF/OCS manifests
+  kubernetes.core.k8s:
+    kubeconfig: "{{ kubeconfig | default(lookup('env','KUBECONFIG')) }}"
+    state: present
+    definition: "{{ item }}"
+  loop: "{{ odf_manifests }}"
+  loop_control: { label: "{{ item.kind }}:{{ item.metadata.name }}" }

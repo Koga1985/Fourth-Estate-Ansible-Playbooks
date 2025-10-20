@@ -1,0 +1,23 @@
+---
+# Common vars expected (override via -e or vars files):
+# kubeconfig: ~/.kube/config
+# context: ""
+# artifacts_dir: /tmp/ocp-artifacts
+# This pack assumes the kubernetes.core collection is installed.
+
+- name: Assert bundle provided
+  ansible.builtin.assert:
+    that:
+      - additional_trust_bundle is defined
+      - additional_trust_bundle | length > 0
+    fail_msg: "Set additional_trust_bundle (PEM)."
+
+- name: Configure trusted CA bundle ConfigMap
+  kubernetes.core.k8s:
+    kubeconfig: "{{ kubeconfig | default(lookup('env','KUBECONFIG')) }}"
+    state: present
+    definition:
+      apiVersion: v1
+      kind: ConfigMap
+      metadata: { name: user-ca-bundle, namespace: openshift-config }
+      data: { "ca-bundle.crt": "{{ additional_trust_bundle }}" }

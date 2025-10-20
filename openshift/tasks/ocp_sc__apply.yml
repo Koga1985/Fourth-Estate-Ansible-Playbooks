@@ -1,0 +1,34 @@
+---
+# Common vars expected (override via -e or vars files):
+# kubeconfig: ~/.kube/config
+# context: ""
+# artifacts_dir: /tmp/ocp-artifacts
+# This pack assumes the kubernetes.core collection is installed.
+
+- name: Assert storage_classes provided
+  ansible.builtin.assert:
+    that:
+      - storage_classes is defined
+      - storage_classes | length > 0
+    fail_msg: "Provide storage_classes (list of SC yamls)."
+
+- name: Apply StorageClasses
+  kubernetes.core.k8s:
+    kubeconfig: "{{ kubeconfig | default(lookup('env','KUBECONFIG')) }}"
+    state: present
+    definition: "{{ item }}"
+  loop: "{{ storage_classes }}"
+  loop_control: { label: "{{ item.metadata.name }}" }
+
+- name: Mark default StorageClass
+  when: default_sc is defined and (default_sc | length > 0)
+  kubernetes.core.k8s:
+    kubeconfig: "{{ kubeconfig | default(lookup('env','KUBECONFIG')) }}"
+    state: present
+    definition:
+      apiVersion: storage.k8s.io/v1
+      kind: StorageClass
+      metadata:
+        name: "{{ default_sc }}"
+        annotations:
+          storageclass.kubernetes.io/is-default-class: "true"

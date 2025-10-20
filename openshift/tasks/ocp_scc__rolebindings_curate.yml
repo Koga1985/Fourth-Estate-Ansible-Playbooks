@@ -1,0 +1,44 @@
+---
+# Common vars expected (override via -e or vars files):
+# kubeconfig: ~/.kube/config
+# context: ""
+# artifacts_dir: /tmp/ocp-artifacts
+# This pack assumes the kubernetes.core collection is installed.
+
+- name: Assert scc_bindings provided
+  ansible.builtin.assert:
+    that:
+      - scc_bindings is defined
+      - scc_bindings | length > 0
+    fail_msg: "Provide scc_bindings: [ { namespace, sa, scc } ]"
+
+- name: Ensure SCC RoleBindings
+  kubernetes.core.k8s:
+    kubeconfig: "{{ kubeconfig | default(lookup('env','KUBECONFIG')) }}"
+    state: present
+    definition:
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: RoleBinding
+      metadata:
+        name: "use-{{ item.scc }}"
+        namespace: "{{ item.namespace }}"
+      subjects:
+        - kind: ServiceAccount
+          name: "{{ item.sa }}"
+          namespace: "{{ item.namespace }}"
+      roleRef:
+        apiGroup: rbac.authorization.k8s.io
+        kind: ClusterRole
+        name: "system:openshift:scc:{{ item.scc }}"
+  loop: "{{ scc_bindings }}"
+  loop_control: { label: "{{ item.namespace }}:{{ item.sa }}" }
+
+- name: Write report (scaffold)
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir | default('/tmp/ocp-artifacts') }}/scc_bindings.csv"
+    mode: "0644"
+    content: |
+      namespace,serviceaccount,scc
+      {% for b in scc_bindings %}
+      {{ b.namespace }},{{ b.sa }},{{ b.scc }}
+      {% endfor %}

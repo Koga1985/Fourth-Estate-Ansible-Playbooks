@@ -1,0 +1,26 @@
+---
+# Common vars expected (override via -e or vars files):
+# kubeconfig: ~/.kube/config
+# context: ""
+# artifacts_dir: /tmp/ocp-artifacts
+# This pack assumes the kubernetes.core collection is installed.
+
+- name: Assert audit inputs
+  ansible.builtin.assert:
+    that:
+      - apiserver_audit_policy_cm is defined
+      - (apiserver_audit_policy_cm | length) > 0
+    fail_msg: "Provide apiserver_audit_policy_cm (ConfigMap)."
+
+- name: Apply API Server audit policy ConfigMap
+  kubernetes.core.k8s:
+    kubeconfig: "{{ kubeconfig | default(lookup('env','KUBECONFIG')) }}"
+    state: present
+    definition: "{{ apiserver_audit_policy_cm }}"
+
+- name: Apply audit log forward configuration (optional)
+  when: audit_forward_config is defined and (audit_forward_config | length > 0)
+  kubernetes.core.k8s:
+    kubeconfig: "{{ kubeconfig | default(lookup('env','KUBECONFIG')) }}"
+    state: present
+    definition: "{{ audit_forward_config }}"

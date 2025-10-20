@@ -1,0 +1,38 @@
+---
+# Common vars expected (override via -e or vars files):
+# kubeconfig: ~/.kube/config
+# context: ""
+# artifacts_dir: /tmp/ocp-artifacts
+# This pack assumes the kubernetes.core collection is installed.
+
+- name: Assert node list provided
+  ansible.builtin.assert:
+    that:
+      - nodes is defined
+      - nodes | length > 0
+    fail_msg: "Provide nodes: [ { name, labels:{}, taints:[...] } ]"
+
+- name: Patch labels
+  kubernetes.core.k8s:
+    kubeconfig: "{{ kubeconfig | default(lookup('env','KUBECONFIG')) }}"
+    state: patched
+    kind: Node
+    name: "{{ item.name }}"
+    definition:
+      metadata:
+        labels: "{{ item.labels | default({}) }}"
+  loop: "{{ nodes }}"
+  loop_control: { label: "{{ item.name }}" }
+
+- name: Apply taints
+  when: item.taints is defined
+  kubernetes.core.k8s:
+    kubeconfig: "{{ kubeconfig | default(lookup('env','KUBECONFIG')) }}"
+    state: patched
+    kind: Node
+    name: "{{ item.name }}"
+    definition:
+      spec:
+        taints: "{{ item.taints }}"
+  loop: "{{ nodes }}"
+  loop_control: { label: "{{ item.name }}" }

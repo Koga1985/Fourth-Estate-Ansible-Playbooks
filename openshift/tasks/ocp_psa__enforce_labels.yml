@@ -1,0 +1,29 @@
+---
+# Common vars expected (override via -e or vars files):
+# kubeconfig: ~/.kube/config
+# context: ""
+# artifacts_dir: /tmp/ocp-artifacts
+# This pack assumes the kubernetes.core collection is installed.
+
+- name: Assert psa_sets provided
+  ansible.builtin.assert:
+    that:
+      - psa_sets is defined
+      - psa_sets | length > 0
+    fail_msg: "Provide psa_sets: [ { namespace, level } ]"
+
+- name: Label namespaces for PSA
+  kubernetes.core.k8s:
+    kubeconfig: "{{ kubeconfig | default(lookup('env','KUBECONFIG')) }}"
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: "{{ item.namespace }}"
+        labels:
+          pod-security.kubernetes.io/enforce: "{{ item.level }}"
+          pod-security.kubernetes.io/audit: "{{ item.level }}"
+          pod-security.kubernetes.io/warn: "{{ item.level }}"
+  loop: "{{ psa_sets }}"
+  loop_control: { label: "{{ item.namespace }}" }

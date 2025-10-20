@@ -1,0 +1,21 @@
+---
+# Common vars expected (override via -e or vars files):
+# kubeconfig: ~/.kube/config
+# context: ""
+# artifacts_dir: /tmp/ocp-artifacts
+# This pack assumes the kubernetes.core collection is installed.
+
+- name: Assert csi_manifests provided
+  ansible.builtin.assert:
+    that:
+      - csi_manifests is defined
+      - csi_manifests | length > 0
+    fail_msg: "Provide csi_manifests (Operator/Driver CRs)."
+
+- name: Apply CSI operator/driver manifests
+  kubernetes.core.k8s:
+    kubeconfig: "{{ kubeconfig | default(lookup('env','KUBECONFIG')) }}"
+    state: present
+    definition: "{{ item }}"
+  loop: "{{ csi_manifests }}"
+  loop_control: { label: "{{ item.kind }}:{{ item.metadata.name }}" }

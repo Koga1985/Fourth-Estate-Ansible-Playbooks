@@ -1,0 +1,30 @@
+---
+# Common vars expected (override via -e or vars files):
+# kubeconfig: ~/.kube/config
+# context: ""
+# artifacts_dir: /tmp/ocp-artifacts
+# This pack assumes the kubernetes.core collection is installed.
+
+- name: Assert quota_sets provided
+  ansible.builtin.assert:
+    that:
+      - quota_sets is defined
+      - quota_sets | length > 0
+    fail_msg: "Provide quota_sets: [ { namespace, rq, lr } ]"
+
+- name: Apply ResourceQuotas
+  kubernetes.core.k8s:
+    kubeconfig: "{{ kubeconfig | default(lookup('env','KUBECONFIG')) }}"
+    state: present
+    definition: "{{ item.rq | combine({'metadata': {'namespace': item.namespace}}, recursive=True) }}"
+  loop: "{{ quota_sets }}"
+  loop_control: { label: "{{ item.namespace }}:rq" }
+
+- name: Apply LimitRanges (optional)
+  when: item.lr is defined
+  kubernetes.core.k8s:
+    kubeconfig: "{{ kubeconfig | default(lookup('env','KUBECONFIG')) }}"
+    state: present
+    definition: "{{ item.lr | combine({'metadata': {'namespace': item.namespace}}, recursive=True) }}"
+  loop: "{{ quota_sets }}"
+  loop_control: { label: "{{ item.namespace }}:lr" }

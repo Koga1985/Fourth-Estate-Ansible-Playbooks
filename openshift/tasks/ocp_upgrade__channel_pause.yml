@@ -1,0 +1,30 @@
+---
+# Common vars expected (override via -e or vars files):
+# kubeconfig: ~/.kube/config
+# context: ""
+# artifacts_dir: /tmp/ocp-artifacts
+# This pack assumes the kubernetes.core collection is installed.
+
+- name: Set update channel
+  kubernetes.core.k8s:
+    kubeconfig: "{{ kubeconfig | default(lookup('env','KUBECONFIG')) }}"
+    state: present
+    definition:
+      apiVersion: config.openshift.io/v1
+      kind: ClusterVersion
+      metadata: { name: version }
+      spec: { channel: "{{ channel | default('stable-4.x') }}" }
+
+- name: Export version status
+  kubernetes.core.k8s_info:
+    kubeconfig: "{{ kubeconfig | default(lookup('env','KUBECONFIG')) }}"
+    api_version: config.openshift.io/v1
+    kind: ClusterVersion
+    name: version
+  register: _cv
+
+- name: Write status artifact
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir | default('/tmp/ocp-artifacts') }}/cluster_version_status.json"
+    mode: "0644"
+    content: "{{ _cv.resources[0] | to_nice_json }}"

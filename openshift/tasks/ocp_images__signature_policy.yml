@@ -1,0 +1,21 @@
+---
+# Common vars expected (override via -e or vars files):
+# kubeconfig: ~/.kube/config
+# context: ""
+# artifacts_dir: /tmp/ocp-artifacts
+# This pack assumes the kubernetes.core collection is installed.
+
+- name: Assert image_policies provided
+  ansible.builtin.assert:
+    that:
+      - image_policies is defined
+      - image_policies | length > 0
+    fail_msg: "Provide image_policies (verification/signature policies)."
+
+- name: Apply image signing/verification policies
+  kubernetes.core.k8s:
+    kubeconfig: "{{ kubeconfig | default(lookup('env','KUBECONFIG')) }}"
+    state: present
+    definition: "{{ item }}"
+  loop: "{{ image_policies }}"
+  loop_control: { label: "{{ item.kind }}:{{ item.metadata.name }}" }

@@ -1,0 +1,38 @@
+---
+# Common vars expected (override via -e or vars files):
+# kubeconfig: ~/.kube/config
+# context: ""
+# artifacts_dir: /tmp/ocp-artifacts
+# This pack assumes the kubernetes.core collection is installed.
+
+- name: Assert namespaces provided
+  ansible.builtin.assert:
+    that:
+      - namespaces is defined
+      - namespaces | length > 0
+    fail_msg: "Provide namespaces list with objects."
+
+- name: Create namespaces
+  kubernetes.core.k8s:
+    kubeconfig: "{{ kubeconfig | default(lookup('env','KUBECONFIG')) }}"
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: "{{ item.name }}"
+        labels: "{{ item.labels | default({}) }}"
+        annotations: "{{ item.annotations | default({}) }}"
+  loop: "{{ namespaces }}"
+  loop_control: { label: "{{ item.name }}" }
+
+- name: Apply namespace-scoped objects
+  kubernetes.core.k8s:
+    kubeconfig: "{{ kubeconfig | default(lookup('env','KUBECONFIG')) }}"
+    state: present
+    definition: "{{ obj | combine({'metadata': {'namespace': ns.name}}, recursive=True) }}"
+  vars:
+    ns: "{{ item.0 }}"
+    obj: "{{ item.1 }}"
+  loop: "{{ namespaces | subelements('objects', skip_missing=True) }}"
+  loop_control: { label: "{{ item.0.name }}:{{ item.1.kind | default('obj') }}" }

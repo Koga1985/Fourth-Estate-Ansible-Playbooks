@@ -1,0 +1,30 @@
+---
+# Common vars expected (override via -e or vars files):
+# kubeconfig: ~/.kube/config
+# context: ""
+# artifacts_dir: /tmp/ocp-artifacts
+# This pack assumes the kubernetes.core collection is installed.
+
+- name: Ensure ClusterAutoscaler
+  kubernetes.core.k8s:
+    kubeconfig: "{{ kubeconfig | default(lookup('env','KUBECONFIG')) }}"
+    state: present
+    definition:
+      apiVersion: autoscaling.openshift.io/v1
+      kind: ClusterAutoscaler
+      metadata: { name: default }
+      spec: "{{ cluster_autoscaler | default({}) }}"
+  register: _ca
+
+- name: Ensure MachineAutoscalers
+  when: machine_autoscalers is defined and (machine_autoscalers | length > 0)
+  kubernetes.core.k8s:
+    kubeconfig: "{{ kubeconfig | default(lookup('env','KUBECONFIG')) }}"
+    state: present
+    definition: >-
+      {{ item if (item.apiVersion is defined)
+         else { 'apiVersion':'autoscaling.openshift.io/v1','kind':'MachineAutoscaler',
+                'metadata':{ 'name': item.name, 'namespace': item.namespace | default('openshift-machine-api')},
+                'spec': item.spec } }}
+  loop: "{{ machine_autoscalers }}"
+  loop_control: { label: "{{ (item.metadata.name if item.metadata is defined else item.name) | default('ma') }}" }
