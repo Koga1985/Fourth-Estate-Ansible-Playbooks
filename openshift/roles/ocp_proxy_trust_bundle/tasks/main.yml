@@ -1,0 +1,30 @@
+---
+
+- name: Ensure artifacts directory exists
+  ansible.builtin.file:
+    path: "{{ artifacts_dir }}"
+    state: directory
+    mode: "0755"
+
+
+- name: Configure cluster Proxy
+  kubernetes.core.k8s:
+    kubeconfig: "{{ kubeconfig }}"
+    state: present
+    definition:
+      apiVersion: config.openshift.io/v1
+      kind: Proxy
+      metadata: { name: cluster }
+      spec: "{{ proxy | default({}) }}"
+
+- name: Configure trusted CA bundle ConfigMap
+  when: additional_trust_bundle | length > 0
+  kubernetes.core.k8s:
+    kubeconfig: "{{ kubeconfig }}"
+    state: present
+    definition:
+      apiVersion: v1
+      kind: ConfigMap
+      metadata: { name: user-ca-bundle, namespace: openshift-config }
+      data: { ca-bundle.crt: "{{ additional_trust_bundle }}" }
+

@@ -1,0 +1,33 @@
+---
+
+- name: Ensure artifacts directory exists
+  ansible.builtin.file:
+    path: "{{ artifacts_dir }}"
+    state: directory
+    mode: "0755"
+
+
+- name: Create namespaces
+  kubernetes.core.k8s:
+    kubeconfig: "{{ kubeconfig }}"
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: "{{ item.name }}"
+        labels: "{{ item.labels | default({}) }}"
+        annotations: "{{ item.annotations | default({}) }}"
+  loop: "{{ namespaces }}"
+  loop_control: { label: "{{ item.name }}" }
+
+- name: Apply nested objects (LimitRange/ResourceQuota/NetworkPolicy/RoleBinding)
+  kubernetes.core.k8s:
+    kubeconfig: "{{ kubeconfig }}"
+    state: present
+    definition: "{{ subitem | combine({'metadata': {'namespace': item.name}}, recursive=True) }}"
+  loop: "{{ namespaces | subelements('objects', skip_missing=True) }}"
+  loop_control: { label: "{{ item.0.name }}:{{ item.1.kind | default('obj') }}" }
+  vars:
+    subitem: "{{ item.1 }}"
+

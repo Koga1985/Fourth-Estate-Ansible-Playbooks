@@ -1,0 +1,26 @@
+---
+
+- name: Ensure artifacts directory exists
+  ansible.builtin.file:
+    path: "{{ artifacts_dir }}"
+    state: directory
+    mode: "0755"
+
+
+- name: Apply ResourceQuotas
+  kubernetes.core.k8s:
+    kubeconfig: "{{ kubeconfig }}"
+    state: present
+    definition: "{{ item.rq | combine({'metadata': {'namespace': item.namespace}}, recursive=True) }}"
+  loop: "{{ quota_sets }}"
+  loop_control: { label: "{{ item.namespace }}:rq" }
+
+- name: Apply LimitRanges
+  when: item.lr is defined
+  kubernetes.core.k8s:
+    kubeconfig: "{{ kubeconfig }}"
+    state: present
+    definition: "{{ item.lr | combine({'metadata': {'namespace': item.namespace}}, recursive=True) }}"
+  loop: "{{ quota_sets }}"
+  loop_control: { label: "{{ item.namespace }}:lr" }
+
