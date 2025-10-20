@@ -1,0 +1,15 @@
+
+---
+- name: Save violations CSV (best-effort)
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/rbac_violations.csv"
+    mode: "0644"
+    content: |
+      username,roles,violation
+      {% set items = (_users.json.items if _users.json.items is defined else _users.json.data | default([])) %}
+      {% for u in items %}
+      {% set over = (u.roles | default([])) | select('match','admin|superuser') | list %}
+      {% if over | length > 0 %}
+      {{ u.username | default('') }},{{ (u.roles | default([])) | join('|') }},excessive_privilege
+      {% endif %}
+      {% endfor %}

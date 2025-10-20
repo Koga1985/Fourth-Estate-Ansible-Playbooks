@@ -1,0 +1,22 @@
+
+---
+- name: Export audit events
+  ansible.builtin.uri:
+    url: "{{ dragos_base_url }}/api/audit/events?limit={{ page_size }}"
+    method: GET
+    headers: { Authorization: "Bearer {{ dragos_token }}" }
+    return_content: true
+    status_code: 200
+    validate_certs: "{{ dragos_verify_ssl }}"
+  register: _audit
+
+- name: Save audit CSV
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/audit_events.csv"
+    mode: "0644"
+    content: |
+      ts,user,action,target,details
+      {% set items = (_audit.json.items if _audit.json.items is defined else _audit.json.data | default([])) %}
+      {% for e in items %}
+      {{ e.timestamp | default('') }},{{ e.user | default('') }},{{ e.action | default('') }},{{ e.target | default('') }},{{ (e.details | to_json) | replace(',', ';') }}
+      {% endfor %}
