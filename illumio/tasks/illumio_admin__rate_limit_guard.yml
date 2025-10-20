@@ -1,0 +1,48 @@
+---
+- name: Ensure artifacts dir
+  ansible.builtin.file:
+    path: "{{ artifacts_dir | default('/tmp/illumio-artifacts') }}"
+    state: directory
+    mode: "0755"
+
+- name: Set common headers
+  ansible.builtin.set_fact:
+    illumio_headers:
+      Accept: "application/json"
+      Content-Type: "application/json"
+      X-Illumio-Org: "{{ org_id }}"
+
+- name: Assert request spec provided
+  ansible.builtin.assert:
+    that:
+      - rl_request is defined
+      - rl_request.url is defined
+      - rl_request.method is defined
+    fail_msg: "Provide rl_request: { url, method, body?, headers? }"
+
+- name: Perform request with backoff on 429/5xx
+  vars:
+    _headers: "{{ illumio_headers | combine(rl_request.headers | default({})) }}"
+  ansible.builtin.uri:
+    url: "{{ rl_request.url }}"
+    method: "{{ rl_request.method | upper }}"
+    user: "{{ api_user }}"
+    password: "{{ api_key }}"
+    force_basic_auth: true
+    validate_certs: "{{ verify_ssl | default(true) }}"
+    headers: "{{ _headers }}"
+    body_format: json
+    body: "{{ rl_request.body | default(omit) }}"
+    status_code: 200,201,202,204,207,400,401,403,404,409,422,429,500,502,503
+    return_content: true
+  register: _resp
+  retries: "{{ backoff.retries | default(5) }}"
+  delay: "{{ backoff.delay | default(2) }}"
+  until: _resp.status not in [429,500,502,503]
+
+- name: Save response (optional)
+  when: rl_request.artifact_name is defined
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir | default('/tmp/illumio-artifacts') }}/{{ rl_request.artifact_name }}.json"
+    mode: "0644"
+    content: "{{ _resp.json | default(_resp.content) }}"

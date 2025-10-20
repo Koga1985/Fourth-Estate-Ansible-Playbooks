@@ -1,0 +1,46 @@
+---
+- name: Ensure artifacts dir
+  ansible.builtin.file:
+    path: "{{ artifacts_dir | default('/tmp/illumio-artifacts') }}"
+    state: directory
+    mode: "0755"
+
+- name: Set common headers
+  ansible.builtin.set_fact:
+    illumio_headers:
+      Accept: "application/json"
+      Content-Type: "application/json"
+      X-Illumio-Org: "{{ org_id }}"
+
+- name: Ping PCE /status (health)
+  ansible.builtin.uri:
+    url: "{{ pce_url }}/api/v2/status"
+    method: GET
+    user: "{{ api_user }}"
+    password: "{{ api_key }}"
+    force_basic_auth: true
+    validate_certs: "{{ verify_ssl | default(true) }}"
+    headers: "{{ illumio_headers }}"
+    return_content: true
+  register: _status
+  retries: "{{ backoff.retries | default(5) }}"
+  delay: "{{ backoff.delay | default(2) }}"
+  until: _status.status in [200]
+
+- name: Get org banner
+  ansible.builtin.uri:
+    url: "{{ pce_url }}/api/v2/orgs/{{ org_id }}"
+    method: GET
+    user: "{{ api_user }}"
+    password: "{{ api_key }}"
+    force_basic_auth: true
+    validate_certs: "{{ verify_ssl | default(true) }}"
+    headers: "{{ illumio_headers }}"
+    return_content: true
+  register: _org
+
+- name: Write health artifact
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir | default('/tmp/illumio-artifacts') }}/api_health.json"
+    mode: "0644"
+    content: "{{ {'status': _status.json, 'org': _org.json} | to_nice_json }}"
