@@ -1,0 +1,20 @@
+---
+- name: Ensure artifacts dir
+  ansible.builtin.file:
+    path: "{{ artifacts_dir | default('/tmp/ot-artifacts') }}"
+    state: directory
+    mode: "0755"
+
+- name: Read freeze flag from SoT file (if provided)
+  when: sot_freeze_file | default('') != ''
+  ansible.builtin.slurp:
+    src: "{{ sot_freeze_file }}"
+  register: _freeze_raw
+- name: Parse freeze flag
+  ansible.builtin.set_fact:
+    freeze_active: >-
+      {%- if _freeze_raw is defined -%}
+      {{ (_freeze_raw.content | b64decode | trim) in ['1','true','True','TRUE','yes','on'] }}
+      {%- else -%}
+      {{ freeze_flag | default(false) }}
+      {%- endif -%}

@@ -1,0 +1,30 @@
+---
+- name: Ensure artifacts dir
+  ansible.builtin.file:
+    path: "{{ artifacts_dir | default('/tmp/ot-artifacts') }}"
+    state: directory
+    mode: "0755"
+
+- name: Compute current time in target timezone
+  ansible.builtin.set_fact:
+    _tz: "{{ change_tz | default('UTC') }}"
+- name: Evaluate configured change windows
+  ansible.builtin.set_fact:
+    _allowed: >-
+      {%- set allow = false -%}
+      {%- set cur_wday = ansible_date_time.weekday | default('Mon') -%}
+      {%- set cur_time = ansible_date_time.time | default('00:00:00') -%}
+      {%- for w in change_windows | default([]) -%}
+        {%- set days = w.days | default(['Mon','Tue','Wed','Thu','Fri']) -%}
+        {%- set start = w.start | default('00:00') -%}
+        {%- set end = w.end | default('23:59') -%}
+        {%- if cur_wday in days and (cur_time[0:5] >= start) and (cur_time[0:5] <= end) -%}
+          {%- set allow = true -%}
+        {%- endif -%}
+      {%- endfor -%}
+      {{ allow }}
+- name: Guard: Fail outside approved windows (unless override is set)
+  ansible.builtin.assert:
+    that:
+      - (_allowed | bool) or (change_window_override | default(false) | bool)
+    fail_msg: "Change blocked: outside approved window. Set change_window_override=true only for emergency with approvals."

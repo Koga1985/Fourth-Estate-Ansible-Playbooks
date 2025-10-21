@@ -1,0 +1,26 @@
+---
+- name: Ensure artifacts dir
+  ansible.builtin.file:
+    path: "{{ artifacts_dir | default('/tmp/ot-artifacts') }}"
+    state: directory
+    mode: "0755"
+
+- name: Generate certificate expiry report (openssl)
+  ansible.builtin.shell: |
+    set -e
+    for c in {{ (certs | default([])) | map(attribute='path') | list | join(' ') }}; do
+      if [ -f "$c" ]; then
+        end=$(openssl x509 -in "$c" -noout -enddate 2>/dev/null | cut -d= -f2 || echo "unknown")
+        echo "$(basename "$c"),$end"
+      fi
+    done
+  args: { executable: /bin/bash }
+  register: certs_report
+  changed_when: false
+- name: Write expiry CSV
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/pki_expiry_report.csv"
+    mode: "0644"
+    content: |
+      cert,not_after
+      {{ certs_report.stdout }}
