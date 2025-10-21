@@ -1,0 +1,44 @@
+---
+- name: Ensure artifacts dir
+  ansible.builtin.file:
+    path: "{{ artifacts_dir | default('/tmp/illumio-artifacts') }}"
+    state: directory
+    mode: "0755"
+
+- name: Set common headers
+  ansible.builtin.set_fact:
+    illumio_headers:
+      Accept: "application/json"
+      Content-Type: "application/json"
+      X-Illumio-Org: "{{ org_id }}"
+
+- name: Assert prune inputs
+  ansible.builtin.assert:
+    that: [ prune_candidates is defined ]
+    fail_msg: "Provide prune_candidates: list of /orgs/... hrefs."
+
+- name: Preview candidates (dry-run by default)
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir | default('/tmp/illumio-artifacts') }}/prune_preview.json"
+    mode: "0644"
+    content: "{{ prune_candidates | to_nice_json }}"
+
+- name: Guardrail - require allow_delete true
+  when: not (dry_run | default(true) | bool)
+  ansible.builtin.assert:
+    that: [ allow_delete | default(false) | bool ]
+    fail_msg: "Deletion blocked. Set allow_delete=true and dry_run=false to proceed."
+
+- name: Delete items
+  when: not (dry_run | default(true) | bool)
+  ansible.builtin.uri:
+    url: "{{ pce_url }}/api/v2{{ item }}"
+    method: DELETE
+    user: "{{ api_user }}"
+    password: "{{ api_key }}"
+    force_basic_auth: true
+    validate_certs: "{{ verify_ssl | default(true) }}"
+    headers: "{{ illumio_headers }}"
+    status_code: 200,204,404
+  loop: "{{ prune_candidates }}"
+  loop_control: { label: "{{ item }}" }

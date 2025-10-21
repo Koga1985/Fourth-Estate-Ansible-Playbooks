@@ -1,0 +1,40 @@
+---
+- name: Ensure artifacts dir
+  ansible.builtin.file:
+    path: "{{ artifacts_dir | default('/tmp/illumio-artifacts') }}"
+    state: directory
+    mode: "0755"
+
+- name: Set common headers
+  ansible.builtin.set_fact:
+    illumio_headers:
+      Accept: "application/json"
+      Content-Type: "application/json"
+      X-Illumio-Org: "{{ org_id }}"
+
+- name: Assert simulation query provided
+  ansible.builtin.assert:
+    that: [ simulate_query is defined ]
+    fail_msg: "Provide simulate_query per Explorer/preview API to estimate impact."
+
+- name: Execute simulation (Explorer-like query)
+  ansible.builtin.uri:
+    url: "{{ pce_url }}/api/v2/orgs/{{ org_id }}/traffic_flows/flows/traffic_query"
+    method: POST
+    user: "{{ api_user }}"
+    password: "{{ api_key }}"
+    force_basic_auth: true
+    validate_certs: "{{ verify_ssl | default(true) }}"
+    headers: "{{ illumio_headers }}"
+    body_format: json
+    body: "{{ simulate_query }}"
+    return_content: true
+  register: _sim
+
+- name: Gate if risky (simple threshold on denied flows)
+  vars:
+    denied: "{{ (_sim.json | default([])) | selectattr('policy_decision','equalto','blocked') | list | length }}"
+  ansible.builtin.assert:
+    that: [ (denied | int) <= (deny_threshold | default(0) | int) ]
+    fail_msg: "Brownout risk too high: blocked flows exceed threshold."
+    success_msg: "Brownout check passed."

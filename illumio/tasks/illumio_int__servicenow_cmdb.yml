@@ -1,0 +1,32 @@
+---
+- name: Ensure artifacts dir
+  ansible.builtin.file:
+    path: "{{ artifacts_dir | default('/tmp/illumio-artifacts') }}"
+    state: directory
+    mode: "0755"
+
+- name: Set common headers
+  ansible.builtin.set_fact:
+    illumio_headers:
+      Accept: "application/json"
+      Content-Type: "application/json"
+      X-Illumio-Org: "{{ org_id }}"
+
+- name: Assert ServiceNow config and records
+  ansible.builtin.assert:
+    that: [ snow.url is defined, snow.user is defined, snow.token is defined, cmdb_records is defined ]
+    fail_msg: "Provide snow {url,user,token} and cmdb_records list."
+
+- name: Upsert CIs in ServiceNow CMDB
+  ansible.builtin.uri:
+    url: "{{ snow.url }}/api/now/table/{{ snow.table | default('cmdb_ci') }}"
+    method: POST
+    force_basic_auth: true
+    url_username: "{{ snow.user }}"
+    url_password: "{{ snow.token }}"
+    headers: { "Content-Type": "application/json" }
+    body_format: json
+    body: "{{ item }}"
+    status_code: 200,201,409
+  loop: "{{ cmdb_records }}"
+  loop_control: { label: "{{ item.name | default(item.sys_id | default('ci')) }}" }

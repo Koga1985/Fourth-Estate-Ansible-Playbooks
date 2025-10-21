@@ -1,0 +1,30 @@
+---
+- name: Ensure artifacts dir
+  ansible.builtin.file:
+    path: "{{ artifacts_dir | default('/tmp/illumio-artifacts') }}"
+    state: directory
+    mode: "0755"
+
+- name: Set common headers
+  ansible.builtin.set_fact:
+    illumio_headers:
+      Accept: "application/json"
+      Content-Type: "application/json"
+      X-Illumio-Org: "{{ org_id }}"
+
+- name: Assert SOAR webhook config
+  ansible.builtin.assert:
+    that: [ soar.url is defined, soar.events is defined ]
+    fail_msg: "Provide soar {url, headers?, verify_ssl?} and events list."
+
+- name: Send normalized notifications to SOAR
+  ansible.builtin.uri:
+    url: "{{ soar.url }}"
+    method: POST
+    headers: "{{ soar.headers | default({'Content-Type':'application/json'}) }}"
+    body_format: json
+    body: "{{ item }}"
+    validate_certs: "{{ soar.verify_ssl | default(true) }}"
+    status_code: 200,201,202
+  loop: "{{ soar.events }}"
+  loop_control: { label: "soar_event" }

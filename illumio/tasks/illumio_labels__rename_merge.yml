@@ -1,0 +1,59 @@
+---
+- name: Ensure artifacts dir
+  ansible.builtin.file:
+    path: "{{ artifacts_dir | default('/tmp/illumio-artifacts') }}"
+    state: directory
+    mode: "0755"
+
+- name: Set common headers
+  ansible.builtin.set_fact:
+    illumio_headers:
+      Accept: "application/json"
+      Content-Type: "application/json"
+      X-Illumio-Org: "{{ org_id }}"
+
+- name: Assert rename/merge plan
+  ansible.builtin.assert:
+    that: [ rename_plan is defined ]
+    fail_msg: "Provide rename_plan: { key: 'app', from: 'old', to: 'new', merge: true|false }"
+
+- name: Preview to-be-renamed label
+  ansible.builtin.uri:
+    url: "{{ pce_url }}/api/v2/orgs/{{ org_id }}/labels?key={{ rename_plan.key }}&value={{ rename_plan.from }}"
+    method: GET
+    user: "{{ api_user }}"
+    password: "{{ api_key }}"
+    force_basic_auth: true
+    validate_certs: "{{ verify_ssl | default(true) }}"
+    headers: "{{ illumio_headers }}"
+    return_content: true
+  register: _old
+
+- name: Require approve_rename true
+  ansible.builtin.assert:
+    that: [ approve_rename | default(false) | bool ]
+    fail_msg: "Set approve_rename=true to proceed with rename/merge."
+
+- name: Rename or merge label value
+  ansible.builtin.uri:
+    url: "{{ pce_url }}/api/v2/orgs/{{ org_id }}/labels/rename_or_merge"
+    method: POST
+    user: "{{ api_user }}"
+    password: "{{ api_key }}"
+    force_basic_auth: true
+    validate_certs: "{{ verify_ssl | default(true) }}"
+    headers: "{{ illumio_headers }}"
+    body_format: json
+    body:
+      key: "{{ rename_plan.key }}"
+      from: "{{ rename_plan.from }}"
+      to: "{{ rename_plan.to }}"
+      merge: "{{ rename_plan.merge | default(true) }}"
+    status_code: 200,201,202
+  register: _rename
+
+- name: Save rename artifact
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir | default('/tmp/illumio-artifacts') }}/labels_rename.json"
+    mode: "0644"
+    content: "{{ _rename.json | default(_rename.content) }}"

@@ -1,0 +1,33 @@
+---
+- name: Ensure artifacts dir
+  ansible.builtin.file:
+    path: "{{ artifacts_dir | default('/tmp/illumio-artifacts') }}"
+    state: directory
+    mode: "0755"
+
+- name: Set common headers
+  ansible.builtin.set_fact:
+    illumio_headers:
+      Accept: "application/json"
+      Content-Type: "application/json"
+      X-Illumio-Org: "{{ org_id }}"
+
+- name: Assert syslog targets
+  ansible.builtin.assert:
+    that: [ syslog_targets is defined, syslog_targets | length > 0 ]
+    fail_msg: "Provide syslog_targets per Illumio API."
+
+- name: Configure syslog/event destinations
+  ansible.builtin.uri:
+    url: "{{ pce_url }}/api/v2/orgs/{{ org_id }}/event_streams/destinations"
+    method: POST
+    user: "{{ api_user }}"
+    password: "{{ api_key }}"
+    force_basic_auth: true
+    validate_certs: "{{ verify_ssl | default(true) }}"
+    headers: "{{ illumio_headers }}"
+    body_format: json
+    body: "{{ item }}"
+    status_code: 200,201,409
+  loop: "{{ syslog_targets }}"
+  loop_control: { label: "{{ item.name | default('syslog-dst') }}" }

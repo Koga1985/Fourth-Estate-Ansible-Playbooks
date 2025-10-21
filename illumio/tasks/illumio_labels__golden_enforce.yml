@@ -1,0 +1,66 @@
+---
+- name: Ensure artifacts dir
+  ansible.builtin.file:
+    path: "{{ artifacts_dir | default('/tmp/illumio-artifacts') }}"
+    state: directory
+    mode: "0755"
+
+- name: Set common headers
+  ansible.builtin.set_fact:
+    illumio_headers:
+      Accept: "application/json"
+      Content-Type: "application/json"
+      X-Illumio-Org: "{{ org_id }}"
+
+- name: Assert golden label map
+  ansible.builtin.assert:
+    that: [ golden_map is defined ]
+    fail_msg: "Provide golden_map: { appA: {env:prod, role:web, loc:us-east}, ... }"
+
+- name: Fetch workloads (for report)
+  ansible.builtin.uri:
+    url: "{{ pce_url }}/api/v2/orgs/{{ org_id }}/workloads"
+    method: GET
+    user: "{{ api_user }}"
+    password: "{{ api_key }}"
+    force_basic_auth: true
+    validate_certs: "{{ verify_ssl | default(true) }}"
+    headers: "{{ illumio_headers }}"
+    return_content: true
+  register: _wls
+
+- name: Write drift CSV (best effort compare by 'app' label)
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir | default('/tmp/illumio-artifacts') }}/labels_drift.csv"
+    mode: "0644"
+    content: |
+      href,hostname,app,golden_env,golden_role,golden_loc
+      {% for wl in _wls.json | default([]) %}
+      {% set app = (wl.labels | default([]) | selectattr('key','equalto','app') | map(attribute='value') | list | first | default('')) %}
+      {{ wl.href }},{{ wl.hostname | default('') }},{{ app }},{{ (golden_map.get(app,{}).env | default('')) }},{{ (golden_map.get(app,{}).role | default('')) }},{{ (golden_map.get(app,{}).loc | default('')) }}
+      {% endfor %}
+
+- name: Enforce golden labels (optional)
+  when: enforce | default(false) | bool
+  ansible.builtin.uri:
+    url: "{{ pce_url }}/api/v2{{ wl.href }}"
+    method: PUT
+    user: "{{ api_user }}"
+    password: "{{ api_key }}"
+    force_basic_auth: true
+    validate_certs: "{{ verify_ssl | default(true) }}"
+    headers: "{{ illumio_headers }}"
+    body_format: json
+    body:
+      labels:
+        - { key: "env", value: "{{ golden_map[app].env }}" }
+        - { key: "role", value: "{{ golden_map[app].role }}" }
+        - { key: "loc", value: "{{ golden_map[app].loc }}" }
+        - { key: "app", value: "{{ app }}" }
+    status_code: 200,201
+  loop: "{{ _wls.json | default([]) }}"
+  loop_control: { label: "{{ item.hostname | default(item.href) }}" }
+  vars:
+    wl: "{{ item }}"
+    app: "{{ (wl.labels | default([]) | selectattr('key','equalto','app') | map(attribute='value') | list | first | default('')) }}"
+  when: enforce | default(false) | bool and golden_map.get(app) is defined

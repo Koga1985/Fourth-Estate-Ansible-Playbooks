@@ -1,0 +1,33 @@
+---
+- name: Ensure artifacts dir
+  ansible.builtin.file:
+    path: "{{ artifacts_dir | default('/tmp/illumio-artifacts') }}"
+    state: directory
+    mode: "0755"
+
+- name: Set common headers
+  ansible.builtin.set_fact:
+    illumio_headers:
+      Accept: "application/json"
+      Content-Type: "application/json"
+      X-Illumio-Org: "{{ org_id }}"
+
+- name: Assert workload hrefs provided
+  ansible.builtin.assert:
+    that: [ workloads is defined, workloads | length > 0 ]
+    fail_msg: "Provide workloads (list of hrefs)."
+
+- name: Place workloads into visibility-only test mode
+  ansible.builtin.uri:
+    url: "{{ pce_url }}/api/v2{{ item }}/change_enforcement_mode"
+    method: POST
+    user: "{{ api_user }}"
+    password: "{{ api_key }}"
+    force_basic_auth: true
+    validate_certs: "{{ verify_ssl | default(true) }}"
+    headers: "{{ illumio_headers }}"
+    body_format: json
+    body: { "enforcement_mode": "visibility_only" }
+    status_code: 200,202
+  loop: "{{ workloads }}"
+  loop_control: { label: "{{ item }}" }

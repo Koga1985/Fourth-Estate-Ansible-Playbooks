@@ -1,0 +1,37 @@
+---
+- name: Ensure artifacts dir
+  ansible.builtin.file:
+    path: "{{ artifacts_dir | default('/tmp/illumio-artifacts') }}"
+    state: directory
+    mode: "0755"
+
+- name: Set common headers
+  ansible.builtin.set_fact:
+    illumio_headers:
+      Accept: "application/json"
+      Content-Type: "application/json"
+      X-Illumio-Org: "{{ org_id }}"
+
+- name: Assert change payload
+  ansible.builtin.assert:
+    that: [ snow.url is defined, snow.user is defined, snow.token is defined, change is defined ]
+    fail_msg: "Provide snow creds and change (short_description, description, payload)."
+
+- name: Open change for policy promotion
+  ansible.builtin.uri:
+    url: "{{ snow.url }}/api/now/table/{{ snow.change_table | default('change_request') }}"
+    method: POST
+    force_basic_auth: true
+    url_username: "{{ snow.user }}"
+    url_password: "{{ snow.token }}"
+    headers: { "Content-Type": "application/json" }
+    body_format: json
+    body: "{{ change }}"
+    status_code: 200,201
+  register: _chg
+
+- name: Save change artifact
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir | default('/tmp/illumio-artifacts') }}/servicenow_change.json"
+    mode: "0644"
+    content: "{{ _chg.json | default(_chg.content) }}"
