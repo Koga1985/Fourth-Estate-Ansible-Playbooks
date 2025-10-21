@@ -1,0 +1,47 @@
+---
+- name: Ensure artifacts dir
+  ansible.builtin.file:
+    path: "{{ artifacts_dir | default('/tmp/illumio-artifacts') }}"
+    state: directory
+    mode: "0755"
+
+- name: Set common headers
+  ansible.builtin.set_fact:
+    illumio_headers:
+      Accept: "application/json"
+      Content-Type: "application/json"
+      X-Illumio-Org: "{{ org_id }}"
+
+- name: Fetch workloads
+  ansible.builtin.uri:
+    url: "{{ pce_url }}/api/v2/orgs/{{ org_id }}/workloads"
+    method: GET
+    user: "{{ api_user }}"
+    password: "{{ api_key }}"
+    force_basic_auth: true
+    validate_certs: "{{ verify_ssl | default(true) }}"
+    headers: "{{ illumio_headers }}"
+    return_content: true
+  register: _wls
+
+- name: Group by app and compute
+  ansible.builtin.set_fact:
+    _apps: "{{ {} }}"
+- name: Aggregate
+  ansible.builtin.set_fact:
+    _apps: "{{ _apps | combine({ app: (_apps.get(app, {'total':0,'enforced':0,'labeled':0})) | combine({'total': (_apps.get(app,{'total':0}).total + 1), 'labeled': (_apps.get(app,{'labeled':0}).labeled + (1 if (wl.labels | default([])) | length > 0 else 0)), 'enforced': (_apps.get(app,{'enforced':0}).enforced + (1 if wl.enforcement_mode == 'enforced' else 0)) }) }) }}"
+  loop: "{{ _wls.json | default([]) }}"
+  vars:
+    wl: "{{ item }}"
+    app: "{{ (wl.labels | default([]) | selectattr('key','equalto','app') | map(attribute='value') | list | first | default('unlabeled')) }}"
+  loop_control: { label: "{{ wl.hostname | default(wl.href) }}" }
+
+- name: Write scorecards CSV
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir | default('/tmp/illumio-artifacts') }}/app_scorecards.csv"
+    mode: "0644"
+    content: |
+      app,total,labeled,enforced,labeled_pct,enforced_pct
+      {% for k,v in _apps.items() %}
+      {{ k }},{{ v.total }},{{ v.labeled }},{{ v.enforced }},{{ ((v.labeled|float/(v.total|float if v.total>0 else 1))*100) | round(2) }},{{ ((v.enforced|float/(v.total|float if v.total>0 else 1))*100) | round(2) }}
+      {% endfor %}

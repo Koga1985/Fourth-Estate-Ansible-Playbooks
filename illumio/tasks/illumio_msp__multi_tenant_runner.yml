@@ -1,0 +1,28 @@
+---
+- name: Ensure artifacts dir
+  ansible.builtin.file:
+    path: "{{ artifacts_dir | default('/tmp/illumio-artifacts') }}"
+    state: directory
+    mode: "0755"
+
+- name: Set common headers
+  ansible.builtin.set_fact:
+    illumio_headers:
+      Accept: "application/json"
+      Content-Type: "application/json"
+      X-Illumio-Org: "{{ org_id }}"
+
+- name: Assert tenants and action_task
+  ansible.builtin.assert:
+    that: [ tenants is defined, tenants | length > 0, action_task is defined ]
+    fail_msg: "Provide tenants list and action_task filename."
+
+- name: Loop tenants and include task with per-tenant creds
+  ansible.builtin.include_tasks: "{{ action_task }}"
+  loop: "{{ tenants }}"
+  loop_control: { loop_var: tnt, label: "{{ tnt.org_id }}" }
+  vars:
+    org_id: "{{ tnt.org_id }}"
+    api_user: "{{ tnt.api_user }}"
+    api_key: "{{ tnt.api_key }}"
+    pce_url: "{{ tnt.pce_url }}"

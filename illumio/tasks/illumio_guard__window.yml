@@ -1,0 +1,28 @@
+---
+- name: Ensure artifacts dir
+  ansible.builtin.file:
+    path: "{{ artifacts_dir | default('/tmp/illumio-artifacts') }}"
+    state: directory
+    mode: "0755"
+
+- name: Set common headers
+  ansible.builtin.set_fact:
+    illumio_headers:
+      Accept: "application/json"
+      Content-Type: "application/json"
+      X-Illumio-Org: "{{ org_id }}"
+
+- name: Assert window guard inputs
+  ansible.builtin.assert:
+    that: [ window_start is defined, window_end is defined ]
+    fail_msg: "Provide window_start/window_end (ISO)."
+
+- name: Current time (UTC)
+  ansible.builtin.set_fact:
+    now_utc: "{{ lookup('pipe','date -u +%Y-%m-%dT%H:%M:%SZ') }}"
+
+- name: Enforce change window
+  ansible.builtin.assert:
+    that: [ now_utc >= window_start, now_utc <= window_end ]
+    fail_msg: "Outside approved change window: {{ window_start }} .. {{ window_end }}"
+    success_msg: "Within approved change window."

@@ -1,0 +1,41 @@
+---
+- name: Ensure artifacts dir
+  ansible.builtin.file:
+    path: "{{ artifacts_dir | default('/tmp/illumio-artifacts') }}"
+    state: directory
+    mode: "0755"
+
+- name: Set common headers
+  ansible.builtin.set_fact:
+    illumio_headers:
+      Accept: "application/json"
+      Content-Type: "application/json"
+      X-Illumio-Org: "{{ org_id }}"
+
+- name: Assert upgrade inputs
+  ansible.builtin.assert:
+    that: [ upgrade_targets is defined ]
+    fail_msg: "Provide upgrade_targets (hrefs/selectors)."
+
+- name: Trigger upgrade (controller-driven example)
+  ansible.builtin.uri:
+    url: "{{ pce_url }}/api/v2/orgs/{{ org_id }}/software/ven/upgrade"
+    method: POST
+    user: "{{ api_user }}"
+    password: "{{ api_key }}"
+    force_basic_auth: true
+    validate_certs: "{{ verify_ssl | default(true) }}"
+    headers: "{{ illumio_headers }}"
+    body_format: json
+    body:
+      targets: "{{ upgrade_targets }}"
+      batch_size: "{{ batch_size | default(50) }}"
+      pause_seconds: "{{ batch_pause | default(60) }}"
+    status_code: 200,202
+  register: _upd
+
+- name: Save upgrade artifact
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir | default('/tmp/illumio-artifacts') }}/ven_upgrade.json"
+    mode: "0644"
+    content: "{{ _upd.json | default(_upd.content) }}"
