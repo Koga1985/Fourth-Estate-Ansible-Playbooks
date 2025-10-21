@@ -1,0 +1,25 @@
+---
+- name: Ensure artifacts dir
+  ansible.builtin.file:
+    path: "{{ artifacts_dir | default('/tmp/ot-artifacts') }}"
+    state: directory
+    mode: "0755"
+
+- name: Load golden
+  ansible.builtin.slurp: { src: "{{ topology_gold_path }}" }
+  register: _gold
+- name: Parse golden
+  ansible.builtin.set_fact:
+    golden: "{{ (_gold.content | b64decode) | from_yaml | default((_gold.content | b64decode) | from_json) }}"
+- name: Drift
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/topology_drift.csv"
+    mode: "0644"
+    content: |
+      type,src,dst,service
+      {% for f in _flows.json | difference(golden) %}
+      new,{{ f.src | default('') }},{{ f.dst | default('') }},{{ f.service | default('') }}
+      {% endfor %}
+      {% for f in golden | difference(_flows.json) %}
+      removed,{{ f.src | default('') }},{{ f.dst | default('') }},{{ f.service | default('') }}
+      {% endfor %}

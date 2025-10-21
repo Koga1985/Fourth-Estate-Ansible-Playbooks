@@ -1,0 +1,19 @@
+---
+- name: Ensure artifacts dir
+  ansible.builtin.file:
+    path: "{{ artifacts_dir | default('/tmp/ot-artifacts') }}"
+    state: directory
+    mode: "0755"
+
+- name: Guard dry-run
+  ansible.builtin.assert:
+    that: [ not (dry_run | default(true) | bool) ]
+    fail_msg: "dry_run=true: refusing destructive action."
+- name: Decommission asset
+  ansible.builtin.uri:
+    url: "{{ api.url }}{{ api.paths.asset_delete | default('/assets/delete') }}"
+    method: POST
+    headers: { "Authorization": "{{ api.token }}", "Content-Type": "application/json" }
+    body_format: json
+    body: "{{ {'id': asset_id, 'note': audit_note | default('decom via Ansible')} }}"
+    status_code: 200,202,204
