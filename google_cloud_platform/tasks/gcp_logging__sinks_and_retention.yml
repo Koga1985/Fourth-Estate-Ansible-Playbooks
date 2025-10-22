@@ -1,0 +1,31 @@
+---
+- vars:
+    artifacts_dir: "/tmp/gcp-artifacts"
+    apply_changes: false
+    gcloud_bin: "gcloud"
+  block:
+  - name: Ensure artifacts directory
+    ansible.builtin.file:
+      path: "{{ artifacts_dir }}"
+      state: directory
+      mode: "0755"
+
+- name: Plan aggregated sinks and retention
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/logging_sinks_plan.json"
+    mode: "0644"
+    content: "{{ logging_sinks | default([]) | to_nice_json }}"
+- name: Apply logging sinks (example)
+  when: apply_changes | bool
+  ansible.builtin.shell: |
+    set -euo pipefail
+    jq -c '.[]' "{{ artifacts_dir }}/logging_sinks_plan.json" | while read -r s; do
+      scope=$(jq -r '.scope' <<<"$s") # org:<id> | folder:<id> | project:<id>
+      name=$(jq -r '.name' <<<"$s"); dest=$(jq -r '.destination' <<<"$s"); filter=$(jq -r '.filter // ""' <<<"$s")
+      case "$scope" in
+        org:*) id=${scope#org:}; {{ gcloud_bin }} logging sinks describe "$name" --organization=$id >/dev/null 2>&1 || {{ gcloud_bin }} logging sinks create "$name" "$dest" --organization=$id ${filter:+--log-filter="$filter"} ;;
+        folder:*) id=${scope#folder:}; {{ gcloud_bin }} logging sinks describe "$name" --folder=$id >/dev/null 2>&1 || {{ gcloud_bin }} logging sinks create "$name" "$dest" --folder=$id ${filter:+--log-filter="$filter"} ;;
+        project:*) id=${scope#project:}; {{ gcloud_bin }} logging sinks describe "$name" --project=$id >/dev/null 2>&1 || {{ gcloud_bin }} logging sinks create "$name" "$dest" --project=$id ${filter:+--log-filter="$filter"} ;;
+      esac
+    done
+  args: { executable: /bin/bash }

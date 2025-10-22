@@ -1,0 +1,35 @@
+---
+- vars:
+    artifacts_dir: "/tmp/gcp-artifacts"
+    apply_changes: false
+    gcloud_bin: "gcloud"
+  block:
+  - name: Ensure artifacts directory
+    ansible.builtin.file:
+      path: "{{ artifacts_dir }}"
+      state: directory
+      mode: "0755"
+
+- name: Plan KMS IAM bindings (least-privilege; SA-only for crypto)
+
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/kms_bindings_plan.json"
+    mode: "0644"
+    content: "{{ {'bindings': kms_bindings | default([])} | to_nice_json }}"
+- name: Apply KMS bindings
+  when: apply_changes | bool
+  ansible.builtin.shell: |
+    set -euo pipefail
+    jq -c '.bindings[]?' "{{ artifacts_dir }}/kms_bindings_plan.json" | while read -r b; do
+      pid=$(jq -r '.project_id' <<<"$b")
+      loc=$(jq -r '.location' <<<"$b")
+      ring=$(jq -r '.keyring' <<<"$b")
+      key=$(jq -r '.key' <<<"$b")
+      role=$(jq -r '.role' <<<"$b")   # e.g., roles/cloudkms.cryptoKeyEncrypterDecrypter
+      member=$(jq -r '.member' <<<"$b") # only serviceAccount:<name>@<project>.iam.gserviceaccount.com
+      if [[ ! "$member" =~ ^serviceAccount: ]]; then
+        echo "Refusing non-SA member: $member" >&2; exit 1
+      fi
+      {{ gcloud_bin }} kms keys add-iam-policy-binding "$key" --keyring "$ring" --location "$loc" --project "$pid" --member "$member" --role "$role"
+    done
+  args: { executable: /bin/bash }

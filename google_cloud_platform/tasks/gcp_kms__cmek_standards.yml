@@ -1,0 +1,32 @@
+---
+- vars:
+    artifacts_dir: "/tmp/gcp-artifacts"
+    apply_changes: false
+    gcloud_bin: "gcloud"
+  block:
+  - name: Ensure artifacts directory
+    ansible.builtin.file:
+      path: "{{ artifacts_dir }}"
+      state: directory
+      mode: "0755"
+
+- name: Plan CMEK keyrings/keys per project/region
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/kms_cmek_plan.json"
+    mode: "0644"
+    content: "{{ {'cmek': cmek | default([])} | to_nice_json }}"
+- name: Apply CMEK (create keyrings/keys; set rotation)
+  when: apply_changes | bool
+  ansible.builtin.shell: |
+    set -euo pipefail
+    jq -c '.cmek[]?' "{{ artifacts_dir }}/kms_cmek_plan.json" | while read -r item; do
+      pid=$(jq -r '.project_id' <<<"$item")
+      region=$(jq -r '.region' <<<"$item")
+      ring=$(jq -r '.keyring' <<<"$item")
+      key=$(jq -r '.key' <<<"$item")
+      rota=$(jq -r '.rotation_period // "2592000s"' <<<"$item")  # default 30d
+      {{ gcloud_bin }} kms keyrings create "$ring" --location "$region" --project "$pid" 2>/dev/null || true
+      {{ gcloud_bin }} kms keys create "$key" --keyring "$ring" --location "$region" --purpose "encryption" --project "$pid" 2>/dev/null || true
+      {{ gcloud_bin }} kms keys update "$key" --keyring "$ring" --location "$region" --project "$pid" --rotation-period "$rota" --next-rotation-time "$(date -u -d '+30 days' --iso-8601=seconds)" || true
+    done
+  args: { executable: /bin/bash }

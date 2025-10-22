@@ -1,0 +1,33 @@
+---
+- vars:
+    artifacts_dir: "/tmp/gcp-artifacts"
+    apply_changes: false
+    gcloud_bin: "gcloud"
+  block:
+  - name: Ensure artifacts directory
+    ansible.builtin.file:
+      path: "{{ artifacts_dir }}"
+      state: directory
+      mode: "0755"
+
+- name: Plan CMEK enforcement (GCS/BQ/PubSub/Bigtable)
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/cmek_enforce_plan.json"
+    mode: "0644"
+    content: "{{ cmek_enforce | default({}) | to_nice_json }}"
+- name: Apply CMEK for GCS buckets (example)
+  when: apply_changes | bool
+  ansible.builtin.shell: |
+    set -euo pipefail
+    jq -c '.gcs[]?' "{{ artifacts_dir }}/cmek_enforce_plan.json" | while read -r b; do
+      pid=$(jq -r '.project_id' <<<"$b")
+      bucket=$(jq -r '.bucket' <<<"$b")
+      key=$(jq -r '.kms_key' <<<"$b")
+      {{ gcloud_bin }} storage buckets update --project "$pid" --default-encryption-key="$key" "gs://$bucket"
+    done
+  args: { executable: /bin/bash }
+- name: Drift report CSV
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/cmek_drift_report.csv"
+    mode: "0644"
+    content: "service,resource,desired_kms,actual_kms,status\n"
