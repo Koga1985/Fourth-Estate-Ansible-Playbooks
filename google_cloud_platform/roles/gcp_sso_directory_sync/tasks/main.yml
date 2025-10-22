@@ -1,0 +1,27 @@
+---
+- name: Ensure artifacts directory
+  ansible.builtin.file:
+    path: "{{ artifacts_dir | default('/tmp/gcp-artifacts') }}"
+    state: directory
+    mode: "0755"
+
+
+- name: Plan directory sync (sources, mappings, schedules)
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/sso_directory_sync_plan.json"
+    mode: "0644"
+    content: "{{ { 'idp': idp | default({}), 'group_mappings': group_mappings | default([]), 'schedules': schedules | default({}) } | to_nice_json }}"
+
+
+- name: Execute sync now (scaffold)
+  when: apply_changes | bool
+  ansible.builtin.shell: |
+    echo 'Trigger SCIM pull and reconcile groups; apply group→IAM bindings'
+  args: { executable: /bin/bash }
+
+
+- name: Emit sync results CSV
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/sso_sync_results.csv"
+    mode: "0644"
+    content: "group,email,members_added,members_removed,bound_scopes\n"

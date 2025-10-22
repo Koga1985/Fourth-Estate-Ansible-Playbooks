@@ -1,0 +1,27 @@
+---
+- name: Ensure artifacts directory
+  ansible.builtin.file:
+    path: "{{ artifacts_dir | default('/tmp/gcp-artifacts') }}"
+    state: directory
+    mode: "0755"
+
+
+- name: Plan GCS governance (UBLA/PAP/retention/CMEK)
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/gcs_governance_plan.json"
+    mode: "0644"
+    content: "{{ { 'buckets': buckets | default([]) } | to_nice_json }}"
+
+
+- name: Apply GCS governance (scaffold)
+  when: apply_changes | bool
+  ansible.builtin.shell: |
+    echo 'Enable UBLA/PAP; set retention locks; enforce CMEK; apply lifecycle rules'
+  args: { executable: /bin/bash }
+
+
+- name: Emit GCS governance drift CSV
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/gcs_governance_drift.csv"
+    mode: "0644"
+    content: "project,bucket,ubla,pap,retention,kms,public_objects,status\n"

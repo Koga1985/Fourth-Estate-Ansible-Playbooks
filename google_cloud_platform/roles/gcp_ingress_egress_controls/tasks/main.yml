@@ -1,0 +1,20 @@
+---
+- name: Ensure artifacts directory
+  ansible.builtin.file:
+    path: "{{ artifacts_dir | default('/tmp/gcp-artifacts') }}"
+    state: directory
+    mode: "0755"
+
+
+- name: Plan ingress/egress controls
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/ingress_egress_plan.json"
+    mode: "0644"
+    content: "{{ { 'load_balancers': lbs | default([]), 'tls': tls | default({}), 'waf': waf | default({}), 'egress': egress | default({}) } | to_nice_json }}"
+
+
+- name: Apply ingress/egress hardening (scaffold)
+  when: apply_changes | bool
+  ansible.builtin.shell: |
+    echo 'Configure TLS policy, mTLS backends, WAF rules; egress proxy patterns'
+  args: { executable: /bin/bash }

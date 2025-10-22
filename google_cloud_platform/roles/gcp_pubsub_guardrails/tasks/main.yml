@@ -1,0 +1,27 @@
+---
+- name: Ensure artifacts directory
+  ansible.builtin.file:
+    path: "{{ artifacts_dir | default('/tmp/gcp-artifacts') }}"
+    state: directory
+    mode: "0755"
+
+
+- name: Plan Pub/Sub guardrails
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/pubsub_guardrails_plan.json"
+    mode: "0644"
+    content: "{{ { 'topics': topics | default([]), 'subscriptions': subscriptions | default([]) } | to_nice_json }}"
+
+
+- name: Apply Pub/Sub guardrails (scaffold)
+  when: apply_changes | bool
+  ansible.builtin.shell: |
+    echo 'Set CMEK on topics; enforce schemas; configure DLQs; set IAM on subs'
+  args: { executable: /bin/bash }
+
+
+- name: Emit Pub/Sub drift CSV
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/pubsub_guardrails_drift.csv"
+    mode: "0644"
+    content: "project,topic,cmek,schema,dlq,status\n"

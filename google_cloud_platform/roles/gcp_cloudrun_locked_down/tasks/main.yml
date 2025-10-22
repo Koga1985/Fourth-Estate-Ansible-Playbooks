@@ -1,0 +1,20 @@
+---
+- name: Ensure artifacts directory
+  ansible.builtin.file:
+    path: "{{ artifacts_dir | default('/tmp/gcp-artifacts') }}"
+    state: directory
+    mode: "0755"
+
+
+- name: Plan Cloud Run lockdown
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/cloudrun_locked_down_plan.json"
+    mode: "0644"
+    content: "{{ { 'services': services | default([]), 'defaults': defaults | default({}), 'exceptions': exceptions | default([]) } | to_nice_json }}"
+
+
+- name: Apply Cloud Run lockdown (scaffold)
+  when: apply_changes | bool
+  ansible.builtin.shell: |
+    echo 'Set internal ingress, TLS minimums, CMEK, resource limits; apply exceptions'
+  args: { executable: /bin/bash }

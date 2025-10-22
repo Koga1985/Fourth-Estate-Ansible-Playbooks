@@ -1,0 +1,27 @@
+---
+- name: Ensure artifacts directory
+  ansible.builtin.file:
+    path: "{{ artifacts_dir | default('/tmp/gcp-artifacts') }}"
+    state: directory
+    mode: "0755"
+
+
+- name: Plan IAM baselines (custom roles, conditional bindings)
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/iam_foundations_plan.json"
+    mode: "0644"
+    content: "{{ { 'org_id': org_id, 'folders': folders | default([]), 'projects': projects | default([]), 'custom_roles': custom_roles | default([]), 'bindings': iam_bindings | default([]), 'break_glass': break_glass | default({}) } | to_nice_json }}"
+
+
+- name: Apply IAM (custom roles + bindings) — scaffold
+  when: apply_changes | bool
+  ansible.builtin.shell: |
+    echo 'Create custom roles and apply conditional bindings per plan'
+  args: { executable: /bin/bash }
+
+
+- name: Emit access review CSV
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/iam_access_review.csv"
+    mode: "0644"
+    content: "scope,principal,role,condition\n"

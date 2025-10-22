@@ -1,0 +1,20 @@
+---
+- name: Ensure artifacts directory
+  ansible.builtin.file:
+    path: "{{ artifacts_dir | default('/tmp/gcp-artifacts') }}"
+    state: directory
+    mode: "0755"
+
+
+- name: Plan GKE runtime policy
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/gke_runtime_policy_plan.json"
+    mode: "0644"
+    content: "{{ { 'psa_labels': psa_labels | default([]), 'gatekeeper': gatekeeper | default([]), 'seccomp': seccomp | default({}) } | to_nice_json }}"
+
+
+- name: Apply runtime policy (scaffold)
+  when: apply_changes | bool
+  ansible.builtin.shell: |
+    echo 'Label namespaces for PSA; apply Gatekeeper constraints; set seccomp defaults'
+  args: { executable: /bin/bash }

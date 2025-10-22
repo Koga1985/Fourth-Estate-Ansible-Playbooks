@@ -1,0 +1,27 @@
+---
+- name: Ensure artifacts directory
+  ansible.builtin.file:
+    path: "{{ artifacts_dir | default('/tmp/gcp-artifacts') }}"
+    state: directory
+    mode: "0755"
+
+
+- name: Plan Cloud SQL baseline
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/sql_baseline_plan.json"
+    mode: "0644"
+    content: "{{ { 'instances': instances | default([]) } | to_nice_json }}"
+
+
+- name: Apply Cloud SQL baseline (scaffold)
+  when: apply_changes | bool
+  ansible.builtin.shell: |
+    echo 'Disable public IP; set CMEK; enable backups/PITR; enable IAM DB auth'
+  args: { executable: /bin/bash }
+
+
+- name: Emit SQL baseline drift CSV
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/sql_baseline_drift.csv"
+    mode: "0644"
+    content: "project,instance,private_ip,cmek,backups,iam_db_auth,pitr,status\n"

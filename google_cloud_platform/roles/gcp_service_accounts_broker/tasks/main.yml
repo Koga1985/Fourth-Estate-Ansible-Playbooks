@@ -1,0 +1,27 @@
+---
+- name: Ensure artifacts directory
+  ansible.builtin.file:
+    path: "{{ artifacts_dir | default('/tmp/gcp-artifacts') }}"
+    state: directory
+    mode: "0755"
+
+
+- name: Plan SA lifecycle + WIF providers
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/sa_broker_plan.json"
+    mode: "0644"
+    content: "{{ { 'service_accounts': service_accounts | default([]), 'wif': wif | default([]), 'policies': sa_policies | default([]) } | to_nice_json }}"
+
+
+- name: Apply SA/WIF (scaffold)
+  when: apply_changes | bool
+  ansible.builtin.shell: |
+    echo 'Create SAs; configure WIF pools/providers to DoD IdP; bind least-privilege roles'
+  args: { executable: /bin/bash }
+
+
+- name: Emit SA inventory CSV
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/sa_inventory.csv"
+    mode: "0644"
+    content: "project,service_account,roles,wif_provider\n"

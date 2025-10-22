@@ -1,0 +1,20 @@
+---
+- name: Ensure artifacts directory
+  ansible.builtin.file:
+    path: "{{ artifacts_dir | default('/tmp/gcp-artifacts') }}"
+    state: directory
+    mode: "0755"
+
+
+- name: Plan audit evidence bundle
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/audit_governance_plan.json"
+    mode: "0644"
+    content: "{{ { 'scopes': scopes | default([]), 'outputs': outputs | default({}) } | to_nice_json }}"
+
+
+- name: Assemble evidence ZIP (scaffold)
+  when: apply_changes | bool
+  ansible.builtin.shell: |
+    cd "{{ artifacts_dir }}" && echo 'evidence manifests' > manifest.txt && zip -q audit_governance_bundle.zip manifest.txt || true
+  args: { executable: /bin/bash }
