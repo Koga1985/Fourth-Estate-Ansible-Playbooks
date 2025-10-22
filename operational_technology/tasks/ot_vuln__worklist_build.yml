@@ -1,0 +1,27 @@
+---
+# Thresholded remediation list w/ owners & windows.
+- name: Ensure artifacts dir
+  ansible.builtin.file:
+    path: "{{ artifacts_dir | default('/tmp/ot-artifacts') }}"
+    state: directory
+    mode: "0755"
+
+- name: Load findings
+  ansible.builtin.slurp:
+    src: "{{ artifacts_dir }}/vuln_findings.json"
+  register: _raw
+
+- name: Build list
+  ansible.builtin.set_fact:
+    findings: "{{ (_raw.content | b64decode | from_json) | default([]) }}"
+    worklist: "{{ (findings | selectattr('risk','ge', risk_threshold | default(80)) | list) }}"
+
+- name: Write worklist CSV
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/vuln_worklist.csv"
+    mode: "0644"
+    content: |
+      id,asset,risk,summary,owner,window
+      {% for i in worklist %}
+      {{ i.id }},{{ i.asset }},{{ i.risk }},{{ (i.summary | default('')) | replace(',',';') }},{{ i.owner | default('') }},{{ i.window | default('') }}
+      {% endfor %}

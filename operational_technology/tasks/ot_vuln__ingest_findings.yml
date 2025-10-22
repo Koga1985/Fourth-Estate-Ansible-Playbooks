@@ -1,0 +1,27 @@
+---
+# Pull vulnerabilities from Claroty/Dragos/TVM.
+- name: Ensure artifacts dir
+  ansible.builtin.file:
+    path: "{{ artifacts_dir | default('/tmp/ot-artifacts') }}"
+    state: directory
+    mode: "0755"
+
+- name: Assert provider config
+  ansible.builtin.assert:
+    that: [ provider.url is defined, provider.token is defined ]
+    fail_msg: "provider.url and provider.token required."
+
+- name: Pull findings
+  ansible.builtin.uri:
+    url: "{{ provider.url }}{{ provider.paths.findings | default('/vuln/findings') }}"
+    method: GET
+    headers: { Authorization: "{{ provider.token }}" }
+    validate_certs: "{{ verify_ssl | default(true) }}"
+    return_content: true
+  register: _find
+
+- name: Save findings
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/vuln_findings.json"
+    mode: "0644"
+    content: "{{ _find.json | to_nice_json }}"

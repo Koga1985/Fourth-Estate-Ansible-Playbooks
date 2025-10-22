@@ -1,0 +1,27 @@
+---
+# chrony/ntp/PTP audit; skew report to artifacts.
+- name: Ensure artifacts dir
+  ansible.builtin.file:
+    path: "{{ artifacts_dir | default('/tmp/ot-artifacts') }}"
+    state: directory
+    mode: "0755"
+
+- name: Collect time sources
+  ansible.builtin.shell: "chronyc sources -n || ntpq -pn || true"
+  register: _sources
+  changed_when: false
+
+- name: Collect time status
+  ansible.builtin.shell: "chronyc tracking || ntpstat || true"
+  register: _status
+  changed_when: false
+
+- name: Write audit report
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/timesync_audit_{{ inventory_hostname }}.txt"
+    mode: "0644"
+    content: |
+      === TIME SOURCES ===
+      {{ _sources.stdout }}
+      === TIME STATUS ===
+      {{ _status.stdout }}

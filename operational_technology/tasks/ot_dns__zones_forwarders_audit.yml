@@ -1,0 +1,31 @@
+---
+# OT resolver audit; conditional forwarders/ACLs (guarded for writes).
+- name: Ensure artifacts dir
+  ansible.builtin.file:
+    path: "{{ artifacts_dir | default('/tmp/ot-artifacts') }}"
+    state: directory
+    mode: "0755"
+
+- name: Audit resolver (placeholder commands)
+  ansible.builtin.shell: "cat /etc/resolv.conf || true"
+  register: _resolv
+  changed_when: false
+
+- name: Write resolver audit
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/dns_resolver_audit_{{ inventory_hostname }}.txt"
+    mode: "0644"
+    content: "{{ _resolv.stdout }}"
+
+- name: Guard write operations for forwarders/ACLs
+  when: desired_dns is defined
+  ansible.builtin.assert:
+    that:
+      - maintenance_window | default(false) | bool
+      - not (dry_run | default(true) | bool)
+    fail_msg: "Blocked: writes require maintenance_window=true and dry_run=false."
+
+- name: Apply forwarders/ACLs (placeholder)
+  when: desired_dns is defined and (not (dry_run | default(true) | bool))
+  ansible.builtin.debug:
+    msg: "Would apply desired forwarders/ACLs to OT DNS servers"

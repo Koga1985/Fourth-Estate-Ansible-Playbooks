@@ -1,0 +1,29 @@
+---
+# Parse cert expiry; CSV via openssl.
+- name: Ensure artifacts dir
+  ansible.builtin.file:
+    path: "{{ artifacts_dir | default('/tmp/ot-artifacts') }}"
+    state: directory
+    mode: "0755"
+
+- name: Generate certificate expiry report
+  ansible.builtin.shell: |
+    set -e
+    for c in {% for c in (certs | default([])) %}{{ c.path }} {% endfor %}; do
+      if [ -f "$c" ]; then
+        end=$(openssl x509 -in "$c" -noout -enddate 2>/dev/null | cut -d= -f2 || echo "unknown")
+        subj=$(openssl x509 -in "$c" -noout -subject 2>/dev/null | sed 's/subject= //')
+        echo "$(basename "$c"),$end,$subj"
+      fi
+    done
+  args: { executable: /bin/bash }
+  register: _certs
+  changed_when: false
+
+- name: Write expiry CSV
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/pki_expiry_report.csv"
+    mode: "0644"
+    content: |
+      cert,not_after,subject
+      {{ _certs.stdout }}
