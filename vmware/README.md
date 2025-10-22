@@ -1,105 +1,88 @@
 # VMware Automation (Ansible)
 
-> **BLUF:** This folder contains production‑ready Ansible playbooks and roles to automate common VMware vSphere operations (vCenter, ESXi, clusters, VMs, networking, snapshots, RBAC, and security/STIG tasks). Use these playbooks to provision, configure, audit, and operate VMware at scale with DoD/NIST/STIG‑minded defaults.
+BLUF: production-ready Ansible playbooks and roles to automate common VMware vSphere operations (vCenter, ESXi, clusters, VMs, networking, snapshots, RBAC, and security/STIG tasks).
 
----
+## What this folder provides
 
-## What’s in here
-
-Typical scenarios supported by the playbooks in this folder include:
-
-- vCenter & ESXi inventory and info‑gathering
+- vCenter & ESXi inventory and facts collection
 - Datacenter/cluster baseline tasks (create/update clusters, add hosts)
 - VM lifecycle (create from template/ISO, reconfigure CPU/RAM/Disk/NICs, customize guest)
-- Power & snapshot operations (on/off/reset, create/restore/delete snapshots)
+- Power & snapshot operations
 - Templates & content library operations
-- RBAC hardening (users/roles, least‑privilege, break‑glass)
-- Network & storage tasks (portgroups, vSwitch/Distributed Switch tweaks, datastore ops)
-- Security baselines (disable SSH where required, enforce VM encryption/secure‑boot where supported, audit for STIG controls)
-- Compliance, audit, and reporting helpers (facts collection, drift checks)
+- RBAC hardening (users/roles, least-privilege, break-glass)
+- Network & storage tasks (portgroups, vSwitch/Distributed Switch, datastores)
+- Security baselines and STIG/compliance helpers
 
-> **Tip:** Run `ls -1 *.yml` in this folder to see the available playbooks and start points. Many playbooks are organized with clear names like `vm_create.yml`, `vm_power.yml`, `snapshot_manage.yml`, `cluster_baseline.yml`, `vcenter_deploy.yml`, `stig_audit.yml`, etc.
-
----
+Tip: run `ls -1 *.yml` in this folder to see available playbooks.
 
 ## Prerequisites
 
-- **Ansible** 2.14+ (Ansible Automation Platform 2.x is fine)
-- **Collections** (both are commonly used across VMware playbooks):
-  - `community.vmware` – broad community‑supported VMware modules
-  - `vmware.vmware` – Red Hat Ansible Certified Content for VMware (REST modules)
-- **Python packages** (installed on the control node): `pyvmomi`, `requests`
+- Ansible 2.14+ (Automation Platform 2.x compatible)
+- Collections: `community.vmware` and/or `vmware.vmware`
+- Python packages: `pyvmomi`, `requests`
 
-Install requirements:
+Install the essentials on your control host:
 
 ```bash
 ansible-galaxy collection install community.vmware vmware.vmware
-python -m pip install --upgrade pyvmomi requests
+python -m pip install --user --upgrade pyvmomi requests
 ```
 
-> If you’re running on Ansible Automation Platform, make sure your Execution Environment contains these collections and Python wheels.
+If you're using Execution Environments (EE), include these collections and packages in the EE definition.
 
----
+## Credentials & connectivity
 
-## Credentials & Connectivity
-
-Define your vSphere access in **vaulted vars** or environment variables. Example (group_vars or extra vars):
+Keep credentials vaulted or stored in a secrets manager. Example `group_vars/vmware.yml`:
 
 ```yaml
 vcenter_hostname: "vcsa.example.mil"
-vcenter_username: "DOD\svc_ansible"
-vcenter_password: "{{ lookup('env', 'VCENTER_PASSWORD') }}"
-vcenter_validate_certs: false  # true in production with trusted CA
+vcenter_username: "svc_ansible@example.mil"
+vcenter_password: "{{ vault_vcenter_password }}"
+vcenter_validate_certs: true
 ```
 
-Recommended practices:
+Best practices:
 
-- Prefer **environment variables** + **Ansible Vault** for secrets; never commit passwords.
-- For most tasks use `hosts: localhost` with `connection: local` and API‑driven modules.
-- When acting **against many VMs**, consider `serial` to rate‑limit operations.
+- Use Ansible Vault for secrets or inject them from environment/CI.
+- Run API-driven tasks from `hosts: localhost` with `connection: local`.
+- Use `serial` when performing bulk operations.
 
----
+## Inventory & layout
 
-## Inventory & Layout
-
-Minimal inventory (API‑only workflows):
+Minimal API inventory:
 
 ```ini
 [localhost]
 127.0.0.1 ansible_connection=local
 ```
 
-Suggested structure (excerpt):
+Suggested layout:
 
-```
+```text
 vmware/
 ├── group_vars/
-│   └── vmware.yml                # shared defaults (vCenter host, auth, datacenter)
-├── host_vars/                    # per‑target overrides (optional)
-├── files/                        # ISO, OVF, templates metadata (optional)
-├── templates/                    # cloud‑init, customization specs, notes
-├── roles/                        # reusable role(s) for vm CRUD, RBAC, compliance
-└── *.yml                         # playbooks (vm_create, vm_power, snapshot, etc.)
+│   └── vmware.yml
+├── playbooks/
+├── roles/
+├── files/
+└── README.md
 ```
 
----
-
-## Common Variables
+## Common variables (examples)
 
 ```yaml
 # group_vars/vmware.yml
 vcenter_hostname: "vcsa.example.mil"
-vcenter_username: "DOD\svc_ansible"
+vcenter_username: "svc_ansible@example.mil"
 vcenter_password: "{{ vault_vcenter_password }}"
 vcenter_validate_certs: true
 
-# Placement
 vsphere_datacenter: "DC1"
 vsphere_cluster: "Prod-Cluster"
 vsphere_datastore: "Datastore01"
 vsphere_network: "VM Network"
 
-# VM Defaults
+# VM defaults
 vm_guest_os: "rhel9_64Guest"
 vm_folder: "Prod/Servers"
 vm_hw_version: 20
@@ -108,21 +91,20 @@ vm_ram_mb: 8192
 vm_disk_gb: 60
 ```
 
----
+## Usage examples
 
-## Usage Examples
+Below are short, runnable examples. Edit values in `group_vars/vmware.yml` before running.
 
-### 1) Create a VM from a template (with customization)
+### Create a VM from a template
 
 ```yaml
----
 - name: Create VM from template
   hosts: localhost
   gather_facts: false
   collections:
     - community.vmware
-  vars:
-    vm_name: web-01
+  vars_files:
+    - ../group_vars/vmware.yml
   tasks:
     - name: Clone VM from template
       community.vmware.vmware_guest:
@@ -134,7 +116,7 @@ vm_disk_gb: 60
         cluster: "{{ vsphere_cluster }}"
         folder: "{{ vm_folder }}"
         template: "rhel9-gold"
-        name: "{{ vm_name }}"
+        name: "web-01"
         state: poweredon
         hardware:
           memory_mb: "{{ vm_ram_mb }}"
@@ -154,17 +136,18 @@ vm_disk_gb: 60
 Run it:
 
 ```bash
-ansible-playbook vm_create_from_template.yml -e @group_vars/vmware.yml --ask-vault-pass
+ansible-playbook playbooks/vm_create_from_template.yml -e @group_vars/vmware.yml --ask-vault-pass
 ```
 
-### 2) Power operations (safe by default)
+### Power operations
 
 ```yaml
-- name: Power operations
+- name: Ensure VM powered off
   hosts: localhost
   gather_facts: false
   collections: [community.vmware]
-  vars: { vm_name: "web-01" }
+  vars_files:
+    - ../group_vars/vmware.yml
   tasks:
     - name: Ensure VM is powered off
       community.vmware.vmware_guest_powerstate:
@@ -172,17 +155,19 @@ ansible-playbook vm_create_from_template.yml -e @group_vars/vmware.yml --ask-vau
         username: "{{ vcenter_username }}"
         password: "{{ vcenter_password }}"
         validate_certs: "{{ vcenter_validate_certs }}"
-        name: "{{ vm_name }}"
+        name: "web-01"
         state: powered-off
 ```
 
-### 3) Snapshot management
+### Snapshot create
 
 ```yaml
-- name: Snapshot create with retention tag
+- name: Create snapshot before patch
   hosts: localhost
   gather_facts: false
   collections: [community.vmware]
+  vars_files:
+    - ../group_vars/vmware.yml
   vars:
     vm_name: "web-01"
     snap_name: "pre_patch_{{ lookup('pipe', 'date +%Y%m%d') }}"
@@ -198,63 +183,43 @@ ansible-playbook vm_create_from_template.yml -e @group_vars/vmware.yml --ask-vau
         description: "Automated snapshot before patching"
 ```
 
-### 4) RBAC hardening (role/user examples)
+## Compliance & STIG notes
 
-Use modules from `community.vmware`/`vmware.vmware` to create least‑privilege roles and bind to users/groups. Keep **break‑glass** accounts separate and vaulted.
+- Prefer read-only service accounts for discovery and audit playbooks.
+- Use `--check --diff` for previews and always schedule changes within approved windows.
+- Consider integrating OpenSCAP or other image-level compliance tools into guest pipelines.
 
----
+## Running & tagging
 
-## Compliance & STIG Notes
-
-- Prefer **read‑only service accounts** for discovery playbooks.
-- Enable **change windows** and use `--check` + `--diff` for previews.
-- Where applicable, disable ESXi SSH and enforce secure defaults (e.g., VM encryption, secure‑boot, signed drivers).
-- Consider pairing with OpenSCAP/SCAP Security Guide in your guest OS pipelines and keeping evidence ZIPs in your artifact store.
-
----
-
-## Running & Tagging
-
-All playbooks are **tagged** so you can filter by function:
+Playbooks are tagged; filter by function during runs. Example:
 
 ```bash
-ansible-playbook vmware_master.yml --tags "power,snapshot" -e @group_vars/vmware.yml
+ansible-playbook playbooks/vmware_master.yml --tags "power,snapshot" -e @group_vars/vmware.yml
 ```
 
-Safety:
+Tips:
 
-- Use `--limit` to scope by host group or a CSV list of VMs.
-- Start with `--check` (dry run) where modules support it.
-- Use `serial` in destructive workflows.
-
----
+- Use `--limit` to scope operations
+- Start with `--check` where supported
+- Use `serial` for bulk operations to reduce blast radius
 
 ## Troubleshooting
 
-- `validate_certs: false` is convenient for labs; **use true in prod** with a trusted CA.
-- If you see session or token errors, ensure the account has **Global Permissions** in vCenter and avoid exceeding API limits.
-- For REST modules (`vmware.vmware_rest`), confirm the vCenter version supports the given endpoint.
-
----
+- TLS / certificate errors: check `vcenter_validate_certs` and CA chain.
+- Session / token errors: verify account permissions and API limits.
+- Module compatibility: ensure `community.vmware` and `vmware.vmware` versions match your vCenter.
 
 ## Contributing
 
-PRs and issues welcome. Please include:
-
-- The exact playbook, variables, and sanitized logs (`-vvv`) that reproduce the issue.
-- Environment details (vCenter/ESXi versions, Ansible version, collections versions).
-
----
+- Document required variables in the playbook header or role README.
+- Include sanitized `-vvv` logs and environment details in issues or PRs.
 
 ## References
 
-- Ansible **community.vmware** collection (modules & usage): https://docs.ansible.com/ansible/latest/collections/community/vmware/index.html
-- Ansible **vmware.vmware** (certified content): https://github.com/ansible-collections/vmware.vmware
-- Intro to Ansible on VMware: https://docs.ansible.com/ansible/4/scenario_guides/vmware_scenarios/vmware_intro.html
-
----
+- community.vmware docs: <https://docs.ansible.com/ansible/latest/collections/community/vmware/index.html>
+- vmware.vmware collection: <https://github.com/ansible-collections/vmware.vmware>
+- Intro to Ansible on VMware: <https://docs.ansible.com/ansible/4/scenario_guides/vmware_scenarios/vmware_intro.html>
 
 ## License
 
 MIT (unless otherwise noted in specific roles or upstream modules).
-

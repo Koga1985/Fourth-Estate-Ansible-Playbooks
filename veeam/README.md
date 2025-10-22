@@ -1,68 +1,176 @@
-
 # Veeam Ansible Playbooks
 
-This folder contains Ansible tasks and roles to automate configuration and operational tasks for Veeam Backup & Replication environments.
+BLUF: Playbooks and roles to automate Veeam Backup & Replication management — installs, repository/job management, exports, and operational tasks.
 
-Contents
+## Contents
 
-- roles/: opinionated roles for common Veeam operations (if present)
+- `roles/` — reusable roles (if present)
+- `tasks/` — standalone playbooks and task files
 
-- tasks/: standalone playbooks and task files for ad-hoc operations
+## Prerequisites
 
-Quick start
+- Ansible 2.9+ (2.10+ recommended)
+- Python packages on the control node where needed (e.g., `requests`)
+- Access to the Veeam server(s) and API/CLI credentials
 
-1. Ensure you have Ansible 2.9+ (recommended 2.10+) and the necessary Python dependencies installed on your control host.
-2. Copy or adapt `inventory.ini` from the checkpoint examples and set the target hosts.
-3. Run a playbook from this folder, for example:
+## Quick start
+
+1. Ensure prerequisites are installed.
+2. Provide inventory and vaulted variables (see `group_vars` or use environment variables).
+3. Run a playbook, for example:
 
 ```bash
 ansible-playbook -i inventory.ini playbooks/veeam_install.yml
 ```
 
-Typical variables
+## Overview
 
-Below are commonly used variables. Check individual playbooks or roles for the full set.
+This folder contains Ansible playbooks and tasks intended to automate common Veeam administration workflows, including:
 
-- veeam_server: the FQDN or IP of the Veeam server
-- veeam_user: administrative user for API/CLI operations
-- veeam_password: password for `veeam_user` (use Ansible Vault or external secrets)
-- veeam_repository: name or id of the backup repository to use
+- Installing or patching Veeam components
+- Creating and validating backup repositories
+- Creating backup jobs and schedules
+- Exporting inventory and reports
+- Performing operational tasks (validate backups, trigger restores, manage retention)
 
-Example playbook snippet
+Where possible the playbooks use idempotent operations or guard checks; however, some Veeam API calls may be inherently imperative. Review each playbook's README and variable list before running in production.
+
+## Inventory & example group_vars
+
+Minimal inventory for API-driven workflows:
+
+```ini
+[localhost]
+127.0.0.1 ansible_connection=local
+```
+
+Example `group_vars/veeam.yml` (vault this file in production):
 
 ```yaml
-- name: Example — create backup job for VM
-  hosts: veeam_servers
-  vars:
-    veeam_user: "admin@example.local"
-    veeam_password: "!vault_encrypted!"
-    veeam_repository: "MainRepo"
+---
+veeam_server: "veeam.example.local"
+veeam_user: "ansible_bot"
+veeam_password: "!vault_hidden!"
+veeam_validate_certs: false
+veeam_repository: "MainRepo"
+veeam_repo_path: "/backup/repo"
+```
+
+## Detailed variables
+
+Describe the commonly used variables and what they control:
+
+- `veeam_server` — FQDN/IP for Veeam Backup & Replication (or REST API gateway)
+- `veeam_user` — service account with API/CLI rights
+- `veeam_password` — vault this value; prefer not to store plaintext
+- `veeam_validate_certs` — set `true` in production when using trusted CA
+- `veeam_repository` — repository name or identifier used by repository playbooks
+- `veeam_repo_path` — path for file-based repositories (if applicable)
+- `veeam_job_name`, `veeam_job_schedule` — used by job creation tasks
+
+## Example playbooks
+
+Below are compact examples that mirror common tasks; adapt paths and variable names to match your repo layout.
+
+1. Install or configure Veeam components (example stub)
+
+```yaml
+- name: Install Veeam Backup & Replication (stub)
+  hosts: localhost
+  gather_facts: no
+  vars_files:
+    - ../group_vars/veeam.yml
+  tasks:
+    - name: Ensure Veeam MSI installed (Windows)
+      win_package:
+        path: "./artifacts/VeeamBackup.msi"
+        state: present
+      when: ansible_os_family == 'Windows'
+```
+
+1. Create/ensure a repository
+
+```yaml
+- name: Ensure repository exists
+  hosts: localhost
+  gather_facts: no
+  vars_files:
+    - ../group_vars/veeam.yml
+  tasks:
+    - name: Ensure repository present via Veeam API (pseudo)
+      uri:
+        url: "https://{{ veeam_server }}/api/repositories"
+        method: POST
+        user: "{{ veeam_user }}"
+        password: "{{ veeam_password }}"
+        body_format: json
+        body:
+          name: "{{ veeam_repository }}"
+          path: "{{ veeam_repo_path | default('/backup/repo') }}"
+        status_code: 200,201
+        validate_certs: "{{ veeam_validate_certs }}"
+      register: repo_resp
+
+    - debug:
+        var: repo_resp.json
+```
+
+1. Create a backup job (example using a role)
+
+```yaml
+- name: Create a backup job
+  hosts: localhost
+  gather_facts: no
+  vars_files:
+    - ../group_vars/veeam.yml
   tasks:
     - include_role:
         name: veeam_create_job
       vars:
-        job_name: "nightly-vm-backup"
-        vm_list:
+        veeam_job_name: "nightly-vm-backup"
+        veeam_vm_list:
           - "vm-01"
           - "vm-02"
 ```
 
-Testing and validation
+## Testing & validation
 
-- Dry-run: use `--check --diff` for non-destructive validation where supported.
-- Logs: check the Veeam server logs and the Ansible output for task-level details.
+- Use `--check --diff` for dry runs where safe, but note many API endpoints do not fully support dry-run semantics.
+- Run playbooks against a lab Veeam environment before production.
+- Validate the Veeam UI and job history after changes.
 
-Security
+## Security
 
-- Never store plaintext credentials in this repository. Use Ansible Vault or a secrets manager.
+- Store secrets in Ansible Vault or a secrets manager. Example to run with vault:
 
-Notes
+```bash
+ansible-playbook playbooks/veeam_install.yml -e @group_vars/veeam.yml --ask-vault-pass
+```
 
-- This is a lightweight overview. See task files in `tasks/` and role README files for detailed instructions and required variables.
+- Ensure service accounts have only the permissions required for automation.
+
+## Troubleshooting
+
+- TLS/connection errors: confirm `veeam_validate_certs` and network reachability.
+- Authentication errors: verify the `veeam_user` has API privileges.
+- API schema changes: consult Veeam API docs for your product version.
+
+## Contributing
+
+- Document variables required by each playbook/role in the playbook header or role `README.md`.
+- When opening PRs, include sanitized logs (`-vvv`) and environment details (Veeam version, Ansible version, collection versions).
+
+## References
+
+- Veeam REST API / PowerShell SDK docs (vendor docs for your version)
+- Ansible `uri` module: <https://docs.ansible.com/ansible/latest/collections/ansible/builtin/uri_module.html>
+
+## Notes
+
+- This is an overview. See `tasks/` and any role README files for detailed usage and required variables.
 - If you want, I can add an example `inventory.ini` and a small test playbook to this folder.
 
-Maintainers / Contact
+## Maintainers / Contact
 
 - Repository: Koga1985/Ansible-Playbooks-2.0
 - Maintainers: see top-level README for contact details
-
