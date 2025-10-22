@@ -1,0 +1,26 @@
+
+---
+# ping REST API, version banner, token test; write health artifact.
+- name: Ensure artifacts dir
+  ansible.builtin.file:
+    path: "{{ artifacts_dir | default('/tmp/sl1-artifacts') }}"
+    state: directory
+    mode: "0755"
+
+- name: Assert SL1 API config
+  ansible.builtin.assert:
+    that: [ sl1.url is defined, sl1.token is defined ]
+    fail_msg: "sl1.url and sl1.token are required."
+- name: Ping API /api/version
+  ansible.builtin.uri:
+    url: "{{ sl1.url }}/api/version"
+    method: GET
+    headers: { Authorization: "Bearer {{ sl1.token }}" }
+    validate_certs: "{{ sl1.verify_ssl | default(true) }}"
+    return_content: true
+  register: _ver
+- name: Write health artifact
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/api_health.json"
+    mode: "0644"
+    content: "{{ _ver.json | to_nice_json if (_ver.json is defined) else _ver.content }}"
