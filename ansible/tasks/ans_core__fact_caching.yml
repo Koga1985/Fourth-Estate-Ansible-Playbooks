@@ -1,0 +1,43 @@
+---
+- name: ans_core__fact_caching.yml
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    artifacts_dir: "{{ artifacts_dir | default('/tmp/ansible-core-artifacts') }}"
+    apply_changes: "{{ apply_changes | default(false) }}"
+
+  pre_tasks:
+    - name: Ensure artifacts directory
+      ansible.builtin.file:
+        path: "{{ artifacts_dir }}"
+        state: directory
+        mode: "0755"
+
+vars:
+  ansible_cfg_path: "{{ ansible_cfg_path | default('.ansible.cfg') }}"
+  cache_backend: "{{ cache_backend | default('redis') }}"
+  cache_connection: "{{ cache_connection | default('redis://localhost:6379/0') }}"
+  cache_ttl: "{{ cache_ttl | default(86400) }}"
+tasks:
+  - name: Plan fact cache settings
+    ansible.builtin.copy:
+      dest: "{{ artifacts_dir }}/fact_cache_plan.json"
+      mode: "0644"
+      content: "{{ {'cache_backend': cache_backend,'cache_connection': cache_connection,'cache_ttl': cache_ttl} | to_nice_json }}"
+
+  - name: Apply cache settings to ansible.cfg
+    when: apply_changes | bool
+    loop:
+      - { section: 'defaults', option: 'fact_caching', value: '{{ cache_backend }}' }
+      - { section: 'defaults', option: 'fact_caching_connection', value: '{{ cache_connection }}' }
+      - { section: 'defaults', option: 'fact_caching_timeout', value: '{{ cache_ttl }}' }
+    loop_control: { label: "{{ item.option }}" }
+    community.general.ini_file:
+      path: "{{ ansible_cfg_path }}"
+      section: "{{ item.section }}"
+      option: "{{ item.option }}"
+      value: "{{ item.value }}"
+      no_extra_spaces: true
+      mode: "0644"

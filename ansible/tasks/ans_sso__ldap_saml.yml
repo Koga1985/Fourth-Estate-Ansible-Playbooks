@@ -1,0 +1,36 @@
+---
+- name: ans_sso__ldap_saml.yml
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    artifacts_dir: "{{ artifacts_dir | default('/tmp/ansible-core-artifacts') }}"
+    apply_changes: "{{ apply_changes | default(false) }}"
+
+  pre_tasks:
+    - name: Ensure artifacts directory
+      ansible.builtin.file:
+        path: "{{ artifacts_dir }}"
+        state: directory
+        mode: "0755"
+
+vars:
+  controller_host: "{{ controller_host | default('https://controller.example.mil') }}"
+  controller_oauthtoken: "{{ controller_oauthtoken | default(lookup('env','TOWER_TOKEN')) }}"
+  validate_certs: "{{ validate_certs | default(true) }}"
+  sso_settings: "{{ sso_settings | default({}) }}"
+tasks:
+  - name: Plan SSO settings (Controller/PAH)
+    ansible.builtin.copy:
+      dest: "{{ artifacts_dir }}/sso_plan.json"
+      mode: "0644"
+      content: "{{ sso_settings | to_nice_json }}"
+
+  - name: Apply Controller SSO (scaffold via settings API)
+    when: apply_changes | bool and (sso_settings | length > 0)
+    ansible.controller.settings:
+      controller_host: "{{ controller_host }}"
+      controller_oauthtoken: "{{ controller_oauthtoken }}"
+      validate_certs: "{{ validate_certs }}"
+      settings: "{{ sso_settings }}"

@@ -1,0 +1,45 @@
+---
+- name: ans_perf__forks_strategy.yml
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    artifacts_dir: "{{ artifacts_dir | default('/tmp/ansible-core-artifacts') }}"
+    apply_changes: "{{ apply_changes | default(false) }}"
+
+  pre_tasks:
+    - name: Ensure artifacts directory
+      ansible.builtin.file:
+        path: "{{ artifacts_dir }}"
+        state: directory
+        mode: "0755"
+
+vars:
+  ansible_cfg_path: "{{ ansible_cfg_path | default('.ansible.cfg') }}"
+  forks_by_size:
+    small: 20
+    medium: 50
+    large: 100
+  inventory_size: "{{ inventory_size | default('small') }}"
+  strategy: "{{ strategy | default('linear') }}"
+tasks:
+  - name: Plan forks/strategy
+    ansible.builtin.copy:
+      dest: "{{ artifacts_dir }}/perf_plan.json"
+      mode: "0644"
+      content: "{{ {'inventory_size': inventory_size, 'forks': forks_by_size[inventory_size], 'strategy': strategy} | to_nice_json }}"
+
+  - name: Apply forks/strategy
+    when: apply_changes | bool
+    loop:
+      - { option: 'forks', value: '{{ forks_by_size[inventory_size] | default(20) }}' }
+      - { option: 'strategy', value: '{{ strategy }}' }
+    loop_control: { label: "{{ item.option }}" }
+    community.general.ini_file:
+      path: "{{ ansible_cfg_path }}"
+      section: defaults
+      option: "{{ item.option }}"
+      value: "{{ item.value }}"
+      no_extra_spaces: true
+      mode: "0644"

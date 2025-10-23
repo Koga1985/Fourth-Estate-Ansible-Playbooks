@@ -1,0 +1,50 @@
+---
+- name: ans_core__vars_schema_check.yml
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    artifacts_dir: "{{ artifacts_dir | default('/tmp/ansible-core-artifacts') }}"
+    apply_changes: "{{ apply_changes | default(false) }}"
+
+  pre_tasks:
+    - name: Ensure artifacts directory
+      ansible.builtin.file:
+        path: "{{ artifacts_dir }}"
+        state: directory
+        mode: "0755"
+
+vars:
+  schemas_dir: "{{ schemas_dir | default('schemas') }}"
+  vars_roots: "{{ vars_roots | default(['group_vars','host_vars']) }}"
+tasks:
+  - name: Discover var files
+    ansible.builtin.shell: |
+      set -euo pipefail
+      find {{ vars_roots | join(' ') }} -type f -name "*.yml" -o -name "*.yaml" 2>/dev/null || true
+    args: { executable: /bin/bash }
+    register: varfiles
+    changed_when: false
+
+  - name: Emit discovered var files
+    ansible.builtin.copy:
+      dest: "{{ artifacts_dir }}/vars_discovered.txt"
+      mode: "0644"
+      content: "{{ (varfiles.stdout_lines | default([])) | join('\n') }}\n"
+
+  - name: Validate variables against JSON Schemas (by filename match)
+    when: apply_changes | bool
+    loop: "{{ varfiles.stdout_lines | default([]) }}"
+    loop_control: { label: "{{ item }}" }
+    community.general.jsonschema:
+      data: "{{ lookup('file', item) | from_yaml | default({}) }}"
+      schema: "{{ lookup('file', schemas_dir ~ '/' ~ (item | basename | regex_replace('\.(yml|yaml)$','.schema.json'))) | default('{}', true) | from_json }}"
+    register: schemares
+    ignore_errors: true
+
+  - name: Write schema results
+    ansible.builtin.copy:
+      dest: "{{ artifacts_dir }}/vars_schema_results.json"
+      mode: "0644"
+      content: "{{ schemares | to_nice_json }}"
