@@ -1,0 +1,115 @@
+---
+- name: ans_ops__artifacts_retention.yml
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    artifacts_dir: "{{ artifacts_dir | default('/tmp/ansible-artifacts') }}"
+    paths_extra: "{{ paths_extra | default([]) }}"
+    retention_days: "{{ retention_days | default(30) }}"
+    match_globs: "{{ match_globs | default(['*']) }}"
+    exclude_globs: "{{ exclude_globs | default([]) }}"
+    max_total_size_gb: "{{ max_total_size_gb | default(0) }}"
+    dry_run: "{{ dry_run | default(true) }}"
+    apply_changes: "{{ apply_changes | default(false) }}"
+    report_path: "{{ report_path | default(artifacts_dir ~ '/artifacts_retention_report.csv') }}"
+  pre_tasks:
+    - name: Ensure artifacts directory
+      ansible.builtin.file:
+        path: "{{ artifacts_dir }}"
+        state: directory
+        mode: "0755"
+
+  tasks:
+    - name: Build paths list (artifacts_dir + paths_extra)
+      ansible.builtin.set_fact:
+        prune_paths: "{{ [artifacts_dir] + paths_extra }}"
+    
+    - name: Find candidate files older than retention_days
+      ansible.builtin.find:
+        paths: "{{ prune_paths }}"
+        patterns: "{{ match_globs }}"
+        excludes: "{{ exclude_globs }}"
+        age: "{{ retention_days }}d"
+        age_stamp: mtime
+        file_type: file
+        recurse: true
+      register: old_files
+
+    - name: Sort files by mtime (oldest first) and compute totals
+      ansible.builtin.set_fact:
+        old_sorted: "{{ old_files.files | sort(attribute='mtime', reverse=false) }}"
+        total_bytes_old: "{{ (old_files.files | map(attribute='size') | list | sum) | default(0) }}"
+    
+    - name: Write report header
+      ansible.builtin.copy:
+        dest: "{{ report_path }}"
+        mode: "0644"
+        content: "path,size_bytes,mtime,dry_run\n"
+
+    - name: Append file lines to report
+      ansible.builtin.lineinfile:
+        path: "{{ report_path }}"
+        line: "{{ item.path }},{{ item.size }},{{ item.mtime }},{{ dry_run | ternary('true','false') }}"
+        create: yes
+      loop: "{{ old_sorted }}"
+      loop_control:
+        label: "{{ item.path }}"
+    
+    - name: Prune old files (age-based) — guarded
+      when: apply_changes | bool and (not dry_run | bool) and (old_sorted | length > 0)
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: absent
+      loop: "{{ old_sorted }}"
+      loop_control:
+        label: "{{ item.path }}"
+    
+    - name: Optional size-based guard — compute current size per root
+      ansible.builtin.command: >
+        du -sb {{ item | quote }}
+      register: du_sizes
+      changed_when: false
+      loop: "{{ prune_paths }}"
+    
+    - name: Build size map
+      ansible.builtin.set_fact:
+        size_map: "{{ dict( (du_sizes.results | map(attribute='item') | list) | zip( (du_sizes.results | map(attribute='stdout') | map('split','\t') | map('first') | map('int') | list) ) ) }}"
+    
+    - name: Enforce max_total_size_gb if set (>0) — plan which extra files to remove
+      when: (max_total_size_gb | int) > 0
+      ansible.builtin.set_fact:
+        size_limit_bytes: "{{ (max_total_size_gb | int) * 1024 * 1024 * 1024 }}"
+        overflow_candidates: >-
+          {{
+            old_sorted | list
+          }}
+    
+    - name: Calculate overflow per root and select extra removals
+      when: (max_total_size_gb | int) > 0
+      ansible.builtin.set_fact:
+        overflow_remove: >-
+          {{
+            (
+              old_sorted |
+              selectattr('path','search', (prune_paths | join('|')) ) |
+              list
+            )
+          }}
+    
+    - name: Prune extra (size-based) — guarded
+      when: apply_changes | bool and (not dry_run | bool) and (max_total_size_gb | int) > 0 and (overflow_remove | length > 0)
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: absent
+      loop: "{{ overflow_remove }}"
+      loop_control:
+        label: "{{ item.path }}"
+
+    - name: Summary
+      ansible.builtin.debug:
+        msg:
+          - "Report written to: {{ report_path }}"
+          - "Age-based candidates: {{ old_sorted | length }}"
+          - "Total old size (bytes): {{ total_bytes_old }}"
+          - "Applied deletions: {{ (apply_changes and (not dry_run)) | ternary('yes','no') }}"
