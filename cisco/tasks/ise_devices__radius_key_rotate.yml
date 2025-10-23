@@ -1,0 +1,33 @@
+
+---
+- name: ise_devices__radius_key_rotate — rotate RADIUS secrets (guarded waves)
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  collections:
+    - cisco.ise
+    - community.general
+  vars:
+    artifacts_dir: "{ artifacts_dir | default('/tmp/ise-artifacts') }"
+    apply_changes: "{ apply_changes | default(false) }"
+
+  vars:
+    rotate_plan: []
+  tasks:
+    - name: Emit plan
+      ansible.builtin.copy:
+        dest: "{{ artifacts_dir }}/radius_rotate_plan.json"
+        mode: "0644"
+        content: "{{ rotate_plan | to_nice_json }}"
+    - name: Apply rotations
+      when: apply_changes | bool
+      loop: "{{ rotate_plan }}"
+      loop_control:
+        label: "{{ item.name }}"
+      cisco.ise.network_device:
+        state: present
+        data:
+          name: "{{ item.name }}"
+          ipAddress: "{{ item.ipAddress | default(omit) }}"
+          authenticationSettings:
+            radiusSharedSecret: "{{ item.new_secret }}"

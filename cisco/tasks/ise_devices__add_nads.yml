@@ -1,0 +1,41 @@
+
+---
+- name: ise_devices__add_nads — bulk NADs
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  collections:
+    - cisco.ise
+    - community.general
+  vars:
+    artifacts_dir: "{ artifacts_dir | default('/tmp/ise-artifacts') }"
+    apply_changes: "{ apply_changes | default(false) }"
+
+  vars:
+    nads: []
+  tasks:
+    - name: Plan
+      ansible.builtin.copy:
+        dest: "{{ artifacts_dir }}/nads_plan.json"
+        mode: "0644"
+        content: "{{ nads | to_nice_json }}"
+    - name: Ensure NADs
+      when: apply_changes | bool
+      loop: "{{ nads }}"
+      loop_control:
+        label: "{{ item.name }} ({{ item.ipAddress }})"
+      cisco.ise.network_device:
+        state: present
+        data:
+          name: "{{ item.name }}"
+          ipAddress: "{{ item.ipAddress }}"
+          networkDeviceGroupList: "{{ item.ndgs | default([]) }}"
+          authenticationSettings:
+            radiusSharedSecret: "{{ item.radiusSharedSecret }}"
+          snmpsettings: "{{ item.snmp | default(omit) }}"
+      register: nad_res
+    - name: Results
+      ansible.builtin.copy:
+        dest: "{{ artifacts_dir }}/nads_result.json"
+        mode: "0644"
+        content: "{{ nad_res | default({}) | to_nice_json }}"

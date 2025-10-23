@@ -1,0 +1,32 @@
+
+---
+- name: ise_trustsec__matrix_policies — SGT-to-SGT matrix
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  collections:
+    - cisco.ise
+    - community.general
+  vars:
+    artifacts_dir: "{ artifacts_dir | default('/tmp/ise-artifacts') }"
+    apply_changes: "{ apply_changes | default(false) }"
+
+  vars:
+    matrix: []
+  tasks:
+    - name: Plan
+      ansible.builtin.copy:
+        dest: "{{ artifacts_dir }}/matrix_plan.json"
+        mode: "0644"
+        content: "{{ matrix | to_nice_json }}"
+    - name: Ensure egress matrix cells
+      when: apply_changes | bool
+      loop: "{{ matrix }}"
+      loop_control:
+        label: "{{ item.src }} → {{ item.dst }}"
+      cisco.ise.egress_matrix_cell:
+        state: present
+        data:
+          sourceSgtName: "{{ item.src }}"
+          destinationSgtName: "{{ item.dst }}"
+          sgaList: "{{ item.sgacls }}"

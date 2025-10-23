@@ -1,0 +1,45 @@
+
+---
+- name: ise_trustsec__sxpfabric_bindings — SXP peers & bindings
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  collections:
+    - cisco.ise
+    - community.general
+  vars:
+    artifacts_dir: "{ artifacts_dir | default('/tmp/ise-artifacts') }"
+    apply_changes: "{ apply_changes | default(false) }"
+
+  vars:
+    sxp_peers: []
+    bindings: []
+  tasks:
+    - name: Plan
+      ansible.builtin.copy:
+        dest: "{{ artifacts_dir }}/sxp_plan.json"
+        mode: "0644"
+        content: "{{ {'peers': sxp_peers, 'bindings': bindings} | to_nice_json }}"
+    - name: Ensure SXP peers
+      when: apply_changes | bool
+      loop: "{{ sxp_peers }}"
+      loop_control:
+        label: "{{ item.ip }} ({{ item.mode }})"
+      cisco.ise.sxp_local_connections:
+        state: present
+        data:
+          sXPDevice: "{{ item.ip }}"
+          mode: "{{ item.mode }}"
+          defaultPassword: "{{ item.password }}"
+          description: "Managed by Ansible"
+          retryCount: "{{ item.retry | default(60) }}"
+    - name: Ensure SXP bindings
+      when: apply_changes | bool
+      loop: "{{ bindings }}"
+      loop_control:
+        label: "{{ item.ip }}→{{ item.sgt }}"
+      cisco.ise.sgt_ip_sgt_mapping:
+        state: present
+        data:
+          sgtName: "{{ item.sgt }}"
+          ip: "{{ item.ip }}"

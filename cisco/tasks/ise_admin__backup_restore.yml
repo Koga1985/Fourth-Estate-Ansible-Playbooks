@@ -1,0 +1,63 @@
+
+---
+- name: ise_admin__backup_restore — backup & guarded restore
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  collections:
+    - cisco.ise
+    - community.general
+  vars:
+    artifacts_dir: "{ artifacts_dir | default('/tmp/ise-artifacts') }"
+    apply_changes: "{ apply_changes | default(false) }"
+
+  vars:
+    backup_repository_name: "{{ backup_repository_name | default('DefaultRepository') }}"
+    backup_password: "{{ backup_password | default(omit) }}"
+    backup_filename: "{{ backup_filename | default('ise-config-backup') }}"
+    restore_file: "{{ restore_file | default(omit) }}"
+    restore_passphrase: "{{ restore_passphrase | default(omit) }}"
+  tasks:
+    - name: Ensure artifacts directory
+      ansible.builtin.file:
+        path: "{{ artifacts_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Trigger on-demand config backup (only when apply_changes=true)
+      when: apply_changes | bool
+      cisco.ise.backup_config:
+        data:
+          repositoryName: "{{ backup_repository_name }}"
+          backupEncryptionKey: "{{ backup_password | default(omit) }}"
+          backupFileName: "{{ backup_filename }}"
+      register: backup_job
+
+    - name: Write backup job artifact
+      ansible.builtin.copy:
+        dest: "{{ artifacts_dir }}/backup_result.json"
+        mode: "0644"
+        content: "{{ backup_job | default({}) | to_nice_json }}"
+
+    - name: Guard — restore only when explicitly requested
+      when: apply_changes | bool and (restore_file is defined) and (restore_file is not none)
+      ansible.builtin.assert:
+        that:
+          - restore_file is match('.*')
+        success_msg: "Restore input looks sane"
+        fail_msg: "Restore file path invalid"
+
+    - name: Restore to sandbox (guarded)
+      when: apply_changes | bool and (restore_file | default('') | length > 0)
+      cisco.ise.restore_config:
+        data:
+          repositoryName: "{{ backup_repository_name }}"
+          restoreFileName: "{{ restore_file }}"
+          restoreEncryptionKey: "{{ restore_passphrase | default(omit) }}"
+      register: restore_job
+
+    - name: Write restore job artifact
+      ansible.builtin.copy:
+        dest: "{{ artifacts_dir }}/restore_result.json"
+        mode: "0644"
+        content: "{{ restore_job | default({}) | to_nice_json }}"

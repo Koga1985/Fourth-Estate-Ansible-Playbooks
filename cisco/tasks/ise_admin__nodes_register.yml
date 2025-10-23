@@ -1,0 +1,40 @@
+
+---
+- name: ise_admin__nodes_register — add PSN/MnT nodes
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  collections:
+    - cisco.ise
+    - community.general
+  vars:
+    artifacts_dir: "{ artifacts_dir | default('/tmp/ise-artifacts') }"
+    apply_changes: "{ apply_changes | default(false) }"
+
+  vars:
+    nodes: []
+  tasks:
+    - name: Plan nodes
+      ansible.builtin.copy:
+        dest: "{{ artifacts_dir }}/nodes_plan.json"
+        mode: "0644"
+        content: "{{ nodes | to_nice_json }}"
+    - name: Register nodes (primary perspective)
+      when: apply_changes | bool
+      loop: "{{ nodes }}"
+      loop_control:
+        label: "{{ item.fqdn | default(item.ip) }}"
+      cisco.ise.node_deployment:
+        state: present
+        data:
+          fqdn: "{{ item.fqdn | default(omit) }}"
+          ipAddress: "{{ item.ip | default(omit) }}"
+          username: "{{ item.username }}"
+          password: "{{ item.password }}"
+          roles: "{{ item.roles | default(['PSN']) }}"
+      register: node_add
+    - name: Write results
+      ansible.builtin.copy:
+        dest: "{{ artifacts_dir }}/nodes_register_result.json"
+        mode: "0644"
+        content: "{{ node_add | default({}) | to_nice_json }}"

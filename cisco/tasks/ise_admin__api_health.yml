@@ -1,0 +1,43 @@
+
+---
+- name: ise_admin__api_health — ping ERS/pxGrid
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  collections:
+    - cisco.ise
+    - community.general
+  vars:
+    artifacts_dir: "{ artifacts_dir | default('/tmp/ise-artifacts') }"
+    apply_changes: "{ apply_changes | default(false) }"
+
+  tasks:
+    - name: Ensure artifacts directory
+      ansible.builtin.file:
+        path: "{{ artifacts_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Get ISE ERS API version
+      cisco.ise.system_health:
+        op: get_version
+      register: ers_version
+      failed_when: false
+
+    - name: Get ISE node services status
+      cisco.ise.node_services:
+        op: get_node_services
+      register: node_services
+      failed_when: false
+
+    - name: pxGrid status (if enabled)
+      cisco.ise.px_grid_node:
+        op: get_pxgrid_settings
+      register: px_status
+      failed_when: false
+
+    - name: Write health artifact
+      ansible.builtin.copy:
+        dest: "{{ artifacts_dir }}/api_health.json"
+        mode: "0644"
+        content: "{{ {'ers_version': ers_version, 'node_services': node_services, 'pxgrid': px_status} | to_nice_json }}"

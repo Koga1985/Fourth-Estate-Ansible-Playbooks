@@ -1,0 +1,45 @@
+
+---
+- name: ise_idstore__internal_users — internal users & groups
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  collections:
+    - cisco.ise
+    - community.general
+  vars:
+    artifacts_dir: "{ artifacts_dir | default('/tmp/ise-artifacts') }"
+    apply_changes: "{ apply_changes | default(false) }"
+
+  vars:
+    internal_groups: []
+    internal_users: []
+  tasks:
+    - name: Plan
+      ansible.builtin.copy:
+        dest: "{{ artifacts_dir }}/internal_users_plan.json"
+        mode: "0644"
+        content: "{{ {'groups': internal_groups, 'users': internal_users} | to_nice_json }}"
+    - name: Ensure internal user groups
+      when: apply_changes | bool
+      loop: "{{ internal_groups }}"
+      loop_control:
+        label: "{{ item }}"
+      cisco.ise.user_group:
+        state: present
+        data:
+          name: "{{ item }}"
+    - name: Ensure internal users
+      when: apply_changes | bool
+      loop: "{{ internal_users }}"
+      loop_control:
+        label: "{{ item.name }}"
+      cisco.ise.internal_user:
+        state: present
+        data:
+          name: "{{ item.name }}"
+          password: "{{ item.password }}"
+          enabled: true
+          description: "{{ item.description | default('') }}"
+          userGroup:
+            - name: "{{ item.groups | default([]) | first | default('Employees') }}"

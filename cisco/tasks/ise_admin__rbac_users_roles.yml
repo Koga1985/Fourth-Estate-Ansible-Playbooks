@@ -1,0 +1,37 @@
+
+---
+- name: ise_admin__rbac_users_roles — admin users & roles
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  collections:
+    - cisco.ise
+    - community.general
+  vars:
+    artifacts_dir: "{ artifacts_dir | default('/tmp/ise-artifacts') }"
+    apply_changes: "{ apply_changes | default(false) }"
+
+  vars:
+    admin_users: []
+    tacacs:
+      enabled: false
+      cmdsets: []
+  tasks:
+    - name: Plan
+      ansible.builtin.copy:
+        dest: "{{ artifacts_dir }}/rbac_plan.json"
+        mode: "0644"
+        content: "{{ {'admins': admin_users, 'tacacs': tacacs} | to_nice_json }}"
+
+    - name: Ensure admin users
+      when: apply_changes | bool
+      loop: "{{ admin_users }}"
+      loop_control:
+        label: "{{ item.username }}"
+      cisco.ise.admin_user:
+        state: present
+        data:
+          name: "{{ item.username }}"
+          password: "{{ item.password }}"
+          description: "{{ item.description | default('') }}"
+          adminGroups: ["{{ item.role | default('Super Admin') }}"]

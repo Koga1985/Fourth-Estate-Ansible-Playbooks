@@ -1,0 +1,54 @@
+
+---
+- name: ise_admin__certificates_rotate — system certs & trust bundles
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  collections:
+    - cisco.ise
+    - community.general
+  vars:
+    artifacts_dir: "{ artifacts_dir | default('/tmp/ise-artifacts') }"
+    apply_changes: "{ apply_changes | default(false) }"
+
+  vars:
+    trust_bundles: []
+    system_certs:
+      - purpose: "Admin"
+        pem_file: ""
+        key_file: ""
+        key_pass: ""
+      - purpose: "EAP"
+        pem_file: ""
+        key_file: ""
+        key_pass: ""
+      - purpose: "pxGrid"
+        pem_file: ""
+        key_file: ""
+        key_pass: ""
+  tasks:
+    - name: Emit plan
+      ansible.builtin.copy:
+        dest: "{{ artifacts_dir }}/certs_rotate_plan.json"
+        mode: "0644"
+        content: "{{ {'trust_bundles': trust_bundles | length, 'system_certs': system_certs} | to_nice_json }}"
+
+    - name: Import trust bundles (placeholder per ISE version)
+      when: apply_changes | bool
+      loop: "{{ trust_bundles }}"
+      loop_control:
+        label: "bundle-{{ loop.index }}"
+      ansible.builtin.debug:
+        msg: "Import CA bundle {{ item }} via appropriate ISE trust store API."
+
+    - name: Cert expiry report (local openssl parse)
+      ansible.builtin.shell: |
+        set -euo pipefail
+        for p in $(printf "%s\n" "{{ system_certs | map(attribute='pem_file') | list | join(' ') }}"); do
+          [ -f "$p" ] || continue
+          end="$(openssl x509 -enddate -noout -in "$p" | cut -d= -f2-)"
+          printf "%s,%s\n" "$p" "$end"
+        done | tee "{{ artifacts_dir }}/certs_expiry_report.csv"
+      args:
+        executable: /bin/bash
+      changed_when: false

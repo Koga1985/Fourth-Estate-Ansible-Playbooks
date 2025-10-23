@@ -1,0 +1,32 @@
+
+---
+- name: ise_trustsec__sgt_define — SGTs
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  collections:
+    - cisco.ise
+    - community.general
+  vars:
+    artifacts_dir: "{ artifacts_dir | default('/tmp/ise-artifacts') }"
+    apply_changes: "{ apply_changes | default(false) }"
+
+  vars:
+    sgts: []
+  tasks:
+    - name: Plan
+      ansible.builtin.copy:
+        dest: "{{ artifacts_dir }}/sgt_plan.json"
+        mode: "0644"
+        content: "{{ sgts | to_nice_json }}"
+    - name: Ensure SGTs
+      when: apply_changes | bool
+      loop: "{{ sgts }}"
+      loop_control:
+        label: "{{ item.name }}"
+      cisco.ise.security_group:
+        state: present
+        data:
+          name: "{{ item.name }}"
+          value: "{{ item.value | default(omit) }}"
+          description: "{{ item.description | default('') }}"
