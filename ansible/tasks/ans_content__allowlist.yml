@@ -5,25 +5,81 @@
   gather_facts: false
 
   vars:
-    controller_host: "{{ controller_host | default('https://controller.example.mil') }}"
-    controller_oauthtoken: "{{ controller_oauthtoken | default(lookup('env','TOWER_TOKEN')) }}"
-    validate_certs: "{{ validate_certs | default(true) }}"
     artifacts_dir: "{{ artifacts_dir | default('/tmp/ansible-artifacts') }}"
     apply_changes: "{{ apply_changes | default(false) }}"
+    # Inputs (can be overridden via -e or inventory)
+    allowlist: "{{ allowlist | default([]) }}"
+    blocklist: "{{ blocklist | default([]) }}"
 
   pre_tasks:
-    - name: Ensure artifacts directory
+    - name: Ensure artifacts directory (least privilege)
       ansible.builtin.file:
         path: "{{ artifacts_dir }}"
         state: directory
-        mode: "0755"
+        mode: "0750"
 
-vars:
-  allowlist: "{{ allowlist | default([]) }}"
-  blocklist: "{{ blocklist | default([]) }}"
-tasks:
-  - name: Write allow/block lists
-    ansible.builtin.copy:
-      dest: "{{ artifacts_dir }}/collections_allowblock.json"
-      mode: "0644"
-      content: "{{ {'allow': allowlist, 'block': blocklist} | to_nice_json }}"
+    - name: Validate input types are lists
+      ansible.builtin.assert:
+        that:
+          - allowlist is iterable
+          - blocklist is iterable
+        fail_msg: "allowlist and blocklist must be lists."
+
+    - name: Optional schema check for collection names (namespace.collection)
+      ansible.builtin.assert:
+        that:
+          - (allowlist | default([])) | difference(
+              (allowlist | select('match', '^[a-z0-9_]+\\.[a-z0-9_]+$') | list)
+            ) | length == 0
+          - (blocklist | default([])) | difference(
+              (blocklist | select('match', '^[a-z0-9_]+\\.[a-z0-9_]+$') | list)
+            ) | length == 0
+        fail_msg: "Items must match 'namespace.collection' (lowercase letters, digits, underscore)."
+        quiet: true
+
+    - name: Normalize inputs (dedupe + sort)
+      ansible.builtin.set_fact:
+        _allow_norm: "{{ (allowlist | unique | sort) | list }}"
+        _block_norm: "{{ (blocklist | unique | sort) | list }}"
+
+    - name: Prevent overlap between allow and block
+      ansible.builtin.assert:
+        that:
+          - (_allow_norm | intersect(_block_norm)) | length == 0
+        fail_msg: "An item cannot be in both allowlist and blocklist: {{ (_allow_norm | intersect(_block_norm)) | join(', ') }}"
+
+  tasks:
+    - name: Build JSON payload
+      ansible.builtin.set_fact:
+        _allowblock_json: "{{ {'allow': _allow_norm, 'block': _block_norm} | to_nice_json }}"
+
+    - name: Write allow/block lists JSON (fail closed unless apply_changes=true)
+      when: apply_changes | bool
+      ansible.builtin.copy:
+        dest: "{{ artifacts_dir }}/collections_allowblock.json"
+        mode: "0640"
+        owner: root
+        group: root
+        backup: true
+        content: "{{ _allowblock_json }}"
+
+    - name: Show planned JSON (dry-run output)  # visible even if apply_changes=false
+      ansible.builtin.debug:
+        msg: "{{ _allowblock_json }}"
+      when: not apply_changes | bool
+
+    - name: Compute checksum of JSON
+      when: apply_changes | bool
+      ansible.builtin.stat:
+        path: "{{ artifacts_dir }}/collections_allowblock.json"
+        checksum_algorithm: sha256
+      register: _ab_stat
+
+    - name: Write checksum sidecar
+      when: apply_changes | bool
+      ansible.builtin.copy:
+        dest: "{{ artifacts_dir }}/collections_allowblock.json.sha256"
+        mode: "0640"
+        owner: root
+        group: root
+        content: "{{ _ab_stat.stat.checksum }}  collections_allowblock.json\n"
