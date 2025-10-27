@@ -5,35 +5,213 @@
   gather_facts: false
 
   vars:
-    controller_host: "{{ controller_host | default('https://controller.example.mil') }}"
-    controller_oauthtoken: "{{ controller_oauthtoken | default(lookup('env','TOWER_TOKEN')) }}"
-    validate_certs: "{{ validate_certs | default(true) }}"
     artifacts_dir: "{{ artifacts_dir | default('/tmp/ansible-artifacts') }}"
     apply_changes: "{{ apply_changes | default(false) }}"
+    # Expect: collections: ["namespace.collection", ...]
+    collections: "{{ collections | default([]) }}"
 
   pre_tasks:
-    - name: Ensure artifacts directory
+    - name: Ensure artifacts directory (least privilege)
       ansible.builtin.file:
         path: "{{ artifacts_dir }}"
         state: directory
-        mode: "0755"
+        mode: "0750"
 
-vars:
-  collections: "{{ collections | default([]) }}"
-tasks:
-  - name: Plan deprecations scan
-    ansible.builtin.copy:
-      dest: "{{ artifacts_dir }}/deprecations_plan.json"
-      mode: "0644"
-      content: "{{ collections | to_nice_json }}"
+    - name: Validate collections is a list of strings like namespace.collection
+      ansible.builtin.assert:
+        that:
+          - collections is iterable
+          - (collections | length) >= 1
+          - (collections | select('match', '^[a-z0-9_]+\\.[a-z0-9_]+$') | list) | length == (collections | length)
+        fail_msg: "Provide collections as ['namespace.collection', ...] (lowercase letters, digits, underscore)."
 
-  - name: Generate deprecations report (ansible-doc parse)
-    when: apply_changes | bool
-    ansible.builtin.shell: |
-      set -euo pipefail
-      : > "{{ artifacts_dir }}/deprecations_report.txt"
-      for c in {{ collections | default([]) | join(' ') }}; do
-        ansible-doc -t module -l | grep "^$c\." || true
-      done >> "{{ artifacts_dir }}/deprecations_report.txt"
-    args: { executable: /bin/bash }
-    changed_when: false
+    - name: Write scan plan (always)
+      ansible.builtin.copy:
+        dest: "{{ artifacts_dir }}/deprecations_plan.json"
+        mode: "0640"
+        owner: root
+        group: root
+        content: "{{ collections | to_nice_json }}"
+
+  tasks:
+    # Enumerate modules belonging to each collection by filtering the full module list.
+    - name: List all modules once (text)
+      ansible.builtin.command:
+        cmd: ansible-doc -t module -l
+      register: _all_modules
+      changed_when: false
+
+    - name: Build mapping collection -> module list
+      vars:
+        all_lines: "{{ _all_modules.stdout_lines | default([]) }}"
+      ansible.builtin.set_fact:
+        _collection_modules: >-
+          {{
+            dict(
+              collections
+              | zip(
+                  collections
+                  | map('regex_replace', '^(.*)$', '^\\1\\.')
+                  | map('regex_search', '(?s).*')  # no-op to keep list shape
+                  | list
+                  | map('extract', [], 0)          # dummy to maintain indices
+              )
+            )
+          }}
+      changed_when: false
+
+    - name: Fill mapping with actual module names per collection
+      vars:
+        all_lines: "{{ _all_modules.stdout_lines | default([]) }}"
+      ansible.builtin.set_fact:
+        _collection_modules: >-
+          {{
+            dict(
+              collections | zip(
+                collections
+                | map('regex_replace', '^(.*)$', '\\1\\.')
+                | map('extract', [], 0)
+                | list
+                | map('regex_replace', '.*', '')  # no-op
+              )
+            )
+            | combine(
+                dict(
+                  collections | map('community.general.list_filter',
+                    all_lines | map('regex_replace','\\s+.*$','') | list,
+                    wantlist=True
+                  ) | list
+                )
+              )
+          }}
+      changed_when: false
+      vars_prompt: []
+      # Helper filter to select lines starting with "<collection>."
+      # If you don't have community.general, replace with a custom filter or use a small loop+selectattr.
+
+    # Safer approach without custom filters: rebuild mapping via a loop
+    - name: Rebuild mapping via loop (portable)
+      vars:
+        all_names: "{{ (_all_modules.stdout_lines | default([])) | map('regex_replace','\\s+.*$','') | list }}"
+      set_fact:
+        _collection_modules: "{{ (_collection_modules | default({})) | combine({ item: (all_names | select('match', '^' + item | regex_escape + '\\.') | list) }) }}"
+      loop: "{{ collections }}"
+      changed_when: false
+
+    - name: Flatten to a list of fully-qualified module names
+      ansible.builtin.set_fact:
+        _fq_modules: "{{ _collection_modules.values() | list | sum(start=[]) | unique | sort }}"
+      changed_when: false
+
+    - name: Inspect each module via ansible-doc JSON (primary path)
+      ansible.builtin.command:
+        cmd: ansible-doc -t module -j {{ item }}
+      loop: "{{ _fq_modules }}"
+      register: _mod_json
+      failed_when: false
+      changed_when: false
+
+    - name: Inspect each module via ansible-doc text (fallback)
+      when: item.rc != 0 or (item.stdout | length) == 0
+      ansible.builtin.command:
+        cmd: ansible-doc {{ item.item }}
+      loop: "{{ _mod_json.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+      register: _mod_text
+      failed_when: false
+      changed_when: false
+
+    - name: Build deprecations dataset
+      vars:
+        as_json: >-
+          {{
+            dict(_mod_json.results
+              | selectattr('rc','eq',0)
+              | map(attribute='stdout')
+              | map('from_json')
+            )
+          }}
+        text_fallback: "{{ dict(_mod_text.results | map(attribute='item.item') | zip(_mod_text.results | map(attribute='stdout'))) if _mod_text is defined else {} }}"
+      ansible.builtin.set_fact:
+        _deprecations: >-
+          {{
+            _fq_modules
+            | map('extract', as_json, default=None)
+            | list
+            | zip(_fq_modules)
+            | map('community.general.dict_kv', 'doc', 'name')  # make {doc: <json or None>, name: <fqcn>}
+            | list
+            | map('extract', None)
+          }}
+      changed_when: false
+      vars_prompt: []
+      # If you lack community.general filters, we’ll build the structure in the next task.
+
+    - name: Build deprecations dataset (portable without extra filters)
+      vars:
+        as_json: >-
+          {{
+            dict(_mod_json.results
+              | selectattr('rc','eq',0)
+              | map(attribute='stdout')
+              | map('from_json')
+            )
+          }}
+        dataset: >-
+          {%- set out=[] -%}
+          {%- for fq in _fq_modules -%}
+            {%- set d = as_json.get(fq, {}) -%}
+            {%- set text = ( _mod_text.results | selectattr('item.item','equalto',fq) | map(attribute='stdout') | list | first ) if _mod_text is defined else '' -%}
+            {%- set deprec = (
+                 (d.get(fq, {}).get('doc', {}).get('deprecated') is defined and d.get(fq, {}).get('doc', {}).get('deprecated'))
+                 or (text is string and ('DEPRECATED' in text or 'deprecated' in text))
+               ) -%}
+            {%- set reason = d.get(fq, {}).get('doc', {}).get('deprecated') if d.get(fq, {}).get('doc', {}).get('deprecated') else
+                             ( (text | regex_search('(?sm)^\\s*DEPRECATED[:]?\\s*(.+)$', '\\1')) | default('', true) ) -%}
+            {%- set _ = out.append({
+                  'module': fq,
+                  'collection': fq.split('.')[0] ~ '.' ~ fq.split('.')[1],
+                  'deprecated': deprec | bool,
+                  'reason': reason | default(''),
+               }) -%}
+          {%- endfor -%}
+          {{ out }}
+      ansible.builtin.set_fact:
+        deprecations_report: "{{ dataset }}"
+      changed_when: false
+
+    - name: Write deprecations report JSON
+      when: apply_changes | bool
+      ansible.builtin.copy:
+        dest: "{{ artifacts_dir }}/deprecations_report.json"
+        mode: "0640"
+        owner: root
+        group: root
+        backup: true
+        content: "{{ deprecations_report | to_nice_json }}"
+
+    - name: Show preview (dry run)
+      when: not apply_changes | bool
+      ansible.builtin.debug:
+        msg: >-
+          {{
+            (deprecations_report | selectattr('deprecated','equalto',true) | list)[:20]
+            | to_nice_json
+          }}
+
+    - name: Compute checksum
+      when: apply_changes | bool
+      ansible.builtin.stat:
+        path: "{{ artifacts_dir }}/deprecations_report.json"
+        checksum_algorithm: sha256
+      register: _chk
+
+    - name: Write checksum sidecar
+      when: apply_changes | bool
+      ansible.builtin.copy:
+        dest: "{{ artifacts_dir }}/deprecations_report.json.sha256"
+        mode: "0640"
+        owner: root
+        group: root
+        content: "{{ _chk.stat.checksum }}  deprecations_report.json\n"
