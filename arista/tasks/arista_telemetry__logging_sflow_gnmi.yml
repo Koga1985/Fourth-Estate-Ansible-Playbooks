@@ -1,0 +1,61 @@
+---
+- name: Syslog + sFlow + optional gNMI/IPFIX
+  hosts: arista
+  gather_facts: false
+  collections:
+    - arista.eos
+    - arista.cvp
+    - ansible.utils
+  vars:
+    apply_changes: false
+    artifacts_dir: "/tmp/arista-artifacts"
+  pre_tasks:
+    - name: Ensure artifacts dir
+      ansible.builtin.file:
+        path: "{ artifacts_dir }"
+        state: directory
+        mode: "0755"
+
+  vars:
+    logging:
+      hosts: [{ host: "10.0.0.20", port: 514, protocol: "udp", vrf: "MGMT" }]
+    sflow:
+      enabled: true
+      agent: "Management1"
+      collectors: [{ host: "10.0.0.30", port: 6343 }]
+    gnmi: { enabled: false, port: 6030 }
+    ipfix: { enabled: false, exporter: { destination: "10.0.0.40", port: 2055, source: "Vlan10" } }
+  tasks:
+    - name: Plan telemetry
+      ansible.builtin.copy:
+        dest: "{{ artifacts_dir }}/telemetry_plan.json"
+        content: "{{ {'logging': logging, 'sflow': sflow, 'gnmi': gnmi, 'ipfix': ipfix} | to_nice_json }}"
+        mode: "0644"
+
+    - name: Syslog
+      when: apply_changes | bool
+      arista.eos.eos_logging:
+        config: { hosts: "{{ logging.hosts }}" }
+        state: merged
+
+    - name: sFlow
+      when: apply_changes | bool and sflow.enabled | default(false)
+      arista.eos.eos_config:
+        lines:
+          - "sflow agent {{ sflow.agent }}"
+          - "{% for c in sflow.collectors %}sflow destination {{ c.host }} {{ c.port | default(6343) }}{% endfor %}"
+
+    - name: gNMI (optional)
+      when: apply_changes | bool and gnmi.enabled | default(false)
+      arista.eos.eos_config:
+        lines:
+          - "management api gnmi"
+          - "transport grpc default"
+          - "port {{ gnmi.port | default(6030) }}"
+          - "no shutdown"
+
+    - name: IPFIX (optional)
+      when: apply_changes | bool and ipfix.enabled | default(false)
+      arista.eos.eos_config:
+        lines:
+          - "ip flow-export destination {{ ipfix.exporter.destination }} {{ ipfix.exporter.port | default(2055) }} source {{ ipfix.exporter.source }}"

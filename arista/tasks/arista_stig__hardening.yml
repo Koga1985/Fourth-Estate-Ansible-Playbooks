@@ -1,0 +1,50 @@
+---
+- name: Opinionated STIG-style hardening
+  hosts: arista
+  gather_facts: false
+  collections:
+    - arista.eos
+    - arista.cvp
+    - ansible.utils
+  vars:
+    apply_changes: false
+    artifacts_dir: "/tmp/arista-artifacts"
+  pre_tasks:
+    - name: Ensure artifacts dir
+      ansible.builtin.file:
+        path: "{ artifacts_dir }"
+        state: directory
+        mode: "0755"
+
+  vars:
+    stig:
+      disable_services: ["http server"]
+      login_banner: "UNCLASSIFIED // FOUO"
+      exec_timeout: 10
+      password_minlen: 14
+  tasks:
+    - name: Plan STIG
+      ansible.builtin.copy:
+        dest: "{{ artifacts_dir }}/stig_plan.json"
+        content: "{{ stig | to_nice_json }}"
+        mode: "0644"
+
+    - name: Disable services
+      when: apply_changes | bool and (stig.disable_services | length) > 0
+      arista.eos.eos_config:
+        lines: "{{ stig.disable_services | map('regex_replace','^(.*)$','no \1') | list }}"
+
+    - name: Exec-timeout and password min length
+      when: apply_changes | bool
+      arista.eos.eos_config:
+        lines:
+          - "service password minimum-length {{ stig.password_minlen | default(14) }}"
+          - "line console"
+          - "exec-timeout {{ stig.exec_timeout | default(10) }}"
+
+    - name: Login banner
+      when: apply_changes | bool
+      arista.eos.eos_banner:
+        banner: login
+        text: "{{ stig.login_banner }}"
+        state: present

@@ -1,0 +1,58 @@
+---
+- name: Configure MLAG on a pair (on each device)
+  hosts: arista
+  gather_facts: false
+  collections:
+    - arista.eos
+    - arista.cvp
+    - ansible.utils
+  vars:
+    apply_changes: false
+    artifacts_dir: "/tmp/arista-artifacts"
+  pre_tasks:
+    - name: Ensure artifacts dir
+      ansible.builtin.file:
+        path: "{ artifacts_dir }"
+        state: directory
+        mode: "0755"
+
+  vars:
+    mlag:
+      domain_id: "MLAG1"
+      peer_link: "Port-Channel100"
+      local_interface: "Vlan4094"
+      local_ip: "169.254.0.1/30"
+      peer_address: "169.254.0.2"
+      peer_link_members: ["Ethernet47","Ethernet48"]
+  tasks:
+    - name: Plan MLAG
+      ansible.builtin.copy:
+        dest: "{{ artifacts_dir }}/mlag_plan.json"
+        content: "{{ mlag | to_nice_json }}"
+        mode: "0644"
+
+    - name: Peer-link LAG
+      when: apply_changes | bool
+      arista.eos.eos_lag_interfaces:
+        config:
+          - name: "{{ mlag.peer_link }}"
+            members: "{{ mlag.peer_link_members }}"
+            mode: active
+        state: merged
+
+    - name: SVI for MLAG
+      when: apply_changes | bool
+      arista.eos.eos_l3_interfaces:
+        config:
+          - { name: "{{ mlag.local_interface }}", ipv4: ["{{ mlag.local_ip }}"] }
+        state: merged
+
+    - name: MLAG configuration
+      when: apply_changes | bool
+      arista.eos.eos_config:
+        lines:
+          - "mlag configuration"
+          - "domain-id {{ mlag.domain_id }}"
+          - "local-interface {{ mlag.local_interface }}"
+          - "peer-address {{ mlag.peer_address }}"
+          - "peer-link {{ mlag.peer_link }}"

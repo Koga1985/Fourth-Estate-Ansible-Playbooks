@@ -1,0 +1,47 @@
+---
+- name: CloudVision: containers, configlets, device placement
+  hosts: arista
+  gather_facts: false
+  collections:
+    - arista.eos
+    - arista.cvp
+    - ansible.utils
+  vars:
+    apply_changes: false
+    artifacts_dir: "/tmp/arista-artifacts"
+  pre_tasks:
+    - name: Ensure artifacts dir
+      ansible.builtin.file:
+        path: "{ artifacts_dir }"
+        state: directory
+        mode: "0755"
+
+  vars:
+    cvp:
+      containers: [{ name: "DC1", parent: "Tenant" }]
+      configlets: []
+      devices: []   # [{ fqdn: "sw1", parentContainerName: "DC1" }]
+  tasks:
+    - name: Plan CVP inventory
+      ansible.builtin.copy:
+        dest: "{{ artifacts_dir }}/cvp_plan.json"
+        content: "{{ cvp | to_nice_json }}"
+        mode: "0644"
+
+    - name: Create containers
+      when: apply_changes | bool and (cvp.containers | length) > 0
+      arista.cvp.cv_container_v3:
+        state: present
+        containers: "{{ cvp.containers }}"
+
+    - name: Create configlets
+      when: apply_changes | bool and (cvp.configlets | length) > 0
+      arista.cvp.cv_configlet_v3:
+        state: present
+        configlets: "{{ cvp.configlets }}"
+
+    - name: Assign devices
+      when: apply_changes | bool and (cvp.devices | length) > 0
+      arista.cvp.cv_device_v3:
+        state: present
+        devices: "{{ cvp.devices }}"

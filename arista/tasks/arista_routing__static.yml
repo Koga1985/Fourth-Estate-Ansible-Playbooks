@@ -1,0 +1,32 @@
+---
+- name: Static routes
+  hosts: arista
+  gather_facts: false
+  collections:
+    - arista.eos
+    - arista.cvp
+    - ansible.utils
+  vars:
+    apply_changes: false
+    artifacts_dir: "/tmp/arista-artifacts"
+  pre_tasks:
+    - name: Ensure artifacts dir
+      ansible.builtin.file:
+        path: "{ artifacts_dir }"
+        state: directory
+        mode: "0755"
+
+  vars:
+    static_routes: [{ dest: "0.0.0.0/0", next_hop: "10.10.10.254" }]
+  tasks:
+    - name: Plan static routes
+      ansible.builtin.copy:
+        dest: "{{ artifacts_dir }}/static_routes_plan.json"
+        content: "{{ {'static_routes': static_routes} | to_nice_json }}"
+        mode: "0644"
+
+    - name: Static routes
+      when: apply_changes | bool
+      arista.eos.eos_static_routes:
+        config: "{{ static_routes }}"
+        state: merged

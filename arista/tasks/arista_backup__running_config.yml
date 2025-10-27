@@ -1,0 +1,39 @@
+---
+- name: Backup running-config to artifacts
+  hosts: arista
+  gather_facts: false
+  collections:
+    - arista.eos
+    - arista.cvp
+    - ansible.utils
+  vars:
+    apply_changes: false
+    artifacts_dir: "/tmp/arista-artifacts"
+  pre_tasks:
+    - name: Ensure artifacts dir
+      ansible.builtin.file:
+        path: "{ artifacts_dir }"
+        state: directory
+        mode: "0755"
+
+  vars:
+    backup_dir: "{{ artifacts_dir }}/backups"
+  tasks:
+    - name: Ensure backup dir
+      ansible.builtin.file:
+        path: "{{ backup_dir }}"
+        state: directory
+        mode: "0750"
+
+    - name: Show running-config
+      when: apply_changes | bool
+      arista.eos.eos_command:
+        commands: ["show running-config"]
+      register: run_cfg
+
+    - name: Save file
+      when: apply_changes | bool and run_cfg.stdout is defined
+      ansible.builtin.copy:
+        dest: "{{ backup_dir }}/{{ inventory_hostname }}.cfg"
+        content: "{{ run_cfg.stdout[0] }}"
+        mode: "0640"

@@ -1,0 +1,42 @@
+---
+- name: Stage EOS image and set boot (no reload by default)
+  hosts: arista
+  gather_facts: false
+  collections:
+    - arista.eos
+    - arista.cvp
+    - ansible.utils
+  vars:
+    apply_changes: false
+    artifacts_dir: "/tmp/arista-artifacts"
+  pre_tasks:
+    - name: Ensure artifacts dir
+      ansible.builtin.file:
+        path: "{ artifacts_dir }"
+        state: directory
+        mode: "0755"
+
+  vars:
+    image_url: "http://repo/images/EOS-4.30.1F.swi"
+    do_reload: false
+  tasks:
+    - name: Plan upgrade
+      ansible.builtin.copy:
+        dest: "{{ artifacts_dir }}/upgrade_plan.json"
+        content: "{{ {'image_url': image_url} | to_nice_json }}"
+        mode: "0644"
+
+    - name: Copy image to flash
+      when: apply_changes | bool
+      arista.eos.eos_config:
+        lines: [ "copy {{ image_url }} flash:" ]
+
+    - name: Set boot system
+      when: apply_changes | bool
+      arista.eos.eos_config:
+        lines: [ "boot system flash:{{ image_url.split('/')[-1] }}" ]
+
+    - name: Optional reload (guarded)
+      when: apply_changes | bool and do_reload | bool
+      arista.eos.eos_command:
+        commands: ["reload now"]

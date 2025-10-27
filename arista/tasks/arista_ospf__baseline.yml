@@ -1,0 +1,39 @@
+---
+- name: OSPF baseline
+  hosts: arista
+  gather_facts: false
+  collections:
+    - arista.eos
+    - arista.cvp
+    - ansible.utils
+  vars:
+    apply_changes: false
+    artifacts_dir: "/tmp/arista-artifacts"
+  pre_tasks:
+    - name: Ensure artifacts dir
+      ansible.builtin.file:
+        path: "{ artifacts_dir }"
+        state: directory
+        mode: "0755"
+
+  vars:
+    ospf:
+      process_id: 1
+      router_id: "192.0.2.1"
+      interfaces: [{ name: "Vlan10", area: 0 }]
+  tasks:
+    - name: Plan OSPF
+      ansible.builtin.copy:
+        dest: "{{ artifacts_dir }}/ospf_plan.json"
+        content: "{{ ospf | to_nice_json }}"
+        mode: "0644"
+
+    - name: OSPF
+      when: apply_changes | bool
+      arista.eos.eos_ospf:
+        config:
+          processes:
+            - process_id: "{{ ospf.process_id }}"
+              router_id: "{{ ospf.router_id }}"
+              interfaces: "{{ ospf.interfaces | default([]) }}"
+        state: merged

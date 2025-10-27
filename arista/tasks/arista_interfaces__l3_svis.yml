@@ -1,0 +1,34 @@
+---
+- name: Configure SVIs / L3 interfaces
+  hosts: arista
+  gather_facts: false
+  collections:
+    - arista.eos
+    - arista.cvp
+    - ansible.utils
+  vars:
+    apply_changes: false
+    artifacts_dir: "/tmp/arista-artifacts"
+  pre_tasks:
+    - name: Ensure artifacts dir
+      ansible.builtin.file:
+        path: "{ artifacts_dir }"
+        state: directory
+        mode: "0755"
+
+  vars:
+    l3_interfaces:
+      - { name: "Vlan10", ipv4: ["10.10.10.1/24"] }
+      - { name: "Vlan20", ipv4: ["10.20.20.1/24"] }
+  tasks:
+    - name: Plan L3
+      ansible.builtin.copy:
+        dest: "{{ artifacts_dir }}/l3_plan.json"
+        content: "{{ {'l3_interfaces': l3_interfaces} | to_nice_json }}"
+        mode: "0644"
+
+    - name: SVIs
+      when: apply_changes | bool and (l3_interfaces | length) > 0
+      arista.eos.eos_l3_interfaces:
+        config: "{{ l3_interfaces }}"
+        state: merged

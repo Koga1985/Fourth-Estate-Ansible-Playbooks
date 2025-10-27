@@ -1,0 +1,38 @@
+---
+- name: BGP baseline
+  hosts: arista
+  gather_facts: false
+  collections:
+    - arista.eos
+    - arista.cvp
+    - ansible.utils
+  vars:
+    apply_changes: false
+    artifacts_dir: "/tmp/arista-artifacts"
+  pre_tasks:
+    - name: Ensure artifacts dir
+      ansible.builtin.file:
+        path: "{ artifacts_dir }"
+        state: directory
+        mode: "0755"
+
+  vars:
+    bgp:
+      asn: 65001
+      router_id: "192.0.2.1"
+      neighbors: [{ ip: "198.51.100.1", remote_as: 65002 }]
+  tasks:
+    - name: Plan BGP
+      ansible.builtin.copy:
+        dest: "{{ artifacts_dir }}/bgp_plan.json"
+        content: "{{ bgp | to_nice_json }}"
+        mode: "0644"
+
+    - name: BGP
+      when: apply_changes | bool
+      arista.eos.eos_bgp:
+        config:
+          as_number: "{{ bgp.asn }}"
+          router_id: "{{ bgp.router_id }}"
+          neighbors: "{{ bgp.neighbors | default([]) }}"
+        state: merged

@@ -1,0 +1,35 @@
+---
+- name: Create port-channels and add member interfaces
+  hosts: arista
+  gather_facts: false
+  collections:
+    - arista.eos
+    - arista.cvp
+    - ansible.utils
+  vars:
+    apply_changes: false
+    artifacts_dir: "/tmp/arista-artifacts"
+  pre_tasks:
+    - name: Ensure artifacts dir
+      ansible.builtin.file:
+        path: "{ artifacts_dir }"
+        state: directory
+        mode: "0755"
+
+  vars:
+    port_channels:
+      - name: "Port-Channel1"
+        members: ["Ethernet3","Ethernet4"]
+        mode: active
+  tasks:
+    - name: Plan LAG
+      ansible.builtin.copy:
+        dest: "{{ artifacts_dir }}/lag_plan.json"
+        content: "{{ {'port_channels': port_channels} | to_nice_json }}"
+        mode: "0644"
+
+    - name: Configure LAGs
+      when: apply_changes | bool and (port_channels | length) > 0
+      arista.eos.eos_lag_interfaces:
+        config: "{{ port_channels }}"
+        state: merged

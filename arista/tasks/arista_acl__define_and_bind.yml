@@ -1,0 +1,48 @@
+---
+- name: Define IPv4 ACLs and bind to interfaces
+  hosts: arista
+  gather_facts: false
+  collections:
+    - arista.eos
+    - arista.cvp
+    - ansible.utils
+  vars:
+    apply_changes: false
+    artifacts_dir: "/tmp/arista-artifacts"
+  pre_tasks:
+    - name: Ensure artifacts dir
+      ansible.builtin.file:
+        path: "{ artifacts_dir }"
+        state: directory
+        mode: "0755"
+
+  vars:
+    acls:
+      - name: "MGMT-IN"
+        afi: "ipv4"
+        entries:
+          - { sequence: 10, action: "permit", source: "10.0.0.0/8" }
+          - { sequence: 99, action: "deny", source: "any" }
+    bindings:
+      - { interface: "Vlan10", direction: "in", acl: "MGMT-IN" }
+  tasks:
+    - name: Plan ACLs
+      ansible.builtin.copy:
+        dest: "{{ artifacts_dir }}/acl_plan.json"
+        content: "{{ {'acls': acls, 'bindings': bindings} | to_nice_json }}"
+        mode: "0644"
+
+    - name: Configure ACLs
+      when: apply_changes | bool
+      arista.eos.eos_acls:
+        config: "{{ acls }}"
+        state: merged
+
+    - name: Bind ACLs
+      when: apply_changes | bool and (bindings | length) > 0
+      loop: "{{ bindings }}"
+      loop_control: { label: "{{ item.interface }} {{ item.direction }}" }
+      arista.eos.eos_config:
+        lines:
+          - "interface {{ item.interface }}"
+          - "ip access-group {{ item.acl }} {{ item.direction }}"

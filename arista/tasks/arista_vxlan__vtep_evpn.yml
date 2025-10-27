@@ -1,0 +1,38 @@
+---
+- name: VXLAN VTEP + EVPN scaffolding
+  hosts: arista
+  gather_facts: false
+  collections:
+    - arista.eos
+    - arista.cvp
+    - ansible.utils
+  vars:
+    apply_changes: false
+    artifacts_dir: "/tmp/arista-artifacts"
+  pre_tasks:
+    - name: Ensure artifacts dir
+      ansible.builtin.file:
+        path: "{ artifacts_dir }"
+        state: directory
+        mode: "0755"
+
+  vars:
+    vxlan:
+      source_interface: "Loopback1"
+      vlans_to_vnis: [{ vlan: 10, vni: 1010 }, { vlan: 20, vni: 1020 }]
+  tasks:
+    - name: Plan VXLAN
+      ansible.builtin.copy:
+        dest: "{{ artifacts_dir }}/vxlan_plan.json"
+        content: "{{ vxlan | to_nice_json }}"
+        mode: "0644"
+
+    - name: Configure VTEP and VLAN-to-VNI mappings
+      when: apply_changes | bool
+      arista.eos.eos_config:
+        lines: |
+          interface Vxlan1
+          vxlan source-interface {{ vxlan.source_interface }}
+          {% for m in vxlan.vlans_to_vnis %}
+          vxlan vlan {{ m.vlan }} vni {{ m.vni }}
+          {% endfor %}
