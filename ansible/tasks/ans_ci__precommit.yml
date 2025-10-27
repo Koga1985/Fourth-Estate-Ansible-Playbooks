@@ -5,16 +5,8 @@
   gather_facts: false
 
   vars:
-    artifacts_dir: "{{ artifacts_dir | default('/tmp/ansible-core-artifacts') }}"
     apply_changes: "{{ apply_changes | default(false) }}"
     repo_root: "{{ repo_root | default('.') }}"
-
-  pre_tasks:
-    - name: Ensure artifacts directory
-      ansible.builtin.file:
-        path: "{{ artifacts_dir }}"
-        state: directory
-        mode: "0755"
 
   tasks:
     - name: Create pre-commit config
@@ -22,29 +14,63 @@
         dest: "{{ repo_root }}/.pre-commit-config.yaml"
         mode: "0644"
         content: |
+          minimum_pre_commit_version: "3.7.0"
+          default_language_version:
+            python: python3.11
+          files: ^(?!(.git/|.venv/|venv/|.tox/|.mypy_cache/|.pytest_cache/|.cache/|node_modules/|dist/|build/|collections/)).*
+          exclude: >
+            (?x)^(
+              .git/|
+              .venv/|venv/|
+              .tox/|
+              .mypy_cache/|
+              .pytest_cache/|
+              .cache/|
+              node_modules/|
+              dist/|build/|
+              collections/|
+              ^molecule/.+/state\.yml
+            )
+
           repos:
+            # General hygiene
             - repo: https://github.com/pre-commit/pre-commit-hooks
               rev: v4.6.0
               hooks:
                 - id: trailing-whitespace
                 - id: end-of-file-fixer
                 - id: check-yaml
-            - repo: https://github.com/ansible-community/ansible-lint
-              rev: v24.7.0
-              hooks:
-                - id: ansible-lint
+                - id: check-json
+                - id: check-xml
+                - id: mixed-line-ending
+                - id: check-added-large-files
+                - id: detect-private-key
+
+            # YAML lint
             - repo: https://github.com/adrienverge/yamllint
               rev: v1.35.1
               hooks:
                 - id: yamllint
+                  additional_dependencies: []  # keep fast; config via .yamllint if present
 
-    - name: Install pre-commit (optional, local)
+            # Ansible lint (align major with CI)
+            - repo: https://github.com/ansible-community/ansible-lint
+              rev: v25.9.0
+              hooks:
+                - id: ansible-lint
+                  additional_dependencies:
+                    - "ansible>=9,<13"
+
+    - name: Install pre-commit client locally (optional)
       when: apply_changes | bool
       ansible.builtin.shell: |
         set -euo pipefail
         cd "{{ repo_root }}"
         if command -v pre-commit >/dev/null 2>&1; then
-          pre-commit install
+          pre-commit install --install-hooks
+        else
+          echo "pre-commit not installed; skipping client install"
         fi
-      args: { executable: /bin/bash }
+      args:
+        executable: /bin/bash
       changed_when: false
