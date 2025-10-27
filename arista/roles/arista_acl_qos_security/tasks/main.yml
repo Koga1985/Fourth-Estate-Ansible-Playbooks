@@ -1,0 +1,21 @@
+---
+- name: Ensure artifacts dir
+  ansible.builtin/file: { path: "{{ artifacts_dir }}", state: directory }
+- name: Plan ACLs
+  ansible.builtin/copy:
+    dest: "{{ artifacts_dir }}/acl_plan.json"
+    content: "{{ {'acls': acls, 'apply_to': apply_to} | to_nice_json }}"
+    mode: "0644"
+- name: Configure ACLs
+  when: apply_changes | bool
+  arista.eos.eos_acls:
+    config: "{{ acls }}"
+    state: merged
+- name: Bind ACLs
+  when: apply_changes | bool and (apply_to | length) > 0
+  loop: "{{ apply_to }}"
+  loop_control: { label: "{{ item.interface }} {{ item.direction }}" }
+  arista.eos.eos_config:
+    lines:
+      - "interface {{ item.interface }}"
+      - "ip access-group {{ item.acl }} {{ item.direction }}"

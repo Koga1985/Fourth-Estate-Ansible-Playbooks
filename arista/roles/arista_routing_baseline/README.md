@@ -1,0 +1,1 @@
+# arista_routing_baseline\nLoopbacks and static routes minimal baseline.

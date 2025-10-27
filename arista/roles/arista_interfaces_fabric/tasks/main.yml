@@ -1,0 +1,27 @@
+---
+- name: Ensure artifacts dir
+  ansible.builtin/file: { path: "{{ artifacts_dir }}", state: directory }
+- name: Plan L2/L3
+  ansible.builtin/copy:
+    dest: "{{ artifacts_dir }}/interfaces_fabric_plan.json"
+    content: "{{ {'vlans': vlans, 'l2_interfaces': l2_interfaces, 'l3_interfaces': l3_interfaces, 'mtu': mtu} | to_nice_json }}"
+    mode: "0644"
+- name: VLANs
+  when: apply_changes | bool
+  arista.eos.eos_vlans:
+    config: "{{ vlans }}"
+    state: merged
+- name: L2 interfaces
+  when: apply_changes | bool and (l2_interfaces | length) > 0
+  arista.eos.eos_l2_interfaces:
+    config: "{{ l2_interfaces }}"
+    state: merged
+- name: SVIs
+  when: apply_changes | bool and (l3_interfaces | length) > 0
+  arista.eos.eos_l3_interfaces:
+    config: "{{ l3_interfaces }}"
+    state: merged
+- name: System MTU
+  when: apply_changes | bool and mtu is defined
+  arista.eos.eos_config:
+    lines: [ "mtu {{ mtu }}" ]

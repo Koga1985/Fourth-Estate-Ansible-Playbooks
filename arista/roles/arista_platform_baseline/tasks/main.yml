@@ -1,0 +1,42 @@
+---
+- name: Ensure artifacts dir
+  ansible.builtin/file: { path: "{{ artifacts_dir }}", state: directory, mode: "0755" }
+- name: Plan baseline
+  ansible.builtin/copy:
+    dest: "{{ artifacts_dir }}/platform_baseline_plan.json"
+    content: "{{ baseline | to_nice_json }}"
+    mode: "0644"
+- name: Set hostname
+  when: apply_changes | bool
+  arista.eos.eos_hostname:
+    config: { hostname: "{{ baseline.hostname }}" }
+    state: merged
+- name: Login banner
+  when: apply_changes | bool
+  arista.eos.eos_banner:
+    banner: login
+    text: "{{ baseline.banners.login }}"
+    state: present
+- name: MOTD banner
+  when: apply_changes | bool
+  arista.eos.eos_banner:
+    banner: motd
+    text: "{{ baseline.banners.motd }}"
+    state: present
+- name: NTP
+  when: apply_changes | bool
+  arista.eos.eos_ntp:
+    config: { servers: "{{ baseline.ntp }}" }
+    state: merged
+- name: Syslog
+  when: apply_changes | bool
+  arista.eos.eos_logging:
+    config: { hosts: "{{ baseline.syslog }}" }
+    state: merged
+- name: Enable eAPI
+  when: apply_changes | bool and baseline.eapi.enabled | default(true)
+  arista.eos.eos_eapi:
+    http: false
+    https: "{{ baseline.eapi.https | default(true) }}"
+    state: started
+    vrf: "{{ baseline.eapi.vrf | default('MGMT') }}"

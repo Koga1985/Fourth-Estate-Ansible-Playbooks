@@ -1,0 +1,1 @@
+# arista_platform_baseline\nBaseline platform config with DoD-friendly defaults.
