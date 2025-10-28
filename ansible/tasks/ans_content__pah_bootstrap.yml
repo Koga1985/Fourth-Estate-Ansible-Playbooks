@@ -5,45 +5,110 @@
   gather_facts: false
 
   vars:
-    controller_host: "{{ controller_host | default('https://controller.example.mil') }}"
-    controller_oauthtoken: "{{ controller_oauthtoken | default(lookup('env','TOWER_TOKEN')) }}"
-    validate_certs: "{{ validate_certs | default(true) }}"
     artifacts_dir: "{{ artifacts_dir | default('/tmp/ansible-artifacts') }}"
     apply_changes: "{{ apply_changes | default(false) }}"
 
+    # Private Automation Hub inputs
+    ah_url: "{{ ah_url | default('https://pah.example.mil') }}"
+    ah_username: "{{ ah_username | default('admin') }}"
+    ah_password: "{{ ah_password | default('') }}"
+    validate_certs: "{{ validate_certs | default(true) }}"
+
+    # Optional bootstrap data (only planned here)
+    sso: "{{ sso | default({}) }}"
+    groups: "{{ groups | default([]) }}"
+
   pre_tasks:
-    - name: Ensure artifacts directory
+    - name: Ensure artifacts directory (least privilege)
       ansible.builtin.file:
         path: "{{ artifacts_dir }}"
         state: directory
-        mode: "0755"
+        mode: "0750"
 
-vars:
-  ah_url: "{{ ah_url | default('https://pah.example.mil') }}"
-  ah_username: "{{ ah_username | default('admin') }}"
-  ah_password: "{{ ah_password | default('') }}"
-  sso: "{{ sso | default({}) }}"
-  groups: "{{ groups | default([]) }}"
-tasks:
-  - name: Plan PAH bootstrap
-    ansible.builtin.copy:
-      dest: "{{ artifacts_dir }}/pah_bootstrap_plan.json"
-      mode: "0644"
-      content: "{{ {'url': ah_url, 'sso': sso, 'groups': groups } | to_nice_json }}"
+    - name: Validate inputs
+      ansible.builtin.assert:
+        that:
+          - ah_url is string
+          - ah_url | length > 0
+          - groups is iterable
+          - sso is mapping
+        fail_msg: "Invalid inputs: ensure ah_url string, groups list, sso mapping."
 
-  - name: Ensure admin login works (sanity)
-    when: apply_changes | bool
-    ansible.builtin.uri:
-      url: "{{ ah_url }}/api/galaxy/pulp/api/v3/status/"
-      method: GET
-      force_basic_auth: true
-      url_username: "{{ ah_username }}"
-      url_password: "{{ ah_password }}"
-      validate_certs: true
-    register: ah_status
+    - name: Write PAH bootstrap plan (no secrets)
+      ansible.builtin.copy:
+        dest: "{{ artifacts_dir }}/pah_bootstrap_plan.json"
+        mode: "0640"
+        content: "{{ {'url': ah_url, 'sso': sso, 'groups': groups} | to_nice_json }}"
 
-  - name: Write PAH status artifact
-    ansible.builtin.copy:
-      dest: "{{ artifacts_dir }}/pah_status.json"
-      mode: "0644"
-      content: "{{ ah_status.json | default({'ok': false}) | to_nice_json }}"
+  tasks:
+    - name: Initialize status holder
+      ansible.builtin.set_fact:
+        _pah_status: {}
+
+    - name: Probe PAH status (primary path)
+      when: apply_changes | bool
+      no_log: true  # protect creds in stdout/stderr and registered vars
+      block:
+        - name: GET {{ ah_url }}/pulp/api/v3/status/
+          ansible.builtin.uri:
+            url: "{{ ah_url }}/pulp/api/v3/status/"
+            method: GET
+            return_content: true
+            force_basic_auth: true
+            url_username: "{{ ah_username }}"
+            url_password: "{{ ah_password }}"
+            validate_certs: "{{ validate_certs | bool }}"
+            status_code: 200
+            timeout: 30
+          register: pah_status_primary
+          changed_when: false
+
+      rescue:
+        - name: Fallback to galaxy-prefixed path
+          ansible.builtin.uri:
+            url: "{{ ah_url }}/api/galaxy/pulp/api/v3/status/"
+            method: GET
+            return_content: true
+            force_basic_auth: true
+            url_username: "{{ ah_username }}"
+            url_password: "{{ ah_password }}"
+            validate_certs: "{{ validate_certs | bool }}"
+            status_code: 200
+            timeout: 30
+          register: pah_status_fallback
+          changed_when: false
+
+    - name: Consolidate PAH status
+      when: apply_changes | bool
+      ansible.builtin.set_fact:
+        _pah_status: >-
+          {{
+            (
+              pah_status_primary.json
+              if (pah_status_primary is defined and pah_status_primary.status == 200)
+              else (pah_status_fallback.json
+                    if (pah_status_fallback is defined and pah_status_fallback.status == 200)
+                    else {'ok': false}
+              )
+            )
+          }}
+
+    - name: Write PAH status artifact
+      ansible.builtin.copy:
+        dest: "{{ artifacts_dir }}/pah_status.json"
+        mode: "0640"
+        content: "{{ (_pah_status if apply_changes | bool else {'ok': false, 'note': 'apply_changes=false'}) | to_nice_json }}"
+
+    - name: Compute checksum of status artifact
+      ansible.builtin.stat:
+        path: "{{ artifacts_dir }}/pah_status.json"
+        checksum_algorithm: sha256
+      register: pah_status_stat
+      changed_when: false
+
+    - name: Write checksum sidecar
+      ansible.builtin.copy:
+        dest: "{{ artifacts_dir }}/pah_status.json.sha256"
+        mode: "0640"
+        content: "{{ pah_status_stat.stat.checksum }}  pah_status.json\n"
+
