@@ -5,32 +5,257 @@
   gather_facts: false
 
   vars:
-    controller_host: "{{ controller_host | default('https://controller.example.mil') }}"
-    controller_oauthtoken: "{{ controller_oauthtoken | default(lookup('env','TOWER_TOKEN')) }}"
-    validate_certs: "{{ validate_certs | default(true) }}"
     artifacts_dir: "{{ artifacts_dir | default('/tmp/ansible-artifacts') }}"
     apply_changes: "{{ apply_changes | default(false) }}"
+    ah_url: "{{ ah_url | default('https://pah.example.mil') }}"
+    ah_username: "{{ ah_username | default('admin') }}"
+    ah_password: "{{ ah_password | default('') }}"
+    validate_certs: "{{ validate_certs | default(true) }}"
+
+    # Expect: remotes is a list of dicts:
+    # - name: rhel_certified
+    #   url: https://console.redhat.com/api/automation-hub/content/published/
+    #   tls_validation: true          # optional (default true)
+    #   ca_cert: |                    # optional PEM
+    #     -----BEGIN CERTIFICATE-----
+    #   client_cert: |                # optional PEM
+    #   client_key: |                 # optional PEM
+    #   distribution_base_path: org/pah/rhel_certified   # optional
+    #   sync: true                    # optional (default false)
+    remotes: "{{ remotes | default([]) }}"
 
   pre_tasks:
-    - name: Ensure artifacts directory
+    - name: Ensure artifacts directory (least privilege)
       ansible.builtin.file:
         path: "{{ artifacts_dir }}"
         state: directory
-        mode: "0755"
+        mode: "0750"
 
-vars:
-  ah_url: "{{ ah_url | default('https://pah.example.mil') }}"
-  ah_username: "{{ ah_username | default('admin') }}"
-  ah_password: "{{ ah_password | default('') }}"
-  remotes: "{{ remotes | default([]) }}"
-tasks:
-  - name: Plan PAH remotes/repos
-    ansible.builtin.copy:
-      dest: "{{ artifacts_dir }}/pah_repos_plan.json"
-      mode: "0644"
-      content: "{{ remotes | to_nice_json }}"
+    - name: Validate inputs
+      ansible.builtin.assert:
+        that:
+          - remotes is iterable
+          - remotes | map(attribute='name') | select('string') | list | length == (remotes | length)
+          - remotes | map(attribute='url')  | select('string') | list | length == (remotes | length)
+        fail_msg: "remotes must be a list of items with string fields: name, url"
 
-  - name: Create remotes (scaffold via API)
-    when: apply_changes | bool
-    ansible.builtin.debug:
-      msg: "Create/ensure PAH remotes/repos via API modules (redhat_cop.ah_configuration)"
+    - name: Write PAH repos plan (no secrets)
+      ansible.builtin.copy:
+        dest: "{{ artifacts_dir }}/pah_repos_plan.json"
+        mode: "0640"
+        content: >-
+          {{
+            remotes
+            | map('combine', {'client_cert':'<redacted>','client_key':'<redacted>','ca_cert':'<redacted>'})
+            | list
+            | to_nice_json
+          }}
+
+  tasks:
+    - name: Initialize results list
+      ansible.builtin.set_fact:
+        pah_results: []
+
+    - name: Ensure remotes, repositories, and optional sync
+      when: apply_changes | bool
+      no_log: true   # protect credentials and responses
+      block:
+        - name: Process remote {{ item.name }}
+          vars:
+            _name: "{{ item.name }}"
+            _url: "{{ item.url }}"
+            _tls: "{{ item.tls_validation | default(true) | bool }}"
+            _ca: "{{ item.ca_cert | default(omit) }}"
+            _cc: "{{ item.client_cert | default(omit) }}"
+            _ck: "{{ item.client_key | default(omit) }}"
+            _dist: "{{ item.distribution_base_path | default(omit) }}"
+            _sync: "{{ item.sync | default(false) | bool }}"
+            _headers:
+              Content-Type: application/json
+          block:
+            # ----- REMOTE -----
+            - name: Lookup collection remote by name
+              ansible.builtin.uri:
+                url: "{{ ah_url }}/pulp/api/v3/remotes/ansible/collection/?name={{ _name | urlencode }}"
+                method: GET
+                force_basic_auth: true
+                url_username: "{{ ah_username }}"
+                url_password: "{{ ah_password }}"
+                validate_certs: "{{ validate_certs | bool }}"
+              register: _remote_q
+              changed_when: false
+
+            - name: Create or update remote
+              vars:
+                body_common:
+                  name: "{{ _name }}"
+                  url: "{{ _url }}"
+                  tls_validation: "{{ _tls }}"
+                body_certs: >-
+                  {{
+                    dict()
+                    | combine( {'ca_cert': _ca}   if _ca   is not string else {} )
+                    | combine( {'client_cert': _cc} if _cc is not string else {} )
+                    | combine( {'client_key': _ck} if _ck is not string else {} )
+                  }}
+              block:
+                - name: Create remote
+                  when: (_remote_q.json.count | default(0)) | int == 0
+                  ansible.builtin.uri:
+                    url: "{{ ah_url }}/pulp/api/v3/remotes/ansible/collection/"
+                    method: POST
+                    headers: "{{ _headers }}"
+                    body_format: json
+                    body: "{{ body_common | combine(body_certs) }}"
+                    force_basic_auth: true
+                    url_username: "{{ ah_username }}"
+                    url_password: "{{ ah_password }}"
+                    validate_certs: "{{ validate_certs | bool }}"
+                  register: _remote_create
+
+                - name: Update remote (PATCH)
+                  when: (_remote_q.json.count | default(0)) | int > 0
+                  ansible.builtin.uri:
+                    url: "{{ _remote_q.json.results[0].pulp_href }}"
+                    method: PATCH
+                    headers: "{{ _headers }}"
+                    body_format: json
+                    body: "{{ body_common | combine(body_certs) }}"
+                    force_basic_auth: true
+                    url_username: "{{ ah_username }}"
+                    url_password: "{{ ah_password }}"
+                    validate_certs: "{{ validate_certs | bool }}"
+                  register: _remote_patch
+                  changed_when: false  # PATCH may be a no-op; avoid noisy changes
+
+            - name: Set remote href
+              ansible.builtin.set_fact:
+                _remote_href: >-
+                  {{
+                    (_remote_create.json.pulp_href
+                      if (_remote_create is defined and _remote_create.json is defined)
+                      else (_remote_q.json.results[0].pulp_href))
+                  }}
+
+            # ----- REPOSITORY -----
+            - name: Lookup collection repository by name
+              ansible.builtin.uri:
+                url: "{{ ah_url }}/pulp/api/v3/repositories/ansible/ansible/?name={{ _name | urlencode }}"
+                method: GET
+                force_basic_auth: true
+                url_username: "{{ ah_username }}"
+                url_password: "{{ ah_password }}"
+                validate_certs: "{{ validate_certs | bool }}"
+              register: _repo_q
+              changed_when: false
+
+            - name: Create repository (if missing)
+              when: (_repo_q.json.count | default(0)) | int == 0
+              ansible.builtin.uri:
+                url: "{{ ah_url }}/pulp/api/v3/repositories/ansible/ansible/"
+                method: POST
+                headers: "{{ _headers }}"
+                body_format: json
+                body:
+                  name: "{{ _name }}"
+                force_basic_auth: true
+                url_username: "{{ ah_username }}"
+                url_password: "{{ ah_password }}"
+                validate_certs: "{{ validate_certs | bool }}"
+              register: _repo_create
+
+            - name: Set repository href
+              ansible.builtin.set_fact:
+                _repo_href: >-
+                  {{
+                    (_repo_create.json.pulp_href
+                      if (_repo_create is defined and _repo_create.json is defined)
+                      else (_repo_q.json.results[0].pulp_href))
+                  }}
+
+            # ----- OPTIONAL SYNC -----
+            - name: Sync repository from remote
+              when: _sync
+              ansible.builtin.uri:
+                url: "{{ _repo_href }}sync/"
+                method: POST
+                headers: "{{ _headers }}"
+                body_format: json
+                body:
+                  remote: "{{ _remote_href }}"
+                force_basic_auth: true
+                url_username: "{{ ah_username }}"
+                url_password: "{{ ah_password }}"
+                validate_certs: "{{ validate_certs | bool }}"
+              register: _sync_task
+
+            # ----- OPTIONAL DISTRIBUTION -----
+            - name: Ensure distribution (optional when distribution_base_path provided)
+              when: _dist is not string
+              ansible.builtin.debug:
+                msg: "No distribution_base_path provided for {{ _name }}; skipping distribution creation."
+
+            - name: Lookup or create distribution (when base_path provided)
+              when: _dist is string
+              block:
+                - name: Lookup distribution
+                  ansible.builtin.uri:
+                    url: "{{ ah_url }}/pulp/api/v3/distributions/ansible/ansible/?base_path={{ _dist | urlencode }}"
+                    method: GET
+                    force_basic_auth: true
+                    url_username: "{{ ah_username }}"
+                    url_password: "{{ ah_password }}"
+                    validate_certs: "{{ validate_certs | bool }}"
+                  register: _dist_q
+                  changed_when: false
+
+                - name: Create distribution
+                  when: (_dist_q.json.count | default(0)) | int == 0
+                  ansible.builtin.uri:
+                    url: "{{ ah_url }}/pulp/api/v3/distributions/ansible/ansible/"
+                    method: POST
+                    headers: "{{ _headers }}"
+                    body_format: json
+                    body:
+                      name: "{{ _name }}"
+                      base_path: "{{ _dist }}"
+                      repository: "{{ _repo_href }}"
+                    force_basic_auth: true
+                    url_username: "{{ ah_username }}"
+                    url_password: "{{ ah_password }}"
+                    validate_certs: "{{ validate_certs | bool }}"
+                  register: _dist_create
+
+            # ----- COLLECT RESULT -----
+            - name: Append result entry
+              ansible.builtin.set_fact:
+                pah_results: >-
+                  {{ pah_results + [ {
+                      'name': _name,
+                      'remote_href': _remote_href,
+                      'repo_href': _repo_href,
+                      'sync_started': (_sync and (_sync_task is defined)),
+                      'distribution': ( _dist if (_dist is string) else None )
+                    } ] }}
+          loop: "{{ remotes }}"
+          loop_control:
+            label: "{{ item.name }}"
+
+    - name: Write results summary (JSON)
+      ansible.builtin.copy:
+        dest: "{{ artifacts_dir }}/pah_repos_summary.json"
+        mode: "0640"
+        content: "{{ pah_results | to_nice_json if apply_changes | bool else '[]' }}"
+
+    - name: Compute checksum
+      ansible.builtin.stat:
+        path: "{{ artifacts_dir }}/pah_repos_summary.json"
+        checksum_algorithm: sha256
+      register: _sum
+      changed_when: false
+
+    - name: Write checksum sidecar
+      ansible.builtin.copy:
+        dest: "{{ artifacts_dir }}/pah_repos_summary.json.sha256"
+        mode: "0640"
+        content: "{{ _sum.stat.checksum }}  pah_repos_summary.json\n"
