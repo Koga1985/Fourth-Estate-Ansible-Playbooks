@@ -5,35 +5,126 @@
   gather_facts: false
 
   vars:
-    controller_host: "{{ controller_host | default('https://controller.example.mil') }}"
-    controller_oauthtoken: "{{ controller_oauthtoken | default(lookup('env','TOWER_TOKEN')) }}"
-    validate_certs: "{{ validate_certs | default(true) }}"
     artifacts_dir: "{{ artifacts_dir | default('/tmp/ansible-artifacts') }}"
     apply_changes: "{{ apply_changes | default(false) }}"
+    requirements: "{{ requirements | default('requirements.yml') }}"
+    lockfile_path: "{{ lockfile_path | default(artifacts_dir ~ '/collections.lock.json') }}"
+    work_dir: "{{ artifacts_dir ~ '/_galaxy_tmp' }}"
 
   pre_tasks:
-    - name: Ensure artifacts directory
+    - name: Ensure artifacts directory (least privilege)
       ansible.builtin.file:
         path: "{{ artifacts_dir }}"
         state: directory
-        mode: "0755"
+        mode: "0750"
 
-vars:
-  requirements: "{{ requirements | default('requirements.yml') }}"
-  lockfile_path: "{{ lockfile_path | default(artifacts_dir ~ '/collections.lock') }}"
-tasks:
-  - name: Generate lockfile from requirements (hash/pins)
-    ansible.builtin.command: >
-      ansible-galaxy collection install -r {{ requirements }} --lockfile {{ lockfile_path }} --requirements-file {{ requirements }}
-    changed_when: false
+    - name: Validate requirements file exists and is a file
+      ansible.builtin.stat:
+        path: "{{ requirements }}"
+        follow: false
+      register: req_stat
 
-  - name: Publish lockfile artifact
-    ansible.builtin.stat:
-      path: "{{ lockfile_path }}"
-    register: lf
+    - name: Assert requirements is present
+      ansible.builtin.assert:
+        that:
+          - req_stat.stat.exists
+          - req_stat.stat.isreg
+        fail_msg: "Requirements file not found: {{ requirements }}"
 
-  - name: Fail if lockfile missing
-    ansible.builtin.assert:
-      that: lf.stat.exists
-      fail_msg: "Lockfile not generated"
-      success_msg: "Lockfile generated at {{ lockfile_path }}"
+    - name: Load requirements content
+      ansible.builtin.set_fact:
+        _req_data: "{{ lookup('file', requirements) | from_yaml }}"
+
+    - name: Normalize requested collections list
+      ansible.builtin.set_fact:
+        _req_collections: >-
+          {{
+            (
+              _req_data.collections
+              | default([])
+              | map('community.general.to_yaml') | list  # harmless if collection absent; helps normalize
+            ) if _req_data is mapping else []
+          }}
+      failed_when: false
+      changed_when: false
+
+    - name: Write plan (declared requirements)
+      ansible.builtin.copy:
+        dest: "{{ artifacts_dir }}/mirror_lock_plan.json"
+        mode: "0640"
+        content: "{{ _req_data | to_nice_json }}"
+
+  tasks:
+    - name: Prepare isolated install directory
+      when: apply_changes | bool
+      ansible.builtin.file:
+        path: "{{ work_dir }}"
+        state: directory
+        mode: "0700"
+
+    - name: Install collections into isolated path (no cache, deterministic)
+      when: apply_changes | bool
+      ansible.builtin.command:
+        cmd: >
+          ansible-galaxy collection install
+          -r {{ requirements | quote }}
+          -p {{ work_dir | quote }}
+          --no-cache
+      register: galaxy_install
+      changed_when: false
+
+    - name: List installed collections from isolated path
+      when: apply_changes | bool
+      ansible.builtin.command:
+        cmd: ansible-galaxy collection list -p {{ work_dir | quote }}
+      register: galaxy_list
+      changed_when: false
+
+    - name: Parse installed versions into lock map
+      when: apply_changes | bool
+      ansible.builtin.set_fact:
+        _lock_entries: >-
+          {%- set lines = galaxy_list.stdout_lines | default([]) -%}
+          {%- set out = [] -%}
+          {%- set start = false -%}
+          {%- for ln in lines -%}
+            {%- if ln|trim == 'Collection       Version' -%}
+              {%- set start = true -%}
+            {%- elif start and (ln|trim) and ('---' not in ln) -%}
+              {%- set parts = (ln | regex_replace('\\s+', ' ') | trim).split(' ') -%}
+              {%- if parts|length >= 2 -%}
+                {%- set _ = out.append({'name': parts[0], 'version': parts[1]}) -%}
+              {%- endif -%}
+            {%- endif -%}
+          {%- endfor -%}
+          {{ out | sort(attribute='name') }}
+      changed_when: false
+
+    - name: Write lockfile JSON (name/version pairs)
+      when: apply_changes | bool
+      ansible.builtin.copy:
+        dest: "{{ lockfile_path }}"
+        mode: "0640"
+        content: "{{ {'generated_at': ansible_date_time.iso8601, 'entries': _lock_entries} | to_nice_json }}"
+        backup: true
+
+    - name: Compute SHA-256 of lockfile
+      when: apply_changes | bool
+      ansible.builtin.stat:
+        path: "{{ lockfile_path }}"
+        checksum_algorithm: sha256
+      register: _lf_stat
+
+    - name: Write checksum sidecar
+      when: apply_changes | bool
+      ansible.builtin.copy:
+        dest: "{{ lockfile_path }}.sha256"
+        mode: "0640"
+        content: "{{ _lf_stat.stat.checksum }}  {{ (lockfile_path | basename) }}\n"
+
+    # Optional cleanup of isolated install dir (keep for audit by default)
+    - name: Remove isolated work dir
+      when: apply_changes | bool and (cleanup_workdir | default(false)) | bool
+      ansible.builtin.file:
+        path: "{{ work_dir }}"
+        state: absent
