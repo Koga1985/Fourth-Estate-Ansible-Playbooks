@@ -7,47 +7,46 @@
   vars:
     artifacts_dir: "{{ artifacts_dir | default('/tmp/ansible-core-artifacts') }}"
     apply_changes: "{{ apply_changes | default(false) }}"
+    ansible_cfg_path: "{{ ansible_cfg_path | default('.ansible.cfg') }}"
+    callbacks_enabled: "{{ callbacks_enabled | default(['timer','profile_tasks','junit']) }}"
+    junit_output_dir: "{{ junit_output_dir | default(artifacts_dir ~ '/junit') }}"
 
   pre_tasks:
     - name: Ensure artifacts directory
       ansible.builtin.file:
         path: "{{ artifacts_dir }}"
         state: directory
-        mode: "0755"
+        mode: "0750"
 
-vars:
-  ansible_cfg_path: "{{ ansible_cfg_path | default('.ansible.cfg') }}"
-  callbacks_enabled: "{{ callbacks_enabled | default(['timer','profile_tasks','junit']) }}"
-  junit_output_dir: "{{ junit_output_dir | default(artifacts_dir ~ '/junit') }}"
-tasks:
-  - name: Plan callbacks
-    ansible.builtin.copy:
-      dest: "{{ artifacts_dir }}/callbacks_plan.json"
-      mode: "0644"
-      content: "{{ {'callbacks_enabled': callbacks_enabled, 'junit_dir': junit_output_dir} | to_nice_json }}"
+  tasks:
+    - name: Plan callbacks
+      ansible.builtin.copy:
+        dest: "{{ artifacts_dir }}/callbacks_plan.json"
+        mode: "0640"
+        content: "{{ {'callbacks_enabled': callbacks_enabled, 'junit_dir': junit_output_dir} | to_nice_json }}"
 
-  - name: Ensure junit output dir
-    when: apply_changes | bool
-    ansible.builtin.file:
-      path: "{{ junit_output_dir }}"
-      state: directory
-      mode: "0755"
+    - name: Ensure junit output dir
+      when: apply_changes | bool
+      ansible.builtin.file:
+        path: "{{ junit_output_dir }}"
+        state: directory
+        mode: "0750"
 
-  - name: Enable callbacks in ansible.cfg
-    when: apply_changes | bool
-    community.general.ini_file:
-      path: "{{ ansible_cfg_path }}"
-      section: defaults
-      option: callbacks_enabled
-      value: "{{ callbacks_enabled | join(',') }}"
-      no_extra_spaces: true
-      mode: "0644"
+    - name: Enable callbacks in ansible.cfg
+      when: apply_changes | bool
+      community.general.ini_file:
+        path: "{{ ansible_cfg_path }}"
+        section: defaults
+        option: callbacks_enabled
+        value: "{{ callbacks_enabled | join(',') }}"
+        no_extra_spaces: true
+        mode: "0644"
 
-  - name: Configure junit path
-    when: apply_changes | bool
-    community.general.ini_file:
-      path: "{{ ansible_cfg_path }}"
-      section: defaults
-      option: junit_testsuite_name
-      value: "ansible-tests"
-      mode: "0644"
+    - name: Configure junit path
+      when: apply_changes | bool
+      community.general.ini_file:
+        path: "{{ ansible_cfg_path }}"
+        section: defaults
+        option: junit_testsuite_name
+        value: "ansible-tests"
+        mode: "0644"
