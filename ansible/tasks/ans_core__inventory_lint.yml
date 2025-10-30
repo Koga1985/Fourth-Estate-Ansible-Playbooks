@@ -7,55 +7,63 @@
   vars:
     artifacts_dir: "{{ artifacts_dir | default('/tmp/ansible-core-artifacts') }}"
     apply_changes: "{{ apply_changes | default(false) }}"
+    inventory_path: "{{ inventory_path | default('inventory') }}"
 
   pre_tasks:
     - name: Ensure artifacts directory
       ansible.builtin.file:
         path: "{{ artifacts_dir }}"
         state: directory
-        mode: "0755"
+        mode: "0750"
 
-vars:
-  inventory_path: "{{ inventory_path | default('inventory') }}"
-tasks:
-  - name: ansible-inventory --list JSON
-    ansible.builtin.shell: |
-      set -euo pipefail
-      ansible-inventory -i "{{ inventory_path }}" --list
-    args: { executable: /bin/bash }
-    register: invlist
-    changed_when: false
-    ignore_errors: true
+  tasks:
+    - name: ansible-inventory --list JSON
+      ansible.builtin.shell: |
+        set -euo pipefail
+        ansible-inventory -i "{{ inventory_path }}" --list
+      args: { executable: /bin/bash }
+      register: invlist
+      changed_when: false
+      failed_when: false
 
-  - name: Write inventory list artifact
-    ansible.builtin.copy:
-      dest: "{{ artifacts_dir }}/inventory_list.json"
-      mode: "0644"
-      content: "{{ invlist.stdout | default('{}') }}"
+    - name: Check for inventory errors
+      ansible.builtin.fail:
+        msg: "Inventory validation failed: {{ invlist.stderr }}"
+      when:
+        - invlist.rc != 0
+        - invlist.stderr is search('ERROR|error|Error')
+        - not (invlist.stderr is search('WARNING|warning|Warning'))
 
-  - name: Detect duplicate hosts and group cycles (heuristic)
-    ansible.builtin.shell: |
-      set -euo pipefail
-      ansible-inventory -i "{{ inventory_path }}" --graph | tee "{{ artifacts_dir }}/inventory_graph.txt"
-      python3 - <<'PY'
-      import re,sys,json
-      g=open("{{ artifacts_dir }}/inventory_graph.txt").read().splitlines()
-      dupes=set(); seen=set(); cycle=False
-      for ln in g:
-        m=re.match(r"\|\s+([\w-]+)", ln)
-        if m:
-          n=m.group(1)
-          if n in seen: dupes.add(n)
-          else: seen.add(n)
-      # naive cycle guess: look for repeated group arrows multiple times
-      print(json.dumps({"dupes":sorted(dupes),"cycle_suspect":cycle}))
-      PY
-    args: { executable: /bin/bash }
-    register: lintres
-    changed_when: false
+    - name: Write inventory list artifact
+      ansible.builtin.copy:
+        dest: "{{ artifacts_dir }}/inventory_list.json"
+        mode: "0640"
+        content: "{{ invlist.stdout | default('{}') }}"
 
-  - name: Write lint result
-    ansible.builtin.copy:
-      dest: "{{ artifacts_dir }}/inventory_lint.json"
-      mode: "0644"
-      content: "{{ lintres.stdout | default('{}') }}"
+    - name: Detect duplicate hosts and group cycles (heuristic)
+      ansible.builtin.shell: |
+        set -euo pipefail
+        ansible-inventory -i "{{ inventory_path }}" --graph | tee "{{ artifacts_dir }}/inventory_graph.txt"
+        python3 - <<'PY'
+        import re,sys,json
+        g=open("{{ artifacts_dir }}/inventory_graph.txt").read().splitlines()
+        dupes=set(); seen=set(); cycle=False
+        for ln in g:
+          m=re.match(r"\|\s+([\w-]+)", ln)
+          if m:
+            n=m.group(1)
+            if n in seen: dupes.add(n)
+            else: seen.add(n)
+        # naive cycle guess: look for repeated group arrows multiple times
+        print(json.dumps({"dupes":sorted(dupes),"cycle_suspect":cycle}))
+        PY
+      args: { executable: /bin/bash }
+      register: lintres
+      changed_when: false
+      failed_when: lintres.rc != 0 and lintres.rc != 1
+
+    - name: Write lint result
+      ansible.builtin.copy:
+        dest: "{{ artifacts_dir }}/inventory_lint.json"
+        mode: "0640"
+        content: "{{ lintres.stdout | default('{}') }}"
