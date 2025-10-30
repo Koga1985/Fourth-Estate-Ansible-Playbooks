@@ -7,6 +7,13 @@
   vars:
     artifacts_dir: "{{ artifacts_dir | default('/tmp/ansible-core-artifacts') }}"
     apply_changes: "{{ apply_changes | default(false) }}"
+    ansible_cfg_path: "{{ ansible_cfg_path | default('.ansible.cfg') }}"
+    cfg_defaults:
+      strategy: "{{ strategy | default('linear') }}"
+      forks: "{{ forks | default(20) }}"
+      timeout: "{{ timeout | default(30) }}"
+      callbacks_enabled: "{{ callbacks_enabled | default(['timer','profile_tasks','junit']) }}"
+      stdout_callback: "{{ stdout_callback | default('yaml') }}"
 
   pre_tasks:
     - name: Ensure artifacts directory
@@ -15,36 +22,28 @@
         state: directory
         mode: "0755"
 
-vars:
-  ansible_cfg_path: "{{ ansible_cfg_path | default('.ansible.cfg') }}"
-  cfg_defaults:
-    strategy: "{{ strategy | default('linear') }}"
-    forks: "{{ forks | default(20) }}"
-    timeout: "{{ timeout | default(30) }}"
-    callbacks_enabled: "{{ callbacks_enabled | default(['timer','profile_tasks','junit']) }}"
-    stdout_callback: "{{ stdout_callback | default('yaml') }}"
-tasks:
-  - name: Plan ansible.cfg changes
-    ansible.builtin.copy:
-      dest: "{{ artifacts_dir }}/ansible_cfg_plan.json"
-      mode: "0644"
-      content: "{{ cfg_defaults | to_nice_json }}"
+  tasks:
+    - name: Plan ansible.cfg changes
+      ansible.builtin.copy:
+        dest: "{{ artifacts_dir }}/ansible_cfg_plan.json"
+        mode: "0644"
+        content: "{{ cfg_defaults | to_nice_json }}"
 
-  - name: Ensure ansible.cfg exists
-    when: apply_changes | bool
-    ansible.builtin.file:
-      path: "{{ ansible_cfg_path }}"
-      state: touch
-      mode: "0644"
+    - name: Ensure ansible.cfg exists
+      when: apply_changes | bool
+      ansible.builtin.file:
+        path: "{{ ansible_cfg_path }}"
+        state: touch
+        mode: "0644"
 
-  - name: Apply [defaults] settings
-    when: apply_changes | bool
-    loop: "{{ cfg_defaults | dict2items }}"
-    loop_control: { label: "{{ item.key }}" }
-    community.general.ini_file:
-      path: "{{ ansible_cfg_path }}"
-      section: defaults
-      option: "{{ item.key }}"
-      value: "{{ (item.value is sequence) | ternary(item.value | join(','), item.value) }}"
-      no_extra_spaces: true
-      mode: "0644"
+    - name: Apply [defaults] settings
+      when: apply_changes | bool
+      loop: "{{ cfg_defaults | dict2items }}"
+      loop_control: { label: "{{ item.key }}" }
+      community.general.ini_file:
+        path: "{{ ansible_cfg_path }}"
+        section: defaults
+        option: "{{ item.key }}"
+        value: "{{ (item.value is sequence) | ternary(item.value | join(','), item.value) }}"
+        no_extra_spaces: true
+        mode: "0644"
