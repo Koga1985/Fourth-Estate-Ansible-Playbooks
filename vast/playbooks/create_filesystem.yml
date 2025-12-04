@@ -1,0 +1,67 @@
+---
+# Create VAST filesystem/view playbook
+# Simple playbook for creating new filesystems with proper security
+
+- name: Create VAST Filesystem
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars_files:
+    - ../vars/production.yml
+    - ../vars/vault.yml
+
+  vars_prompt:
+    - name: view_name
+      prompt: "Enter filesystem name"
+      private: false
+
+    - name: view_path
+      prompt: "Enter filesystem path"
+      private: false
+      default: "/vms"
+
+    - name: view_quota_gb
+      prompt: "Enter quota size in GB (0 for unlimited)"
+      private: false
+      default: "0"
+
+  tasks:
+    - name: Validate input
+      ansible.builtin.assert:
+        that:
+          - view_name is defined
+          - view_name | length > 0
+          - view_path is defined
+        fail_msg: "Invalid input parameters"
+
+    - name: Create VAST view/filesystem
+      ansible.builtin.include_tasks: ../tasks/create_view.yml
+      vars:
+        view_protocols: ['nfs', 'smb']
+        view_snapshot_enabled: true
+
+    - name: Apply security settings to new view
+      ansible.builtin.uri:
+        url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/views/{{ view_name }}/security"
+        method: PATCH
+        user: "{{ vast_mgmt_user }}"
+        password: "{{ vast_mgmt_password }}"
+        force_basic_auth: true
+        validate_certs: "{{ vast_verify_ssl }}"
+        body_format: json
+        body:
+          enforce_encryption: true
+          require_signing: true
+        status_code: [200, 204]
+      delegate_to: localhost
+      no_log: true
+
+    - name: Display filesystem information
+      ansible.builtin.debug:
+        msg:
+          - "Filesystem created successfully"
+          - "Name: {{ view_name }}"
+          - "Path: {{ view_path }}"
+          - "Quota: {{ view_quota_gb }}GB"
+          - "Security: Encryption and signing enabled"

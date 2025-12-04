@@ -1,0 +1,34 @@
+---
+# Reusable task: Verify VAST compliance status
+# Usage: include this task to check compliance
+
+- name: Get STIG compliance status
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port | default(443) }}/api/{{ vast_api_version | default('v1') }}/compliance/stig"
+    method: GET
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl | default(true) }}"
+    return_content: true
+  register: compliance_check
+  delegate_to: localhost
+  changed_when: false
+  failed_when: false
+
+- name: Check for critical STIG findings (CAT I)
+  ansible.builtin.assert:
+    that:
+      - compliance_check.json.cat1_findings | default(0) == 0
+    fail_msg: "Critical STIG findings (CAT I) detected: {{ compliance_check.json.cat1_findings | default(0) }}"
+    success_msg: "No critical STIG findings detected"
+  when: compliance_check.json is defined
+
+- name: Display compliance summary
+  ansible.builtin.debug:
+    msg:
+      - "Overall Status: {{ compliance_check.json.overall_status | default('unknown') }}"
+      - "CAT I Findings: {{ compliance_check.json.cat1_findings | default(0) }}"
+      - "CAT II Findings: {{ compliance_check.json.cat2_findings | default(0) }}"
+      - "CAT III Findings: {{ compliance_check.json.cat3_findings | default(0) }}"
+  when: compliance_check.json is defined

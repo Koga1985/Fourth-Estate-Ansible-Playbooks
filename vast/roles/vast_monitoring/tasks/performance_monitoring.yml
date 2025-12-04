@@ -1,0 +1,48 @@
+---
+# Performance monitoring configuration
+
+- name: Enable performance metrics collection
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/monitoring/performance"
+    method: PATCH
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    body_format: json
+    body:
+      enabled: true
+      metrics: "{{ vast_performance_metrics }}"
+      interval_seconds: "{{ vast_metric_collection_interval }}"
+    status_code: [200, 204]
+  delegate_to: localhost
+  tags:
+    - performance
+    - metrics
+
+- name: Get current performance metrics
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/monitoring/metrics"
+    method: GET
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    return_content: true
+  register: vast_current_metrics
+  delegate_to: localhost
+  changed_when: false
+  tags:
+    - performance
+    - metrics
+
+- name: Display current performance metrics
+  ansible.builtin.debug:
+    msg:
+      - "IOPS: {{ vast_current_metrics.json.iops | default('N/A') }}"
+      - "Throughput: {{ vast_current_metrics.json.throughput | default('N/A') }} MB/s"
+      - "Latency: {{ vast_current_metrics.json.latency | default('N/A') }} ms"
+  when: vast_current_metrics.json is defined
+  tags:
+    - performance
+    - metrics

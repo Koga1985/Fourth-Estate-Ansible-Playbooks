@@ -1,0 +1,45 @@
+---
+# Health check configuration
+
+- name: Configure automated health checks
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/monitoring/health"
+    method: PATCH
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    body_format: json
+    body:
+      enabled: true
+      interval_seconds: "{{ vast_health_check_interval }}"
+      components: "{{ vast_health_check_components }}"
+    status_code: [200, 204]
+  delegate_to: localhost
+  tags:
+    - health
+
+- name: Run immediate health check
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/health"
+    method: GET
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    return_content: true
+  register: vast_health_check
+  delegate_to: localhost
+  changed_when: false
+  tags:
+    - health
+    - check
+
+- name: Display health check results
+  ansible.builtin.debug:
+    msg:
+      - "Overall Health: {{ vast_health_check.json.status | default('unknown') }}"
+      - "Failed Components: {{ vast_health_check.json.failed_components | default([]) | length }}"
+  when: vast_health_check.json is defined
+  tags:
+    - health

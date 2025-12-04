@@ -1,0 +1,65 @@
+---
+# Alerting configuration
+
+- name: Configure email alerting
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/alerts/email"
+    method: PATCH
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    body_format: json
+    body:
+      enabled: "{{ vast_alert_email_enabled }}"
+      recipients: "{{ vast_alert_email_recipients }}"
+    status_code: [200, 204]
+  delegate_to: localhost
+  when:
+    - vast_alert_email_enabled | bool
+    - vast_alert_email_recipients | length > 0
+  tags:
+    - alerts
+    - email
+
+- name: Configure capacity threshold alerts
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/alerts/thresholds"
+    method: PATCH
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    body_format: json
+    body:
+      capacity_threshold_percent: "{{ vast_alert_on_capacity_threshold }}"
+      alert_on_performance_degradation: "{{ vast_alert_on_performance_degradation }}"
+      alert_on_hardware_failure: "{{ vast_alert_on_hardware_failure }}"
+      alert_on_security_events: "{{ vast_alert_on_security_events }}"
+    status_code: [200, 204]
+  delegate_to: localhost
+  tags:
+    - alerts
+    - thresholds
+
+- name: Get current active alerts
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/alerts/active"
+    method: GET
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    return_content: true
+  register: vast_active_alerts
+  delegate_to: localhost
+  changed_when: false
+  tags:
+    - alerts
+
+- name: Display active alerts
+  ansible.builtin.debug:
+    msg: "Active Alerts: {{ vast_active_alerts.json | default([]) | length }}"
+  when: vast_active_alerts.json is defined
+  tags:
+    - alerts

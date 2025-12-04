@@ -1,0 +1,135 @@
+---
+# Encryption hardening tasks
+# NIST 800-52r2, NIST 800-111, STIG V-238203
+
+- name: Enable FIPS 140-2 mode (DoD requirement)
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/security/fips"
+    method: PATCH
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    body_format: json
+    body:
+      enabled: "{{ vast_fips_140_2_mode }}"
+    status_code: [200, 204]
+  delegate_to: localhost
+  when: vast_fips_140_2_mode | bool
+  tags:
+    - fips
+    - encryption
+    - dod
+
+- name: Enable encryption at rest (NIST 800-111)
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/security/encryption/at-rest"
+    method: PATCH
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    body_format: json
+    body:
+      enabled: "{{ vast_enforce_encryption_at_rest }}"
+      algorithm: "AES-256-GCM"
+    status_code: [200, 204]
+  delegate_to: localhost
+  when: vast_enforce_encryption_at_rest | bool
+  tags:
+    - encryption_at_rest
+    - nist
+
+- name: Enable encryption in transit (NIST 800-52r2)
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/security/encryption/in-transit"
+    method: PATCH
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    body_format: json
+    body:
+      enabled: "{{ vast_enforce_encryption_in_transit }}"
+      min_tls_version: "{{ vast_tls_min_version }}"
+    status_code: [200, 204]
+  delegate_to: localhost
+  when: vast_enforce_encryption_in_transit | bool
+  tags:
+    - encryption_in_transit
+    - tls
+
+- name: Configure approved cipher suites (NIST 800-52r2)
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/security/cipher-suites"
+    method: PATCH
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    body_format: json
+    body:
+      allowed_ciphers: "{{ vast_allowed_cipher_suites }}"
+    status_code: [200, 204]
+  delegate_to: localhost
+  when: vast_disable_weak_ciphers | bool
+  tags:
+    - cipher_suites
+    - weak_ciphers
+
+- name: Disable SSLv3 and TLS 1.0/1.1 (STIG V-238203)
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/security/protocols"
+    method: PATCH
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    body_format: json
+    body:
+      disable_sslv3: true
+      disable_tls10: true
+      disable_tls11: true
+    status_code: [200, 204]
+  delegate_to: localhost
+  tags:
+    - ssl_tls
+    - deprecated_protocols
+
+- name: Configure certificate validation (DoD PKI)
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/security/certificates"
+    method: PATCH
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    body_format: json
+    body:
+      validate_certificates: "{{ vast_certificate_validation_strict }}"
+      use_dod_pki: "{{ vast_use_dod_pki_certificates }}"
+      expiry_warning_days: "{{ vast_cert_expiry_warning_days }}"
+    status_code: [200, 204]
+  delegate_to: localhost
+  when: vast_certificate_validation_strict | bool
+  tags:
+    - certificates
+    - pki
+
+- name: Enable key rotation policy
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/security/key-rotation"
+    method: PATCH
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    body_format: json
+    body:
+      enabled: true
+      rotation_days: 90
+    status_code: [200, 204]
+  delegate_to: localhost
+  tags:
+    - key_rotation
+    - encryption

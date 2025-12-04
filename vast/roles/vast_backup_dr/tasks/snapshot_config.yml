@@ -1,0 +1,63 @@
+---
+# Snapshot configuration tasks
+
+- name: Configure snapshot schedule
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/snapshots/schedule"
+    method: POST
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    body_format: json
+    body:
+      name: "default-snapshot-schedule"
+      frequency: "{{ vast_snapshot_schedule }}"
+      retention_days: "{{ vast_snapshot_retention_days }}"
+      prefix: "{{ vast_snapshot_prefix }}"
+      enabled: true
+    status_code: [200, 201, 409]
+  delegate_to: localhost
+  tags:
+    - snapshots
+
+- name: Get existing snapshots
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/snapshots"
+    method: GET
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    return_content: true
+  register: vast_existing_snapshots
+  delegate_to: localhost
+  changed_when: false
+  tags:
+    - snapshots
+
+- name: Display snapshot information
+  ansible.builtin.debug:
+    msg: "Total Snapshots: {{ vast_existing_snapshots.json | default([]) | length }}"
+  when: vast_existing_snapshots.json is defined
+  tags:
+    - snapshots
+
+- name: Create immediate snapshot for testing
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/snapshots"
+    method: POST
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    body_format: json
+    body:
+      name: "ansible-test-snapshot-{{ ansible_date_time.epoch }}"
+      description: "Test snapshot created by Ansible"
+    status_code: [200, 201]
+  delegate_to: localhost
+  when: vast_dr_testing_enabled | bool
+  tags:
+    - snapshots
+    - testing

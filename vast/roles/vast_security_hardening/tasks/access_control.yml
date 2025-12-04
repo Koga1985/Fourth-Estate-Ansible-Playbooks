@@ -1,0 +1,122 @@
+---
+# Access Control hardening tasks
+# NIST 800-53 AC family, STIG V-238197
+
+- name: Configure LDAP integration for centralized authentication
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/ldap"
+    method: POST
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    body_format: json
+    body:
+      enabled: "{{ vast_enable_ldap }}"
+      server: "{{ vast_ldap_server }}"
+      port: "{{ vast_ldap_port }}"
+      use_ssl: "{{ vast_ldap_use_ssl }}"
+      base_dn: "{{ vast_ldap_base_dn }}"
+    status_code: [200, 201, 409]
+  delegate_to: localhost
+  when:
+    - vast_enable_ldap | bool
+    - vast_ldap_server != ''
+  tags:
+    - ldap
+    - authentication
+
+- name: Configure Active Directory integration (DoD PKI)
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/activedirectory"
+    method: POST
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    body_format: json
+    body:
+      enabled: "{{ vast_enable_active_directory }}"
+      domain: "{{ vast_ad_domain }}"
+      use_kerberos: "{{ vast_require_kerberos }}"
+    status_code: [200, 201, 409]
+  delegate_to: localhost
+  when:
+    - vast_enable_active_directory | bool
+    - vast_ad_domain != ''
+  tags:
+    - active_directory
+    - kerberos
+
+- name: Disable anonymous access (STIG requirement)
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/security/access"
+    method: PATCH
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    body_format: json
+    body:
+      allow_anonymous: false
+    status_code: [200, 204]
+  delegate_to: localhost
+  when: vast_disable_anonymous_access | bool
+  tags:
+    - anonymous_access
+    - stig
+
+- name: Configure role-based access control (RBAC)
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/rbac"
+    method: PATCH
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    body_format: json
+    body:
+      enabled: true
+      enforce_least_privilege: true
+    status_code: [200, 204]
+  delegate_to: localhost
+  tags:
+    - rbac
+    - least_privilege
+
+- name: Enable access-based enumeration (ABE)
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/shares/abe"
+    method: PATCH
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    body_format: json
+    body:
+      enabled: "{{ vast_enable_access_based_enumeration }}"
+    status_code: [200, 204]
+  delegate_to: localhost
+  when: vast_enable_access_based_enumeration | bool
+  tags:
+    - abe
+    - privacy
+
+- name: Configure session timeout (STIG V-238201)
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/security/sessions"
+    method: PATCH
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    body_format: json
+    body:
+      timeout_minutes: "{{ vast_session_timeout_minutes }}"
+      max_concurrent_sessions: "{{ vast_max_concurrent_sessions }}"
+      audit_sessions: "{{ vast_enable_session_audit }}"
+    status_code: [200, 204]
+  delegate_to: localhost
+  tags:
+    - session_management
+    - timeout

@@ -1,0 +1,34 @@
+---
+# Reusable task: Create VAST quota policy
+# Usage: include this task with required variables
+
+- name: Validate required variables for quota creation
+  ansible.builtin.assert:
+    that:
+      - vast_mgmt_host is defined
+      - quota_name is defined
+      - quota_size_gb is defined
+    fail_msg: "Required variables for quota creation are missing"
+
+- name: Create quota policy
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port | default(443) }}/api/{{ vast_api_version | default('v1') }}/quotas"
+    method: POST
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl | default(true) }}"
+    body_format: json
+    body:
+      name: "{{ quota_name }}"
+      hard_limit_gb: "{{ quota_size_gb }}"
+      soft_limit_percent: "{{ quota_soft_limit_percent | default(90) }}"
+      grace_period_days: "{{ quota_grace_period | default(7) }}"
+    status_code: [200, 201, 409]
+  delegate_to: localhost
+  register: quota_creation_result
+
+- name: Display quota creation result
+  ansible.builtin.debug:
+    msg: "Quota policy '{{ quota_name }}' created with {{ quota_size_gb }}GB limit"
+  when: quota_creation_result.status in [200, 201]

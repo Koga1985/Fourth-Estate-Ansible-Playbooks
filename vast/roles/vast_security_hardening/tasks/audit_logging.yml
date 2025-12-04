@@ -1,0 +1,122 @@
+---
+# Audit and logging hardening tasks
+# NIST 800-53 AU family, STIG V-238205
+
+- name: Enable comprehensive audit logging (NIST 800-53 AU-2)
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/audit/config"
+    method: PATCH
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    body_format: json
+    body:
+      audit_all_access: "{{ vast_audit_all_access }}"
+      audit_admin_actions: "{{ vast_audit_admin_actions }}"
+      audit_failed_logins: "{{ vast_audit_failed_logins }}"
+      audit_config_changes: "{{ vast_audit_config_changes }}"
+    status_code: [200, 204]
+  delegate_to: localhost
+  tags:
+    - audit
+    - logging
+    - nist
+
+- name: Configure audit log retention (NIST 800-53 AU-11)
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/audit/retention"
+    method: PATCH
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    body_format: json
+    body:
+      retention_days: "{{ vast_audit_log_retention_days }}"
+      enable_integrity_check: "{{ vast_audit_log_integrity_check }}"
+    status_code: [200, 204]
+  delegate_to: localhost
+  tags:
+    - audit
+    - retention
+
+- name: Configure SIEM integration (NIST 800-53 AU-6)
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/siem"
+    method: PATCH
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    body_format: json
+    body:
+      enabled: "{{ vast_send_logs_to_siem }}"
+      siem_server: "{{ vast_siem_server }}"
+      protocol: "syslog-tls"
+      port: 6514
+    status_code: [200, 204]
+  delegate_to: localhost
+  when:
+    - vast_send_logs_to_siem | bool
+    - vast_siem_server != ''
+  tags:
+    - siem
+    - centralized_logging
+
+- name: Enable audit log integrity verification (NIST 800-53 AU-9)
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/audit/integrity"
+    method: PATCH
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    body_format: json
+    body:
+      enable_signing: true
+      hash_algorithm: "SHA-256"
+    status_code: [200, 204]
+  delegate_to: localhost
+  when: vast_audit_log_integrity_check | bool
+  tags:
+    - audit
+    - integrity
+
+- name: Configure audit alert thresholds
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/audit/alerts"
+    method: PATCH
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    body_format: json
+    body:
+      alert_on_multiple_failed_logins: true
+      failed_login_threshold: 5
+      alert_on_privilege_escalation: true
+      alert_on_config_changes: true
+    status_code: [200, 204]
+  delegate_to: localhost
+  tags:
+    - audit
+    - alerts
+
+- name: Enable audit trail for privileged operations (STIG V-238205)
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/audit/privileged"
+    method: PATCH
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    body_format: json
+    body:
+      audit_privileged_commands: true
+      audit_sudo_operations: true
+    status_code: [200, 204]
+  delegate_to: localhost
+  tags:
+    - audit
+    - privileged_operations

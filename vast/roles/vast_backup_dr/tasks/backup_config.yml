@@ -1,0 +1,79 @@
+---
+# External backup configuration tasks
+
+- name: Configure external backup target
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/backup/targets"
+    method: POST
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    body_format: json
+    body:
+      name: "external-backup"
+      type: "{{ vast_backup_type }}"
+      destination: "{{ vast_backup_destination }}"
+      encryption_enabled: "{{ vast_backup_encryption_enabled }}"
+      compression_enabled: "{{ vast_backup_compression_enabled }}"
+    status_code: [200, 201, 409]
+  delegate_to: localhost
+  when: vast_backup_destination != ''
+  tags:
+    - backup
+    - external
+
+- name: Configure backup schedule
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/backup/schedules"
+    method: POST
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    body_format: json
+    body:
+      name: "default-backup-schedule"
+      frequency: "{{ vast_backup_schedule }}"
+      retention_days: "{{ vast_backup_retention_days }}"
+      target: "external-backup"
+      enabled: true
+    status_code: [200, 201, 409]
+  delegate_to: localhost
+  tags:
+    - backup
+    - schedule
+
+- name: Enable backup integrity checking (compliance requirement)
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/backup/integrity"
+    method: PATCH
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    body_format: json
+    body:
+      enabled: "{{ vast_backup_integrity_check }}"
+      verify_after_backup: true
+    status_code: [200, 204]
+  delegate_to: localhost
+  when: vast_backup_integrity_check | bool
+  tags:
+    - backup
+    - integrity
+
+- name: Get backup job status
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/backup/jobs"
+    method: GET
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    return_content: true
+  register: vast_backup_jobs
+  delegate_to: localhost
+  changed_when: false
+  tags:
+    - backup

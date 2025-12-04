@@ -1,0 +1,102 @@
+---
+# Protocol configuration tasks for VAST
+
+- name: Configure NFS settings
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/nfs"
+    method: PATCH
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    body_format: json
+    body:
+      enabled: "{{ vast_enable_nfs }}"
+      versions: "{{ vast_nfs_versions }}"
+      kerberos_required: "{{ vast_nfs_kerberos_required }}"
+    status_code: [200, 204]
+  delegate_to: localhost
+  when: vast_enable_nfs is defined
+  tags:
+    - nfs
+    - protocols
+
+- name: Disable SMBv1 (DoD STIG requirement)
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/smb"
+    method: PATCH
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    body_format: json
+    body:
+      smb1_enabled: false
+    status_code: [200, 204]
+  delegate_to: localhost
+  when: vast_disable_smb1 | bool
+  tags:
+    - smb
+    - security
+    - stig
+
+- name: Configure SMB settings with security requirements
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/smb"
+    method: PATCH
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    body_format: json
+    body:
+      enabled: "{{ vast_enable_smb }}"
+      versions: "{{ vast_smb_versions }}"
+      signing_required: "{{ vast_require_smb_signing }}"
+      encryption_required: "{{ vast_require_smb_encryption }}"
+    status_code: [200, 204]
+  delegate_to: localhost
+  when: vast_enable_smb is defined
+  tags:
+    - smb
+    - protocols
+    - security
+
+- name: Configure S3 protocol settings
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/s3"
+    method: PATCH
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    body_format: json
+    body:
+      enabled: "{{ vast_enable_s3 }}"
+      enforce_secure_transport: "{{ vast_enforce_secure_protocols }}"
+    status_code: [200, 204]
+  delegate_to: localhost
+  when: vast_enable_s3 is defined
+  tags:
+    - s3
+    - protocols
+    - security
+
+- name: Enforce secure protocol versions only (NIST 800-52r2)
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/security/protocols"
+    method: PATCH
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    body_format: json
+    body:
+      enforce_secure_protocols: "{{ vast_enforce_secure_protocols }}"
+    status_code: [200, 204]
+  delegate_to: localhost
+  when: vast_enforce_secure_protocols | bool
+  tags:
+    - protocols
+    - security
+    - nist
