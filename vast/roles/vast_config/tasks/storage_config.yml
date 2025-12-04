@@ -1,0 +1,108 @@
+---
+# Storage configuration tasks for VAST
+
+- name: Get existing view policies
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/viewpolicies"
+    method: GET
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    return_content: true
+  register: vast_view_policies
+  delegate_to: localhost
+  changed_when: false
+  tags:
+    - storage
+    - views
+
+- name: Enable deduplication (storage optimization)
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/clusters/{{ vast_cluster_id }}/storage"
+    method: PATCH
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    body_format: json
+    body:
+      deduplication_enabled: "{{ vast_enable_deduplication }}"
+    status_code: [200, 204]
+  delegate_to: localhost
+  when:
+    - vast_cluster_id is defined and vast_cluster_id != ''
+    - vast_enable_deduplication is defined
+  tags:
+    - storage
+    - optimization
+
+- name: Enable compression (storage optimization)
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/clusters/{{ vast_cluster_id }}/storage"
+    method: PATCH
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    body_format: json
+    body:
+      compression_enabled: "{{ vast_enable_compression }}"
+    status_code: [200, 204]
+  delegate_to: localhost
+  when:
+    - vast_cluster_id is defined and vast_cluster_id != ''
+    - vast_enable_compression is defined
+  tags:
+    - storage
+    - optimization
+
+- name: Configure snapshot retention policy (compliance requirement)
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/snapshotpolicies"
+    method: POST
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    body_format: json
+    body:
+      name: "production-snapshot-policy"
+      retention_days: "{{ vast_snapshot_retention_days }}"
+      schedule: "daily"
+    status_code: [201, 200, 409]
+  delegate_to: localhost
+  tags:
+    - storage
+    - snapshots
+    - backup
+
+- name: Get storage capacity information
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/clusters/{{ vast_cluster_id }}/capacity"
+    method: GET
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    return_content: true
+  register: vast_capacity_info
+  delegate_to: localhost
+  changed_when: false
+  when: vast_cluster_id is defined and vast_cluster_id != ''
+  tags:
+    - storage
+    - capacity
+
+- name: Display storage capacity information
+  ansible.builtin.debug:
+    msg:
+      - "Total Capacity: {{ (vast_capacity_info.json.total_capacity | default(0) / 1099511627776) | round(2) }} TB"
+      - "Used Capacity: {{ (vast_capacity_info.json.used_capacity | default(0) / 1099511627776) | round(2) }} TB"
+      - "Available Capacity: {{ (vast_capacity_info.json.available_capacity | default(0) / 1099511627776) | round(2) }} TB"
+  when:
+    - vast_capacity_info.json is defined
+    - vast_capacity_info.json.total_capacity is defined
+  tags:
+    - storage
+    - capacity

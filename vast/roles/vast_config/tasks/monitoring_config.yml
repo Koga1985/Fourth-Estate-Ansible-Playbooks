@@ -1,0 +1,109 @@
+---
+# Monitoring and logging configuration tasks for VAST
+
+- name: Enable SNMP monitoring (DoD requirement)
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/snmp"
+    method: PATCH
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    body_format: json
+    body:
+      enabled: "{{ vast_enable_snmp }}"
+      community_string: "{{ vast_snmp_community }}"
+    status_code: [200, 204]
+  delegate_to: localhost
+  when: vast_enable_snmp | bool
+  tags:
+    - monitoring
+    - snmp
+
+- name: Configure syslog server (audit requirement)
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/syslog"
+    method: PATCH
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    body_format: json
+    body:
+      enabled: "{{ vast_enable_syslog }}"
+      server: "{{ vast_syslog_server }}"
+      port: "{{ vast_syslog_port }}"
+      protocol: "{{ vast_syslog_protocol }}"
+    status_code: [200, 204]
+  delegate_to: localhost
+  when:
+    - vast_enable_syslog | bool
+    - vast_syslog_server != ''
+  tags:
+    - monitoring
+    - syslog
+    - audit
+
+- name: Enable audit logging (NIST 800-53 AU family)
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/audit"
+    method: PATCH
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    body_format: json
+    body:
+      enabled: "{{ vast_enable_audit_logging }}"
+      retention_days: "{{ vast_audit_log_retention_days }}"
+    status_code: [200, 204]
+  delegate_to: localhost
+  when: vast_enable_audit_logging | bool
+  tags:
+    - audit
+    - logging
+    - compliance
+
+- name: Configure alert thresholds
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/alerts/config"
+    method: PATCH
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    body_format: json
+    body:
+      capacity_threshold_percent: 80
+      performance_degradation_threshold: 20
+      hardware_failure_alert: true
+    status_code: [200, 204]
+  delegate_to: localhost
+  tags:
+    - monitoring
+    - alerts
+
+- name: Get current system health status
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/clusters/{{ vast_cluster_id }}/health"
+    method: GET
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    return_content: true
+  register: vast_health_status
+  delegate_to: localhost
+  changed_when: false
+  when: vast_cluster_id is defined and vast_cluster_id != ''
+  tags:
+    - monitoring
+    - health
+
+- name: Display system health status
+  ansible.builtin.debug:
+    msg: "VAST Cluster Health Status: {{ vast_health_status.json.status | default('unknown') }}"
+  when: vast_health_status.json is defined
+  tags:
+    - monitoring
+    - health

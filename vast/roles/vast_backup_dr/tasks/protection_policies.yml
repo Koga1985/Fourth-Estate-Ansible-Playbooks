@@ -1,0 +1,45 @@
+---
+# Protection policy configuration tasks
+
+- name: Create protection policies
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/protection/policies"
+    method: POST
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    body_format: json
+    body:
+      name: "{{ item.name }}"
+      snapshot_frequency: "{{ item.snapshot_frequency }}"
+      snapshot_retention_hours: "{{ item.snapshot_retention }}"
+      replication_enabled: "{{ item.replication_enabled }}"
+    status_code: [200, 201, 409]
+  delegate_to: localhost
+  loop: "{{ vast_protection_policies }}"
+  tags:
+    - policies
+    - protection
+
+- name: Get all protection policies
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/protection/policies"
+    method: GET
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    return_content: true
+  register: vast_all_policies
+  delegate_to: localhost
+  changed_when: false
+  tags:
+    - policies
+
+- name: Display configured policies
+  ansible.builtin.debug:
+    msg: "Total Protection Policies: {{ vast_all_policies.json | default([]) | length }}"
+  when: vast_all_policies.json is defined
+  tags:
+    - policies

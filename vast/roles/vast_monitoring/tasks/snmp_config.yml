@@ -1,0 +1,45 @@
+---
+# SNMP monitoring configuration
+
+- name: Configure SNMPv3 (secure, DoD compliant)
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/snmp"
+    method: PATCH
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    body_format: json
+    body:
+      enabled: true
+      version: "{{ vast_snmp_version }}"
+      user: "{{ vast_snmp_user }}"
+      auth_protocol: "{{ vast_snmp_auth_protocol }}"
+      priv_protocol: "{{ vast_snmp_priv_protocol }}"
+    status_code: [200, 204]
+  delegate_to: localhost
+  no_log: true
+  tags:
+    - snmp
+
+- name: Configure SNMP trap destinations
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/snmp/traps"
+    method: POST
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    body_format: json
+    body:
+      destination: "{{ item.host }}"
+      port: "{{ item.port | default(162) }}"
+      community: "{{ item.community | default(vast_snmp_community) }}"
+    status_code: [200, 201, 409]
+  delegate_to: localhost
+  loop: "{{ vast_snmp_trap_destinations }}"
+  when: vast_snmp_trap_destinations | length > 0
+  no_log: true
+  tags:
+    - snmp
+    - traps

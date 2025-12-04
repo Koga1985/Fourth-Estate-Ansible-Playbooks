@@ -1,0 +1,70 @@
+---
+# Disaster recovery configuration tasks
+
+- name: Configure RTO and RPO objectives
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/dr/objectives"
+    method: PATCH
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    body_format: json
+    body:
+      rto_minutes: "{{ vast_dr_rto_minutes }}"
+      rpo_minutes: "{{ vast_dr_rpo_minutes }}"
+    status_code: [200, 204]
+  delegate_to: localhost
+  tags:
+    - dr
+    - objectives
+
+- name: Configure DR runbook
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/dr/runbook"
+    method: POST
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    body_format: json
+    body:
+      name: "production-dr-runbook"
+      steps:
+        - "Verify DR cluster availability"
+        - "Activate replication failover"
+        - "Verify data integrity"
+        - "Update DNS records"
+        - "Notify stakeholders"
+    status_code: [200, 201, 409]
+  delegate_to: localhost
+  tags:
+    - dr
+    - runbook
+
+- name: Get DR readiness status
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/dr/readiness"
+    method: GET
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    return_content: true
+  register: vast_dr_readiness
+  delegate_to: localhost
+  changed_when: false
+  tags:
+    - dr
+    - readiness
+
+- name: Display DR readiness status
+  ansible.builtin.debug:
+    msg:
+      - "DR Readiness: {{ vast_dr_readiness.json.status | default('unknown') }}"
+      - "Last DR Test: {{ vast_dr_readiness.json.last_test | default('Never') }}"
+      - "Current RPO: {{ vast_dr_readiness.json.current_rpo | default('N/A') }} minutes"
+  when: vast_dr_readiness.json is defined
+  tags:
+    - dr
+    - readiness

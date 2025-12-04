@@ -1,0 +1,44 @@
+---
+# Syslog configuration for centralized logging
+
+- name: Configure syslog servers
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/syslog"
+    method: POST
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    body_format: json
+    body:
+      server: "{{ item.host }}"
+      port: "{{ item.port }}"
+      protocol: "{{ item.protocol }}"
+      facility: "{{ vast_syslog_facility }}"
+      severity: "{{ vast_syslog_severity }}"
+    status_code: [200, 201, 409]
+  delegate_to: localhost
+  loop: "{{ vast_syslog_servers }}"
+  when:
+    - vast_syslog_servers | length > 0
+    - item.host != ''
+  tags:
+    - syslog
+
+- name: Verify syslog connectivity
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/syslog/test"
+    method: POST
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    body_format: json
+    body:
+      server: "{{ vast_syslog_servers[0].host }}"
+    status_code: [200, 204]
+  delegate_to: localhost
+  when: vast_syslog_servers | length > 0
+  tags:
+    - syslog
+    - verification

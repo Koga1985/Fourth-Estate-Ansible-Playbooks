@@ -1,0 +1,37 @@
+---
+# Reusable task: Create VAST view (filesystem/volume)
+# Usage: include this task with required variables
+
+- name: Validate required variables for view creation
+  ansible.builtin.assert:
+    that:
+      - vast_mgmt_host is defined
+      - vast_mgmt_user is defined
+      - vast_mgmt_password is defined
+      - view_name is defined
+      - view_path is defined
+    fail_msg: "Required variables for view creation are missing"
+
+- name: Create VAST view
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port | default(443) }}/api/{{ vast_api_version | default('v1') }}/views"
+    method: POST
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl | default(true) }}"
+    body_format: json
+    body:
+      name: "{{ view_name }}"
+      path: "{{ view_path }}"
+      protocols: "{{ view_protocols | default(['nfs', 'smb']) }}"
+      quota_size_gb: "{{ view_quota_gb | default(0) }}"
+      snapshot_enabled: "{{ view_snapshot_enabled | default(true) }}"
+    status_code: [200, 201, 409]
+  delegate_to: localhost
+  register: view_creation_result
+
+- name: Display view creation result
+  ansible.builtin.debug:
+    msg: "View '{{ view_name }}' created successfully"
+  when: view_creation_result.status in [200, 201]

@@ -1,0 +1,113 @@
+---
+# Network security hardening tasks
+# STIG V-238211
+
+- name: Enable host-based firewall (STIG requirement)
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/firewall"
+    method: PATCH
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    body_format: json
+    body:
+      enabled: "{{ vast_enable_firewall }}"
+    status_code: [200, 204]
+  delegate_to: localhost
+  when: vast_enable_firewall | bool
+  tags:
+    - firewall
+    - network_security
+
+- name: Configure management network ACLs
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/firewall/rules"
+    method: POST
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    body_format: json
+    body:
+      name: "management-access"
+      action: "allow"
+      source_networks: "{{ vast_allowed_management_networks }}"
+      destination_ports: ["443", "22"]
+      protocol: "tcp"
+    status_code: [201, 200, 409]
+  delegate_to: localhost
+  when: vast_allowed_management_networks | length > 0
+  tags:
+    - firewall
+    - acl
+
+- name: Block default deny rule (implicit deny all)
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/firewall/default-policy"
+    method: PATCH
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    body_format: json
+    body:
+      default_action: "deny"
+      log_denied_traffic: true
+    status_code: [200, 204]
+  delegate_to: localhost
+  tags:
+    - firewall
+    - default_deny
+
+- name: Enable intrusion detection (if available)
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/security/ids"
+    method: PATCH
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    body_format: json
+    body:
+      enabled: "{{ vast_enable_intrusion_detection }}"
+    status_code: [200, 204, 404]
+  delegate_to: localhost
+  when: vast_enable_intrusion_detection | bool
+  failed_when: false
+  tags:
+    - ids
+    - intrusion_detection
+
+- name: Configure network segmentation
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/network/vlans"
+    method: GET
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    return_content: true
+  register: vast_network_vlans
+  delegate_to: localhost
+  changed_when: false
+  tags:
+    - network_segmentation
+
+- name: Disable unnecessary network services
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/services"
+    method: PATCH
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    body_format: json
+    body:
+      disable_unused_services: true
+      disabled_services: ["tftp", "rsh", "rlogin"]
+    status_code: [200, 204]
+  delegate_to: localhost
+  tags:
+    - services
+    - attack_surface

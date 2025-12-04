@@ -1,0 +1,88 @@
+---
+# Prerequisites and validation tasks for VAST configuration
+
+- name: Validate required variables are defined
+  ansible.builtin.assert:
+    that:
+      - vast_mgmt_host is defined
+      - vast_mgmt_user is defined
+      - vast_mgmt_password is defined
+      - vast_cluster_name is defined
+    fail_msg: "Required VAST configuration variables are not defined"
+    success_msg: "All required variables are defined"
+  tags:
+    - validation
+
+- name: Check VAST management server connectivity
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/system"
+    method: GET
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    status_code: [200, 401, 403]
+    timeout: 10
+  register: vast_connectivity_check
+  failed_when: false
+  changed_when: false
+  delegate_to: localhost
+  tags:
+    - connectivity
+
+- name: Fail if VAST management server is unreachable
+  ansible.builtin.fail:
+    msg: "Cannot reach VAST management server at {{ vast_mgmt_host }}:{{ vast_mgmt_port }}"
+  when: vast_connectivity_check is failed or vast_connectivity_check.status == -1
+  tags:
+    - connectivity
+
+- name: Get VAST cluster information
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/clusters"
+    method: GET
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    return_content: true
+  register: vast_cluster_info
+  delegate_to: localhost
+  changed_when: false
+  tags:
+    - discovery
+
+- name: Set VAST cluster facts
+  ansible.builtin.set_fact:
+    vast_cluster_id: "{{ vast_cluster_info.json[0].id | default('') }}"
+    vast_cluster_version: "{{ vast_cluster_info.json[0].sw_version | default('unknown') }}"
+  when: vast_cluster_info.json is defined and vast_cluster_info.json | length > 0
+  tags:
+    - discovery
+
+- name: Display VAST cluster information
+  ansible.builtin.debug:
+    msg:
+      - "VAST Cluster Name: {{ vast_cluster_name }}"
+      - "VAST Cluster Version: {{ vast_cluster_version | default('unknown') }}"
+      - "Management Host: {{ vast_mgmt_host }}"
+  tags:
+    - discovery
+
+- name: Ensure SSL certificate is present if SSL verification is enabled
+  ansible.builtin.stat:
+    path: "{{ vast_ssl_cert_path }}"
+  register: vast_ssl_cert
+  when: vast_verify_ssl | bool
+  delegate_to: localhost
+  tags:
+    - ssl
+
+- name: Warn if SSL certificate is not found
+  ansible.builtin.debug:
+    msg: "WARNING: SSL verification is enabled but certificate not found at {{ vast_ssl_cert_path }}"
+  when:
+    - vast_verify_ssl | bool
+    - not vast_ssl_cert.stat.exists
+  tags:
+    - ssl

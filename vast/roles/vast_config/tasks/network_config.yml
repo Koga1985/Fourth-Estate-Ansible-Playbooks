@@ -1,0 +1,88 @@
+---
+# Network configuration tasks for VAST
+
+- name: Get existing VIP pools
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/vippools"
+    method: GET
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    return_content: true
+  register: vast_existing_vip_pools
+  delegate_to: localhost
+  changed_when: false
+  tags:
+    - vip
+
+- name: Check if VIP pool exists
+  ansible.builtin.set_fact:
+    vast_vip_pool_exists: "{{ vast_existing_vip_pools.json | selectattr('name', 'equalto', vast_vip_pool_name) | list | length > 0 }}"
+  when: vast_existing_vip_pools.json is defined
+  tags:
+    - vip
+
+- name: Create VIP pool if configured and doesn't exist
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/vippools"
+    method: POST
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    body_format: json
+    body:
+      name: "{{ vast_vip_pool_name }}"
+      ip_range_start: "{{ vast_vip_pool_start }}"
+      ip_range_end: "{{ vast_vip_pool_end }}"
+      subnet: "{{ vast_vip_pool_subnet }}"
+      gateway: "{{ vast_vip_pool_gateway }}"
+    status_code: [201, 200]
+  delegate_to: localhost
+  when:
+    - vast_vip_pool_start != ''
+    - vast_vip_pool_end != ''
+    - vast_vip_pool_subnet != ''
+    - not (vast_vip_pool_exists | default(false))
+  tags:
+    - vip
+
+- name: Configure DNS servers
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/clusters/{{ vast_cluster_id }}/dns"
+    method: PATCH
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    body_format: json
+    body:
+      domain: "{{ vast_cluster_domain }}"
+    status_code: [200, 204]
+  delegate_to: localhost
+  when:
+    - vast_cluster_id is defined and vast_cluster_id != ''
+    - vast_cluster_domain is defined
+  tags:
+    - dns
+
+- name: Configure NTP servers (DoD STIG requirement)
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/clusters/{{ vast_cluster_id }}/ntp"
+    method: PATCH
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    body_format: json
+    body:
+      ntp_servers: "{{ vast_ntp_servers | default([]) }}"
+    status_code: [200, 204]
+  delegate_to: localhost
+  when:
+    - vast_cluster_id is defined and vast_cluster_id != ''
+    - vast_ntp_servers is defined
+  tags:
+    - ntp
+    - time_sync

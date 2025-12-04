@@ -1,0 +1,131 @@
+---
+# Protocol security hardening tasks
+# STIG V-238207
+
+- name: Disable SMBv1 protocol (Critical STIG finding)
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/protocols/smb"
+    method: PATCH
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    body_format: json
+    body:
+      smb1_enabled: false
+    status_code: [200, 204]
+  delegate_to: localhost
+  when: vast_disable_smb1 | bool
+  tags:
+    - smb
+    - stig_critical
+
+- name: Require SMB signing (STIG V-238207)
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/protocols/smb"
+    method: PATCH
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    body_format: json
+    body:
+      signing_required: "{{ vast_smb_signing_required }}"
+    status_code: [200, 204]
+  delegate_to: localhost
+  when: vast_smb_signing_required | bool
+  tags:
+    - smb
+    - signing
+
+- name: Require SMB encryption (DoD requirement)
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/protocols/smb"
+    method: PATCH
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    body_format: json
+    body:
+      encryption_required: "{{ vast_smb_encryption_required }}"
+    status_code: [200, 204]
+  delegate_to: localhost
+  when: vast_smb_encryption_required | bool
+  tags:
+    - smb
+    - encryption
+
+- name: Configure NFS to use secure ports only (STIG)
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/protocols/nfs"
+    method: PATCH
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    body_format: json
+    body:
+      require_secure_port: "{{ vast_nfs_require_secure_port }}"
+    status_code: [200, 204]
+  delegate_to: localhost
+  when: vast_nfs_require_secure_port | bool
+  tags:
+    - nfs
+    - secure_ports
+
+- name: Enable NFS Kerberos authentication
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/protocols/nfs"
+    method: PATCH
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    body_format: json
+    body:
+      kerberos_only: "{{ vast_nfs_kerberos_only }}"
+      allowed_security_modes: ["krb5", "krb5i", "krb5p"]
+    status_code: [200, 204]
+  delegate_to: localhost
+  when: vast_nfs_kerberos_only | bool
+  tags:
+    - nfs
+    - kerberos
+
+- name: Configure S3 to enforce HTTPS only
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/protocols/s3"
+    method: PATCH
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    body_format: json
+    body:
+      enforce_https: true
+      signature_version: "v4"
+    status_code: [200, 204]
+  delegate_to: localhost
+  tags:
+    - s3
+    - https
+
+- name: Disable insecure protocols (FTP, Telnet, HTTP)
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/protocols/insecure"
+    method: PATCH
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    body_format: json
+    body:
+      ftp_enabled: false
+      telnet_enabled: false
+      http_enabled: false
+    status_code: [200, 204]
+  delegate_to: localhost
+  tags:
+    - insecure_protocols
+    - stig

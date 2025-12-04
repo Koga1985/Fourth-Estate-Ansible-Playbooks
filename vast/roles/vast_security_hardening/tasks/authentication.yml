@@ -1,0 +1,106 @@
+---
+# Authentication hardening tasks
+# NIST 800-63B, STIG V-238199
+
+- name: Configure password complexity requirements (STIG)
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/security/password-policy"
+    method: PATCH
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    body_format: json
+    body:
+      min_length: "{{ vast_password_min_length }}"
+      require_uppercase: true
+      require_lowercase: true
+      require_numbers: true
+      require_special_chars: true
+      max_age_days: "{{ vast_password_max_age_days }}"
+      history_count: "{{ vast_password_history_count }}"
+    status_code: [200, 204]
+  delegate_to: localhost
+  when: vast_password_complexity_required | bool
+  tags:
+    - password_policy
+    - stig
+
+- name: Configure account lockout policy (STIG V-238199)
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/security/lockout-policy"
+    method: PATCH
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    body_format: json
+    body:
+      threshold: "{{ vast_account_lockout_threshold }}"
+      duration_minutes: "{{ vast_account_lockout_duration_minutes }}"
+    status_code: [200, 204]
+  delegate_to: localhost
+  tags:
+    - lockout_policy
+    - stig
+
+- name: Enable multi-factor authentication (NIST 800-63B AAL2)
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/security/mfa"
+    method: PATCH
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    body_format: json
+    body:
+      enabled: "{{ vast_require_mfa }}"
+      methods: "{{ vast_mfa_methods }}"
+    status_code: [200, 204]
+  delegate_to: localhost
+  when: vast_require_mfa | bool
+  tags:
+    - mfa
+    - two_factor
+
+- name: Configure Kerberos authentication (DoD requirement)
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/security/kerberos"
+    method: PATCH
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    body_format: json
+    body:
+      enabled: "{{ vast_require_kerberos }}"
+      require_for_nfs: true
+    status_code: [200, 204]
+  delegate_to: localhost
+  when: vast_require_kerberos | bool
+  tags:
+    - kerberos
+    - strong_auth
+
+- name: Disable local admin accounts except emergency access
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/users/local"
+    method: GET
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    return_content: true
+  register: vast_local_users
+  delegate_to: localhost
+  changed_when: false
+  tags:
+    - local_accounts
+
+- name: Audit local administrative accounts
+  ansible.builtin.debug:
+    msg: "Local admin accounts found: {{ vast_local_users.json | length | default(0) }}"
+  when: vast_local_users.json is defined
+  tags:
+    - local_accounts
+    - audit

@@ -1,0 +1,133 @@
+---
+# Compliance verification tasks
+# STIG V-238217
+
+- name: Generate compliance report
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/compliance/report"
+    method: POST
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    body_format: json
+    body:
+      frameworks: "{{ vast_compliance_frameworks }}"
+      include_remediation: true
+    status_code: [200, 201]
+    return_content: true
+  register: vast_compliance_report
+  delegate_to: localhost
+  when: vast_generate_compliance_reports | bool
+  tags:
+    - compliance
+    - reporting
+
+- name: Check STIG compliance status
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/compliance/stig"
+    method: GET
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    return_content: true
+  register: vast_stig_status
+  delegate_to: localhost
+  changed_when: false
+  tags:
+    - stig
+    - compliance
+
+- name: Display STIG compliance status
+  ansible.builtin.debug:
+    msg:
+      - "STIG Compliance Status: {{ vast_stig_status.json.overall_status | default('unknown') }}"
+      - "Findings: {{ vast_stig_status.json.findings | default([]) | length }}"
+      - "CAT I (Critical): {{ vast_stig_status.json.cat1_findings | default(0) }}"
+      - "CAT II (High): {{ vast_stig_status.json.cat2_findings | default(0) }}"
+      - "CAT III (Medium): {{ vast_stig_status.json.cat3_findings | default(0) }}"
+  when: vast_stig_status.json is defined
+  tags:
+    - stig
+    - compliance
+
+- name: Check NIST 800-53 compliance
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/compliance/nist-800-53"
+    method: GET
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    return_content: true
+  register: vast_nist_status
+  delegate_to: localhost
+  changed_when: false
+  tags:
+    - nist
+    - compliance
+
+- name: Verify FIPS 140-2 mode is active
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/security/fips/status"
+    method: GET
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    return_content: true
+  register: vast_fips_status
+  delegate_to: localhost
+  changed_when: false
+  tags:
+    - fips
+    - verification
+
+- name: Assert FIPS mode is enabled
+  ansible.builtin.assert:
+    that:
+      - vast_fips_status.json.enabled | default(false) | bool
+    fail_msg: "FIPS 140-2 mode is NOT enabled - DoD requirement not met"
+    success_msg: "FIPS 140-2 mode is enabled"
+  when:
+    - vast_fips_140_2_mode | bool
+    - vast_fips_status.json is defined
+  tags:
+    - fips
+    - verification
+
+- name: Verify encryption at rest is enabled
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/security/encryption/status"
+    method: GET
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    return_content: true
+  register: vast_encryption_status
+  delegate_to: localhost
+  changed_when: false
+  tags:
+    - encryption
+    - verification
+
+- name: Create compliance summary
+  ansible.builtin.set_fact:
+    vast_compliance_summary:
+      fips_enabled: "{{ vast_fips_status.json.enabled | default(false) }}"
+      encryption_at_rest: "{{ vast_encryption_status.json.at_rest_enabled | default(false) }}"
+      encryption_in_transit: "{{ vast_encryption_status.json.in_transit_enabled | default(false) }}"
+      audit_logging: "{{ vast_enable_audit_logging }}"
+      smb1_disabled: "{{ vast_disable_smb1 }}"
+  tags:
+    - compliance
+    - summary
+
+- name: Display compliance summary
+  ansible.builtin.debug:
+    var: vast_compliance_summary
+  tags:
+    - compliance
+    - summary
