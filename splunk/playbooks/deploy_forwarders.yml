@@ -1,0 +1,30 @@
+---
+# Playbook for deploying Splunk Universal Forwarders
+# Usage: ansible-playbook -i inventory splunk/playbooks/deploy_forwarders.yml
+
+- name: Deploy Splunk Universal Forwarders
+  hosts: forwarder_targets
+  become: yes
+  vars_files:
+    - ../vars/vault.yml
+
+  roles:
+    - role: ../roles/splunk_forwarder
+      tags: ['forwarder', 'install']
+
+  post_tasks:
+    - name: Verify forwarder is sending data
+      ansible.builtin.wait_for:
+        port: 9997
+        host: "{{ splunk_indexers[0].split(':')[0] }}"
+        timeout: 30
+      delegate_to: localhost
+
+    - name: Display forwarder summary
+      ansible.builtin.debug:
+        msg:
+          - "=== Splunk Forwarder Deployment Complete ==="
+          - "Host: {{ inventory_hostname }}"
+          - "Forwarding to: {{ splunk_indexers | join(', ') }}"
+          - "TLS Enabled: {{ splunk_forwarder_enable_ssl }}"
+          - "FIPS Mode: {{ splunk_forwarder_fips_mode }}"

@@ -1,0 +1,32 @@
+---
+# File System Hardening
+
+- name: Set strict file permissions
+  ansible.builtin.file:
+    path: "{{ splunk_home }}/etc"
+    owner: "{{ splunk_user }}"
+    group: "{{ splunk_group }}"
+    mode: '0700'
+    recurse: yes
+  when: fs_strict_permissions | bool
+  tags:
+    - filesystem
+    - permissions
+
+- name: Remove SUID/SGID bits
+  ansible.builtin.shell: |
+    find {{ splunk_home }}/bin -type f \( -perm -4000 -o -perm -2000 \) -exec chmod ug-s {} \;
+  when: fs_remove_suid_sgid | bool
+  changed_when: false
+  tags:
+    - filesystem
+    - suid
+
+- name: Remove world-readable permissions
+  ansible.builtin.shell: |
+    find {{ splunk_home }} -type f -perm -0004 -exec chmod o-r {} \;
+  when: fs_remove_world_readable | bool
+  changed_when: false
+  tags:
+    - filesystem
+    - permissions

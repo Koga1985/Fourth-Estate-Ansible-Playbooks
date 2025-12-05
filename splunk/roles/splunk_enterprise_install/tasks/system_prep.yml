@@ -1,0 +1,188 @@
+---
+# System preparation tasks
+# STIG V-258002 - System Hardening for Splunk
+
+- name: Install required system packages (RedHat/CentOS)
+  ansible.builtin.yum:
+    name:
+      - wget
+      - tar
+      - gzip
+      - openssl
+      - python3
+      - python3-pip
+      - libselinux-python3
+      - policycoreutils-python-utils
+    state: present
+  when: ansible_os_family == "RedHat"
+  tags:
+    - packages
+    - system
+
+- name: Install required system packages (Debian/Ubuntu)
+  ansible.builtin.apt:
+    name:
+      - wget
+      - tar
+      - gzip
+      - openssl
+      - python3
+      - python3-pip
+      - python3-selinux
+      - policycoreutils
+    state: present
+    update_cache: yes
+  when: ansible_os_family == "Debian"
+  tags:
+    - packages
+    - system
+
+- name: Create Splunk group
+  ansible.builtin.group:
+    name: "{{ splunk_group }}"
+    gid: "{{ splunk_group_gid }}"
+    state: present
+  tags:
+    - user
+    - group
+
+- name: Create Splunk user
+  ansible.builtin.user:
+    name: "{{ splunk_user }}"
+    uid: "{{ splunk_user_uid }}"
+    group: "{{ splunk_group }}"
+    shell: "{{ splunk_user_shell }}"
+    home: "{{ splunk_home }}"
+    comment: "Splunk Service Account"
+    system: yes
+    create_home: no
+  tags:
+    - user
+    - account
+
+- name: Set secure password aging for Splunk user (STIG V-258004)
+  ansible.builtin.command: chage -M 60 -m 1 -W 7 {{ splunk_user }}
+  changed_when: false
+  tags:
+    - user
+    - security
+    - stig
+
+- name: Create Splunk installation directory
+  ansible.builtin.file:
+    path: "{{ splunk_home }}"
+    state: directory
+    owner: "{{ splunk_user }}"
+    group: "{{ splunk_group }}"
+    mode: "0755"
+  tags:
+    - directories
+    - permissions
+
+- name: Create Splunk data directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ splunk_user }}"
+    group: "{{ splunk_group }}"
+    mode: "0700"
+  loop:
+    - "{{ splunk_db }}"
+    - "{{ splunk_home }}/var/log/splunk"
+    - "{{ splunk_home }}/var/run/splunk"
+    - "{{ splunk_home }}/etc/auth"
+    - "{{ splunk_home }}/etc/apps"
+  tags:
+    - directories
+    - permissions
+
+- name: Create backup directory if enabled
+  ansible.builtin.file:
+    path: "{{ splunk_backup_path }}"
+    state: directory
+    owner: "{{ splunk_user }}"
+    group: "{{ splunk_group }}"
+    mode: "0700"
+  when: splunk_enable_backup | bool
+  tags:
+    - directories
+    - backup
+
+- name: Set system ulimits for Splunk user (STIG V-258006)
+  ansible.builtin.pam_limits:
+    domain: "{{ splunk_user }}"
+    limit_type: "{{ item.type }}"
+    limit_item: "{{ item.item }}"
+    value: "{{ item.value }}"
+  loop:
+    - { type: 'soft', item: 'nofile', value: '65536' }
+    - { type: 'hard', item: 'nofile', value: '65536' }
+    - { type: 'soft', item: 'nproc', value: '20480' }
+    - { type: 'hard', item: 'nproc', value: '20480' }
+    - { type: 'soft', item: 'fsize', value: 'unlimited' }
+    - { type: 'hard', item: 'fsize', value: 'unlimited' }
+  tags:
+    - ulimits
+    - performance
+
+- name: Configure kernel parameters for Splunk (STIG V-258008)
+  ansible.builtin.sysctl:
+    name: "{{ item.name }}"
+    value: "{{ item.value }}"
+    state: present
+    reload: yes
+    sysctl_set: yes
+  loop:
+    - { name: 'vm.swappiness', value: '10' }
+    - { name: 'net.core.rmem_max', value: '26214400' }
+    - { name: 'net.core.wmem_max', value: '26214400' }
+    - { name: 'net.ipv4.tcp_rmem', value: '4096 87380 26214400' }
+    - { name: 'net.ipv4.tcp_wmem', value: '4096 65536 26214400' }
+    - { name: 'net.core.netdev_max_backlog', value: '5000' }
+  tags:
+    - kernel
+    - performance
+
+- name: Disable Transparent Huge Pages (THP) for better performance
+  ansible.builtin.lineinfile:
+    path: /etc/rc.local
+    line: "echo never > /sys/kernel/mm/transparent_hugepage/enabled"
+    create: yes
+    mode: '0755'
+  tags:
+    - performance
+    - thp
+
+- name: Disable THP immediately
+  ansible.builtin.shell: echo never > /sys/kernel/mm/transparent_hugepage/enabled
+  changed_when: false
+  failed_when: false
+  tags:
+    - performance
+    - thp
+
+- name: Configure system timezone to UTC (STIG V-258010)
+  community.general.timezone:
+    name: UTC
+  tags:
+    - system
+    - timezone
+
+- name: Ensure NTP/Chrony is configured (STIG V-258012)
+  ansible.builtin.service:
+    name: "{{ 'chronyd' if ansible_os_family == 'RedHat' else 'ntp' }}"
+    state: started
+    enabled: yes
+  tags:
+    - ntp
+    - time
+    - security
+
+- name: Create systemd directory for Splunk
+  ansible.builtin.file:
+    path: /etc/systemd/system
+    state: directory
+    mode: '0755'
+  tags:
+    - systemd
+    - service

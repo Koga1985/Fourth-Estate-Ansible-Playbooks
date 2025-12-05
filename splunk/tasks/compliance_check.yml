@@ -1,0 +1,70 @@
+---
+# Standalone task: STIG compliance verification
+# Usage: ansible-playbook -i inventory splunk/tasks/compliance_check.yml
+
+- name: STIG Compliance Check
+  hosts: splunk_servers
+  become: yes
+  vars:
+    splunk_home: "/opt/splunk"
+    splunk_user: "splunk"
+
+  tasks:
+    - name: Check FIPS mode
+      ansible.builtin.command: "{{ splunk_home }}/bin/splunk btool server list fips"
+      become_user: "{{ splunk_user }}"
+      register: fips_status
+      changed_when: false
+
+    - name: Check TLS configuration
+      ansible.builtin.command: "{{ splunk_home }}/bin/splunk btool server list sslConfig"
+      become_user: "{{ splunk_user }}"
+      register: tls_config
+      changed_when: false
+
+    - name: Check audit configuration
+      ansible.builtin.command: "{{ splunk_home }}/bin/splunk btool audit list"
+      become_user: "{{ splunk_user }}"
+      register: audit_config
+      changed_when: false
+
+    - name: Check file permissions
+      ansible.builtin.shell: |
+        find {{ splunk_home }}/etc -type f -perm /0022 | head -10
+      register: permissions_check
+      changed_when: false
+
+    - name: Generate compliance report
+      ansible.builtin.copy:
+        dest: "{{ splunk_home }}/var/log/splunk/compliance_check_{{ ansible_date_time.date }}.txt"
+        content: |
+          STIG Compliance Verification Report
+          Generated: {{ ansible_date_time.iso8601 }}
+          Host: {{ inventory_hostname }}
+
+          ==============================================
+
+          FIPS Configuration:
+          {{ fips_status.stdout }}
+
+          TLS Configuration:
+          {{ tls_config.stdout }}
+
+          Audit Configuration:
+          {{ audit_config.stdout }}
+
+          File Permission Issues:
+          {{ permissions_check.stdout if permissions_check.stdout else 'None found' }}
+
+          ==============================================
+        owner: "{{ splunk_user }}"
+        mode: '0600'
+
+    - name: Display compliance summary
+      ansible.builtin.debug:
+        msg:
+          - "=== Compliance Check Summary ==="
+          - "FIPS Mode: {{ 'Enabled' if 'fipsMode = strict' in fips_status.stdout else 'Check Required' }}"
+          - "TLS Min Version: {{ 'tls1.2' if 'tls1.2' in tls_config.stdout else 'Check Required' }}"
+          - "Audit Logging: {{ 'Enabled' if 'enableAuditTrail = true' in audit_config.stdout else 'Check Required' }}"
+          - "Permission Issues: {{ permissions_check.stdout_lines | length }} files found"

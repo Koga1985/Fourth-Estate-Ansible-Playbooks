@@ -1,0 +1,130 @@
+---
+# FIPS 140-2 configuration tasks
+# NIST 800-53 SC-13, STIG V-258032
+
+- name: Check if OpenSSL FIPS module is available
+  ansible.builtin.command: openssl version
+  register: openssl_version
+  changed_when: false
+  tags:
+    - fips
+    - validation
+
+- name: Enable FIPS mode in Splunk
+  ansible.builtin.lineinfile:
+    path: "{{ splunk_home }}/etc/system/local/server.conf"
+    regexp: '^allowSslRenegotiation'
+    line: |
+      [general]
+      allowSslRenegotiation = false
+      trustedIP = {{ splunk_allowed_management_networks | join(', ') }}
+
+      [sslConfig]
+      enableSplunkdSSL = true
+      useClientSSLCompression = false
+      useSplunkdClientSSLCompression = false
+      sslVersions = {{ splunk_ssl_versions }}
+      ecdhCurves = {{ splunk_ecdh_curves }}
+      cipherSuite = {{ splunk_cipher_suite }}
+      requireClientCert = false
+      sslVerifyServerCert = {{ splunk_cert_validation_strict | lower }}
+
+      [fips]
+      fipsMode = {{ splunk_fips_mode }}
+      sslCommonNameToCheck =
+      sslAltNameToCheck =
+    create: yes
+    owner: "{{ splunk_user }}"
+    group: "{{ splunk_group }}"
+    mode: '0600'
+  notify: restart splunk
+  tags:
+    - fips
+    - config
+    - ssl
+
+- name: Verify FIPS module installation (RedHat/CentOS)
+  ansible.builtin.yum:
+    name:
+      - dracut-fips
+      - dracut-fips-aesni
+    state: present
+  when:
+    - ansible_os_family == "RedHat"
+    - ansible_distribution_major_version | int >= 8
+  tags:
+    - fips
+    - packages
+
+- name: Check FIPS mode status
+  ansible.builtin.command: cat /proc/sys/crypto/fips_enabled
+  register: fips_status
+  changed_when: false
+  failed_when: false
+  tags:
+    - fips
+    - validation
+
+- name: Display FIPS mode status
+  ansible.builtin.debug:
+    msg: "System FIPS mode: {{ 'Enabled' if fips_status.stdout == '1' else 'Disabled' }}"
+  tags:
+    - fips
+    - validation
+
+- name: Warn if FIPS is not enabled at OS level
+  ansible.builtin.debug:
+    msg: "WARNING: FIPS mode is not enabled at the OS level. For full FIPS compliance, enable FIPS at the system level."
+  when: fips_status.stdout != '1'
+  tags:
+    - fips
+    - validation
+
+- name: Create FIPS verification script
+  ansible.builtin.copy:
+    dest: "{{ splunk_home }}/bin/verify_fips.sh"
+    content: |
+      #!/bin/bash
+      # FIPS Mode Verification Script
+      # Verifies FIPS compliance for Splunk Enterprise
+
+      echo "=== FIPS Compliance Verification ==="
+      echo
+
+      # Check OS FIPS mode
+      echo "1. Checking OS FIPS mode..."
+      if [ -f /proc/sys/crypto/fips_enabled ]; then
+        FIPS_OS=$(cat /proc/sys/crypto/fips_enabled)
+        if [ "$FIPS_OS" = "1" ]; then
+          echo "   [PASS] OS FIPS mode is ENABLED"
+        else
+          echo "   [WARN] OS FIPS mode is DISABLED"
+        fi
+      else
+        echo "   [WARN] Cannot determine OS FIPS status"
+      fi
+      echo
+
+      # Check Splunk FIPS configuration
+      echo "2. Checking Splunk FIPS configuration..."
+      {{ splunk_home }}/bin/splunk btool server list fips --debug
+      echo
+
+      # Check OpenSSL version
+      echo "3. Checking OpenSSL version..."
+      openssl version
+      echo
+
+      # Verify TLS settings
+      echo "4. Checking TLS configuration..."
+      {{ splunk_home }}/bin/splunk btool server list sslConfig --debug
+      echo
+
+      echo "=== Verification Complete ==="
+    owner: "{{ splunk_user }}"
+    group: "{{ splunk_group }}"
+    mode: '0750'
+  tags:
+    - fips
+    - validation
+    - scripts

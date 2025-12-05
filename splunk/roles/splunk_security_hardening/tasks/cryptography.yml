@@ -1,0 +1,41 @@
+---
+# Cryptography Hardening (NIST 800-53 SC-13, SC-17)
+
+- name: Enable FIPS 140-2 mode
+  ansible.builtin.lineinfile:
+    path: "{{ splunk_home }}/etc/system/local/server.conf"
+    regexp: '^fipsMode'
+    line: "fipsMode = strict"
+    insertafter: '^\[fips\]'
+  when: sc_enforce_fips_140_2 | bool
+  notify: restart splunk
+  tags:
+    - fips
+    - cryptography
+
+- name: Configure strong TLS settings
+  ansible.builtin.blockinfile:
+    path: "{{ splunk_home }}/etc/system/local/server.conf"
+    block: |
+      [sslConfig]
+      sslVersions = {{ sc_tls_min_version }}, tls1.3
+      cipherSuite = {{ sc_cipher_suite }}
+      ecdhCurves = prime256v1, secp384r1, secp521r1
+      allowSslRenegotiation = false
+      allowSslCompression = false
+    marker: "# {mark} ANSIBLE MANAGED TLS BLOCK"
+  notify: restart splunk
+  tags:
+    - tls
+    - cryptography
+
+- name: Disable weak ciphers
+  ansible.builtin.lineinfile:
+    path: "{{ splunk_home }}/etc/system/local/server.conf"
+    regexp: '^sslVersions'
+    line: "sslVersions = tls1.2, tls1.3"
+  when: sc_disable_weak_ciphers | bool
+  notify: restart splunk
+  tags:
+    - ciphers
+    - cryptography

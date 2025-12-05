@@ -1,0 +1,42 @@
+---
+# Standalone task: Splunk health check
+# Usage: ansible-playbook -i inventory splunk/tasks/health_check.yml
+
+- name: Splunk Health Check
+  hosts: splunk_servers
+  become: yes
+  vars:
+    splunk_home: "/opt/splunk"
+    splunk_user: "splunk"
+
+  tasks:
+    - name: Check Splunk process
+      ansible.builtin.shell: "ps aux | grep splunkd | grep -v grep"
+      register: splunk_process
+      changed_when: false
+
+    - name: Check disk usage
+      ansible.builtin.shell: "df -h {{ splunk_home }} | tail -1"
+      register: disk_usage
+      changed_when: false
+
+    - name: Check memory usage
+      ansible.builtin.shell: "free -h"
+      register: memory_usage
+      changed_when: false
+
+    - name: Check Splunk version
+      ansible.builtin.command: "{{ splunk_home }}/bin/splunk version"
+      become_user: "{{ splunk_user }}"
+      register: splunk_version
+      changed_when: false
+
+    - name: Generate health report
+      ansible.builtin.debug:
+        msg:
+          - "=== Splunk Health Report ==="
+          - "Host: {{ inventory_hostname }}"
+          - "Version: {{ splunk_version.stdout }}"
+          - "Process Status: {{ 'Running' if splunk_process.rc == 0 else 'Not Running' }}"
+          - "Disk Usage: {{ disk_usage.stdout }}"
+          - "Memory: {{ memory_usage.stdout_lines[1] }}"

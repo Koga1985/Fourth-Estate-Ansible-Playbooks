@@ -1,0 +1,216 @@
+---
+# TLS/SSL configuration tasks
+# NIST 800-52r2, STIG V-258034
+
+- name: Create SSL certificate directory
+  ansible.builtin.file:
+    path: "{{ splunk_home }}/etc/auth/mycerts"
+    state: directory
+    owner: "{{ splunk_user }}"
+    group: "{{ splunk_group }}"
+    mode: '0700'
+  tags:
+    - tls
+    - certificates
+    - directories
+
+- name: Copy TLS server certificate
+  ansible.builtin.copy:
+    src: "{{ splunk_server_cert }}"
+    dest: "{{ splunk_home }}/etc/auth/mycerts/server.pem"
+    owner: "{{ splunk_user }}"
+    group: "{{ splunk_group }}"
+    mode: '0600'
+  when:
+    - not splunk_use_default_tls_certs
+    - splunk_server_cert != ''
+  notify: restart splunk
+  tags:
+    - tls
+    - certificates
+
+- name: Copy TLS server key
+  ansible.builtin.copy:
+    src: "{{ splunk_server_key }}"
+    dest: "{{ splunk_home }}/etc/auth/mycerts/server-key.pem"
+    owner: "{{ splunk_user }}"
+    group: "{{ splunk_group }}"
+    mode: '0600'
+  when:
+    - not splunk_use_default_tls_certs
+    - splunk_server_key != ''
+  notify: restart splunk
+  no_log: true
+  tags:
+    - tls
+    - certificates
+
+- name: Copy CA certificate
+  ansible.builtin.copy:
+    src: "{{ splunk_ca_cert }}"
+    dest: "{{ splunk_home }}/etc/auth/mycerts/ca.pem"
+    owner: "{{ splunk_user }}"
+    group: "{{ splunk_group }}"
+    mode: '0644'
+  when:
+    - not splunk_use_default_tls_certs
+    - splunk_ca_cert != ''
+  notify: restart splunk
+  tags:
+    - tls
+    - certificates
+
+- name: Copy intermediate CA certificates
+  ansible.builtin.copy:
+    src: "{{ item }}"
+    dest: "{{ splunk_home }}/etc/auth/mycerts/intermediate-{{ item | basename }}"
+    owner: "{{ splunk_user }}"
+    group: "{{ splunk_group }}"
+    mode: '0644'
+  loop: "{{ splunk_intermediate_ca_certs }}"
+  when:
+    - splunk_intermediate_ca_certs | length > 0
+  notify: restart splunk
+  tags:
+    - tls
+    - certificates
+
+- name: Configure web interface TLS (STIG V-258036)
+  ansible.builtin.blockinfile:
+    path: "{{ splunk_home }}/etc/system/local/web.conf"
+    block: |
+      [settings]
+      enableSplunkWebSSL = {{ splunk_enable_web_ssl | lower }}
+      privKeyPath = {{ splunk_home }}/etc/auth/mycerts/server-key.pem
+      serverCert = {{ splunk_home }}/etc/auth/mycerts/server.pem
+      sslVersions = {{ splunk_ssl_versions }}
+      cipherSuite = {{ splunk_cipher_suite }}
+      httpport = {{ splunk_web_port }}
+      mgmtHostPort = {{ splunk_bind_ip }}:{{ splunk_mgmt_port }}
+      sessionTimeout = {{ splunk_ui_session_timeout }}
+      tools.sessions.timeout = {{ splunk_ui_idle_timeout }}
+      max_upload_size = {{ splunk_max_upload_size }}
+      enableWebDebug = false
+      x_frame_options_sameorigin = true
+      cspEnabled = true
+      cookieSecure = true
+      # DoD STIG V-258036 - Enable secure cookies
+      trustedIP = {{ splunk_allowed_management_networks | join(', ') }}
+    create: yes
+    owner: "{{ splunk_user }}"
+    group: "{{ splunk_group }}"
+    mode: '0600'
+  when: not splunk_use_default_tls_certs
+  notify: restart splunk
+  tags:
+    - tls
+    - config
+    - web
+
+- name: Configure Splunk management interface TLS (STIG V-258038)
+  ansible.builtin.blockinfile:
+    path: "{{ splunk_home }}/etc/system/local/server.conf"
+    block: |
+      [sslConfig]
+      enableSplunkdSSL = true
+      serverCert = {{ splunk_home }}/etc/auth/mycerts/server.pem
+      sslPassword = $7${{ lookup('password', '/dev/null length=32 chars=ascii_letters,digits') | b64encode }}
+      sslVersions = {{ splunk_ssl_versions }}
+      ecdhCurves = {{ splunk_ecdh_curves }}
+      cipherSuite = {{ splunk_cipher_suite }}
+      sslVerifyServerCert = {{ splunk_cert_validation_strict | lower }}
+      sslVerifyServerName = {{ splunk_cert_validation_strict | lower }}
+      sslCommonNameToCheck = {{ inventory_hostname }}
+      allowSslCompression = false
+      allowSslRenegotiation = false
+      useClientSSLCompression = false
+      useSplunkdClientSSLCompression = false
+    create: yes
+    owner: "{{ splunk_user }}"
+    group: "{{ splunk_group }}"
+    mode: '0600'
+  when: not splunk_use_default_tls_certs
+  notify: restart splunk
+  tags:
+    - tls
+    - config
+    - management
+
+- name: Configure inputs TLS for receiving data (STIG V-258040)
+  ansible.builtin.blockinfile:
+    path: "{{ splunk_home }}/etc/system/local/inputs.conf"
+    block: |
+      [splunktcp-ssl:{{ splunk_splunktcp_port }}]
+      disabled = {{ not splunk_enable_splunktcp_ssl | lower }}
+      serverCert = {{ splunk_home }}/etc/auth/mycerts/server.pem
+      sslPassword = $7${{ lookup('password', '/dev/null length=32 chars=ascii_letters,digits') | b64encode }}
+      requireClientCert = false
+      sslVersions = {{ splunk_ssl_versions }}
+      cipherSuite = {{ splunk_cipher_suite }}
+    create: yes
+    owner: "{{ splunk_user }}"
+    group: "{{ splunk_group }}"
+    mode: '0600'
+  when:
+    - not splunk_use_default_tls_certs
+    - splunk_enable_splunktcp_ssl | bool
+  notify: restart splunk
+  tags:
+    - tls
+    - config
+    - inputs
+
+- name: Create certificate monitoring script
+  ansible.builtin.copy:
+    dest: "{{ splunk_home }}/bin/check_cert_expiry.sh"
+    content: |
+      #!/bin/bash
+      # Certificate Expiry Check Script
+      # STIG V-258042 - Monitor certificate expiration
+
+      CERT_FILE="{{ splunk_home }}/etc/auth/mycerts/server.pem"
+      WARNING_DAYS={{ splunk_cert_expiry_warning_days }}
+
+      if [ ! -f "$CERT_FILE" ]; then
+        echo "ERROR: Certificate file not found: $CERT_FILE"
+        exit 1
+      fi
+
+      EXPIRY_DATE=$(openssl x509 -enddate -noout -in "$CERT_FILE" | cut -d= -f2)
+      EXPIRY_EPOCH=$(date -d "$EXPIRY_DATE" +%s)
+      CURRENT_EPOCH=$(date +%s)
+      DAYS_UNTIL_EXPIRY=$(( ($EXPIRY_EPOCH - $CURRENT_EPOCH) / 86400 ))
+
+      echo "Certificate: $CERT_FILE"
+      echo "Expires: $EXPIRY_DATE"
+      echo "Days until expiry: $DAYS_UNTIL_EXPIRY"
+
+      if [ $DAYS_UNTIL_EXPIRY -lt 0 ]; then
+        echo "CRITICAL: Certificate has EXPIRED!"
+        exit 2
+      elif [ $DAYS_UNTIL_EXPIRY -lt $WARNING_DAYS ]; then
+        echo "WARNING: Certificate expires in less than $WARNING_DAYS days!"
+        exit 1
+      else
+        echo "OK: Certificate is valid"
+        exit 0
+      fi
+    owner: "{{ splunk_user }}"
+    group: "{{ splunk_group }}"
+    mode: '0750'
+  tags:
+    - tls
+    - monitoring
+    - scripts
+
+- name: Setup certificate expiry monitoring cron job
+  ansible.builtin.cron:
+    name: "Splunk certificate expiry check"
+    minute: "0"
+    hour: "6"
+    job: "{{ splunk_home }}/bin/check_cert_expiry.sh"
+    user: "{{ splunk_user }}"
+  tags:
+    - tls
+    - monitoring
+    - cron

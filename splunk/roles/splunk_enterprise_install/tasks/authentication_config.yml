@@ -1,0 +1,112 @@
+---
+# Authentication configuration tasks
+# NIST 800-63B, STIG V-258044
+
+- name: Configure LDAP authentication
+  ansible.builtin.template:
+    src: authentication_ldap.conf.j2
+    dest: "{{ splunk_home }}/etc/system/local/authentication.conf"
+    owner: "{{ splunk_user }}"
+    group: "{{ splunk_group }}"
+    mode: '0600'
+  when: splunk_auth_type == "LDAP"
+  notify: restart splunk
+  tags:
+    - authentication
+    - ldap
+    - config
+
+- name: Configure SAML authentication
+  ansible.builtin.template:
+    src: authentication_saml.conf.j2
+    dest: "{{ splunk_home }}/etc/system/local/authentication.conf"
+    owner: "{{ splunk_user }}"
+    group: "{{ splunk_group }}"
+    mode: '0600'
+  when: splunk_auth_type == "SAML"
+  notify: restart splunk
+  tags:
+    - authentication
+    - saml
+    - config
+
+- name: Configure MFA - DUO integration
+  ansible.builtin.copy:
+    dest: "{{ splunk_home }}/etc/apps/Splunk_SA_DuoSecurityApp/local/duo_settings.conf"
+    content: |
+      [duo]
+      integration_key = {{ vault_duo_integration_key }}
+      secret_key = {{ vault_duo_secret_key }}
+      api_hostname = {{ vault_duo_api_hostname }}
+      failsafe = secure
+    owner: "{{ splunk_user }}"
+    group: "{{ splunk_group }}"
+    mode: '0600'
+  when:
+    - splunk_enable_mfa | bool
+    - splunk_mfa_type == "DUO"
+  no_log: true
+  tags:
+    - authentication
+    - mfa
+    - duo
+
+- name: Create role-based access control configuration (STIG V-258046)
+  ansible.builtin.copy:
+    dest: "{{ splunk_home }}/etc/system/local/authorize.conf"
+    content: |
+      # DoD STIG V-258046 - Role-Based Access Control
+
+      [role_admin]
+      # Full administrative access
+      grantableRoles = admin;power;user
+      importRoles = admin
+      srchIndexesAllowed = *
+      srchIndexesDefault = main
+      edit_user = enabled
+      edit_roles_grantable = enabled
+
+      [role_power]
+      # Power user access
+      importRoles = power
+      srchIndexesAllowed = *
+      srchIndexesDefault = main
+      edit_user = disabled
+
+      [role_user]
+      # Standard user access
+      importRoles = user
+      srchIndexesAllowed = main
+      srchIndexesDefault = main
+      edit_user = disabled
+
+      [role_auditor]
+      # Audit and compliance role (NIST 800-53 AU-9)
+      importRoles = user
+      srchIndexesAllowed = _audit;_internal
+      srchIndexesDefault = _audit
+      edit_user = disabled
+      srchMaxTime = 0
+      rtSrchJobsQuota = 10
+      srchJobsQuota = 20
+      srchDiskQuota = 10000
+    owner: "{{ splunk_user }}"
+    group: "{{ splunk_group }}"
+    mode: '0600'
+  notify: restart splunk
+  tags:
+    - authentication
+    - authorization
+    - rbac
+
+- name: Force password change on first login (STIG V-258048)
+  ansible.builtin.lineinfile:
+    path: "{{ splunk_home }}/etc/system/local/authentication.conf"
+    regexp: '^forcePasswordChangeOnFirstLogin'
+    line: "forcePasswordChangeOnFirstLogin = {{ splunk_require_password_change_on_first_login | lower }}"
+    insertafter: '^\[authentication\]'
+  notify: restart splunk
+  tags:
+    - authentication
+    - security
+    - password

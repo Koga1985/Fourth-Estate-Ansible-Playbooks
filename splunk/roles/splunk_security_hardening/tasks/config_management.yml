@@ -1,0 +1,35 @@
+---
+# Configuration Management (NIST 800-53 CM family)
+
+- name: Disable unnecessary sample apps
+  ansible.builtin.file:
+    path: "{{ splunk_home }}/etc/apps/{{ item }}"
+    state: absent
+  loop:
+    - sample_app
+    - legacy
+    - learned
+  when: cm_disable_sample_apps | bool
+  tags:
+    - config_management
+    - apps
+
+- name: Remove default content
+  ansible.builtin.file:
+    path: "{{ splunk_home }}/etc/apps/search/samples"
+    state: absent
+  when: cm_remove_default_content | bool
+  tags:
+    - config_management
+    - content
+
+- name: Enable configuration change detection
+  ansible.builtin.cron:
+    name: "Splunk configuration change detection"
+    minute: "*/15"
+    job: "find {{ splunk_home }}/etc -name '*.conf' -mmin -15 | logger -t splunk-config-change"
+    user: "{{ splunk_user }}"
+  when: cm_config_change_detection | bool
+  tags:
+    - config_management
+    - monitoring

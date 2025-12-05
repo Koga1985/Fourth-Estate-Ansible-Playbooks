@@ -1,0 +1,138 @@
+---
+# Splunk package installation tasks
+# STIG V-258014 - Secure Software Installation
+
+- name: Set Splunk package filename
+  ansible.builtin.set_fact:
+    splunk_package_name: "{{ splunk_product }}-{{ splunk_version }}-{{ splunk_build }}-linux-{{ splunk_architecture | replace('_', '-') }}.tgz"
+  tags:
+    - package
+    - download
+
+- name: Download Splunk package
+  ansible.builtin.get_url:
+    url: "{{ splunk_package_url }}/{{ splunk_version }}/linux/{{ splunk_package_name }}"
+    dest: "/tmp/{{ splunk_package_name }}"
+    mode: '0600'
+    timeout: 300
+    validate_certs: yes
+  register: splunk_download
+  tags:
+    - package
+    - download
+
+- name: Verify package checksum (if verification enabled)
+  ansible.builtin.stat:
+    path: "/tmp/{{ splunk_package_name }}"
+    checksum_algorithm: sha256
+  register: package_stat
+  when: splunk_verify_checksum | bool
+  tags:
+    - package
+    - verification
+    - security
+
+- name: Extract Splunk package
+  ansible.builtin.unarchive:
+    src: "/tmp/{{ splunk_package_name }}"
+    dest: "{{ splunk_home | dirname }}"
+    remote_src: yes
+    owner: "{{ splunk_user }}"
+    group: "{{ splunk_group }}"
+    creates: "{{ splunk_home }}/bin/splunk"
+  tags:
+    - package
+    - install
+
+- name: Set ownership of Splunk installation
+  ansible.builtin.file:
+    path: "{{ splunk_home }}"
+    state: directory
+    owner: "{{ splunk_user }}"
+    group: "{{ splunk_group }}"
+    recurse: yes
+  tags:
+    - package
+    - permissions
+
+- name: Remove installation package
+  ansible.builtin.file:
+    path: "/tmp/{{ splunk_package_name }}"
+    state: absent
+  when: splunk_cleanup_installer | bool
+  tags:
+    - package
+    - cleanup
+
+- name: Create Splunk service user seed file (STIG V-258016)
+  ansible.builtin.copy:
+    dest: "{{ splunk_home }}/etc/system/local/user-seed.conf"
+    content: |
+      [user_info]
+      USERNAME = admin
+      PASSWORD = {{ splunk_admin_password }}
+    owner: "{{ splunk_user }}"
+    group: "{{ splunk_group }}"
+    mode: '0600'
+  no_log: true
+  tags:
+    - config
+    - security
+    - credentials
+
+- name: Accept Splunk license and start for first time
+  ansible.builtin.command: >
+    {{ splunk_home }}/bin/splunk start
+    --accept-license
+    --answer-yes
+    --no-prompt
+    --seed-passwd {{ splunk_admin_password }}
+  become: yes
+  become_user: "{{ splunk_user }}"
+  environment:
+    SPLUNK_HOME: "{{ splunk_home }}"
+  register: splunk_first_start
+  changed_when: "'Splunk has started' in splunk_first_start.stdout"
+  failed_when: splunk_first_start.rc != 0
+  no_log: true
+  tags:
+    - service
+    - start
+    - license
+
+- name: Wait for Splunk management port to be available
+  ansible.builtin.wait_for:
+    port: "{{ splunk_mgmt_port }}"
+    host: "{{ splunk_bind_ip }}"
+    delay: 5
+    timeout: 300
+    state: started
+  tags:
+    - service
+    - validation
+
+- name: Stop Splunk for configuration
+  ansible.builtin.command: "{{ splunk_home }}/bin/splunk stop"
+  become: yes
+  become_user: "{{ splunk_user }}"
+  environment:
+    SPLUNK_HOME: "{{ splunk_home }}"
+  changed_when: false
+  tags:
+    - service
+    - stop
+
+- name: Configure Splunk to start at boot
+  ansible.builtin.command: >
+    {{ splunk_home }}/bin/splunk enable boot-start
+    -user {{ splunk_user }}
+    -systemd-managed 1
+    --accept-license
+    --answer-yes
+    --no-prompt
+  when: splunk_enable_boot_start | bool
+  changed_when: true
+  tags:
+    - service
+    - boot
+    - systemd

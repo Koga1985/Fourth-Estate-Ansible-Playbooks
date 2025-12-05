@@ -1,0 +1,39 @@
+---
+# Standalone task: Restart Splunk service
+# Usage: ansible-playbook -i inventory splunk/tasks/restart_splunk.yml
+
+- name: Restart Splunk Enterprise
+  hosts: splunk_servers
+  become: yes
+  vars:
+    splunk_home: "/opt/splunk"
+    splunk_user: "splunk"
+
+  tasks:
+    - name: Check Splunk service status
+      ansible.builtin.systemd:
+        name: Splunkd
+        state: started
+      register: splunk_status
+
+    - name: Restart Splunk service
+      ansible.builtin.systemd:
+        name: Splunkd
+        state: restarted
+        daemon_reload: yes
+
+    - name: Wait for Splunk to be available
+      ansible.builtin.wait_for:
+        port: 8089
+        delay: 10
+        timeout: 300
+
+    - name: Verify Splunk is running
+      ansible.builtin.command: "{{ splunk_home }}/bin/splunk status"
+      become_user: "{{ splunk_user }}"
+      register: status_output
+      changed_when: false
+
+    - name: Display status
+      ansible.builtin.debug:
+        msg: "{{ status_output.stdout_lines }}"

@@ -1,0 +1,215 @@
+---
+# Initial Splunk configuration tasks
+# STIG V-258018 - Base Configuration
+
+- name: Create Splunk server.conf configuration
+  ansible.builtin.template:
+    src: server.conf.j2
+    dest: "{{ splunk_home }}/etc/system/local/server.conf"
+    owner: "{{ splunk_user }}"
+    group: "{{ splunk_group }}"
+    mode: '0600'
+  notify: restart splunk
+  tags:
+    - config
+    - server
+
+- name: Create Splunk web.conf configuration (STIG V-258020)
+  ansible.builtin.template:
+    src: web.conf.j2
+    dest: "{{ splunk_home }}/etc/system/local/web.conf"
+    owner: "{{ splunk_user }}"
+    group: "{{ splunk_group }}"
+    mode: '0600'
+  notify: restart splunk
+  tags:
+    - config
+    - web
+    - ssl
+
+- name: Create Splunk inputs.conf configuration
+  ansible.builtin.template:
+    src: inputs.conf.j2
+    dest: "{{ splunk_home }}/etc/system/local/inputs.conf"
+    owner: "{{ splunk_user }}"
+    group: "{{ splunk_group }}"
+    mode: '0600'
+  notify: restart splunk
+  tags:
+    - config
+    - inputs
+
+- name: Create Splunk outputs.conf configuration
+  ansible.builtin.template:
+    src: outputs.conf.j2
+    dest: "{{ splunk_home }}/etc/system/local/outputs.conf"
+    owner: "{{ splunk_user }}"
+    group: "{{ splunk_group }}"
+    mode: '0600'
+  notify: restart splunk
+  tags:
+    - config
+    - outputs
+
+- name: Configure password policy (NIST 800-63B, STIG V-258022)
+  ansible.builtin.copy:
+    dest: "{{ splunk_home }}/etc/system/local/authentication.conf"
+    content: |
+      [authentication]
+      minPasswordLength = {{ splunk_admin_password_min_length }}
+      minPasswordDigit = 1
+      minPasswordLowercase = 1
+      minPasswordUppercase = 1
+      minPasswordSpecial = 1
+      passwordHistoryCount = 24
+      enablePasswordHistory = true
+      constantLoginTime = 3s
+      lockoutAttempts = 3
+      lockoutThresholdMins = 15
+      lockoutMins = 15
+      enableWebLoginTimeout = true
+      webLoginTimeout = {{ splunk_ui_session_timeout }}
+      webLoginIdleTimeout = {{ splunk_ui_idle_timeout }}
+    owner: "{{ splunk_user }}"
+    group: "{{ splunk_group }}"
+    mode: '0600'
+  notify: restart splunk
+  tags:
+    - config
+    - authentication
+    - password
+    - security
+
+- name: Configure audit logging (NIST 800-53 AU family, STIG V-258024)
+  ansible.builtin.copy:
+    dest: "{{ splunk_home }}/etc/system/local/audit.conf"
+    content: |
+      [auditTrail]
+      enableAuditTrail = {{ splunk_enable_audit_trail | lower }}
+      filepath = {{ splunk_audit_log_path }}
+
+      [searchActivity]
+      enableSearchActivity = {{ splunk_audit_all_searches | lower }}
+
+      [adminActivity]
+      enableAdminActivity = {{ splunk_audit_admin_actions | lower }}
+    owner: "{{ splunk_user }}"
+    group: "{{ splunk_group }}"
+    mode: '0600'
+  notify: restart splunk
+  tags:
+    - config
+    - audit
+    - logging
+    - security
+
+- name: Configure login banner (STIG V-258026)
+  ansible.builtin.copy:
+    dest: "{{ splunk_home }}/etc/system/local/alert_actions.conf"
+    content: |
+      [default]
+      # DoD Standard Mandatory Notice and Consent Banner
+    owner: "{{ splunk_user }}"
+    group: "{{ splunk_group }}"
+    mode: '0600'
+  when: splunk_login_banner_enabled | bool
+  tags:
+    - config
+    - banner
+    - compliance
+
+- name: Create login banner file
+  ansible.builtin.copy:
+    dest: "{{ splunk_home }}/etc/apps/search/default/data/ui/views/login.xml"
+    content: |
+      <view template="login.html">
+        <module name="Message" layoutPanel="messaging">
+          <param name="filter">*</param>
+          <param name="clearOnJobDispatch">False</param>
+          <param name="maxSize">1</param>
+        </module>
+        <module name="Message" layoutPanel="messaging">
+          <param name="message">{{ splunk_login_banner_text | replace('\n', '<br/>') }}</param>
+          <param name="severity">info</param>
+        </module>
+      </view>
+    owner: "{{ splunk_user }}"
+    group: "{{ splunk_group }}"
+    mode: '0644'
+  when: splunk_login_banner_enabled | bool
+  tags:
+    - config
+    - banner
+    - ui
+
+- name: Configure resource limits (STIG V-258028)
+  ansible.builtin.copy:
+    dest: "{{ splunk_home }}/etc/system/local/limits.conf"
+    content: |
+      [search]
+      max_concurrent_searches = {{ splunk_max_concurrent_searches }}
+      max_searches_per_cpu = {{ splunk_max_searches_per_cpu }}
+      max_mem_usage_mb = {{ splunk_search_process_memory_limit }}
+
+      [thruput]
+      maxKBps = 0
+
+      [scheduler]
+      max_searches_perc = 50
+      auto_summary_perc = 50
+    owner: "{{ splunk_user }}"
+    group: "{{ splunk_group }}"
+    mode: '0600'
+  notify: restart splunk
+  tags:
+    - config
+    - limits
+    - performance
+
+- name: Configure index settings (NIST 800-53 AU-11)
+  ansible.builtin.copy:
+    dest: "{{ splunk_home }}/etc/system/local/indexes.conf"
+    content: |
+      [default]
+      maxDataSize = {{ splunk_max_data_size }}
+      maxHotBuckets = {{ splunk_max_hot_buckets }}
+      maxWarmDBCount = {{ splunk_max_warm_db_count }}
+      frozenTimePeriodInSecs = {{ splunk_frozen_time_period_in_secs }}
+      repFactor = {{ splunk_index_replication_factor }}
+
+      [_internal]
+      maxDataSize = auto_high_volume
+      frozenTimePeriodInSecs = {{ splunk_log_retention_days * 86400 }}
+
+      [_audit]
+      maxDataSize = auto
+      frozenTimePeriodInSecs = {{ splunk_log_retention_days * 86400 }}
+    owner: "{{ splunk_user }}"
+    group: "{{ splunk_group }}"
+    mode: '0600'
+  notify: restart splunk
+  tags:
+    - config
+    - indexes
+    - storage
+
+- name: Disable sending usage data (STIG V-258030)
+  ansible.builtin.lineinfile:
+    path: "{{ splunk_home }}/etc/system/local/server.conf"
+    line: |
+      [telemetry]
+      sendAnonymizedUsage = false
+      sendAnonymizedWebAnalytics = false
+
+      [phonehome]
+      sendLicenseUsage = false
+    create: yes
+    owner: "{{ splunk_user }}"
+    group: "{{ splunk_group }}"
+    mode: '0600'
+  when: not splunk_send_usage_data | bool
+  notify: restart splunk
+  tags:
+    - config
+    - privacy
+    - telemetry

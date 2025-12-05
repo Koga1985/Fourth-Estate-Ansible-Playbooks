@@ -1,0 +1,52 @@
+---
+# Deploy health check scripts
+
+- name: Create monitoring scripts directory
+  ansible.builtin.file:
+    path: "{{ splunk_home }}/bin/monitoring"
+    state: directory
+    owner: "{{ splunk_user }}"
+    mode: '0750'
+
+- name: Deploy Splunk health check script
+  ansible.builtin.copy:
+    dest: "{{ splunk_home }}/bin/monitoring/health_check.sh"
+    content: |
+      #!/bin/bash
+      # Splunk Health Check Script
+      SPLUNK_HOME={{ splunk_home }}
+
+      echo "=== Splunk Health Check ==="
+      echo "Timestamp: $(date)"
+
+      # Check Splunkd status
+      if $SPLUNK_HOME/bin/splunk status | grep -q "splunkd is running"; then
+        echo "[OK] Splunkd is running"
+      else
+        echo "[CRITICAL] Splunkd is not running"
+        exit 2
+      fi
+
+      # Check disk usage
+      DISK_USAGE=$(df -h $SPLUNK_HOME | tail -1 | awk '{print $5}' | sed 's/%//')
+      if [ $DISK_USAGE -gt {{ monitoring_disk_threshold }} ]; then
+        echo "[WARNING] Disk usage is ${DISK_USAGE}%"
+      else
+        echo "[OK] Disk usage is ${DISK_USAGE}%"
+      fi
+
+      # Check for errors in internal logs
+      ERROR_COUNT=$(grep -c ERROR $SPLUNK_HOME/var/log/splunk/splunkd.log | tail -100 || echo 0)
+      echo "[INFO] Recent errors: $ERROR_COUNT"
+
+      echo "=== Health Check Complete ==="
+    owner: "{{ splunk_user }}"
+    mode: '0750'
+
+- name: Schedule health checks
+  ansible.builtin.cron:
+    name: "Splunk health check"
+    minute: "*/5"
+    job: "{{ splunk_home }}/bin/monitoring/health_check.sh >> {{ splunk_home }}/var/log/splunk/health_check.log 2>&1"
+    user: "{{ splunk_user }}"
+  when: monitoring_enable_health_checks | bool

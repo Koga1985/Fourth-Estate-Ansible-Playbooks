@@ -1,0 +1,28 @@
+---
+# Compliance monitoring
+
+- name: Create FIPS compliance check script
+  ansible.builtin.copy:
+    dest: "{{ splunk_home }}/bin/monitoring/fips_compliance_check.sh"
+    content: |
+      #!/bin/bash
+      # FIPS Compliance Check
+      {{ splunk_home }}/bin/splunk btool server list fips | grep -q "fipsMode = strict"
+      if [ $? -eq 0 ]; then
+        echo "[OK] FIPS mode is enabled"
+      else
+        echo "[CRITICAL] FIPS mode is not enabled"
+        exit 2
+      fi
+    owner: "{{ splunk_user }}"
+    mode: '0750'
+  when: monitoring_fips_compliance_check | bool
+
+- name: Schedule compliance checks
+  ansible.builtin.cron:
+    name: "Splunk FIPS compliance check"
+    hour: "6"
+    minute: "0"
+    job: "{{ splunk_home }}/bin/monitoring/fips_compliance_check.sh | logger -t splunk-compliance"
+    user: "{{ splunk_user }}"
+  when: monitoring_fips_compliance_check | bool

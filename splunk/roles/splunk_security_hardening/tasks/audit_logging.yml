@@ -1,0 +1,48 @@
+---
+# Audit and Logging Hardening (NIST 800-53 AU family)
+
+- name: Enable comprehensive audit logging
+  ansible.builtin.copy:
+    dest: "{{ splunk_home }}/etc/system/local/audit.conf"
+    content: |
+      [auditTrail]
+      enableAuditTrail = true
+      filepath = {{ splunk_home }}/var/log/splunk/audit.log
+
+      [searchActivity]
+      enableSearchActivity = {{ au_audit_admin_actions | lower }}
+
+      [adminActivity]
+      enableAdminActivity = {{ au_audit_admin_actions | lower }}
+
+      [dataAccessActivity]
+      enableDataAccessActivity = {{ au_audit_privileged_functions | lower }}
+    owner: "{{ splunk_user }}"
+    group: "{{ splunk_group }}"
+    mode: '0600'
+  notify: restart splunk
+  tags:
+    - audit
+    - logging
+
+- name: Configure audit log retention
+  ansible.builtin.lineinfile:
+    path: "{{ splunk_home }}/etc/system/local/indexes.conf"
+    regexp: '^frozenTimePeriodInSecs'
+    line: "frozenTimePeriodInSecs = {{ au_log_retention_days * 86400 }}"
+    insertafter: '^\[_audit\]'
+  notify: restart splunk
+  tags:
+    - audit
+    - retention
+
+- name: Protect audit logs from unauthorized access
+  ansible.builtin.file:
+    path: "{{ splunk_home }}/var/log/splunk/audit.log"
+    owner: "{{ splunk_user }}"
+    group: "{{ splunk_group }}"
+    mode: '0600'
+  when: au_protect_audit_logs | bool
+  tags:
+    - audit
+    - permissions

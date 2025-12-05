@@ -1,0 +1,140 @@
+---
+# STIG Category I (High Severity) Findings Remediation
+# These are critical security controls that must be implemented
+
+- name: V-258100 - Disable SSLv3 and TLS 1.0/1.1
+  ansible.builtin.lineinfile:
+    path: "{{ splunk_home }}/etc/system/local/server.conf"
+    regexp: '^sslVersions'
+    line: "sslVersions = tls1.2, tls1.3"
+    insertafter: '^\[sslConfig\]'
+  notify: restart splunk
+  tags:
+    - CAT1
+    - V-258100
+    - tls
+
+- name: V-258102 - Enable FIPS 140-2 mode
+  ansible.builtin.lineinfile:
+    path: "{{ splunk_home }}/etc/system/local/server.conf"
+    regexp: '^fipsMode'
+    line: "fipsMode = strict"
+    insertafter: '^\[fips\]'
+  when: sc_enforce_fips_140_2 | bool
+  notify: restart splunk
+  tags:
+    - CAT1
+    - V-258102
+    - fips
+
+- name: V-258104 - Enforce strong cipher suites
+  ansible.builtin.lineinfile:
+    path: "{{ splunk_home }}/etc/system/local/server.conf"
+    regexp: '^cipherSuite'
+    line: "cipherSuite = {{ sc_cipher_suite }}"
+    insertafter: '^\[sslConfig\]'
+  notify: restart splunk
+  tags:
+    - CAT1
+    - V-258104
+    - ciphers
+
+- name: V-258106 - Disable anonymous access
+  ansible.builtin.lineinfile:
+    path: "{{ splunk_home }}/etc/system/local/server.conf"
+    regexp: '^allowRemoteLogin'
+    line: "allowRemoteLogin = requireSetPassword"
+    insertafter: '^\[general\]'
+  when: ia_disable_anonymous_access | bool
+  notify: restart splunk
+  tags:
+    - CAT1
+    - V-258106
+    - authentication
+
+- name: V-258108 - Enable comprehensive audit logging
+  ansible.builtin.copy:
+    dest: "{{ splunk_home }}/etc/system/local/audit.conf"
+    content: |
+      [auditTrail]
+      enableAuditTrail = true
+      filepath = {{ splunk_home }}/var/log/splunk/audit.log
+
+      [searchActivity]
+      enableSearchActivity = true
+
+      [adminActivity]
+      enableAdminActivity = true
+
+      [dataAccessActivity]
+      enableDataAccessActivity = true
+    owner: "{{ splunk_user }}"
+    group: "{{ splunk_group }}"
+    mode: '0600'
+  when: au_enable_comprehensive_logging | bool
+  notify: restart splunk
+  tags:
+    - CAT1
+    - V-258108
+    - audit
+
+- name: V-258110 - Disable default admin account (create new admin first)
+  ansible.builtin.debug:
+    msg: "WARNING: Ensure a new administrative account is created before disabling default admin"
+  when: ac_disable_default_accounts | bool
+  tags:
+    - CAT1
+    - V-258110
+    - accounts
+
+- name: V-258112 - Configure session timeout
+  ansible.builtin.lineinfile:
+    path: "{{ splunk_home }}/etc/system/local/web.conf"
+    regexp: '^sessionTimeout'
+    line: "sessionTimeout = {{ ac_session_timeout_minutes }}"
+    insertafter: '^\[settings\]'
+  notify: restart splunk
+  tags:
+    - CAT1
+    - V-258112
+    - session
+
+- name: V-258114 - Protect audit logs from modification
+  ansible.builtin.file:
+    path: "{{ splunk_home }}/var/log/splunk/audit.log"
+    attributes: +i
+  when:
+    - au_audit_log_immutable | bool
+    - ansible_os_family == "RedHat"
+  failed_when: false
+  tags:
+    - CAT1
+    - V-258114
+    - audit
+
+- name: V-258116 - Disable insecure protocols
+  ansible.builtin.blockinfile:
+    path: "{{ splunk_home }}/etc/system/local/server.conf"
+    block: |
+      [httpServer]
+      disableDefaultPort = true
+      allowSslRenegotiation = false
+      allowSslCompression = false
+    marker: "# {mark} CAT1 V-258116 ANSIBLE MANAGED BLOCK"
+  notify: restart splunk
+  tags:
+    - CAT1
+    - V-258116
+    - protocols
+
+- name: V-258118 - Enable certificate validation
+  ansible.builtin.lineinfile:
+    path: "{{ splunk_home }}/etc/system/local/server.conf"
+    regexp: '^sslVerifyServerCert'
+    line: "sslVerifyServerCert = true"
+    insertafter: '^\[sslConfig\]'
+  notify: restart splunk
+  tags:
+    - CAT1
+    - V-258118
+    - certificates

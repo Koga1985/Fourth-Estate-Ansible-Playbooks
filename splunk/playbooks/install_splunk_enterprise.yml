@@ -1,0 +1,42 @@
+---
+# Main playbook for Splunk Enterprise installation
+# DoD STIG and NIST 800-53 Compliant Installation
+#
+# Usage: ansible-playbook -i inventory splunk/playbooks/install_splunk_enterprise.yml
+#
+# Requirements:
+#   - Ansible 2.12+
+#   - Target hosts with RHEL 8/9 or Ubuntu 20.04/22.04
+#   - Vault file with credentials configured
+
+- name: Install and Configure Splunk Enterprise
+  hosts: splunk_servers
+  become: yes
+  vars_files:
+    - ../vars/vault.yml
+
+  roles:
+    - role: ../roles/splunk_enterprise_install
+      tags: ['install', 'splunk']
+
+    - role: ../roles/splunk_security_hardening
+      tags: ['security', 'hardening', 'stig']
+
+    - role: ../roles/splunk_monitoring
+      tags: ['monitoring', 'health']
+
+    - role: ../roles/splunk_backup_dr
+      tags: ['backup', 'dr']
+
+  post_tasks:
+    - name: Display installation summary
+      ansible.builtin.debug:
+        msg:
+          - "=== Splunk Enterprise Installation Complete ==="
+          - "Host: {{ inventory_hostname }}"
+          - "Splunk Home: {{ splunk_home }}"
+          - "Web URL: https://{{ ansible_fqdn }}:{{ splunk_web_port }}"
+          - "Management Port: {{ splunk_mgmt_port }}"
+          - "FIPS Mode: {{ 'Enabled' if splunk_enable_fips else 'Disabled' }}"
+          - "Compliance: DoD STIG, NIST 800-53, FISMA"
+          - "=============================================="
