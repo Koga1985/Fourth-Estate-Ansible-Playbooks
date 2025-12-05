@@ -1,0 +1,56 @@
+---
+# Service configuration tasks
+# STIG V-258070 - Service Management
+
+- name: Ensure Splunkd service is enabled
+  ansible.builtin.systemd:
+    name: Splunkd
+    enabled: yes
+    daemon_reload: yes
+  tags:
+    - service
+    - systemd
+
+- name: Start Splunk service
+  ansible.builtin.systemd:
+    name: Splunkd
+    state: started
+  tags:
+    - service
+    - start
+
+- name: Wait for Splunk web interface to be available
+  ansible.builtin.wait_for:
+    port: "{{ splunk_web_port }}"
+    host: "{{ splunk_bind_ip }}"
+    delay: 10
+    timeout: 300
+  tags:
+    - service
+    - validation
+
+- name: Wait for Splunk management port to be available
+  ansible.builtin.wait_for:
+    port: "{{ splunk_mgmt_port }}"
+    host: "{{ splunk_bind_ip }}"
+    delay: 5
+    timeout: 300
+  tags:
+    - service
+    - validation
+
+- name: Verify Splunk service status
+  ansible.builtin.systemd:
+    name: Splunkd
+    state: started
+  register: splunk_service_status
+  tags:
+    - service
+    - validation
+
+- name: Display Splunk service status
+  ansible.builtin.debug:
+    msg: "Splunk service is {{ splunk_service_status.status.ActiveState }}"
+  tags:
+    - service
+    - validation

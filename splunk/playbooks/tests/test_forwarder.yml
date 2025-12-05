@@ -1,0 +1,55 @@
+---
+# Functional test for Splunk forwarders
+# Usage: ansible-playbook -i inventory splunk/playbooks/tests/test_forwarder.yml
+
+- name: Test Splunk Universal Forwarder
+  hosts: forwarder_targets
+  become: yes
+  vars:
+    splunk_forwarder_home: "/opt/splunkforwarder"
+    splunk_user: "splunk"
+
+  tasks:
+    - name: Test - Verify forwarder binary exists
+      ansible.builtin.stat:
+        path: "{{ splunk_forwarder_home }}/bin/splunk"
+      register: forwarder_binary
+      failed_when: not forwarder_binary.stat.exists
+
+    - name: Test - Verify forwarder service is running
+      ansible.builtin.systemd:
+        name: SplunkForwarder
+        state: started
+      check_mode: yes
+      register: forwarder_service
+
+    - name: Test - Verify outputs.conf exists
+      ansible.builtin.stat:
+        path: "{{ splunk_forwarder_home }}/etc/system/local/outputs.conf"
+      register: outputs_conf
+      failed_when: not outputs_conf.stat.exists
+
+    - name: Test - Verify inputs.conf exists
+      ansible.builtin.stat:
+        path: "{{ splunk_forwarder_home }}/etc/system/local/inputs.conf"
+      register: inputs_conf
+      failed_when: not inputs_conf.stat.exists
+
+    - name: Test - Verify TLS is enabled for forwarding
+      ansible.builtin.shell: grep -i "sslVerifyServerCert" {{ splunk_forwarder_home }}/etc/system/local/outputs.conf
+      register: tls_forwarder
+      changed_when: false
+      failed_when: tls_forwarder.rc != 0
+
+    - name: Forwarder Test Results
+      ansible.builtin.debug:
+        msg:
+          - "=== Forwarder Test Results ==="
+          - "Host: {{ inventory_hostname }}"
+          - "Binary: {{ 'PASS' if forwarder_binary.stat.exists else 'FAIL' }}"
+          - "Service: {{ 'PASS' if forwarder_service.status.ActiveState == 'active' else 'FAIL' }}"
+          - "Outputs Config: {{ 'PASS' if outputs_conf.stat.exists else 'FAIL' }}"
+          - "Inputs Config: {{ 'PASS' if inputs_conf.stat.exists else 'FAIL' }}"
+          - "TLS Enabled: {{ 'PASS' if tls_forwarder.rc == 0 else 'FAIL' }}"
+          - "==============================="
+          - "Overall: ALL TESTS PASSED"

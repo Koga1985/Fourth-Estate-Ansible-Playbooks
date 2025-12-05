@@ -1,0 +1,36 @@
+---
+# Splunk Universal Forwarder installation tasks
+
+- name: Create Splunk forwarder user
+  ansible.builtin.user:
+    name: "{{ splunk_forwarder_user }}"
+    group: "{{ splunk_forwarder_group }}"
+    shell: "/bin/bash"
+    system: yes
+    create_home: no
+
+- name: Download Splunk Universal Forwarder
+  ansible.builtin.get_url:
+    url: "https://download.splunk.com/products/universalforwarder/releases/{{ splunk_forwarder_version }}/linux/splunkforwarder-{{ splunk_forwarder_version }}-{{ splunk_forwarder_build }}-linux-x86_64.tgz"
+    dest: "/tmp/splunkforwarder.tgz"
+    mode: '0600'
+
+- name: Extract Splunk Universal Forwarder
+  ansible.builtin.unarchive:
+    src: "/tmp/splunkforwarder.tgz"
+    dest: "/opt"
+    remote_src: yes
+    owner: "{{ splunk_forwarder_user }}"
+    group: "{{ splunk_forwarder_group }}"
+
+- name: Start and accept license
+  ansible.builtin.command: >
+    {{ splunk_forwarder_home }}/bin/splunk start --accept-license --answer-yes --no-prompt
+  become: yes
+  become_user: "{{ splunk_forwarder_user }}"
+  changed_when: false
+
+- name: Enable boot start
+  ansible.builtin.command: >
+    {{ splunk_forwarder_home }}/bin/splunk enable boot-start -user {{ splunk_forwarder_user }} -systemd-managed 1
+  when: splunk_forwarder_enable_boot_start | bool

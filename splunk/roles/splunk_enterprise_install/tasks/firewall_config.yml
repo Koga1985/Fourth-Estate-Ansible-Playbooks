@@ -1,0 +1,54 @@
+---
+# Firewall configuration tasks
+# NIST 800-53 SC-7, STIG V-258078
+
+- name: Configure firewall rules for Splunk (firewalld)
+  ansible.posix.firewalld:
+    port: "{{ item }}/tcp"
+    permanent: yes
+    state: enabled
+    zone: public
+  loop:
+    - "{{ splunk_web_port }}"
+    - "{{ splunk_mgmt_port }}"
+    - "{{ splunk_splunktcp_port }}"
+    - "{{ splunk_kvstore_port }}"
+  when:
+    - splunk_configure_firewall | bool
+    - ansible_os_family == "RedHat"
+  notify: reload firewall
+  tags:
+    - firewall
+    - network
+
+- name: Configure firewall rules for Splunk (ufw)
+  community.general.ufw:
+    rule: allow
+    port: "{{ item }}"
+    proto: tcp
+  loop:
+    - "{{ splunk_web_port }}"
+    - "{{ splunk_mgmt_port }}"
+    - "{{ splunk_splunktcp_port }}"
+    - "{{ splunk_kvstore_port }}"
+  when:
+    - splunk_configure_firewall | bool
+    - ansible_os_family == "Debian"
+  tags:
+    - firewall
+    - network
+
+- name: Restrict management access to specific networks
+  ansible.posix.firewalld:
+    rich_rule: "rule family='ipv4' source address='{{ item }}' port port='{{ splunk_mgmt_port }}' protocol='tcp' accept"
+    permanent: yes
+    state: enabled
+  loop: "{{ splunk_allowed_management_networks }}"
+  when:
+    - splunk_configure_firewall | bool
+    - ansible_os_family == "RedHat"
+  notify: reload firewall
+  tags:
+    - firewall
+    - network
+    - security

@@ -1,0 +1,26 @@
+---
+# Archive configuration
+
+- name: Create archive directory
+  ansible.builtin.file:
+    path: "{{ archive_path }}"
+    state: directory
+    owner: "{{ splunk_user }}"
+    mode: '0700'
+
+- name: Deploy archive script
+  ansible.builtin.copy:
+    dest: "{{ splunk_home }}/bin/archive_splunk.sh"
+    content: |
+      #!/bin/bash
+      # Splunk Archive Script
+      ARCHIVE_PATH={{ archive_path }}
+      BACKUP_PATH={{ backup_path }}
+
+      # Move old backups to archive
+      find $BACKUP_PATH -name "splunk_backup_*.tar.gz*" -mtime +90 -exec mv {} $ARCHIVE_PATH/ \;
+
+      # Remove archives older than retention period
+      find $ARCHIVE_PATH -name "splunk_backup_*.tar.gz*" -mtime +{{ archive_retention_years * 365 }} -delete
+    owner: "{{ splunk_user }}"
+    mode: '0750'

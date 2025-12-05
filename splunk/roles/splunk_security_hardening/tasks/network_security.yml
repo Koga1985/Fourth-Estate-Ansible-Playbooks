@@ -1,0 +1,33 @@
+---
+# Network Security Hardening (NIST 800-53 SC-7)
+
+- name: Restrict management access to trusted networks
+  ansible.builtin.lineinfile:
+    path: "{{ splunk_home }}/etc/system/local/server.conf"
+    regexp: '^trustedIP'
+    line: "trustedIP = {{ network_allowed_ips | join(', ') }}"
+    insertafter: '^\[general\]'
+  notify: restart splunk
+  tags:
+    - network
+    - access_control
+
+- name: Enable rate limiting
+  ansible.builtin.lineinfile:
+    path: "{{ splunk_home }}/etc/system/local/limits.conf"
+    line: "max_connections = {{ network_max_connections }}"
+  when: network_enable_rate_limiting | bool
+  notify: restart splunk
+  tags:
+    - network
+    - dos_protection
+
+- name: Disable unnecessary network services
+  ansible.builtin.lineinfile:
+    path: "{{ splunk_home }}/etc/system/local/server.conf"
+    line: "disableDefaultPort = true"
+    insertafter: '^\[httpServer\]'
+  notify: restart splunk
+  tags:
+    - network
+    - services

@@ -1,0 +1,56 @@
+---
+# Deploy backup scripts
+
+- name: Deploy Splunk backup script
+  ansible.builtin.copy:
+    dest: "{{ splunk_home }}/bin/backup_splunk.sh"
+    content: |
+      #!/bin/bash
+      # Splunk Backup Script - DoD STIG Compliant
+      SPLUNK_HOME={{ splunk_home }}
+      BACKUP_PATH={{ backup_path }}
+      TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+      BACKUP_FILE="$BACKUP_PATH/splunk_backup_$TIMESTAMP.tar.gz"
+
+      echo "Starting Splunk backup at $(date)"
+
+      # Create backup
+      tar czf "$BACKUP_FILE" \
+        --exclude='$SPLUNK_HOME/var/lib/splunk/*' \
+        $SPLUNK_HOME/etc \
+        $SPLUNK_HOME/var/log
+
+      # Encrypt backup if enabled
+      {% if backup_encryption_enabled %}
+      openssl enc -aes-256-cbc -salt -in "$BACKUP_FILE" -out "${BACKUP_FILE}.enc" -k "{{ backup_encryption_key }}"
+      rm -f "$BACKUP_FILE"
+      BACKUP_FILE="${BACKUP_FILE}.enc"
+      {% endif %}
+
+      # Verify backup
+      if [ -f "$BACKUP_FILE" ]; then
+        echo "Backup completed successfully: $BACKUP_FILE"
+        ls -lh "$BACKUP_FILE"
+      else
+        echo "ERROR: Backup failed"
+        exit 1
+      fi
+
+      # Remove old backups
+      find $BACKUP_PATH -name "splunk_backup_*.tar.gz*" -mtime +{{ backup_retention_days }} -delete
+
+      echo "Backup completed at $(date)"
+    owner: "{{ splunk_user }}"
+    mode: '0750'
+  no_log: true
+
+- name: Schedule backup job
+  ansible.builtin.cron:
+    name: "Splunk backup"
+    minute: "{{ backup_schedule.split()[0] }}"
+    hour: "{{ backup_schedule.split()[1] }}"
+    day: "{{ backup_schedule.split()[2] }}"
+    month: "{{ backup_schedule.split()[3] }}"
+    weekday: "{{ backup_schedule.split()[4] }}"
+    job: "{{ splunk_home }}/bin/backup_splunk.sh >> {{ backup_path }}/logs/backup.log 2>&1"
+    user: "{{ splunk_user }}"

@@ -1,0 +1,46 @@
+---
+# handlers file for splunk_enterprise_install
+
+- name: restart splunk
+  ansible.builtin.systemd:
+    name: Splunkd
+    state: restarted
+    daemon_reload: yes
+  listen: restart splunk
+  when: not splunk_restart_on_config_change | bool
+
+- name: reload splunk
+  ansible.builtin.command: "{{ splunk_home }}/bin/splunk reload deploy-server -auth admin:{{ splunk_admin_password }}"
+  become: yes
+  become_user: "{{ splunk_user }}"
+  listen: reload splunk
+  no_log: true
+
+- name: restart splunkweb
+  ansible.builtin.systemd:
+    name: Splunkd
+    state: restarted
+  listen: restart splunkweb
+
+- name: rebuild search bundle
+  ansible.builtin.command: "{{ splunk_home }}/bin/splunk apply shcluster-bundle -auth admin:{{ splunk_admin_password }} --answer-yes"
+  become: yes
+  become_user: "{{ splunk_user }}"
+  listen: rebuild search bundle
+  when: splunk_shc_mode | bool
+  no_log: true
+
+- name: apply cluster bundle
+  ansible.builtin.command: "{{ splunk_home }}/bin/splunk apply cluster-bundle -auth admin:{{ splunk_admin_password }} --answer-yes"
+  become: yes
+  become_user: "{{ splunk_user }}"
+  listen: apply cluster bundle
+  when: splunk_cluster_mode == 'master'
+  no_log: true
+
+- name: reload firewall
+  ansible.builtin.systemd:
+    name: firewalld
+    state: reloaded
+  listen: reload firewall
+  when: ansible_os_family == "RedHat"

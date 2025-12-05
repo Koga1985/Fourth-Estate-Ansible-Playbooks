@@ -1,0 +1,35 @@
+---
+# System and Information Integrity (NIST 800-53 SI family)
+
+- name: Install file integrity monitoring tool (AIDE)
+  ansible.builtin.yum:
+    name: aide
+    state: present
+  when:
+    - si_file_integrity_monitoring | bool
+    - ansible_os_family == "RedHat"
+  tags:
+    - integrity
+    - aide
+
+- name: Initialize AIDE database
+  ansible.builtin.command: aide --init
+  when:
+    - si_file_integrity_monitoring | bool
+    - ansible_os_family == "RedHat"
+  changed_when: false
+  tags:
+    - integrity
+    - aide
+
+- name: Schedule AIDE integrity checks
+  ansible.builtin.cron:
+    name: "AIDE file integrity check"
+    minute: "0"
+    hour: "3"
+    job: "/usr/sbin/aide --check | logger -t aide-check"
+    user: root
+  when: si_file_integrity_monitoring | bool
+  tags:
+    - integrity
+    - cron

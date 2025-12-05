@@ -1,0 +1,111 @@
+---
+# Post-installation validation tasks
+# STIG V-258072 - Installation Verification
+
+- name: Check Splunk version
+  ansible.builtin.command: "{{ splunk_home }}/bin/splunk version"
+  become: yes
+  become_user: "{{ splunk_user }}"
+  register: splunk_version_output
+  changed_when: false
+  tags:
+    - validation
+    - version
+
+- name: Display installed Splunk version
+  ansible.builtin.debug:
+    msg: "{{ splunk_version_output.stdout_lines }}"
+  tags:
+    - validation
+    - version
+
+- name: Verify Splunk is responding to API calls
+  ansible.builtin.uri:
+    url: "https://{{ splunk_bind_ip }}:{{ splunk_mgmt_port }}/services/server/info"
+    method: GET
+    user: admin
+    password: "{{ splunk_admin_password }}"
+    force_basic_auth: yes
+    validate_certs: no
+    status_code: 200
+  register: splunk_api_check
+  no_log: true
+  tags:
+    - validation
+    - api
+
+- name: Verify FIPS mode (if enabled)
+  ansible.builtin.command: "{{ splunk_home }}/bin/splunk btool server list fips"
+  become: yes
+  become_user: "{{ splunk_user }}"
+  register: fips_check
+  changed_when: false
+  when: splunk_enable_fips | bool
+  tags:
+    - validation
+    - fips
+
+- name: Verify TLS configuration
+  ansible.builtin.command: "{{ splunk_home }}/bin/splunk btool server list sslConfig"
+  become: yes
+  become_user: "{{ splunk_user }}"
+  register: tls_check
+  changed_when: false
+  tags:
+    - validation
+    - tls
+
+- name: Check audit logging configuration
+  ansible.builtin.command: "{{ splunk_home }}/bin/splunk btool audit list"
+  become: yes
+  become_user: "{{ splunk_user }}"
+  register: audit_check
+  changed_when: false
+  tags:
+    - validation
+    - audit
+
+- name: Verify firewall rules (if configured)
+  ansible.builtin.command: firewall-cmd --list-all
+  register: firewall_check
+  changed_when: false
+  when:
+    - splunk_configure_firewall | bool
+    - ansible_os_family == "RedHat"
+  tags:
+    - validation
+    - firewall
+
+- name: Create post-installation validation report
+  ansible.builtin.copy:
+    dest: "{{ splunk_home }}/var/log/splunk/installation_validation.log"
+    content: |
+      Splunk Enterprise Installation Validation Report
+      Generated: {{ ansible_date_time.iso8601 }}
+      Host: {{ inventory_hostname }}
+
+      ==============================================
+
+      Splunk Version:
+      {{ splunk_version_output.stdout }}
+
+      FIPS Mode:
+      {{ fips_check.stdout if splunk_enable_fips else 'Not Enabled' }}
+
+      TLS Configuration:
+      {{ tls_check.stdout }}
+
+      Audit Configuration:
+      {{ audit_check.stdout }}
+
+      Compliance Frameworks:
+      {{ splunk_compliance_frameworks | join(', ') }}
+
+      ==============================================
+      Installation completed successfully
+    owner: "{{ splunk_user }}"
+    group: "{{ splunk_group }}"
+    mode: '0600'
+  tags:
+    - validation
+    - report

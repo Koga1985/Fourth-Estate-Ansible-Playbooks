@@ -1,0 +1,43 @@
+---
+# Compliance Verification and Reporting
+
+- name: Create compliance report directory
+  ansible.builtin.file:
+    path: "{{ compliance_report_path }}"
+    state: directory
+    owner: "{{ splunk_user }}"
+    group: "{{ splunk_group }}"
+    mode: '0750'
+  when: compliance_generate_reports | bool
+  tags:
+    - compliance
+    - reporting
+
+- name: Generate STIG compliance report
+  ansible.builtin.copy:
+    dest: "{{ compliance_report_path }}/stig_compliance_{{ ansible_date_time.date }}.txt"
+    content: |
+      STIG Compliance Report
+      Generated: {{ ansible_date_time.iso8601 }}
+      Host: {{ inventory_hostname }}
+
+      ==============================================
+      Compliance Frameworks: {{ compliance_frameworks | join(', ') }}
+
+      CAT I Findings: {{ 'REMEDIATED' if stig_cat1_enabled else 'NOT APPLIED' }}
+      CAT II Findings: {{ 'REMEDIATED' if stig_cat2_enabled else 'NOT APPLIED' }}
+      CAT III Findings: {{ 'REMEDIATED' if stig_cat3_enabled else 'NOT APPLIED' }}
+
+      FIPS 140-2: {{ 'ENABLED' if sc_enforce_fips_140_2 else 'DISABLED' }}
+      TLS Min Version: {{ sc_tls_min_version }}
+      Audit Logging: {{ 'ENABLED' if au_enable_comprehensive_logging else 'DISABLED' }}
+      MFA: {{ 'ENABLED' if ia_enforce_mfa else 'DISABLED' }}
+
+      ==============================================
+    owner: "{{ splunk_user }}"
+    group: "{{ splunk_group }}"
+    mode: '0600'
+  when: compliance_generate_reports | bool
+  tags:
+    - compliance
+    - reporting

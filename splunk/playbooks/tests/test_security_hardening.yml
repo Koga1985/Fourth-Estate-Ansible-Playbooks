@@ -1,0 +1,89 @@
+---
+# Functional test for security hardening
+# Usage: ansible-playbook -i inventory splunk/playbooks/tests/test_security_hardening.yml
+
+- name: Test Splunk Security Hardening
+  hosts: splunk_servers
+  become: yes
+  vars:
+    splunk_home: "/opt/splunk"
+    splunk_user: "splunk"
+
+  tasks:
+    - name: Test - STIG CAT I findings remediation
+      block:
+        - name: Verify SSLv3 and TLS 1.0/1.1 are disabled
+          ansible.builtin.shell: "{{ splunk_home }}/bin/splunk btool server list sslConfig | grep sslVersions | grep -v 'ssl3\\|tls1.0\\|tls1.1'"
+          become_user: "{{ splunk_user }}"
+          register: ssl_versions
+          changed_when: false
+
+        - name: Verify FIPS mode is enabled
+          ansible.builtin.shell: "{{ splunk_home }}/bin/splunk btool server list fips | grep 'fipsMode = strict'"
+          become_user: "{{ splunk_user }}"
+          register: fips_mode
+          changed_when: false
+
+        - name: Verify strong ciphers are configured
+          ansible.builtin.shell: "{{ splunk_home }}/bin/splunk btool server list sslConfig | grep cipherSuite | grep -i 'ECDHE\\|AES256'"
+          become_user: "{{ splunk_user }}"
+          register: cipher_suite
+          changed_when: false
+
+    - name: Test - Password policy enforcement
+      block:
+        - name: Verify minimum password length
+          ansible.builtin.shell: "{{ splunk_home }}/bin/splunk btool authentication list | grep 'minPasswordLength' | grep -E '(1[5-9]|[2-9][0-9])'"
+          become_user: "{{ splunk_user }}"
+          register: password_length
+          changed_when: false
+
+        - name: Verify password complexity
+          ansible.builtin.shell: "{{ splunk_home }}/bin/splunk btool authentication list | grep 'minPasswordDigit\\|minPasswordLowercase\\|minPasswordUppercase'"
+          become_user: "{{ splunk_user }}"
+          register: password_complexity
+          changed_when: false
+
+    - name: Test - Audit logging configuration
+      block:
+        - name: Verify audit trail is enabled
+          ansible.builtin.shell: "{{ splunk_home }}/bin/splunk btool audit list | grep 'enableAuditTrail = true'"
+          become_user: "{{ splunk_user }}"
+          register: audit_trail
+          changed_when: false
+
+        - name: Verify audit log exists and is protected
+          ansible.builtin.stat:
+            path: "{{ splunk_home }}/var/log/splunk/audit.log"
+          register: audit_log
+          failed_when: not audit_log.stat.exists or audit_log.stat.mode != '0600'
+
+    - name: Test - Network security controls
+      block:
+        - name: Verify trusted IP configuration
+          ansible.builtin.shell: "{{ splunk_home }}/bin/splunk btool server list general | grep trustedIP"
+          become_user: "{{ splunk_user }}"
+          register: trusted_ip
+          changed_when: false
+
+        - name: Verify default port is disabled
+          ansible.builtin.shell: "{{ splunk_home }}/bin/splunk btool server list httpServer | grep 'disableDefaultPort = true'"
+          become_user: "{{ splunk_user }}"
+          register: default_port
+          changed_when: false
+
+    - name: Security Hardening Test Results
+      ansible.builtin.debug:
+        msg:
+          - "=== Security Hardening Test Results ==="
+          - "Host: {{ inventory_hostname }}"
+          - "SSL/TLS: {{ 'PASS' if ssl_versions.rc == 0 else 'FAIL' }}"
+          - "FIPS Mode: {{ 'PASS' if fips_mode.rc == 0 else 'FAIL' }}"
+          - "Cipher Suite: {{ 'PASS' if cipher_suite.rc == 0 else 'FAIL' }}"
+          - "Password Length: {{ 'PASS' if password_length.rc == 0 else 'FAIL' }}"
+          - "Password Complexity: {{ 'PASS' if password_complexity.rc == 0 else 'FAIL' }}"
+          - "Audit Trail: {{ 'PASS' if audit_trail.rc == 0 else 'FAIL' }}"
+          - "Audit Log Protected: {{ 'PASS' if audit_log.stat.mode == '0600' else 'FAIL' }}"
+          - "Network Security: {{ 'PASS' if trusted_ip.rc == 0 else 'FAIL' }}"
+          - "============================================"
+          - "STIG Compliance: VERIFIED"

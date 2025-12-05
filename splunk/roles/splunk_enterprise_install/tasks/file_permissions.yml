@@ -1,0 +1,136 @@
+---
+# File permissions hardening tasks
+# STIG V-258050 - Secure File Permissions
+
+- name: Set strict permissions on Splunk home directory
+  ansible.builtin.file:
+    path: "{{ splunk_home }}"
+    owner: "{{ splunk_user }}"
+    group: "{{ splunk_group }}"
+    mode: '0755'
+  tags:
+    - permissions
+    - security
+
+- name: Set strict permissions on configuration files (STIG V-258052)
+  ansible.builtin.file:
+    path: "{{ splunk_home }}/etc"
+    state: directory
+    owner: "{{ splunk_user }}"
+    group: "{{ splunk_group }}"
+    mode: '0700'
+    recurse: yes
+  when: splunk_enforce_strict_permissions | bool
+  tags:
+    - permissions
+    - security
+    - config
+
+- name: Set permissions on sensitive credential files (STIG V-258054)
+  ansible.builtin.file:
+    path: "{{ item }}"
+    owner: "{{ splunk_user }}"
+    group: "{{ splunk_group }}"
+    mode: '0600'
+  loop:
+    - "{{ splunk_home }}/etc/system/local/user-seed.conf"
+    - "{{ splunk_home }}/etc/auth/passwd"
+    - "{{ splunk_home }}/etc/auth/splunk.secret"
+  when: splunk_enforce_strict_permissions | bool
+  failed_when: false
+  tags:
+    - permissions
+    - security
+    - credentials
+
+- name: Set permissions on TLS certificates and keys (STIG V-258056)
+  ansible.builtin.file:
+    path: "{{ splunk_home }}/etc/auth/mycerts"
+    state: directory
+    owner: "{{ splunk_user }}"
+    group: "{{ splunk_group }}"
+    mode: '0700'
+    recurse: yes
+  when: splunk_enforce_strict_permissions | bool
+  tags:
+    - permissions
+    - security
+    - certificates
+
+- name: Set permissions on private keys to 0600 (STIG V-258058)
+  ansible.builtin.shell: |
+    find {{ splunk_home }}/etc/auth/mycerts -name "*key*" -type f -exec chmod 0600 {} \;
+    find {{ splunk_home }}/etc/auth/mycerts -name "*key*" -type f -exec chown {{ splunk_user }}:{{ splunk_group }} {} \;
+  changed_when: false
+  when: splunk_enforce_strict_permissions | bool
+  tags:
+    - permissions
+    - security
+    - keys
+
+- name: Remove world-readable permissions on log files (STIG V-258060)
+  ansible.builtin.file:
+    path: "{{ splunk_home }}/var/log/splunk"
+    state: directory
+    owner: "{{ splunk_user }}"
+    group: "{{ splunk_group }}"
+    mode: '0750'
+    recurse: yes
+  when: splunk_enforce_strict_permissions | bool
+  tags:
+    - permissions
+    - security
+    - logs
+
+- name: Set permissions on audit logs (NIST 800-53 AU-9, STIG V-258062)
+  ansible.builtin.file:
+    path: "{{ splunk_audit_log_path }}"
+    owner: "{{ splunk_user }}"
+    group: "{{ splunk_group }}"
+    mode: '0600'
+  when:
+    - splunk_enforce_strict_permissions | bool
+    - splunk_audit_log_path is defined
+  failed_when: false
+  tags:
+    - permissions
+    - security
+    - audit
+
+- name: Remove SUID/SGID bits from binaries (STIG V-258064)
+  ansible.builtin.shell: |
+    find {{ splunk_home }}/bin -type f \( -perm -4000 -o -perm -2000 \) -exec chmod ug-s {} \;
+  changed_when: false
+  when: splunk_enforce_strict_permissions | bool
+  tags:
+    - permissions
+    - security
+    - suid
+
+- name: Verify no world-writable files exist (STIG V-258066)
+  ansible.builtin.shell: |
+    find {{ splunk_home }} -type f -perm -0002 -ls
+  register: world_writable_files
+  changed_when: false
+  failed_when: world_writable_files.stdout != ""
+  when: splunk_enforce_strict_permissions | bool
+  tags:
+    - permissions
+    - security
+    - validation
+
+- name: Set immutable flag on critical configuration files (STIG V-258068)
+  ansible.builtin.file:
+    path: "{{ item }}"
+    attributes: +i
+  loop:
+    - "{{ splunk_home }}/etc/splunk-launch.conf"
+    - "{{ splunk_home }}/etc/system/local/server.conf"
+  when:
+    - splunk_enforce_strict_permissions | bool
+    - ansible_os_family == "RedHat"
+  failed_when: false
+  tags:
+    - permissions
+    - security
+    - immutable

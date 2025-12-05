@@ -1,0 +1,148 @@
+---
+# Pre-installation validation tasks
+# STIG V-258000 - System Requirements Validation
+
+- name: Verify license acceptance
+  ansible.builtin.assert:
+    that:
+      - splunk_accept_license | bool
+    fail_msg: "Splunk license must be accepted. Set splunk_accept_license: true"
+    success_msg: "Splunk license acceptance confirmed"
+  tags:
+    - validation
+    - license
+
+- name: Verify admin password is set
+  ansible.builtin.assert:
+    that:
+      - splunk_admin_password is defined
+      - splunk_admin_password | length >= splunk_admin_password_min_length
+    fail_msg: "Admin password must be set and meet minimum length of {{ splunk_admin_password_min_length }} characters"
+    success_msg: "Admin password meets requirements"
+  tags:
+    - validation
+    - security
+
+- name: Check operating system compatibility
+  ansible.builtin.assert:
+    that:
+      - ansible_os_family in splunk_supported_os_families
+    fail_msg: "Operating system {{ ansible_os_family }} is not supported"
+    success_msg: "Operating system {{ ansible_os_family }} is supported"
+  when: splunk_check_os_compatibility | bool
+  tags:
+    - validation
+    - os
+
+- name: Gather system memory facts
+  ansible.builtin.setup:
+    filter: ansible_memory_mb
+  tags:
+    - validation
+    - memory
+
+- name: Validate minimum memory requirements
+  ansible.builtin.assert:
+    that:
+      - ansible_memory_mb.real.total >= (splunk_min_memory_gb * 1024)
+    fail_msg: "System has {{ ansible_memory_mb.real.total }} MB, requires {{ splunk_min_memory_gb * 1024 }} MB"
+    success_msg: "Memory requirements met: {{ ansible_memory_mb.real.total }} MB available"
+  when: splunk_check_memory | bool
+  tags:
+    - validation
+    - memory
+
+- name: Check available disk space
+  ansible.builtin.shell: df -BG {{ splunk_home | dirname }} | tail -1 | awk '{print $4}' | sed 's/G//'
+  register: available_disk_space
+  changed_when: false
+  when: splunk_check_disk_space | bool
+  tags:
+    - validation
+    - disk
+
+- name: Validate minimum disk space requirements
+  ansible.builtin.assert:
+    that:
+      - available_disk_space.stdout | int >= splunk_min_disk_gb
+    fail_msg: "Insufficient disk space: {{ available_disk_space.stdout }}GB available, {{ splunk_min_disk_gb }}GB required"
+    success_msg: "Disk space requirements met: {{ available_disk_space.stdout }}GB available"
+  when: splunk_check_disk_space | bool
+  tags:
+    - validation
+    - disk
+
+- name: Check if required ports are available
+  ansible.builtin.wait_for:
+    port: "{{ item }}"
+    state: stopped
+    timeout: 5
+  loop:
+    - "{{ splunk_web_port }}"
+    - "{{ splunk_mgmt_port }}"
+    - "{{ splunk_splunktcp_port }}"
+    - "{{ splunk_kvstore_port }}"
+  when: splunk_check_network_ports | bool
+  ignore_errors: true
+  register: port_check
+  tags:
+    - validation
+    - network
+
+- name: Warn about ports already in use
+  ansible.builtin.debug:
+    msg: "Warning: Port {{ item.item }} may already be in use"
+  loop: "{{ port_check.results }}"
+  when:
+    - splunk_check_network_ports | bool
+    - item.failed is defined
+    - item.failed
+  tags:
+    - validation
+    - network
+
+- name: Check if Splunk is already installed
+  ansible.builtin.stat:
+    path: "{{ splunk_home }}/bin/splunk"
+  register: splunk_binary
+  tags:
+    - validation
+    - install
+
+- name: Get existing Splunk version if installed
+  ansible.builtin.command: "{{ splunk_home }}/bin/splunk version --accept-license --answer-yes --no-prompt"
+  register: existing_splunk_version
+  when: splunk_binary.stat.exists
+  changed_when: false
+  failed_when: false
+  tags:
+    - validation
+    - install
+
+- name: Display existing Splunk installation
+  ansible.builtin.debug:
+    msg: "Splunk is already installed: {{ existing_splunk_version.stdout_lines | default('Unknown version') }}"
+  when:
+    - splunk_binary.stat.exists
+    - existing_splunk_version is defined
+  tags:
+    - validation
+    - install
+
+- name: Verify TLS certificates exist (if custom certs are configured)
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop:
+    - "{{ splunk_server_cert }}"
+    - "{{ splunk_server_key }}"
+    - "{{ splunk_ca_cert }}"
+  register: cert_files
+  when:
+    - not splunk_use_default_tls_certs
+    - item != ''
+  failed_when:
+    - not cert_files.results[0].stat.exists
+  tags:
+    - validation
+    - tls
+    - certificates

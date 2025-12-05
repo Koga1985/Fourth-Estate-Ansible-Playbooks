@@ -1,0 +1,67 @@
+---
+# Clustering configuration tasks
+# STIG V-258074 - High Availability Configuration
+
+- name: Configure indexer cluster master node
+  ansible.builtin.blockinfile:
+    path: "{{ splunk_home }}/etc/system/local/server.conf"
+    block: |
+      [clustering]
+      mode = master
+      replication_factor = {{ splunk_index_replication_factor }}
+      search_factor = {{ splunk_index_search_factor }}
+      pass4SymmKey = {{ splunk_cluster_secret }}
+      cluster_label = {{ splunk_cluster_label }}
+    create: yes
+    owner: "{{ splunk_user }}"
+    group: "{{ splunk_group }}"
+    mode: '0600'
+  when: splunk_cluster_mode == 'master'
+  notify: restart splunk
+  no_log: true
+  tags:
+    - clustering
+    - master
+
+- name: Configure indexer cluster peer node
+  ansible.builtin.blockinfile:
+    path: "{{ splunk_home }}/etc/system/local/server.conf"
+    block: |
+      [clustering]
+      mode = peer
+      master_uri = {{ splunk_cluster_master_uri }}
+      pass4SymmKey = {{ splunk_cluster_secret }}
+
+      [replication_port://9887]
+      disabled = false
+    create: yes
+    owner: "{{ splunk_user }}"
+    group: "{{ splunk_group }}"
+    mode: '0600'
+  when: splunk_cluster_mode == 'peer'
+  notify: restart splunk
+  no_log: true
+  tags:
+    - clustering
+    - peer
+
+- name: Configure search head cluster member
+  ansible.builtin.blockinfile:
+    path: "{{ splunk_home }}/etc/system/local/server.conf"
+    block: |
+      [shclustering]
+      disabled = false
+      mgmt_uri = https://{{ ansible_fqdn }}:{{ splunk_mgmt_port }}
+      pass4SymmKey = {{ splunk_shc_secret }}
+      shcluster_label = {{ splunk_shc_label }}
+      replication_factor = {{ splunk_shc_replication_factor }}
+    create: yes
+    owner: "{{ splunk_user }}"
+    group: "{{ splunk_group }}"
+    mode: '0600'
+  when: splunk_shc_mode | bool
+  notify: restart splunk
+  no_log: true
+  tags:
+    - clustering
+    - shc

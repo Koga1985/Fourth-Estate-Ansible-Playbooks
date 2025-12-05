@@ -1,0 +1,33 @@
+---
+# Standalone task: Immediate Splunk backup
+# Usage: ansible-playbook -i inventory splunk/tasks/backup_now.yml
+
+- name: Execute Splunk Backup
+  hosts: splunk_servers
+  become: yes
+  vars:
+    splunk_home: "/opt/splunk"
+    splunk_user: "splunk"
+    backup_path: "/backup/splunk"
+
+  tasks:
+    - name: Verify backup script exists
+      ansible.builtin.stat:
+        path: "{{ splunk_home }}/bin/backup_splunk.sh"
+      register: backup_script
+
+    - name: Execute backup
+      ansible.builtin.command: "{{ splunk_home }}/bin/backup_splunk.sh"
+      become_user: "{{ splunk_user }}"
+      when: backup_script.stat.exists
+      register: backup_result
+
+    - name: Display backup results
+      ansible.builtin.debug:
+        msg: "{{ backup_result.stdout_lines }}"
+      when: backup_script.stat.exists
+
+    - name: Warning if backup script missing
+      ansible.builtin.debug:
+        msg: "WARNING: Backup script not found. Run splunk_backup_dr role first."
+      when: not backup_script.stat.exists
