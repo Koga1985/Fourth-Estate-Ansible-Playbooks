@@ -1,0 +1,102 @@
+---
+# Identification and Authentication (IA) - NIST 800-53 IA Family
+
+- name: IA-2 - Configure LDAP/AD authentication providers
+  cisco.ucs.ucs_ldap_provider:
+    hostname: "{{ ucs_hostname }}"
+    username: "{{ ucs_username }}"
+    password: "{{ ucs_password }}"
+    name: "{{ item.name }}"
+    order: "{{ item.order }}"
+    basedn: "{{ item.basedn }}"
+    domain: "{{ item.domain }}"
+    filter: "{{ item.filter | default('cn=$userid') }}"
+    attribute: "{{ item.attribute | default('CiscoAvPair') }}"
+    enable: "yes"
+    state: present
+  loop: "{{ ia_ldap_providers }}"
+  when:
+    - apply_changes | bool
+    - ia_enable_ldap | bool
+
+- name: IA-2 - Configure RADIUS authentication providers
+  cisco.ucs.ucs_radius_provider:
+    hostname: "{{ ucs_hostname }}"
+    username: "{{ ucs_username }}"
+    password: "{{ ucs_password }}"
+    name: "{{ item.name }}"
+    order: "{{ item.order }}"
+    auth_port: "{{ item.auth_port | default(1812) }}"
+    key: "{{ item.key }}"
+    timeout: "{{ item.timeout | default(5) }}"
+    retries: "{{ item.retries | default(1) }}"
+    state: present
+  loop: "{{ ia_radius_providers }}"
+  when:
+    - apply_changes | bool
+    - ia_enable_radius | bool
+  no_log: true
+
+- name: IA-2 - Configure TACACS+ authentication providers
+  cisco.ucs.ucs_tacacs_provider:
+    hostname: "{{ ucs_hostname }}"
+    username: "{{ ucs_username }}"
+    password: "{{ ucs_password }}"
+    name: "{{ item.name }}"
+    order: "{{ item.order }}"
+    port: "{{ item.port | default(49) }}"
+    key: "{{ item.key }}"
+    timeout: "{{ item.timeout | default(5) }}"
+    state: present
+  loop: "{{ ia_tacacs_providers }}"
+  when:
+    - apply_changes | bool
+    - ia_enable_tacacs | bool
+  no_log: true
+
+- name: IA-5 - Configure password policy
+  cisco.ucs.ucs_password_policy:
+    hostname: "{{ ucs_hostname }}"
+    username: "{{ ucs_username }}"
+    password: "{{ ucs_password }}"
+    min_length: "{{ ia_password_min_length }}"
+    complexity_check: "yes"
+    password_expiration: "yes"
+    password_expiration_days: "{{ ia_password_max_age_days }}"
+    password_history_count: "{{ ia_password_history_count }}"
+    change_during_interval: "disable"
+    change_count: "{{ ia_password_change_count }}"
+    change_interval: "{{ ia_password_change_interval }}"
+  when: apply_changes | bool
+
+- name: IA-8 - Configure certificate-based authentication
+  cisco.ucs.ucs_certificate:
+    hostname: "{{ ucs_hostname }}"
+    username: "{{ ucs_username }}"
+    password: "{{ ucs_password }}"
+    cert_file: "{{ ia_certificate_file }}"
+    key_file: "{{ ia_certificate_key_file }}"
+  when:
+    - apply_changes | bool
+    - ia_enable_certificate_auth | bool
+
+- name: Record authentication configuration
+  ansible.builtin.copy:
+    dest: "{{ ucs_artifacts_dir }}/authentication.json"
+    mode: '0640'
+    content: |
+      {
+        "nist_controls": ["IA-2", "IA-5", "IA-8"],
+        "ldap_enabled": {{ ia_enable_ldap | to_json }},
+        "radius_enabled": {{ ia_enable_radius | to_json }},
+        "tacacs_enabled": {{ ia_enable_tacacs | to_json }},
+        "certificate_auth": {{ ia_enable_certificate_auth | to_json }},
+        "password_policy": {
+          "min_length": {{ ia_password_min_length }},
+          "complexity": true,
+          "max_age_days": {{ ia_password_max_age_days }},
+          "history_count": {{ ia_password_history_count }}
+        },
+        "configured_at": "{{ ansible_date_time.iso8601 }}"
+      }
+  delegate_to: localhost

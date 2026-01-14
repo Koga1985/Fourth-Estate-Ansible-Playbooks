@@ -1,0 +1,67 @@
+---
+# Blade and rack server configuration
+
+- name: Query available servers
+  cisco.ucs.ucs_query:
+    hostname: "{{ ucs_hostname }}"
+    username: "{{ ucs_username }}"
+    password: "{{ ucs_password }}"
+    class_ids: computeBlade,computeRackUnit
+  register: available_servers
+
+- name: Associate service profiles from templates
+  cisco.ucs.ucs_service_profile_from_template:
+    hostname: "{{ ucs_hostname }}"
+    username: "{{ ucs_username }}"
+    password: "{{ ucs_password }}"
+    name: "{{ item.name }}"
+    source_template: "{{ item.template }}"
+    org_dn: "org-root/org-{{ fourth_estate_org_name }}"
+    server_pool: "{{ item.server_pool | default('') }}"
+    server_assignment: "{{ item.server_assignment | default('pool') }}"
+    description: "{{ item.description }}"
+    state: present
+  loop: "{{ ucs_service_profile_instances }}"
+  when:
+    - apply_changes | bool
+    - ucs_auto_associate_servers | bool
+
+- name: Configure server power policies
+  cisco.ucs.ucs_power_policy:
+    hostname: "{{ ucs_hostname }}"
+    username: "{{ ucs_username }}"
+    password: "{{ ucs_password }}"
+    name: "{{ item.name }}"
+    org_dn: "org-root/org-{{ fourth_estate_org_name }}"
+    prio: "{{ item.priority | default('no-cap') }}"
+    descr: "{{ item.description }}"
+    state: present
+  loop: "{{ ucs_power_policies }}"
+  when: apply_changes | bool
+
+- name: Configure local disk configuration policies
+  cisco.ucs.ucs_disk_group_policy:
+    hostname: "{{ ucs_hostname }}"
+    username: "{{ ucs_username }}"
+    password: "{{ ucs_password }}"
+    name: "{{ item.name }}"
+    org_dn: "org-root/org-{{ fourth_estate_org_name }}"
+    raid_level: "{{ item.raid_level }}"
+    configuration_mode: "{{ item.config_mode | default('automatic') }}"
+    descr: "{{ item.description }}"
+    state: present
+  loop: "{{ ucs_disk_group_policies }}"
+  when: apply_changes | bool
+
+- name: Record server configuration
+  ansible.builtin.copy:
+    dest: "{{ ucs_artifacts_dir }}/server_configuration.json"
+    mode: '0640'
+    content: |
+      {
+        "service_profiles": {{ ucs_service_profile_instances | to_json }},
+        "power_policies": {{ ucs_power_policies | to_json }},
+        "disk_policies": {{ ucs_disk_group_policies | to_json }},
+        "configured_at": "{{ ansible_date_time.iso8601 }}"
+      }
+  delegate_to: localhost

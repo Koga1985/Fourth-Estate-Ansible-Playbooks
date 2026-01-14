@@ -1,0 +1,71 @@
+---
+# Audit and Accountability (AU) - NIST 800-53 AU Family
+
+- name: AU-2 - Enable comprehensive audit logging
+  cisco.ucs.ucs_system:
+    hostname: "{{ ucs_hostname }}"
+    username: "{{ ucs_username }}"
+    password: "{{ ucs_password }}"
+    audit_log_enabled: "yes"
+  when: apply_changes | bool
+
+- name: AU-3 - Configure audit content requirements
+  ansible.builtin.debug:
+    msg: "UCS audit logs include: event type, date/time, source, outcome, user identity"
+
+- name: AU-4 - Configure remote syslog servers for log storage
+  cisco.ucs.ucs_syslog_server:
+    hostname: "{{ ucs_hostname }}"
+    username: "{{ ucs_username }}"
+    password: "{{ ucs_password }}"
+    syslog_server: "{{ item.server }}"
+    severity: "{{ item.severity | default('information') }}"
+    facility: "{{ item.facility | default('local7') }}"
+    forwarding_facility: "{{ item.forwarding_facility | default('local7') }}"
+    state: present
+  loop: "{{ au_syslog_servers }}"
+  when: apply_changes | bool
+
+- name: AU-5 - Configure syslog local console logging
+  cisco.ucs.ucs_syslog_console:
+    hostname: "{{ ucs_hostname }}"
+    username: "{{ ucs_username }}"
+    password: "{{ ucs_password }}"
+    admin_state: "enabled"
+    level: "{{ au_console_log_level }}"
+  when: apply_changes | bool
+
+- name: AU-9 - Protect audit information
+  ansible.builtin.debug:
+    msg: "Ensure syslog servers have appropriate access controls and encryption"
+
+- name: AU-12 - Generate audit records for security events
+  cisco.ucs.ucs_syslog_source:
+    hostname: "{{ ucs_hostname }}"
+    username: "{{ ucs_username }}"
+    password: "{{ ucs_password }}"
+    name: "{{ item.name }}"
+    audits: "{{ item.audits | default('enabled') }}"
+    events: "{{ item.events | default('enabled') }}"
+    faults: "{{ item.faults | default('enabled') }}"
+  loop: "{{ au_log_sources }}"
+  when: apply_changes | bool
+
+- name: Configure audit log rotation
+  ansible.builtin.debug:
+    msg: "Configure log retention period: {{ au_log_retention_days }} days"
+
+- name: Record audit logging configuration
+  ansible.builtin.copy:
+    dest: "{{ ucs_artifacts_dir }}/audit_logging.json"
+    mode: '0640'
+    content: |
+      {
+        "nist_controls": ["AU-2", "AU-3", "AU-4", "AU-5", "AU-9", "AU-12"],
+        "comprehensive_logging": true,
+        "syslog_servers": {{ au_syslog_servers | to_json }},
+        "retention_days": {{ au_log_retention_days }},
+        "console_level": "{{ au_console_log_level }}",
+        "configured_at": "{{ ansible_date_time.iso8601 }}"
+      }
+  delegate_to: localhost

@@ -1,0 +1,40 @@
+---
+# Chassis and FEX discovery tasks
+
+- name: Configure chassis discovery policy
+  cisco.ucs.ucs_chassis_discovery:
+    hostname: "{{ ucs_hostname }}"
+    username: "{{ ucs_username }}"
+    password: "{{ ucs_password }}"
+    link_aggregation_pref: "{{ ucs_chassis_link_aggregation }}"
+    num_links: "{{ ucs_chassis_num_links }}"
+  when: apply_changes | bool
+
+- name: Query discovered chassis
+  cisco.ucs.ucs_query:
+    hostname: "{{ ucs_hostname }}"
+    username: "{{ ucs_username }}"
+    password: "{{ ucs_password }}"
+    class_ids: equipmentChassis
+  register: discovered_chassis
+
+- name: Acknowledge chassis
+  cisco.ucs.ucs_chassis:
+    hostname: "{{ ucs_hostname }}"
+    username: "{{ ucs_username }}"
+    password: "{{ ucs_password }}"
+    chassis_id: "{{ item.id }}"
+    user_label: "{{ fourth_estate_org_name }}-Chassis-{{ item.id }}"
+    state: present
+  loop: "{{ discovered_chassis.objects }}"
+  when:
+    - apply_changes | bool
+    - discovered_chassis.objects is defined
+
+- name: Record chassis inventory
+  ansible.builtin.copy:
+    dest: "{{ ucs_artifacts_dir }}/chassis_inventory.json"
+    mode: '0640'
+    content: "{{ discovered_chassis | to_nice_json }}"
+  delegate_to: localhost
+  when: discovered_chassis.objects is defined

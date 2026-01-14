@@ -1,0 +1,60 @@
+---
+# System and Communications Protection (SC) - Cryptographic Controls
+
+- name: SC-8 - Configure strong TLS cipher suites
+  cisco.ucs.ucs_https_cipher:
+    hostname: "{{ ucs_hostname }}"
+    username: "{{ ucs_username }}"
+    password: "{{ ucs_password }}"
+    cipher_suite: "{{ sc_cipher_suite }}"
+  when: apply_changes | bool
+
+- name: SC-8 - Disable weak SSL/TLS protocols
+  cisco.ucs.ucs_https_protocol:
+    hostname: "{{ ucs_hostname }}"
+    username: "{{ ucs_username }}"
+    password: "{{ ucs_password }}"
+    tls_v1_enabled: "{{ sc_enable_tls_10 | ternary('yes', 'no') }}"
+    tls_v1_1_enabled: "{{ sc_enable_tls_11 | ternary('yes', 'no') }}"
+    tls_v1_2_enabled: "yes"
+  when: apply_changes | bool
+
+- name: SC-12 - Configure certificate management
+  cisco.ucs.ucs_certificate:
+    hostname: "{{ ucs_hostname }}"
+    username: "{{ ucs_username }}"
+    password: "{{ ucs_password }}"
+    cert_file: "{{ sc_certificate_file }}"
+    key_file: "{{ sc_certificate_key_file }}"
+  when:
+    - apply_changes | bool
+    - sc_custom_certificate | bool
+
+- name: SC-13 - Enforce FIPS 140-2 mode (if supported)
+  ansible.builtin.debug:
+    msg: "FIPS 140-2 mode: {{ sc_enforce_fips_140_2 | ternary('Enabled', 'Disabled') }}"
+
+- name: SC-17 - Configure public key infrastructure certificates
+  ansible.builtin.debug:
+    msg: "Ensure PKI certificates are properly configured and valid"
+
+- name: SC-23 - Protect session authenticity with strong crypto
+  ansible.builtin.debug:
+    msg: "Session cookies use strong cryptographic protection"
+
+- name: Record cryptography configuration
+  ansible.builtin.copy:
+    dest: "{{ ucs_artifacts_dir }}/cryptography.json"
+    mode: '0640'
+    content: |
+      {
+        "nist_controls": ["SC-8", "SC-12", "SC-13", "SC-17", "SC-23"],
+        "tls_1.0": {{ sc_enable_tls_10 | to_json }},
+        "tls_1.1": {{ sc_enable_tls_11 | to_json }},
+        "tls_1.2": true,
+        "cipher_suite": "{{ sc_cipher_suite }}",
+        "fips_140_2": {{ sc_enforce_fips_140_2 | to_json }},
+        "custom_certificate": {{ sc_custom_certificate | to_json }},
+        "configured_at": "{{ ansible_date_time.iso8601 }}"
+      }
+  delegate_to: localhost

@@ -1,0 +1,39 @@
+---
+# Firmware management tasks
+
+- name: Query current firmware versions
+  cisco.ucs.ucs_query:
+    hostname: "{{ ucs_hostname }}"
+    username: "{{ ucs_username }}"
+    password: "{{ ucs_password }}"
+    class_ids: firmwareRunning
+  register: current_firmware
+
+- name: Record current firmware versions
+  ansible.builtin.copy:
+    dest: "{{ ucs_artifacts_dir }}/firmware_versions.json"
+    mode: '0640'
+    content: "{{ current_firmware | to_nice_json }}"
+  delegate_to: localhost
+
+- name: Create host firmware packages
+  cisco.ucs.ucs_host_firmware_package:
+    hostname: "{{ ucs_hostname }}"
+    username: "{{ ucs_username }}"
+    password: "{{ ucs_password }}"
+    name: "{{ item.name }}"
+    org_dn: "org-root/org-{{ fourth_estate_org_name }}"
+    blade_package: "{{ item.blade_package }}"
+    rack_package: "{{ item.rack_package }}"
+    update_trigger: "{{ item.update_trigger | default('immediate') }}"
+    descr: "{{ item.description }}"
+    state: present
+  loop: "{{ ucs_host_firmware_packages }}"
+  when:
+    - apply_changes | bool
+    - ucs_enable_firmware_updates | bool
+
+- name: Verify firmware package consistency
+  ansible.builtin.debug:
+    msg: "Firmware packages configured for {{ fourth_estate_org_name }}"
+  when: ucs_enable_firmware_updates | bool

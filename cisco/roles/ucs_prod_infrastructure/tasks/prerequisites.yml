@@ -1,0 +1,49 @@
+---
+# Prerequisites validation for Cisco UCS deployment
+
+- name: Validate required variables are defined
+  ansible.builtin.assert:
+    that:
+      - ucs_hostname is defined
+      - ucs_username is defined
+      - ucs_password is defined
+      - fourth_estate_org_name is defined
+    fail_msg: "Required UCS connection variables must be defined"
+    success_msg: "All required variables are defined"
+
+- name: Test UCS Manager connectivity
+  cisco.ucs.ucs_query:
+    hostname: "{{ ucs_hostname }}"
+    username: "{{ ucs_username }}"
+    password: "{{ ucs_password }}"
+    class_ids: topSystem
+  register: ucs_system_info
+  failed_when: false
+
+- name: Verify UCS Manager is accessible
+  ansible.builtin.assert:
+    that:
+      - ucs_system_info is succeeded
+    fail_msg: "Cannot connect to UCS Manager at {{ ucs_hostname }}"
+    success_msg: "Successfully connected to UCS Manager"
+
+- name: Create artifacts directory
+  ansible.builtin.file:
+    path: "{{ ucs_artifacts_dir }}"
+    state: directory
+    mode: '0750'
+  delegate_to: localhost
+
+- name: Record deployment metadata
+  ansible.builtin.copy:
+    dest: "{{ ucs_artifacts_dir }}/deployment_metadata.json"
+    mode: '0640'
+    content: |
+      {
+        "deployment_date": "{{ ansible_date_time.iso8601 }}",
+        "ucs_manager": "{{ ucs_hostname }}",
+        "organization": "{{ fourth_estate_org_name }}",
+        "deployed_by": "{{ ansible_user_id }}",
+        "compliance_frameworks": {{ compliance_frameworks | to_json }}
+      }
+  delegate_to: localhost

@@ -1,0 +1,67 @@
+---
+# vNIC and vHBA template configuration
+
+- name: Create vNIC templates for fourth estate
+  cisco.ucs.ucs_vnic_template:
+    hostname: "{{ ucs_hostname }}"
+    username: "{{ ucs_username }}"
+    password: "{{ ucs_password }}"
+    name: "{{ item.name }}"
+    org_dn: "org-root/org-{{ fourth_estate_org_name }}"
+    fabric: "{{ item.fabric }}"
+    template_type: "{{ item.template_type | default('updating-template') }}"
+    vlans_list: "{{ item.vlans }}"
+    cdn_source: "{{ item.cdn_source | default('vnic-name') }}"
+    mtu: "{{ item.mtu | default('1500') }}"
+    mac_pool: "{{ item.mac_pool }}"
+    network_control_policy: "{{ item.network_control_policy | default('') }}"
+    qos_policy: "{{ item.qos_policy | default('') }}"
+    state: present
+  loop: "{{ ucs_vnic_templates }}"
+  when: apply_changes | bool
+
+- name: Create vHBA templates for SAN connectivity
+  cisco.ucs.ucs_vhba_template:
+    hostname: "{{ ucs_hostname }}"
+    username: "{{ ucs_username }}"
+    password: "{{ ucs_password }}"
+    name: "{{ item.name }}"
+    org_dn: "org-root/org-{{ fourth_estate_org_name }}"
+    fabric: "{{ item.fabric }}"
+    vsan: "{{ item.vsan }}"
+    template_type: "{{ item.template_type | default('updating-template') }}"
+    wwpn_pool: "{{ item.wwpn_pool }}"
+    max_data_field_size: "{{ item.max_data_field_size | default('2048') }}"
+    qos_policy: "{{ item.qos_policy | default('') }}"
+    state: present
+  loop: "{{ ucs_vhba_templates }}"
+  when:
+    - apply_changes | bool
+    - ucs_enable_san | bool
+
+- name: Create LAN connectivity policies
+  cisco.ucs.ucs_lan_connectivity:
+    hostname: "{{ ucs_hostname }}"
+    username: "{{ ucs_username }}"
+    password: "{{ ucs_password }}"
+    name: "{{ item.name }}"
+    org_dn: "org-root/org-{{ fourth_estate_org_name }}"
+    vnic_list: "{{ item.vnics }}"
+    state: present
+  loop: "{{ ucs_lan_connectivity_policies }}"
+  when: apply_changes | bool
+
+- name: Create SAN connectivity policies
+  cisco.ucs.ucs_san_connectivity:
+    hostname: "{{ ucs_hostname }}"
+    username: "{{ ucs_username }}"
+    password: "{{ ucs_password }}"
+    name: "{{ item.name }}"
+    org_dn: "org-root/org-{{ fourth_estate_org_name }}"
+    vhba_list: "{{ item.vhbas }}"
+    wwnn_pool: "{{ item.wwnn_pool }}"
+    state: present
+  loop: "{{ ucs_san_connectivity_policies }}"
+  when:
+    - apply_changes | bool
+    - ucs_enable_san | bool

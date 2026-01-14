@@ -1,0 +1,89 @@
+---
+# STIG Category I (High Severity) Findings Remediation
+
+- name: V-230500 - Disable default admin account (if not in use)
+  cisco.ucs.ucs_user:
+    hostname: "{{ ucs_hostname }}"
+    username: "{{ ucs_username }}"
+    password: "{{ ucs_password }}"
+    name: "admin"
+    account_status: "{{ stig_disable_default_admin | ternary('inactive', 'active') }}"
+  when:
+    - apply_changes | bool
+    - stig_disable_default_admin | bool
+
+- name: V-230502 - Enforce minimum password length
+  cisco.ucs.ucs_password_policy:
+    hostname: "{{ ucs_hostname }}"
+    username: "{{ ucs_username }}"
+    password: "{{ ucs_password }}"
+    min_length: "{{ ia_password_min_length }}"
+  when: apply_changes | bool
+
+- name: V-230503 - Enable password complexity requirements
+  cisco.ucs.ucs_password_policy:
+    hostname: "{{ ucs_hostname }}"
+    username: "{{ ucs_username }}"
+    password: "{{ ucs_password }}"
+    complexity_check: "yes"
+  when: apply_changes | bool
+
+- name: V-230505 - Configure maximum password age
+  cisco.ucs.ucs_password_policy:
+    hostname: "{{ ucs_hostname }}"
+    username: "{{ ucs_username }}"
+    password: "{{ ucs_password }}"
+    password_expiration: "yes"
+    password_expiration_days: "{{ ia_password_max_age_days }}"
+  when: apply_changes | bool
+
+- name: V-230507 - Enforce password history
+  cisco.ucs.ucs_password_policy:
+    hostname: "{{ ucs_hostname }}"
+    username: "{{ ucs_username }}"
+    password: "{{ ucs_password }}"
+    password_history_count: "{{ ia_password_history_count }}"
+  when: apply_changes | bool
+
+- name: V-230510 - Disable anonymous/guest access
+  cisco.ucs.ucs_system:
+    hostname: "{{ ucs_hostname }}"
+    username: "{{ ucs_username }}"
+    password: "{{ ucs_password }}"
+    anonymous_reporting: "off"
+  when: apply_changes | bool
+
+- name: V-230515 - Configure session timeout
+  cisco.ucs.ucs_system:
+    hostname: "{{ ucs_hostname }}"
+    username: "{{ ucs_username }}"
+    password: "{{ ucs_password }}"
+    session_timeout: "{{ ac_session_timeout_minutes }}"
+  when: apply_changes | bool
+
+- name: V-230520 - Enable TLS 1.2 or higher only
+  cisco.ucs.ucs_https_cipher:
+    hostname: "{{ ucs_hostname }}"
+    username: "{{ ucs_username }}"
+    password: "{{ ucs_password }}"
+    cipher_suite: "{{ sc_cipher_suite }}"
+  when: apply_changes | bool
+
+- name: Record STIG CAT I remediation
+  ansible.builtin.copy:
+    dest: "{{ ucs_artifacts_dir }}/stig_cat1_remediation.txt"
+    mode: '0640'
+    content: |
+      STIG Category I (High) Remediation Applied
+      =========================================
+      Date: {{ ansible_date_time.iso8601 }}
+
+      V-230500: Default admin account status configured
+      V-230502: Minimum password length: {{ ia_password_min_length }}
+      V-230503: Password complexity: Enabled
+      V-230505: Password expiration: {{ ia_password_max_age_days }} days
+      V-230507: Password history: {{ ia_password_history_count }} passwords
+      V-230510: Anonymous access: Disabled
+      V-230515: Session timeout: {{ ac_session_timeout_minutes }} minutes
+      V-230520: TLS enforcement: TLS 1.2+
+  delegate_to: localhost

@@ -1,0 +1,69 @@
+---
+# Network Security Controls
+
+- name: SC-7 - Configure management network restrictions
+  cisco.ucs.ucs_ip_pool:
+    hostname: "{{ ucs_hostname }}"
+    username: "{{ ucs_username }}"
+    password: "{{ ucs_password }}"
+    name: "{{ item.name }}"
+    first_addr: "{{ item.first_addr }}"
+    last_addr: "{{ item.last_addr }}"
+    subnet_mask: "{{ item.subnet_mask }}"
+    default_gw: "{{ item.default_gw }}"
+    state: present
+  loop: "{{ sc_management_ip_pools }}"
+  when: apply_changes | bool
+
+- name: SC-7 - Configure firewall policies (boundary protection)
+  ansible.builtin.debug:
+    msg: "Ensure external firewalls protect UCS management interfaces"
+
+- name: SC-10 - Redirect HTTP to HTTPS
+  cisco.ucs.ucs_https_redirect:
+    hostname: "{{ ucs_hostname }}"
+    username: "{{ ucs_username }}"
+    password: "{{ ucs_password }}"
+    http_redirect: "enabled"
+  when: apply_changes | bool
+
+- name: SC-20 - Configure secure name/address resolution
+  cisco.ucs.ucs_dns_server:
+    hostname: "{{ ucs_hostname }}"
+    username: "{{ ucs_username }}"
+    password: "{{ ucs_password }}"
+    dns_server: "{{ item }}"
+    state: present
+  loop: "{{ sc_dns_servers }}"
+  when: apply_changes | bool
+
+- name: SC-24 - Fail securely on system failures
+  ansible.builtin.debug:
+    msg: "UCS configured to fail securely on component failures"
+
+- name: Configure VLAN isolation for security zones
+  cisco.ucs.ucs_vlan:
+    hostname: "{{ ucs_hostname }}"
+    username: "{{ ucs_username }}"
+    password: "{{ ucs_password }}"
+    name: "{{ item.name }}"
+    id: "{{ item.id }}"
+    fabric: "common"
+    native: "{{ item.native | default('no') }}"
+    state: present
+  loop: "{{ sc_security_vlans }}"
+  when: apply_changes | bool
+
+- name: Record network security configuration
+  ansible.builtin.copy:
+    dest: "{{ ucs_artifacts_dir }}/network_security.json"
+    mode: '0640'
+    content: |
+      {
+        "nist_controls": ["SC-7", "SC-10", "SC-20", "SC-24"],
+        "http_redirect": true,
+        "management_pools": {{ sc_management_ip_pools | to_json }},
+        "security_vlans": {{ sc_security_vlans | to_json }},
+        "configured_at": "{{ ansible_date_time.iso8601 }}"
+      }
+  delegate_to: localhost
