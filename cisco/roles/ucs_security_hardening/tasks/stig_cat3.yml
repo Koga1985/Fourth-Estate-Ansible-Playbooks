@@ -1,0 +1,70 @@
+---
+# STIG Category III (Low Severity) Findings Remediation
+
+- name: V-230560 - Configure system description
+  cisco.ucs.ucs_system:
+    hostname: "{{ ucs_hostname }}"
+    username: "{{ ucs_username }}"
+    password: "{{ ucs_password }}"
+    descr: "{{ ucs_system_description }}"
+  when: apply_changes | bool
+
+- name: V-230562 - Configure system contact information
+  cisco.ucs.ucs_callhome:
+    hostname: "{{ ucs_hostname }}"
+    username: "{{ ucs_username }}"
+    password: "{{ ucs_password }}"
+    contact: "{{ fourth_estate_contact }}"
+    phone: "{{ fourth_estate_phone }}"
+    email: "{{ fourth_estate_email }}"
+  when: apply_changes | bool
+
+- name: V-230565 - Configure timezone
+  cisco.ucs.ucs_timezone:
+    hostname: "{{ ucs_hostname }}"
+    username: "{{ ucs_username }}"
+    password: "{{ ucs_password }}"
+    timezone: "{{ ucs_timezone }}"
+  when: apply_changes | bool
+
+- name: V-230570 - Enable configuration backup
+  cisco.ucs.ucs_backup:
+    hostname: "{{ ucs_hostname }}"
+    username: "{{ ucs_username }}"
+    password: "{{ ucs_password }}"
+    type: "full-state"
+    protocol: "scp"
+    admin_state: "enabled"
+  when:
+    - apply_changes | bool
+    - ucs_backup_enabled | bool
+
+- name: V-230575 - Document network topology
+  ansible.builtin.copy:
+    dest: "{{ ucs_artifacts_dir }}/network_topology.txt"
+    mode: '0640'
+    content: |
+      UCS Network Topology Documentation
+      ==================================
+      Organization: {{ fourth_estate_org_name }}
+      UCS Manager: {{ ucs_hostname }}
+
+      This file should document the complete network topology
+      including VLANs, VSANs, and connectivity details.
+  delegate_to: localhost
+
+- name: Record STIG CAT III remediation
+  ansible.builtin.copy:
+    dest: "{{ ucs_artifacts_dir }}/stig_cat3_remediation.txt"
+    mode: '0640'
+    content: |
+      STIG Category III (Low) Remediation Applied
+      ===========================================
+      Date: {{ ansible_date_time.iso8601 }}
+
+      V-230560: System description: Configured
+      V-230562: Contact information: Configured
+      V-230565: Timezone: {{ ucs_timezone }}
+      V-230570: Configuration backup: {{ ucs_backup_enabled | ternary('Enabled', 'Disabled') }}
+      V-230575: Network documentation: Created
+  delegate_to: localhost

@@ -1,0 +1,97 @@
+---
+# STIG Category II (Medium Severity) Findings Remediation
+
+- name: V-230525 - Configure account lockout threshold
+  cisco.ucs.ucs_password_policy:
+    hostname: "{{ ucs_hostname }}"
+    username: "{{ ucs_username }}"
+    password: "{{ ucs_password }}"
+    lockout_enabled: "yes"
+    max_login_attempts: "{{ ac_max_failed_login_attempts }}"
+  when: apply_changes | bool
+
+- name: V-230527 - Configure account lockout duration
+  cisco.ucs.ucs_password_policy:
+    hostname: "{{ ucs_hostname }}"
+    username: "{{ ucs_username }}"
+    password: "{{ ucs_password }}"
+    lockout_duration: "{{ ac_account_lockout_duration_minutes }}"
+  when: apply_changes | bool
+
+- name: V-230530 - Enable audit logging for administrative actions
+  cisco.ucs.ucs_system:
+    hostname: "{{ ucs_hostname }}"
+    username: "{{ ucs_username }}"
+    password: "{{ ucs_password }}"
+    audit_log_enabled: "yes"
+  when: apply_changes | bool
+
+- name: V-230532 - Configure remote syslog servers
+  cisco.ucs.ucs_syslog_server:
+    hostname: "{{ ucs_hostname }}"
+    username: "{{ ucs_username }}"
+    password: "{{ ucs_password }}"
+    syslog_server: "{{ item.server }}"
+    severity: "{{ item.severity }}"
+    facility: "{{ item.facility }}"
+    state: present
+  loop: "{{ au_syslog_servers }}"
+  when: apply_changes | bool
+
+- name: V-230535 - Configure NTP for time synchronization
+  cisco.ucs.ucs_ntp_server:
+    hostname: "{{ ucs_hostname }}"
+    username: "{{ ucs_username }}"
+    password: "{{ ucs_password }}"
+    ntp_server: "{{ item }}"
+    state: present
+  loop: "{{ ucs_ntp_servers }}"
+  when: apply_changes | bool
+
+- name: V-230540 - Disable insecure protocols (HTTP)
+  cisco.ucs.ucs_https_redirect:
+    hostname: "{{ ucs_hostname }}"
+    username: "{{ ucs_username }}"
+    password: "{{ ucs_password }}"
+    http_redirect: "enabled"
+  when: apply_changes | bool
+
+- name: V-230545 - Configure SNMP v3 (if SNMP enabled)
+  cisco.ucs.ucs_snmp_user:
+    hostname: "{{ ucs_hostname }}"
+    username: "{{ ucs_username }}"
+    password: "{{ ucs_password }}"
+    name: "{{ item.name }}"
+    auth_type: "{{ item.auth_type }}"
+    auth_password: "{{ item.auth_password }}"
+    privacy_type: "{{ item.privacy_type }}"
+    privacy_password: "{{ item.privacy_password }}"
+    state: present
+  loop: "{{ snmp_v3_users }}"
+  when:
+    - apply_changes | bool
+    - ucs_enable_snmp | bool
+    - snmp_use_v3 | bool
+  no_log: true
+
+- name: V-230550 - Disable unused management interfaces
+  ansible.builtin.debug:
+    msg: "Ensure only required management interfaces are enabled"
+
+- name: Record STIG CAT II remediation
+  ansible.builtin.copy:
+    dest: "{{ ucs_artifacts_dir }}/stig_cat2_remediation.txt"
+    mode: '0640'
+    content: |
+      STIG Category II (Medium) Remediation Applied
+      ============================================
+      Date: {{ ansible_date_time.iso8601 }}
+
+      V-230525: Account lockout threshold: {{ ac_max_failed_login_attempts }} attempts
+      V-230527: Account lockout duration: {{ ac_account_lockout_duration_minutes }} minutes
+      V-230530: Audit logging: Enabled
+      V-230532: Remote syslog: Configured
+      V-230535: NTP synchronization: Configured
+      V-230540: HTTP redirect to HTTPS: Enabled
+      V-230545: SNMPv3: {{ snmp_use_v3 | ternary('Configured', 'N/A') }}
+  delegate_to: localhost

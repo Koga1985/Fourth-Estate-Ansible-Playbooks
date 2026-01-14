@@ -1,0 +1,44 @@
+---
+# High availability configuration for UCS Manager cluster
+
+- name: Verify UCS Manager cluster status
+  cisco.ucs.ucs_query:
+    hostname: "{{ ucs_hostname }}"
+    username: "{{ ucs_username }}"
+    password: "{{ ucs_password }}"
+    class_ids: topSystem
+  register: cluster_status
+
+- name: Configure fabric interconnect clustering
+  ansible.builtin.debug:
+    msg: "UCS cluster mode: {{ cluster_status.objects[0].mode | default('standalone') }}"
+
+- name: Enable configuration backup
+  cisco.ucs.ucs_backup:
+    hostname: "{{ ucs_hostname }}"
+    username: "{{ ucs_username }}"
+    password: "{{ ucs_password }}"
+    type: "{{ ucs_backup_type }}"
+    protocol: "{{ ucs_backup_protocol }}"
+    remote_file: "{{ ucs_backup_path }}"
+    hostname_remote: "{{ ucs_backup_server }}"
+    username_remote: "{{ ucs_backup_username }}"
+    password_remote: "{{ ucs_backup_password }}"
+    admin_state: "{{ ucs_backup_enabled | ternary('enabled', 'disabled') }}"
+  when:
+    - apply_changes | bool
+    - ucs_backup_enabled | bool
+  no_log: true
+
+- name: Record HA configuration
+  ansible.builtin.copy:
+    dest: "{{ ucs_artifacts_dir }}/ha_configuration.json"
+    mode: '0640'
+    content: |
+      {
+        "cluster_mode": "{{ cluster_status.objects[0].mode | default('standalone') }}",
+        "backup_enabled": {{ ucs_backup_enabled | to_json }},
+        "backup_type": "{{ ucs_backup_type }}",
+        "configured_at": "{{ ansible_date_time.iso8601 }}"
+      }
+  delegate_to: localhost

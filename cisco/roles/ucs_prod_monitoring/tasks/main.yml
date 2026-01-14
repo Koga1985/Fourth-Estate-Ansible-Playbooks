@@ -1,0 +1,150 @@
+---
+# tasks file for ucs_prod_monitoring
+# Cisco UCS Production Monitoring and Compliance
+
+- name: Configure SNMP for monitoring
+  cisco.ucs.ucs_snmp:
+    hostname: "{{ ucs_hostname }}"
+    username: "{{ ucs_username }}"
+    password: "{{ ucs_password }}"
+    admin_state: "enabled"
+    community: "{{ snmp_community }}"
+    sys_contact: "{{ monitoring_contact }}"
+    sys_location: "{{ monitoring_location }}"
+  when:
+    - apply_changes | bool
+    - monitoring_enable_snmp | bool
+  no_log: true
+  tags:
+    - monitoring
+    - snmp
+
+- name: Configure SNMP traps
+  cisco.ucs.ucs_snmp_trap:
+    hostname: "{{ ucs_hostname }}"
+    username: "{{ ucs_username }}"
+    password: "{{ ucs_password }}"
+    hostname_trap: "{{ item.host }}"
+    community: "{{ item.community }}"
+    port: "{{ item.port | default(162) }}"
+    version: "{{ item.version | default('v2c') }}"
+    state: present
+  loop: "{{ snmp_trap_destinations }}"
+  when:
+    - apply_changes | bool
+    - monitoring_enable_snmp | bool
+  no_log: true
+  tags:
+    - monitoring
+    - snmp
+
+- name: Configure Call Home for proactive monitoring
+  cisco.ucs.ucs_callhome:
+    hostname: "{{ ucs_hostname }}"
+    username: "{{ ucs_username }}"
+    password: "{{ ucs_password }}"
+    admin_state: "{{ monitoring_callhome_enabled | ternary('on', 'off') }}"
+    contact: "{{ monitoring_contact }}"
+    phone: "{{ monitoring_phone }}"
+    email: "{{ monitoring_email }}"
+    addr: "{{ monitoring_address }}"
+  when: apply_changes | bool
+  tags:
+    - monitoring
+    - callhome
+
+- name: Configure Call Home SMTP server
+  cisco.ucs.ucs_callhome_smtp:
+    hostname: "{{ ucs_hostname }}"
+    username: "{{ ucs_username }}"
+    password: "{{ ucs_password }}"
+    smtp_host: "{{ monitoring_smtp_server }}"
+    smtp_port: "{{ monitoring_smtp_port }}"
+  when:
+    - apply_changes | bool
+    - monitoring_callhome_enabled | bool
+  tags:
+    - monitoring
+    - callhome
+
+- name: Query system health status
+  cisco.ucs.ucs_query:
+    hostname: "{{ ucs_hostname }}"
+    username: "{{ ucs_username }}"
+    password: "{{ ucs_password }}"
+    class_ids: faultInst,computeBlade,fabricInterconnect
+  register: system_health
+  tags:
+    - monitoring
+    - health_check
+
+- name: Query power and thermal status
+  cisco.ucs.ucs_query:
+    hostname: "{{ ucs_hostname }}"
+    username: "{{ ucs_username }}"
+    password: "{{ ucs_password }}"
+    class_ids: equipmentPsu,processorEnvStats
+  register: power_thermal
+  tags:
+    - monitoring
+    - power
+
+- name: Generate monitoring report
+  ansible.builtin.copy:
+    dest: "{{ ucs_artifacts_dir }}/monitoring_status.json"
+    mode: '0640'
+    content: |
+      {
+        "system_health": {{ system_health | to_json }},
+        "power_thermal": {{ power_thermal | to_json }},
+        "monitoring_config": {
+          "snmp_enabled": {{ monitoring_enable_snmp | to_json }},
+          "callhome_enabled": {{ monitoring_callhome_enabled | to_json }},
+          "trap_destinations": {{ snmp_trap_destinations | length }}
+        },
+        "timestamp": "{{ ansible_date_time.iso8601 }}"
+      }
+  delegate_to: localhost
+  tags:
+    - monitoring
+    - reporting
+
+- name: Generate compliance monitoring checklist
+  ansible.builtin.copy:
+    dest: "{{ ucs_artifacts_dir }}/compliance_monitoring.txt"
+    mode: '0640'
+    content: |
+      Cisco UCS Compliance Monitoring Checklist
+      =========================================
+      Date: {{ ansible_date_time.iso8601 }}
+
+      MONITORING SYSTEMS
+      -----------------
+      SNMP: {{ monitoring_enable_snmp | ternary('ENABLED', 'DISABLED') }}
+      Call Home: {{ monitoring_callhome_enabled | ternary('ENABLED', 'DISABLED') }}
+      Syslog: Configured (see security hardening role)
+
+      HEALTH CHECKS
+      -------------
+      - System faults monitored
+      - Power supply status tracked
+      - Thermal conditions monitored
+      - Hardware health verified
+
+      COMPLIANCE REQUIREMENTS
+      ----------------------
+      - NIST 800-53 SI-4: Information System Monitoring
+      - NIST 800-53 AU-6: Audit Review, Analysis, and Reporting
+      - DoD STIG: Continuous monitoring requirements
+
+      RECOMMENDED ACTIONS
+      ------------------
+      - Review fault reports daily
+      - Verify SNMP trap delivery
+      - Test Call Home functionality
+      - Integrate with SIEM for centralized monitoring
+      - Schedule regular compliance audits
+  delegate_to: localhost
+  tags:
+    - monitoring
+    - compliance

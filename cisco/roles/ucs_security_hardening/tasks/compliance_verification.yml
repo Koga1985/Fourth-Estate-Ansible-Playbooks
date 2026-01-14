@@ -1,0 +1,101 @@
+---
+# Compliance Verification Tasks
+
+- name: Query system configuration for compliance check
+  cisco.ucs.ucs_query:
+    hostname: "{{ ucs_hostname }}"
+    username: "{{ ucs_username }}"
+    password: "{{ ucs_password }}"
+    class_ids: topSystem,aaaUserEp,commSyslog
+  register: compliance_config
+
+- name: Query active faults
+  cisco.ucs.ucs_query:
+    hostname: "{{ ucs_hostname }}"
+    username: "{{ ucs_username }}"
+    password: "{{ ucs_password }}"
+    class_ids: faultInst
+  register: active_faults
+
+- name: Query user accounts
+  cisco.ucs.ucs_query:
+    hostname: "{{ ucs_hostname }}"
+    username: "{{ ucs_username }}"
+    password: "{{ ucs_password }}"
+    class_ids: aaaUser
+  register: user_accounts
+
+- name: Generate compliance report
+  ansible.builtin.copy:
+    dest: "{{ ucs_artifacts_dir }}/compliance_report.txt"
+    mode: '0640'
+    content: |
+      Cisco UCS Security Hardening Compliance Report
+      ==============================================
+      Organization: {{ fourth_estate_org_name }}
+      UCS Manager: {{ ucs_hostname }}
+      Report Date: {{ ansible_date_time.iso8601 }}
+
+      COMPLIANCE FRAMEWORKS
+      --------------------
+      {% for framework in compliance_frameworks %}
+      - {{ framework }}
+      {% endfor %}
+
+      STIG COMPLIANCE
+      ---------------
+      Category I (High):   {{ stig_cat1_enabled | ternary('APPLIED', 'NOT APPLIED') }}
+      Category II (Medium): {{ stig_cat2_enabled | ternary('APPLIED', 'NOT APPLIED') }}
+      Category III (Low):   {{ stig_cat3_enabled | ternary('APPLIED', 'NOT APPLIED') }}
+
+      NIST 800-53 CONTROLS
+      -------------------
+      Access Control (AC):            {{ ac_enforce_rbac | ternary('IMPLEMENTED', 'NOT IMPLEMENTED') }}
+      Identification & Auth (IA):     {{ ia_enable_strong_auth | ternary('IMPLEMENTED', 'NOT IMPLEMENTED') }}
+      Audit & Accountability (AU):    {{ au_enable_comprehensive_logging | ternary('IMPLEMENTED', 'NOT IMPLEMENTED') }}
+      System & Comm Protection (SC):  {{ sc_enforce_strong_crypto | ternary('IMPLEMENTED', 'NOT IMPLEMENTED') }}
+      Configuration Management (CM):  {{ cm_baseline_config | ternary('IMPLEMENTED', 'NOT IMPLEMENTED') }}
+      System Integrity (SI):          {{ si_enable_integrity_checks | ternary('IMPLEMENTED', 'NOT IMPLEMENTED') }}
+      Physical & Env Protection (PE): {{ pe_enable_physical_controls | ternary('IMPLEMENTED', 'NOT IMPLEMENTED') }}
+
+      SYSTEM STATUS
+      ------------
+      Total Faults: {{ active_faults.objects | length }}
+      Critical Faults: {{ active_faults.objects | selectattr('severity', 'equalto', 'critical') | list | length }}
+      Major Faults: {{ active_faults.objects | selectattr('severity', 'equalto', 'major') | list | length }}
+
+      USER ACCOUNTS
+      -------------
+      Total Accounts: {{ user_accounts.objects | length }}
+
+      SECURITY SETTINGS
+      ----------------
+      Password Min Length: {{ ia_password_min_length }} characters
+      Password Max Age: {{ ia_password_max_age_days }} days
+      Password History: {{ ia_password_history_count }} passwords
+      Session Timeout: {{ ac_session_timeout_minutes }} minutes
+      Account Lockout: {{ ac_max_failed_login_attempts }} failed attempts
+      Lockout Duration: {{ ac_account_lockout_duration_minutes }} minutes
+
+      DoD Banner: {{ dod_banner_enabled | ternary('CONFIGURED', 'NOT CONFIGURED') }}
+
+      RECOMMENDATIONS
+      --------------
+      {% if not apply_changes %}
+      - This was a dry-run. Set apply_changes=true to apply configurations.
+      {% endif %}
+      - Review all critical and major faults
+      - Verify external integrations (SIEM, backup, monitoring)
+      - Schedule regular compliance audits
+      - Maintain documentation of all changes
+      - Ensure backup and disaster recovery procedures are tested
+
+      END OF REPORT
+  delegate_to: localhost
+
+- name: Display compliance summary
+  ansible.builtin.debug:
+    msg: |
+      Compliance report generated: {{ ucs_artifacts_dir }}/compliance_report.txt
+      Total faults: {{ active_faults.objects | length }}
+      STIG compliance: {{ (stig_cat1_enabled and stig_cat2_enabled and stig_cat3_enabled) | ternary('FULL', 'PARTIAL') }}

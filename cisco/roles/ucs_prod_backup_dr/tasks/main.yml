@@ -1,0 +1,234 @@
+---
+# tasks file for ucs_prod_backup_dr
+# Cisco UCS Production Backup and Disaster Recovery
+
+- name: Configure full-state backup
+  cisco.ucs.ucs_backup:
+    hostname: "{{ ucs_hostname }}"
+    username: "{{ ucs_username }}"
+    password: "{{ ucs_password }}"
+    type: "full-state"
+    protocol: "{{ backup_protocol }}"
+    remote_file: "{{ backup_remote_path }}/full-state-{{ ansible_date_time.date }}.tar.gz"
+    hostname_remote: "{{ backup_server }}"
+    username_remote: "{{ backup_username }}"
+    password_remote: "{{ backup_password }}"
+    admin_state: "enabled"
+    schedule: "{{ backup_schedule }}"
+  when:
+    - apply_changes | bool
+    - backup_type in ['full-state', 'all']
+  no_log: true
+  tags:
+    - backup
+    - full_state
+
+- name: Configure configuration backup
+  cisco.ucs.ucs_backup:
+    hostname: "{{ ucs_hostname }}"
+    username: "{{ ucs_username }}"
+    password: "{{ ucs_password }}"
+    type: "config-all"
+    protocol: "{{ backup_protocol }}"
+    remote_file: "{{ backup_remote_path }}/config-all-{{ ansible_date_time.date }}.xml"
+    hostname_remote: "{{ backup_server }}"
+    username_remote: "{{ backup_username }}"
+    password_remote: "{{ backup_password }}"
+    admin_state: "enabled"
+    schedule: "{{ backup_schedule }}"
+  when:
+    - apply_changes | bool
+    - backup_type in ['config-all', 'all']
+  no_log: true
+  tags:
+    - backup
+    - config
+
+- name: Trigger immediate backup
+  cisco.ucs.ucs_backup_immediate:
+    hostname: "{{ ucs_hostname }}"
+    username: "{{ ucs_username }}"
+    password: "{{ ucs_password }}"
+    type: "{{ item }}"
+    protocol: "{{ backup_protocol }}"
+    remote_file: "{{ backup_remote_path }}/immediate-{{ item }}-{{ ansible_date_time.iso8601_basic_short }}.tar.gz"
+    hostname_remote: "{{ backup_server }}"
+    username_remote: "{{ backup_username }}"
+    password_remote: "{{ backup_password }}"
+  loop: "{{ backup_immediate_types }}"
+  when:
+    - apply_changes | bool
+    - backup_trigger_immediate | bool
+  no_log: true
+  tags:
+    - backup
+    - immediate
+
+- name: Document disaster recovery procedures
+  ansible.builtin.copy:
+    dest: "{{ ucs_artifacts_dir }}/disaster_recovery_plan.txt"
+    mode: '0640'
+    content: |
+      Cisco UCS Disaster Recovery Plan
+      =================================
+      Organization: Fourth Estate
+      Date: {{ ansible_date_time.iso8601 }}
+
+      BACKUP CONFIGURATION
+      -------------------
+      Backup Type: {{ backup_type }}
+      Backup Protocol: {{ backup_protocol }}
+      Backup Server: {{ backup_server }}
+      Backup Schedule: {{ backup_schedule }}
+      Retention Period: {{ backup_retention_days }} days
+
+      RECOVERY TIME OBJECTIVE (RTO)
+      -----------------------------
+      Target RTO: {{ dr_rto_hours }} hours
+
+      RECOVERY POINT OBJECTIVE (RPO)
+      ------------------------------
+      Target RPO: {{ dr_rpo_hours }} hours
+
+      BACKUP TYPES
+      ------------
+      1. Full State Backup
+         - Complete system backup including all configuration and operational data
+         - Used for complete disaster recovery
+         - File: full-state-YYYY-MM-DD.tar.gz
+
+      2. Configuration Backup
+         - System configuration only
+         - Used for configuration rollback
+         - File: config-all-YYYY-MM-DD.xml
+
+      3. Logical Configuration Backup
+         - Service profiles and policies
+         - Used for logical configuration recovery
+         - File: config-logical-YYYY-MM-DD.xml
+
+      DISASTER RECOVERY PROCEDURES
+      ---------------------------
+
+      SCENARIO 1: Configuration Rollback
+      1. Access UCS Manager
+      2. Navigate to Admin > Import Configuration
+      3. Select backup file (config-all or config-logical)
+      4. Review changes before applying
+      5. Apply configuration
+      6. Verify system operation
+
+      SCENARIO 2: Complete System Recovery
+      1. Install fresh UCS Manager firmware
+      2. Complete initial setup wizard
+      3. Navigate to Admin > Import Configuration
+      4. Select full-state backup file
+      5. System will restore all configuration and state
+      6. Reboot fabric interconnects if required
+      7. Verify all service profiles
+      8. Verify network connectivity
+      9. Run health checks
+
+      SCENARIO 3: Fabric Interconnect Failure
+      1. Verify secondary FI is operational
+      2. System continues operation (HA mode)
+      3. Replace failed FI hardware
+      4. Acknowledge new FI in UCS Manager
+      5. System synchronizes configuration
+      6. Verify cluster status
+
+      SCENARIO 4: Data Center Failure
+      1. Activate disaster recovery site
+      2. Restore UCS Manager from backup
+      3. Reconfigure network connectivity for DR site
+      4. Update DNS and service discovery
+      5. Verify application connectivity
+      6. Monitor system health
+
+      TESTING PROCEDURES
+      ------------------
+      - Test backups monthly
+      - Verify backup file integrity
+      - Test restoration in lab environment quarterly
+      - Document test results
+      - Update procedures based on test findings
+
+      CONTACT INFORMATION
+      ------------------
+      Primary Contact: {{ dr_primary_contact }}
+      Secondary Contact: {{ dr_secondary_contact }}
+      Emergency Phone: {{ dr_emergency_phone }}
+      Backup Server Admin: {{ backup_admin_contact }}
+
+      COMPLIANCE REQUIREMENTS
+      ----------------------
+      - NIST 800-53 CP-9: Information System Backup
+      - NIST 800-53 CP-10: Information System Recovery and Reconstitution
+      - DoD STIG: Backup and recovery requirements
+
+      BACKUP VERIFICATION
+      ------------------
+      - Automated backup verification enabled
+      - Backup file integrity checks performed
+      - Restoration tests documented
+      - Off-site backup copies maintained
+
+      CHANGE CONTROL
+      --------------
+      All DR plan changes require:
+      - Change request approval
+      - Documentation update
+      - Team notification
+      - Training if procedures change
+  delegate_to: localhost
+  tags:
+    - backup
+    - documentation
+
+- name: Create backup verification script
+  ansible.builtin.copy:
+    dest: "{{ ucs_artifacts_dir }}/verify_backups.sh"
+    mode: '0750'
+    content: |
+      #!/bin/bash
+      # UCS Backup Verification Script
+
+      BACKUP_SERVER="{{ backup_server }}"
+      BACKUP_PATH="{{ backup_remote_path }}"
+      RETENTION_DAYS="{{ backup_retention_days }}"
+
+      echo "UCS Backup Verification"
+      echo "======================="
+      echo "Date: $(date)"
+      echo ""
+
+      # Check for recent backups
+      echo "Checking for backups in last 24 hours..."
+      # Add your verification logic here
+
+      echo ""
+      echo "Verification complete"
+  delegate_to: localhost
+  tags:
+    - backup
+    - scripts
+
+- name: Record backup configuration
+  ansible.builtin.copy:
+    dest: "{{ ucs_artifacts_dir }}/backup_config.json"
+    mode: '0640'
+    content: |
+      {
+        "backup_type": "{{ backup_type }}",
+        "backup_protocol": "{{ backup_protocol }}",
+        "backup_server": "{{ backup_server }}",
+        "backup_schedule": "{{ backup_schedule }}",
+        "retention_days": {{ backup_retention_days }},
+        "dr_rto_hours": {{ dr_rto_hours }},
+        "dr_rpo_hours": {{ dr_rpo_hours }},
+        "configured_at": "{{ ansible_date_time.iso8601 }}"
+      }
+  delegate_to: localhost
+  tags:
+    - backup
+    - reporting

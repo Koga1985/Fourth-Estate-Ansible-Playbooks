@@ -1,0 +1,118 @@
+---
+# tasks file for ucs_prod_networking
+# Cisco UCS Production Networking Configuration
+
+- name: Create VLANs for fourth estate
+  cisco.ucs.ucs_vlan:
+    hostname: "{{ ucs_hostname }}"
+    username: "{{ ucs_username }}"
+    password: "{{ ucs_password }}"
+    name: "{{ item.name }}"
+    id: "{{ item.id }}"
+    fabric: "{{ item.fabric | default('common') }}"
+    native: "{{ item.native | default('no') }}"
+    state: present
+  loop: "{{ ucs_vlans }}"
+  when: apply_changes | bool
+  tags:
+    - networking
+    - vlans
+
+- name: Create VSANs for SAN connectivity
+  cisco.ucs.ucs_vsan:
+    hostname: "{{ ucs_hostname }}"
+    username: "{{ ucs_username }}"
+    password: "{{ ucs_password }}"
+    name: "{{ item.name }}"
+    vsan_id: "{{ item.id }}"
+    fabric: "{{ item.fabric }}"
+    fcoe_vlan_id: "{{ item.fcoe_vlan_id | default(omit) }}"
+    state: present
+  loop: "{{ ucs_vsans }}"
+  when:
+    - apply_changes | bool
+    - ucs_enable_san | bool
+  tags:
+    - networking
+    - vsans
+    - san
+
+- name: Configure QoS policies
+  cisco.ucs.ucs_qos_policy:
+    hostname: "{{ ucs_hostname }}"
+    username: "{{ ucs_username }}"
+    password: "{{ ucs_password }}"
+    name: "{{ item.name }}"
+    priority: "{{ item.priority }}"
+    rate: "{{ item.rate | default('line-rate') }}"
+    burst: "{{ item.burst | default(10240) }}"
+    host_control: "{{ item.host_control | default('none') }}"
+    state: present
+  loop: "{{ ucs_qos_policies }}"
+  when: apply_changes | bool
+  tags:
+    - networking
+    - qos
+
+- name: Configure network control policies
+  cisco.ucs.ucs_network_control_policy:
+    hostname: "{{ ucs_hostname }}"
+    username: "{{ ucs_username }}"
+    password: "{{ ucs_password }}"
+    name: "{{ item.name }}"
+    cdp: "{{ item.cdp | default('enabled') }}"
+    lldp_transmit: "{{ item.lldp_transmit | default('enabled') }}"
+    lldp_receive: "{{ item.lldp_receive | default('enabled') }}"
+    mac_register_mode: "{{ item.mac_register_mode | default('all-host-vlans') }}"
+    state: present
+  loop: "{{ ucs_network_control_policies }}"
+  when: apply_changes | bool
+  tags:
+    - networking
+    - network_control
+
+- name: Configure multicast policies
+  cisco.ucs.ucs_multicast_policy:
+    hostname: "{{ ucs_hostname }}"
+    username: "{{ ucs_username }}"
+    password: "{{ ucs_password }}"
+    name: "{{ item.name }}"
+    querier_state: "{{ item.querier_state | default('disabled') }}"
+    snooping_state: "{{ item.snooping_state | default('enabled') }}"
+    state: present
+  loop: "{{ ucs_multicast_policies }}"
+  when: apply_changes | bool
+  tags:
+    - networking
+    - multicast
+
+- name: Configure uplink port channels
+  cisco.ucs.ucs_lan_uplink_port_channel:
+    hostname: "{{ ucs_hostname }}"
+    username: "{{ ucs_username }}"
+    password: "{{ ucs_password }}"
+    name: "{{ item.name }}"
+    port_channel_id: "{{ item.id }}"
+    fabric: "{{ item.fabric }}"
+    ports: "{{ item.ports }}"
+    state: present
+  loop: "{{ ucs_uplink_port_channels }}"
+  when: apply_changes | bool
+  tags:
+    - networking
+    - uplinks
+
+- name: Record networking configuration
+  ansible.builtin.copy:
+    dest: "{{ ucs_artifacts_dir }}/networking_config.json"
+    mode: '0640'
+    content: |
+      {
+        "vlans": {{ ucs_vlans | to_json }},
+        "vsans": {{ ucs_vsans | to_json }},
+        "qos_policies": {{ ucs_qos_policies | to_json }},
+        "configured_at": "{{ ansible_date_time.iso8601 }}"
+      }
+  delegate_to: localhost
+  tags:
+    - networking

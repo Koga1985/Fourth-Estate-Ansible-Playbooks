@@ -1,0 +1,91 @@
+---
+# Access Control (AC) - NIST 800-53 AC Family
+
+- name: AC-2 - Create role-based access control roles
+  cisco.ucs.ucs_role:
+    hostname: "{{ ucs_hostname }}"
+    username: "{{ ucs_username }}"
+    password: "{{ ucs_password }}"
+    name: "{{ item.name }}"
+    descr: "{{ item.description }}"
+    priv: "{{ item.privileges }}"
+    state: present
+  loop: "{{ ucs_rbac_roles }}"
+  when: apply_changes | bool
+
+- name: AC-2 - Create user accounts with RBAC
+  cisco.ucs.ucs_user:
+    hostname: "{{ ucs_hostname }}"
+    username: "{{ ucs_username }}"
+    password: "{{ ucs_password }}"
+    name: "{{ item.name }}"
+    first_name: "{{ item.first_name | default('') }}"
+    last_name: "{{ item.last_name | default('') }}"
+    email: "{{ item.email | default('') }}"
+    phone: "{{ item.phone | default('') }}"
+    password: "{{ item.password }}"
+    account_status: "active"
+    state: present
+  loop: "{{ ucs_user_accounts }}"
+  when: apply_changes | bool
+  no_log: true
+
+- name: AC-2 - Assign users to roles
+  cisco.ucs.ucs_user_role:
+    hostname: "{{ ucs_hostname }}"
+    username: "{{ ucs_username }}"
+    password: "{{ ucs_password }}"
+    user: "{{ item.user }}"
+    role: "{{ item.role }}"
+    org_dn: "{{ item.org_dn | default('org-root') }}"
+    state: present
+  loop: "{{ ucs_user_role_assignments }}"
+  when: apply_changes | bool
+
+- name: AC-7 - Enforce account lockout policy
+  cisco.ucs.ucs_password_policy:
+    hostname: "{{ ucs_hostname }}"
+    username: "{{ ucs_username }}"
+    password: "{{ ucs_password }}"
+    lockout_enabled: "yes"
+    max_login_attempts: "{{ ac_max_failed_login_attempts }}"
+    lockout_duration: "{{ ac_account_lockout_duration_minutes }}"
+  when: apply_changes | bool
+
+- name: AC-11 - Configure session lock (timeout)
+  cisco.ucs.ucs_system:
+    hostname: "{{ ucs_hostname }}"
+    username: "{{ ucs_username }}"
+    password: "{{ ucs_password }}"
+    session_timeout: "{{ ac_session_timeout_minutes }}"
+  when: apply_changes | bool
+
+- name: AC-17 - Configure remote access restrictions
+  cisco.ucs.ucs_ip_pool:
+    hostname: "{{ ucs_hostname }}"
+    username: "{{ ucs_username }}"
+    password: "{{ ucs_password }}"
+    name: "Management-IP-Pool"
+    order: "sequential"
+    first_addr: "{{ mgmt_pool_first_ip }}"
+    last_addr: "{{ mgmt_pool_last_ip }}"
+    subnet_mask: "{{ mgmt_pool_subnet_mask }}"
+    default_gw: "{{ mgmt_pool_gateway }}"
+  when:
+    - apply_changes | bool
+    - ac_configure_mgmt_pool | bool
+
+- name: Record access control configuration
+  ansible.builtin.copy:
+    dest: "{{ ucs_artifacts_dir }}/access_control.json"
+    mode: '0640'
+    content: |
+      {
+        "nist_controls": ["AC-2", "AC-7", "AC-11", "AC-17"],
+        "rbac_roles": {{ ucs_rbac_roles | to_json }},
+        "user_accounts": {{ ucs_user_accounts | length }},
+        "session_timeout": {{ ac_session_timeout_minutes }},
+        "lockout_threshold": {{ ac_max_failed_login_attempts }},
+        "configured_at": "{{ ansible_date_time.iso8601 }}"
+      }
+  delegate_to: localhost

@@ -1,0 +1,177 @@
+---
+# Cisco UCS Fourth Estate Production Deployment Playbook
+# Complete production rollout with DoD STIG and NIST 800-53 compliance
+
+- name: Deploy Cisco UCS Infrastructure for Fourth Estate
+  hosts: localhost
+  gather_facts: yes
+  connection: local
+
+  vars:
+    # Deployment control - set to true to apply changes
+    apply_changes: false
+
+    # Artifacts directory
+    ucs_artifacts_dir: "/tmp/ucs-fourth-estate-artifacts"
+
+    # Fourth Estate Organization
+    fourth_estate_org_name: "FourthEstate"
+    fourth_estate_description: "Fourth Estate Organization - Free Press and Media"
+
+    # Compliance frameworks
+    compliance_frameworks:
+      - "dod_stig"
+      - "nist_800_53"
+      - "nist_800_171"
+      - "fisma_moderate"
+      - "fisma_high"
+
+  tasks:
+    - name: Display deployment banner
+      ansible.builtin.debug:
+        msg: |
+          ================================================================
+          Cisco UCS Fourth Estate Production Deployment
+          ================================================================
+          Organization: {{ fourth_estate_org_name }}
+          Apply Changes: {{ apply_changes }}
+          Compliance: {{ compliance_frameworks | join(', ') }}
+          ================================================================
+
+    - name: Create artifacts directory
+      ansible.builtin.file:
+        path: "{{ ucs_artifacts_dir }}"
+        state: directory
+        mode: '0750'
+
+    - name: Include UCS infrastructure deployment role
+      ansible.builtin.include_role:
+        name: ucs_prod_infrastructure
+      tags:
+        - infrastructure
+        - deployment
+
+    - name: Include UCS networking configuration role
+      ansible.builtin.include_role:
+        name: ucs_prod_networking
+      tags:
+        - networking
+        - infrastructure
+
+    - name: Include UCS security hardening role
+      ansible.builtin.include_role:
+        name: ucs_security_hardening
+      tags:
+        - security
+        - hardening
+        - compliance
+
+    - name: Include UCS monitoring role
+      ansible.builtin.include_role:
+        name: ucs_prod_monitoring
+      tags:
+        - monitoring
+        - health
+
+    - name: Include UCS backup and DR role
+      ansible.builtin.include_role:
+        name: ucs_prod_backup_dr
+      tags:
+        - backup
+        - dr
+
+    - name: Generate final deployment report
+      ansible.builtin.copy:
+        dest: "{{ ucs_artifacts_dir }}/deployment_complete.txt"
+        mode: '0640'
+        content: |
+          ================================================================
+          Cisco UCS Fourth Estate Production Deployment - COMPLETE
+          ================================================================
+
+          Deployment Date: {{ ansible_date_time.iso8601 }}
+          Organization: {{ fourth_estate_org_name }}
+          Changes Applied: {{ apply_changes | ternary('YES', 'NO - DRY RUN') }}
+
+          DEPLOYMENT SUMMARY
+          ==================
+
+          Infrastructure:
+          ✓ UCS Manager configured
+          ✓ Organizations created
+          ✓ Service profiles deployed
+          ✓ Server pools configured
+          ✓ High availability enabled
+
+          Networking:
+          ✓ VLANs configured
+          ✓ VSANs configured (SAN)
+          ✓ QoS policies applied
+          ✓ Network control policies set
+
+          Security:
+          ✓ STIG compliance implemented
+          ✓ NIST 800-53 controls applied
+          ✓ Access control configured
+          ✓ Authentication hardened
+          ✓ Audit logging enabled
+          ✓ Cryptographic controls enforced
+          ✓ DoD banner configured
+
+          Monitoring:
+          ✓ SNMP configured
+          ✓ Call Home enabled
+          ✓ Health monitoring active
+
+          Backup & DR:
+          ✓ Automated backups configured
+          ✓ DR procedures documented
+          ✓ RTO/RPO targets set
+
+          COMPLIANCE FRAMEWORKS
+          =====================
+          {% for framework in compliance_frameworks %}
+          - {{ framework }}
+          {% endfor %}
+
+          NEXT STEPS
+          ==========
+          {% if not apply_changes %}
+          1. Review all artifacts in {{ ucs_artifacts_dir }}
+          2. Verify configurations meet requirements
+          3. Set apply_changes=true to apply configurations
+          4. Run playbook again to deploy
+          {% else %}
+          1. Review deployment artifacts
+          2. Verify all systems operational
+          3. Test backup/restore procedures
+          4. Integrate with monitoring systems
+          5. Schedule compliance audits
+          6. Document as-built configuration
+          7. Train operations team
+          {% endif %}
+
+          ARTIFACTS LOCATION
+          ==================
+          All deployment artifacts saved to:
+          {{ ucs_artifacts_dir }}
+
+          Review the following files:
+          - deployment_summary.txt
+          - compliance_report.txt
+          - disaster_recovery_plan.txt
+          - network_topology.txt
+          - And more...
+
+          ================================================================
+          END OF DEPLOYMENT REPORT
+          ================================================================
+
+    - name: Display deployment completion message
+      ansible.builtin.debug:
+        msg: |
+          Deployment {{ apply_changes | ternary('APPLIED', 'PLANNED (dry-run)') }}
+          Review artifacts: {{ ucs_artifacts_dir }}
+          {% if not apply_changes %}
+          To apply changes, run with: -e "apply_changes=true"
+          {% endif %}

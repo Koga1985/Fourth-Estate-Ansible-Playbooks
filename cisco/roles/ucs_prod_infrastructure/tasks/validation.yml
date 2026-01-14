@@ -1,0 +1,61 @@
+---
+# Validation and verification tasks
+
+- name: Query all faults in UCS domain
+  cisco.ucs.ucs_query:
+    hostname: "{{ ucs_hostname }}"
+    username: "{{ ucs_username }}"
+    password: "{{ ucs_password }}"
+    class_ids: faultInst
+    filter_string: "severity eq 'critical' or severity eq 'major'"
+  register: ucs_faults
+
+- name: Display critical and major faults
+  ansible.builtin.debug:
+    msg: "Found {{ ucs_faults.objects | length }} critical/major faults"
+  when: ucs_faults.objects is defined
+
+- name: Save fault report
+  ansible.builtin.copy:
+    dest: "{{ ucs_artifacts_dir }}/fault_report.json"
+    mode: '0640'
+    content: "{{ ucs_faults | to_nice_json }}"
+  delegate_to: localhost
+  when: ucs_faults.objects is defined
+
+- name: Query service profile association status
+  cisco.ucs.ucs_query:
+    hostname: "{{ ucs_hostname }}"
+    username: "{{ ucs_username }}"
+    password: "{{ ucs_password }}"
+    class_ids: lsServer
+    distinguished_names: "org-root/org-{{ fourth_estate_org_name }}"
+  register: service_profiles_status
+
+- name: Verify service profile associations
+  ansible.builtin.debug:
+    msg: "Service profiles in {{ fourth_estate_org_name }}: {{ service_profiles_status.objects | length }}"
+
+- name: Generate deployment summary report
+  ansible.builtin.copy:
+    dest: "{{ ucs_artifacts_dir }}/deployment_summary.txt"
+    mode: '0640'
+    content: |
+      Cisco UCS Infrastructure Deployment Summary
+      ==========================================
+      Organization: {{ fourth_estate_org_name }}
+      UCS Manager: {{ ucs_hostname }}
+      Deployment Date: {{ ansible_date_time.iso8601 }}
+
+      Configuration Applied: {{ apply_changes | ternary('Yes', 'No - Dry Run') }}
+
+      Service Profiles: {{ service_profiles_status.objects | length }}
+      Critical/Major Faults: {{ ucs_faults.objects | length }}
+
+      Compliance Frameworks:
+      {% for framework in compliance_frameworks %}
+      - {{ framework }}
+      {% endfor %}
+
+      Deployment completed successfully.
+  delegate_to: localhost

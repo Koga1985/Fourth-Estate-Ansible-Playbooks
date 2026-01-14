@@ -1,0 +1,37 @@
+---
+# Organization and sub-organization configuration
+
+- name: Create fourth estate root organization
+  cisco.ucs.ucs_org:
+    hostname: "{{ ucs_hostname }}"
+    username: "{{ ucs_username }}"
+    password: "{{ ucs_password }}"
+    org_name: "{{ fourth_estate_org_name }}"
+    parent_org_path: "org-root"
+    description: "Fourth Estate Organization - {{ fourth_estate_description }}"
+    state: present
+  when: apply_changes | bool
+
+- name: Create sub-organizations for fourth estate
+  cisco.ucs.ucs_org:
+    hostname: "{{ ucs_hostname }}"
+    username: "{{ ucs_username }}"
+    password: "{{ ucs_password }}"
+    org_name: "{{ item.name }}"
+    parent_org_path: "org-root/org-{{ fourth_estate_org_name }}"
+    description: "{{ item.description }}"
+    state: present
+  loop: "{{ fourth_estate_sub_orgs }}"
+  when: apply_changes | bool
+
+- name: Record organization hierarchy
+  ansible.builtin.copy:
+    dest: "{{ ucs_artifacts_dir }}/organization_hierarchy.json"
+    mode: '0640'
+    content: |
+      {
+        "root_org": "{{ fourth_estate_org_name }}",
+        "sub_organizations": {{ fourth_estate_sub_orgs | to_json }},
+        "created_at": "{{ ansible_date_time.iso8601 }}"
+      }
+  delegate_to: localhost
