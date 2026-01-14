@@ -1,0 +1,127 @@
+---
+# Cisco UCS Quick Start Deployment
+# Minimal viable deployment for development/testing
+# Not for production use - use full deployment instead
+
+- name: UCS Quick Start Deployment (Dev/Test Only)
+  hosts: localhost
+  gather_facts: yes
+  connection: local
+
+  vars:
+    apply_changes: false
+    ucs_artifacts_dir: "/tmp/ucs-quickstart-{{ ansible_date_time.epoch }}"
+    fourth_estate_org_name: "FourthEstate-Dev"
+
+    # Minimal features for quick start
+    ucs_enable_san: false
+    stig_cat1_enabled: true
+    stig_cat2_enabled: false
+    stig_cat3_enabled: false
+
+  pre_tasks:
+    - name: Display quick start warning
+      ansible.builtin.debug:
+        msg: |
+          ════════════════════════════════════════════════════════════════
+          UCS QUICK START DEPLOYMENT (DEV/TEST ONLY)
+          ════════════════════════════════════════════════════════════════
+          ⚠ WARNING: This is a minimal deployment for development/testing
+          ⚠ NOT suitable for production use
+          ⚠ Use 01_ucs_full_deployment.yml for production
+
+          Quick Start includes:
+            ✓ Basic infrastructure
+            ✓ Minimal networking (no SAN)
+            ✓ Essential security (STIG Cat I only)
+            ✓ Basic monitoring
+            ✓ No backup/DR configuration
+
+          For production, use phased deployment (playbooks 02-06)
+          ════════════════════════════════════════════════════════════════
+
+    - name: Create quickstart artifacts directory
+      ansible.builtin.file:
+        path: "{{ ucs_artifacts_dir }}"
+        state: directory
+        mode: '0750'
+
+  tasks:
+    - name: Deploy minimal infrastructure
+      ansible.builtin.include_role:
+        name: ucs_prod_infrastructure
+      vars:
+        ucs_enable_firmware_updates: false
+        ucs_auto_associate_servers: false
+
+    - name: Configure basic networking
+      ansible.builtin.include_role:
+        name: ucs_prod_networking
+      vars:
+        ucs_enable_san: false
+
+    - name: Apply essential security
+      ansible.builtin.include_role:
+        name: ucs_security_hardening
+      vars:
+        stig_cat1_enabled: true
+        stig_cat2_enabled: false
+        stig_cat3_enabled: false
+
+    - name: Setup basic monitoring
+      ansible.builtin.include_role:
+        name: ucs_prod_monitoring
+
+  post_tasks:
+    - name: Generate quick start report
+      ansible.builtin.copy:
+        dest: "{{ ucs_artifacts_dir }}/quickstart_report.txt"
+        mode: '0640'
+        content: |
+          UCS Quick Start Deployment Report
+          ══════════════════════════════════════════════════════════════
+          ⚠ DEVELOPMENT/TEST DEPLOYMENT ONLY ⚠
+
+          Deployed: {{ ansible_date_time.iso8601 }}
+          Organization: {{ fourth_estate_org_name }}
+          Status: {{ apply_changes | ternary('APPLIED', 'DRY RUN') }}
+
+          Components Deployed:
+            ✓ Basic UCS infrastructure
+            ✓ Minimal networking (LAN only, no SAN)
+            ✓ Essential security (STIG Cat I)
+            ✓ Basic monitoring
+
+          Components NOT Included:
+            ✗ SAN connectivity
+            ✗ Full STIG compliance (Cat II/III)
+            ✗ Comprehensive NIST 800-53 controls
+            ✗ Backup and disaster recovery
+            ✗ Advanced monitoring integrations
+
+          ⚠ IMPORTANT: For Production Deployment
+          ══════════════════════════════════════════════════════════════
+          This quick start is NOT suitable for production.
+
+          For production deployment, use:
+            1. Full deployment: ansible-playbook 01_ucs_full_deployment.yml
+            OR
+            2. Phased deployment:
+               - ansible-playbook 02_ucs_phase1_infrastructure.yml
+               - ansible-playbook 03_ucs_phase2_networking.yml
+               - ansible-playbook 04_ucs_phase3_security.yml
+               - ansible-playbook 05_ucs_phase4_monitoring.yml
+               - ansible-playbook 06_ucs_phase5_backup_dr.yml
+
+          Artifacts: {{ ucs_artifacts_dir }}
+          ══════════════════════════════════════════════════════════════
+
+    - name: Display quick start completion
+      ansible.builtin.debug:
+        msg: |
+          ⚠ QUICK START COMPLETE (DEV/TEST ONLY) ⚠
+
+          This is a minimal deployment.
+          For production, use full or phased deployment.
+
+          Artifacts: {{ ucs_artifacts_dir }}
