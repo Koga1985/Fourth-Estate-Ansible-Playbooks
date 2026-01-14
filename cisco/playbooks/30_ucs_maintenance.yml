@@ -1,0 +1,208 @@
+---
+# Cisco UCS Maintenance and Configuration Updates
+# For routine maintenance, updates, and configuration changes
+# Safe for production use with proper change control
+
+- name: UCS Maintenance and Configuration Updates
+  hosts: localhost
+  gather_facts: yes
+  connection: local
+
+  vars:
+    apply_changes: false
+    ucs_artifacts_dir: "/tmp/ucs-maintenance-{{ ansible_date_time.epoch }}"
+    fourth_estate_org_name: "FourthEstate"
+
+    # Maintenance tasks - set to true for tasks to perform
+    perform_backup: true
+    perform_health_check: true
+    update_firmware: false  # Requires careful planning
+    update_security_policies: false
+    update_network_config: false
+
+  pre_tasks:
+    - name: Display maintenance banner
+      ansible.builtin.debug:
+        msg: |
+          ════════════════════════════════════════════════════════════════
+          UCS Maintenance and Configuration Updates
+          ════════════════════════════════════════════════════════════════
+          Maintenance Window: {{ ansible_date_time.iso8601 }}
+          Organization: {{ fourth_estate_org_name }}
+
+          Scheduled Tasks:
+            - Backup: {{ perform_backup }}
+            - Health Check: {{ perform_health_check }}
+            - Firmware Update: {{ update_firmware }}
+            - Security Policy Update: {{ update_security_policies }}
+            - Network Config Update: {{ update_network_config }}
+
+          Apply Changes: {{ apply_changes }}
+          ════════════════════════════════════════════════════════════════
+
+    - name: Create maintenance artifacts directory
+      ansible.builtin.file:
+        path: "{{ ucs_artifacts_dir }}"
+        state: directory
+        mode: '0750'
+
+    - name: Record maintenance start
+      ansible.builtin.copy:
+        dest: "{{ ucs_artifacts_dir }}/maintenance_start.txt"
+        mode: '0640'
+        content: |
+          Maintenance Window Start: {{ ansible_date_time.iso8601 }}
+          Initiated by: {{ ansible_user_id }}
+          Organization: {{ fourth_estate_org_name }}
+
+  tasks:
+    # Pre-maintenance backup
+    - name: Perform pre-maintenance backup
+      when: perform_backup | bool
+      block:
+        - name: Display backup message
+          ansible.builtin.debug:
+            msg: "Performing pre-maintenance backup..."
+
+        - name: Trigger immediate backup
+          cisco.ucs.ucs_backup_immediate:
+            hostname: "{{ ucs_hostname }}"
+            username: "{{ ucs_username }}"
+            password: "{{ ucs_password }}"
+            type: "full-state"
+            protocol: "scp"
+            remote_file: "{{ backup_remote_path }}/maintenance-backup-{{ ansible_date_time.iso8601_basic_short }}.tar.gz"
+            hostname_remote: "{{ backup_server }}"
+            username_remote: "{{ backup_username }}"
+            password_remote: "{{ backup_password }}"
+          when: apply_changes | bool
+          no_log: true
+
+    # Health check
+    - name: Perform system health check
+      when: perform_health_check | bool
+      block:
+        - name: Query system faults
+          cisco.ucs.ucs_query:
+            hostname: "{{ ucs_hostname }}"
+            username: "{{ ucs_username }}"
+            password: "{{ ucs_password }}"
+            class_ids: faultInst
+          register: pre_maintenance_faults
+
+        - name: Save pre-maintenance health
+          ansible.builtin.copy:
+            dest: "{{ ucs_artifacts_dir }}/pre_maintenance_health.json"
+            mode: '0640'
+            content: "{{ pre_maintenance_faults | to_nice_json }}"
+
+    # Firmware updates
+    - name: Update firmware
+      when: update_firmware | bool
+      block:
+        - name: Display firmware update warning
+          ansible.builtin.debug:
+            msg: |
+              ⚠ FIRMWARE UPDATE SELECTED
+              This operation requires careful planning and may cause service disruption.
+              Ensure proper change control and approval before proceeding.
+
+        - name: Include firmware management tasks
+          ansible.builtin.include_role:
+            name: ucs_prod_infrastructure
+            tasks_from: firmware_management
+
+    # Security policy updates
+    - name: Update security policies
+      when: update_security_policies | bool
+      block:
+        - name: Apply updated security hardening
+          ansible.builtin.include_role:
+            name: ucs_security_hardening
+
+    # Network configuration updates
+    - name: Update network configuration
+      when: update_network_config | bool
+      block:
+        - name: Apply updated networking configuration
+          ansible.builtin.include_role:
+            name: ucs_prod_networking
+
+  post_tasks:
+    # Post-maintenance validation
+    - name: Perform post-maintenance validation
+      when: apply_changes | bool
+      block:
+        - name: Wait for system stabilization
+          ansible.builtin.pause:
+            seconds: 30
+
+        - name: Query post-maintenance faults
+          cisco.ucs.ucs_query:
+            hostname: "{{ ucs_hostname }}"
+            username: "{{ ucs_username }}"
+            password: "{{ ucs_password }}"
+            class_ids: faultInst
+          register: post_maintenance_faults
+
+        - name: Save post-maintenance health
+          ansible.builtin.copy:
+            dest: "{{ ucs_artifacts_dir }}/post_maintenance_health.json"
+            mode: '0640'
+            content: "{{ post_maintenance_faults | to_nice_json }}"
+
+    - name: Generate maintenance report
+      ansible.builtin.copy:
+        dest: "{{ ucs_artifacts_dir }}/maintenance_report.txt"
+        mode: '0640'
+        content: |
+          UCS Maintenance Report
+          ══════════════════════════════════════════════════════════════
+          Start Time: {{ ansible_date_time.iso8601 }}
+          Organization: {{ fourth_estate_org_name }}
+          Performed By: {{ ansible_user_id }}
+          Status: {{ apply_changes | ternary('COMPLETED', 'DRY RUN') }}
+
+          MAINTENANCE TASKS
+          ────────────────────────────────────────────────────────────
+          Pre-Maintenance Backup: {{ perform_backup | ternary('✓', '-') }}
+          Health Check: {{ perform_health_check | ternary('✓', '-') }}
+          Firmware Update: {{ update_firmware | ternary('✓', '-') }}
+          Security Policy Update: {{ update_security_policies | ternary('✓', '-') }}
+          Network Config Update: {{ update_network_config | ternary('✓', '-') }}
+
+          {% if apply_changes %}
+          SYSTEM HEALTH
+          ────────────────────────────────────────────────────────────
+          Pre-Maintenance Faults: {{ pre_maintenance_faults.objects | length | default('N/A') }}
+          Post-Maintenance Faults: {{ post_maintenance_faults.objects | length | default('N/A') }}
+
+          {% if post_maintenance_faults.objects | length > pre_maintenance_faults.objects | length %}
+          ⚠ New faults detected - review required
+          {% else %}
+          ✓ No new faults introduced
+          {% endif %}
+          {% endif %}
+
+          RECOMMENDATIONS
+          ────────────────────────────────────────────────────────────
+          - Review post-maintenance health check
+          - Verify all services operational
+          - Monitor system for 24 hours
+          - Update change management documentation
+          - Schedule follow-up validation
+
+          Artifacts: {{ ucs_artifacts_dir }}
+          ══════════════════════════════════════════════════════════════
+
+    - name: Display maintenance completion
+      ansible.builtin.debug:
+        msg: |
+          Maintenance {{ apply_changes | ternary('Completed', 'Planned') }}!
+
+          {% if apply_changes %}
+          Review artifacts: {{ ucs_artifacts_dir }}
+          Monitor system for 24 hours
+          {% else %}
+          This was a dry run. Set apply_changes=true to execute.
+          {% endif %}

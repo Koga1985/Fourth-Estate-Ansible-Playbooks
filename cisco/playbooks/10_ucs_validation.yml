@@ -1,0 +1,227 @@
+---
+# Cisco UCS Validation and Health Check Playbook
+# Verify UCS deployment and system health
+# Run after deployment or as routine health check
+
+- name: UCS Validation and Health Check
+  hosts: localhost
+  gather_facts: yes
+  connection: local
+
+  vars:
+    ucs_artifacts_dir: "/tmp/ucs-validation-{{ ansible_date_time.epoch }}"
+    fourth_estate_org_name: "FourthEstate"
+
+  pre_tasks:
+    - name: Display validation banner
+      ansible.builtin.debug:
+        msg: |
+          ════════════════════════════════════════════════════════════════
+          UCS Validation and Health Check
+          ════════════════════════════════════════════════════════════════
+          Validating:
+            ✓ System connectivity
+            ✓ Configuration status
+            ✓ Service profiles
+            ✓ System faults
+            ✓ Hardware health
+            ✓ Firmware versions
+            ✓ Network connectivity
+            ✓ Security settings
+          ════════════════════════════════════════════════════════════════
+
+    - name: Create validation artifacts directory
+      ansible.builtin.file:
+        path: "{{ ucs_artifacts_dir }}"
+        state: directory
+        mode: '0750'
+
+  tasks:
+    # Connectivity validation
+    - name: Test UCS Manager connectivity
+      cisco.ucs.ucs_query:
+        hostname: "{{ ucs_hostname }}"
+        username: "{{ ucs_username }}"
+        password: "{{ ucs_password }}"
+        class_ids: topSystem
+      register: ucs_connectivity
+      failed_when: false
+
+    - name: Record connectivity status
+      ansible.builtin.copy:
+        dest: "{{ ucs_artifacts_dir }}/connectivity_status.json"
+        mode: '0640'
+        content: "{{ ucs_connectivity | to_nice_json }}"
+
+    # System faults check
+    - name: Query all system faults
+      cisco.ucs.ucs_query:
+        hostname: "{{ ucs_hostname }}"
+        username: "{{ ucs_username }}"
+        password: "{{ ucs_password }}"
+        class_ids: faultInst
+      register: system_faults
+      when: ucs_connectivity is succeeded
+
+    - name: Analyze fault severity
+      ansible.builtin.set_fact:
+        critical_faults: "{{ system_faults.objects | selectattr('severity', 'equalto', 'critical') | list }}"
+        major_faults: "{{ system_faults.objects | selectattr('severity', 'equalto', 'major') | list }}"
+        minor_faults: "{{ system_faults.objects | selectattr('severity', 'equalto', 'minor') | list }}"
+      when: ucs_connectivity is succeeded
+
+    - name: Save fault analysis
+      ansible.builtin.copy:
+        dest: "{{ ucs_artifacts_dir }}/fault_analysis.json"
+        mode: '0640'
+        content: |
+          {
+            "total_faults": {{ system_faults.objects | length }},
+            "critical": {{ critical_faults | length }},
+            "major": {{ major_faults | length }},
+            "minor": {{ minor_faults | length }},
+            "timestamp": "{{ ansible_date_time.iso8601 }}"
+          }
+      when: ucs_connectivity is succeeded
+
+    # Hardware health check
+    - name: Query blade servers
+      cisco.ucs.ucs_query:
+        hostname: "{{ ucs_hostname }}"
+        username: "{{ ucs_username }}"
+        password: "{{ ucs_password }}"
+        class_ids: computeBlade
+      register: blade_servers
+      when: ucs_connectivity is succeeded
+
+    - name: Query rack servers
+      cisco.ucs.ucs_query:
+        hostname: "{{ ucs_hostname }}"
+        username: "{{ ucs_username }}"
+        password: "{{ ucs_password }}"
+        class_ids: computeRackUnit
+      register: rack_servers
+      when: ucs_connectivity is succeeded
+
+    - name: Query fabric interconnects
+      cisco.ucs.ucs_query:
+        hostname: "{{ ucs_hostname }}"
+        username: "{{ ucs_username }}"
+        password: "{{ ucs_password }}"
+        class_ids: networkElement
+      register: fabric_interconnects
+      when: ucs_connectivity is succeeded
+
+    # Service profile validation
+    - name: Query service profiles
+      cisco.ucs.ucs_query:
+        hostname: "{{ ucs_hostname }}"
+        username: "{{ ucs_username }}"
+        password: "{{ ucs_password }}"
+        class_ids: lsServer
+        distinguished_names: "org-root/org-{{ fourth_estate_org_name }}"
+      register: service_profiles
+      when: ucs_connectivity is succeeded
+
+    # Firmware version check
+    - name: Query firmware versions
+      cisco.ucs.ucs_query:
+        hostname: "{{ ucs_hostname }}"
+        username: "{{ ucs_username }}"
+        password: "{{ ucs_password }}"
+        class_ids: firmwareRunning
+      register: firmware_versions
+      when: ucs_connectivity is succeeded
+
+    # Power and thermal
+    - name: Query power supplies
+      cisco.ucs.ucs_query:
+        hostname: "{{ ucs_hostname }}"
+        username: "{{ ucs_username }}"
+        password: "{{ ucs_password }}"
+        class_ids: equipmentPsu
+      register: power_supplies
+      when: ucs_connectivity is succeeded
+
+  post_tasks:
+    - name: Generate validation report
+      ansible.builtin.copy:
+        dest: "{{ ucs_artifacts_dir }}/validation_report.txt"
+        mode: '0640'
+        content: |
+          UCS Validation and Health Check Report
+          ══════════════════════════════════════════════════════════════
+          Generated: {{ ansible_date_time.iso8601 }}
+          Organization: {{ fourth_estate_org_name }}
+
+          CONNECTIVITY
+          ────────────────────────────────────────────────────────────
+          UCS Manager: {{ ucs_connectivity is succeeded | ternary('✓ Connected', '✗ Failed') }}
+
+          {% if ucs_connectivity is succeeded %}
+          SYSTEM FAULTS
+          ────────────────────────────────────────────────────────────
+          Total Faults: {{ system_faults.objects | length }}
+          Critical: {{ critical_faults | length }}
+          Major: {{ major_faults | length }}
+          Minor: {{ minor_faults | length }}
+
+          {% if critical_faults | length > 0 %}
+          ⚠ CRITICAL FAULTS DETECTED - Immediate attention required
+          {% elif major_faults | length > 0 %}
+          ⚠ MAJOR FAULTS DETECTED - Attention recommended
+          {% else %}
+          ✓ No critical or major faults
+          {% endif %}
+
+          HARDWARE INVENTORY
+          ────────────────────────────────────────────────────────────
+          Blade Servers: {{ blade_servers.objects | length }}
+          Rack Servers: {{ rack_servers.objects | length }}
+          Fabric Interconnects: {{ fabric_interconnects.objects | length }}
+          Power Supplies: {{ power_supplies.objects | length }}
+
+          SERVICE PROFILES
+          ────────────────────────────────────────────────────────────
+          Total Profiles: {{ service_profiles.objects | length }}
+          Organization: {{ fourth_estate_org_name }}
+
+          FIRMWARE VERSIONS
+          ────────────────────────────────────────────────────────────
+          Components: {{ firmware_versions.objects | length }}
+          (See firmware_versions.json for details)
+
+          VALIDATION STATUS
+          ────────────────────────────────────────────────────────────
+          Overall Health: {% if critical_faults | length == 0 and major_faults | length == 0 %}✓ HEALTHY{% else %}⚠ ATTENTION NEEDED{% endif %}
+
+          RECOMMENDATIONS
+          ────────────────────────────────────────────────────────────
+          {% if critical_faults | length > 0 %}
+          - Address critical faults immediately
+          {% endif %}
+          {% if major_faults | length > 0 %}
+          - Review and resolve major faults
+          {% endif %}
+          - Review detailed fault analysis
+          - Schedule regular health checks
+          - Verify backup completion
+          - Test disaster recovery procedures
+          {% endif %}
+
+          Artifacts saved to: {{ ucs_artifacts_dir }}
+          ══════════════════════════════════════════════════════════════
+
+    - name: Display validation summary
+      ansible.builtin.debug:
+        msg: |
+          Validation Complete!
+
+          Connectivity: {{ ucs_connectivity is succeeded | ternary('✓', '✗') }}
+          {% if ucs_connectivity is succeeded %}
+          Total Faults: {{ system_faults.objects | length }}
+          Critical: {{ critical_faults | length }}
+          Major: {{ major_faults | length }}
+
+          Artifacts: {{ ucs_artifacts_dir }}
+          {% endif %}

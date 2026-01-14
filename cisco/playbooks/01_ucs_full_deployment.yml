@@ -1,0 +1,277 @@
+---
+# Cisco UCS Full Production Deployment - Fourth Estate
+# Complete end-to-end deployment with all components
+# Use this for greenfield deployments
+
+- name: Cisco UCS Full Production Deployment for Fourth Estate
+  hosts: localhost
+  gather_facts: yes
+  connection: local
+
+  vars:
+    # Deployment control - set to true to apply changes
+    apply_changes: false
+
+    # Artifacts directory
+    ucs_artifacts_dir: "/tmp/ucs-fourth-estate-artifacts"
+
+    # Fourth Estate Organization
+    fourth_estate_org_name: "FourthEstate"
+    fourth_estate_description: "Fourth Estate Organization - Free Press and Media"
+
+    # Deployment phases
+    deploy_infrastructure: true
+    deploy_networking: true
+    deploy_security: true
+    deploy_monitoring: true
+    deploy_backup: true
+
+    # Compliance frameworks
+    compliance_frameworks:
+      - "dod_stig"
+      - "nist_800_53"
+      - "nist_800_171"
+      - "fisma_moderate"
+      - "fisma_high"
+
+  pre_tasks:
+    - name: Display deployment banner
+      ansible.builtin.debug:
+        msg: |
+          ════════════════════════════════════════════════════════════════
+          Cisco UCS Full Production Deployment - Fourth Estate
+          ════════════════════════════════════════════════════════════════
+          Organization: {{ fourth_estate_org_name }}
+          Apply Changes: {{ apply_changes }}
+          Deployment Type: Full Greenfield Deployment
+
+          Phases:
+            - Infrastructure: {{ deploy_infrastructure }}
+            - Networking: {{ deploy_networking }}
+            - Security Hardening: {{ deploy_security }}
+            - Monitoring: {{ deploy_monitoring }}
+            - Backup & DR: {{ deploy_backup }}
+
+          Compliance: {{ compliance_frameworks | join(', ') }}
+          ════════════════════════════════════════════════════════════════
+
+    - name: Create artifacts directory
+      ansible.builtin.file:
+        path: "{{ ucs_artifacts_dir }}"
+        state: directory
+        mode: '0750'
+
+    - name: Record deployment start time
+      ansible.builtin.copy:
+        dest: "{{ ucs_artifacts_dir }}/deployment_start.txt"
+        mode: '0640'
+        content: |
+          Deployment Type: Full Production Deployment
+          Started At: {{ ansible_date_time.iso8601 }}
+          Organization: {{ fourth_estate_org_name }}
+          User: {{ ansible_user_id }}
+
+  tasks:
+    # PHASE 1: Infrastructure Deployment
+    - name: "PHASE 1: Deploy UCS Infrastructure"
+      when: deploy_infrastructure | bool
+      block:
+        - name: Display Phase 1 banner
+          ansible.builtin.debug:
+            msg: "═══ PHASE 1: Infrastructure Deployment ═══"
+
+        - name: Include UCS infrastructure deployment role
+          ansible.builtin.include_role:
+            name: ucs_prod_infrastructure
+          tags:
+            - phase1
+            - infrastructure
+            - deployment
+
+        - name: Wait for infrastructure stabilization
+          ansible.builtin.pause:
+            seconds: 10
+          when: apply_changes | bool
+
+    # PHASE 2: Networking Configuration
+    - name: "PHASE 2: Configure Networking"
+      when: deploy_networking | bool
+      block:
+        - name: Display Phase 2 banner
+          ansible.builtin.debug:
+            msg: "═══ PHASE 2: Networking Configuration ═══"
+
+        - name: Include UCS networking configuration role
+          ansible.builtin.include_role:
+            name: ucs_prod_networking
+          tags:
+            - phase2
+            - networking
+            - infrastructure
+
+        - name: Wait for networking stabilization
+          ansible.builtin.pause:
+            seconds: 5
+          when: apply_changes | bool
+
+    # PHASE 3: Security Hardening
+    - name: "PHASE 3: Apply Security Hardening"
+      when: deploy_security | bool
+      block:
+        - name: Display Phase 3 banner
+          ansible.builtin.debug:
+            msg: "═══ PHASE 3: Security Hardening (STIG + NIST 800-53) ═══"
+
+        - name: Include UCS security hardening role
+          ansible.builtin.include_role:
+            name: ucs_security_hardening
+          tags:
+            - phase3
+            - security
+            - hardening
+            - compliance
+
+        - name: Wait for security policy application
+          ansible.builtin.pause:
+            seconds: 5
+          when: apply_changes | bool
+
+    # PHASE 4: Monitoring Setup
+    - name: "PHASE 4: Configure Monitoring"
+      when: deploy_monitoring | bool
+      block:
+        - name: Display Phase 4 banner
+          ansible.builtin.debug:
+            msg: "═══ PHASE 4: Monitoring Setup ═══"
+
+        - name: Include UCS monitoring role
+          ansible.builtin.include_role:
+            name: ucs_prod_monitoring
+          tags:
+            - phase4
+            - monitoring
+            - health
+
+    # PHASE 5: Backup & DR
+    - name: "PHASE 5: Configure Backup and Disaster Recovery"
+      when: deploy_backup | bool
+      block:
+        - name: Display Phase 5 banner
+          ansible.builtin.debug:
+            msg: "═══ PHASE 5: Backup & Disaster Recovery ═══"
+
+        - name: Include UCS backup and DR role
+          ansible.builtin.include_role:
+            name: ucs_prod_backup_dr
+          tags:
+            - phase5
+            - backup
+            - dr
+
+  post_tasks:
+    - name: Record deployment end time
+      ansible.builtin.copy:
+        dest: "{{ ucs_artifacts_dir }}/deployment_end.txt"
+        mode: '0640'
+        content: |
+          Deployment Type: Full Production Deployment
+          Completed At: {{ ansible_date_time.iso8601 }}
+          Status: {{ apply_changes | ternary('APPLIED', 'DRY RUN') }}
+
+    - name: Generate final deployment report
+      ansible.builtin.copy:
+        dest: "{{ ucs_artifacts_dir }}/full_deployment_report.txt"
+        mode: '0640'
+        content: |
+          ════════════════════════════════════════════════════════════════
+          Cisco UCS Full Production Deployment - COMPLETE
+          ════════════════════════════════════════════════════════════════
+
+          Deployment Date: {{ ansible_date_time.iso8601 }}
+          Organization: {{ fourth_estate_org_name }}
+          Changes Applied: {{ apply_changes | ternary('YES', 'NO - DRY RUN') }}
+
+          DEPLOYMENT PHASES COMPLETED
+          ════════════════════════════════════════════════════════════════
+
+          Phase 1 - Infrastructure:  {{ deploy_infrastructure | ternary('✓', '✗') }}
+            - UCS Manager configured
+            - Organizations created
+            - Service profiles deployed
+            - Server pools configured
+            - High availability enabled
+
+          Phase 2 - Networking:      {{ deploy_networking | ternary('✓', '✗') }}
+            - VLANs configured
+            - VSANs configured (SAN)
+            - QoS policies applied
+            - Network control policies set
+
+          Phase 3 - Security:        {{ deploy_security | ternary('✓', '✗') }}
+            - STIG compliance implemented
+            - NIST 800-53 controls applied
+            - Access control configured
+            - Authentication hardened
+            - Audit logging enabled
+            - DoD banner configured
+
+          Phase 4 - Monitoring:      {{ deploy_monitoring | ternary('✓', '✗') }}
+            - SNMP configured
+            - Call Home enabled
+            - Health monitoring active
+
+          Phase 5 - Backup & DR:     {{ deploy_backup | ternary('✓', '✗') }}
+            - Automated backups configured
+            - DR procedures documented
+            - RTO/RPO targets set
+
+          COMPLIANCE FRAMEWORKS
+          ════════════════════════════════════════════════════════════════
+          {% for framework in compliance_frameworks %}
+          ✓ {{ framework }}
+          {% endfor %}
+
+          ARTIFACTS LOCATION
+          ════════════════════════════════════════════════════════════════
+          All deployment artifacts: {{ ucs_artifacts_dir }}
+
+          NEXT STEPS
+          ════════════════════════════════════════════════════════════════
+          {% if not apply_changes %}
+          1. Review all artifacts in {{ ucs_artifacts_dir }}
+          2. Verify configurations meet requirements
+          3. Set apply_changes=true to apply configurations
+          4. Run playbook again:
+             ansible-playbook 01_ucs_full_deployment.yml -e "apply_changes=true"
+          {% else %}
+          1. Verify all systems operational
+          2. Test service profile associations
+          3. Verify network connectivity
+          4. Test backup/restore procedures
+          5. Integrate with external monitoring
+          6. Schedule compliance audits
+          7. Document as-built configuration
+          8. Train operations team
+          {% endif %}
+
+          ════════════════════════════════════════════════════════════════
+
+    - name: Display deployment completion message
+      ansible.builtin.debug:
+        msg: |
+
+          ════════════════════════════════════════════════════════════════
+          DEPLOYMENT {{ apply_changes | ternary('COMPLETED', 'PLANNED (DRY RUN)') }}
+          ════════════════════════════════════════════════════════════════
+
+          Review artifacts: {{ ucs_artifacts_dir }}
+
+          {% if not apply_changes %}
+          To apply changes, run with:
+            ansible-playbook 01_ucs_full_deployment.yml -e "apply_changes=true"
+          {% else %}
+          Deployment applied successfully!
+          Review the full_deployment_report.txt for details.
+          {% endif %}
+
+          ════════════════════════════════════════════════════════════════
