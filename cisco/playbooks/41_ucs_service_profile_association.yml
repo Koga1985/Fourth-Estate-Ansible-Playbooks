@@ -1,0 +1,190 @@
+---
+# Cisco UCS Service Profile Association Playbook
+# Associates service profiles with physical servers in the UCS cluster
+
+- name: Associate UCS Service Profiles with Servers
+  hosts: localhost
+  gather_facts: yes
+  connection: local
+
+  vars:
+    apply_changes: false  # Set to true to apply associations
+    ucs_artifacts_dir: "/tmp/ucs-sp-association-{{ ansible_date_time.epoch }}"
+    fourth_estate_org_name: "FourthEstate"
+
+    # Association Mode: 'auto' or 'manual'
+    sp_association_mode: "auto"
+
+    # For manual mode, define associations:
+    # sp_manual_associations:
+    #   - service_profile: "SP-Web-01"
+    #     server_dn: "sys/chassis-1/blade-1"
+    #   - service_profile: "SP-App-01"
+    #     server_dn: "sys/chassis-1/blade-2"
+
+    # For auto mode, define server pool:
+    # sp_server_pool_name: "FourthEstate-Pool"
+    # sp_pool_servers:
+    #   - server_dn: "sys/chassis-1/blade-1"
+    #   - server_dn: "sys/chassis-1/blade-2"
+    # sp_templates_for_auto_assoc:
+    #   - "FourthEstate-Web-Template"
+
+  pre_tasks:
+    - name: Display service profile association banner
+      ansible.builtin.debug:
+        msg: |
+          ╔══════════════════════════════════════════════════════════════╗
+          ║   Cisco UCS Service Profile Association                      ║
+          ║   Fourth Estate Production Deployment                        ║
+          ╚══════════════════════════════════════════════════════════════╝
+
+          Configuration Mode: {{ 'APPLY CHANGES' if apply_changes else 'DRY-RUN (no changes)' }}
+          Association Mode: {{ sp_association_mode | upper }}
+          Organization: {{ fourth_estate_org_name }}
+          Artifacts Directory: {{ ucs_artifacts_dir }}
+
+          ⚠️  WARNING: Service profile association will bind servers
+          ⚠️  Ensure servers are ready and available
+          ⚠️  Server configuration may take several minutes
+
+    - name: Create artifacts directory
+      ansible.builtin.file:
+        path: "{{ ucs_artifacts_dir }}"
+        state: directory
+        mode: '0755'
+
+    - name: Verify UCS Manager connectivity
+      cisco.ucs.ucs_query:
+        hostname: "{{ ucs_hostname }}"
+        username: "{{ ucs_username }}"
+        password: "{{ ucs_password }}"
+        validate_certs: "{{ ucs_validate_certs | default(false) }}"
+        class_ids: topSystem
+      register: ucs_connection_test
+      failed_when: false
+
+    - name: Fail if UCS Manager is not reachable
+      ansible.builtin.fail:
+        msg: |
+          Cannot connect to UCS Manager at {{ ucs_hostname }}
+          Please verify:
+          - UCS Manager is accessible
+          - Credentials are correct
+          - Network connectivity is available
+      when: ucs_connection_test.failed
+
+    - name: Query current cluster server inventory
+      cisco.ucs.ucs_query:
+        hostname: "{{ ucs_hostname }}"
+        username: "{{ ucs_username }}"
+        password: "{{ ucs_password }}"
+        validate_certs: "{{ ucs_validate_certs | default(false) }}"
+        class_ids: computePhysical
+      register: cluster_servers
+
+    - name: Display cluster server inventory
+      ansible.builtin.debug:
+        msg: |
+          UCS Cluster Server Inventory:
+          - Total Servers: {{ cluster_servers.objects | length }}
+          - Available for Association: {{ cluster_servers.objects | selectattr('association', 'equalto', 'none') | list | length }}
+          - Currently Associated: {{ cluster_servers.objects | selectattr('association', 'ne', 'none') | list | length }}
+
+  tasks:
+    - name: Associate service profiles with servers
+      ansible.builtin.include_role:
+        name: ucs_prod_infrastructure
+        tasks_from: service_profile_association
+      tags:
+        - service_profile
+        - sp_association
+        - association
+
+  post_tasks:
+    - name: Query final service profile status
+      cisco.ucs.ucs_query:
+        hostname: "{{ ucs_hostname }}"
+        username: "{{ ucs_username }}"
+        password: "{{ ucs_password }}"
+        validate_certs: "{{ ucs_validate_certs | default(false) }}"
+        class_ids: lsServer
+        filter_str: "dn contains 'org-{{ fourth_estate_org_name }}'"
+      register: final_sp_status
+
+    - name: Calculate association statistics
+      ansible.builtin.set_fact:
+        total_sps: "{{ final_sp_status.objects | length }}"
+        associated_sps: "{{ final_sp_status.objects | selectattr('assoc_state', 'equalto', 'associated') | list | length }}"
+        associating_sps: "{{ final_sp_status.objects | selectattr('assoc_state', 'equalto', 'associating') | list | length }}"
+        unassociated_sps: "{{ final_sp_status.objects | selectattr('assoc_state', 'equalto', 'unassociated') | list | length }}"
+        failed_sps: "{{ final_sp_status.objects | selectattr('assoc_state', 'equalto', 'failed') | list | length }}"
+
+    - name: Display association summary
+      ansible.builtin.debug:
+        msg: |
+          ╔══════════════════════════════════════════════════════════════╗
+          ║   Service Profile Association Complete                       ║
+          ╚══════════════════════════════════════════════════════════════╝
+
+          Status: {{ 'APPLIED' if apply_changes else 'DRY-RUN' }}
+          Association Mode: {{ sp_association_mode | upper }}
+
+          Service Profile Statistics:
+          - Total Service Profiles: {{ total_sps }}
+          - Successfully Associated: {{ associated_sps }}
+          - Currently Associating: {{ associating_sps }}
+          - Unassociated: {{ unassociated_sps }}
+          - Failed Associations: {{ failed_sps }}
+
+          {% if not apply_changes %}
+          ⚠️  DRY-RUN MODE: No changes were applied
+          ⚠️  Review the configuration and set apply_changes=true to apply
+          {% else %}
+          {% if failed_sps | int > 0 %}
+          ⚠️  WARNING: {{ failed_sps }} service profile(s) failed association
+          ⚠️  Review the artifacts for details and troubleshoot
+          {% else %}
+          ✓ All service profiles processed successfully
+          {% endif %}
+          {% if associating_sps | int > 0 %}
+          ⏳ {{ associating_sps }} service profile(s) are still associating
+          ⏳ This process may take 5-10 minutes per server
+          ⏳ Monitor UCS Manager for completion status
+          {% endif %}
+          {% endif %}
+
+          Artifacts: {{ ucs_artifacts_dir }}
+          Report: service_profile_association.txt
+
+    - name: Display next steps
+      ansible.builtin.debug:
+        msg: |
+          Next Steps:
+          {% if associating_sps | int > 0 %}
+          1. Monitor association progress in UCS Manager
+          2. Wait for all associations to complete (5-10 min per server)
+          3. Run validation playbook: ansible-playbook 10_ucs_validation.yml
+          {% elif failed_sps | int > 0 %}
+          1. Review association failures in {{ ucs_artifacts_dir }}/service_profile_association.txt
+          2. Check UCS Manager faults for specific error messages
+          3. Verify server hardware is discovered and operational
+          4. Re-run this playbook after resolving issues
+          {% else %}
+          1. Verify server configurations in UCS Manager
+          2. Run validation playbook: ansible-playbook 10_ucs_validation.yml
+          3. Proceed with application deployment
+          {% endif %}
+
+    - name: List generated artifacts
+      ansible.builtin.find:
+        paths: "{{ ucs_artifacts_dir }}"
+        patterns: "*"
+      register: artifact_files
+
+    - name: Display artifact locations
+      ansible.builtin.debug:
+        msg: "{{ item.path }}"
+      loop: "{{ artifact_files.files }}"
+      loop_control:
+        label: "{{ item.path | basename }}"

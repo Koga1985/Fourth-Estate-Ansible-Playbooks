@@ -1,0 +1,229 @@
+---
+# Service Profile Association Tasks
+# Associates service profiles with physical servers in the UCS cluster
+
+- name: Display service profile association banner
+  ansible.builtin.debug:
+    msg: |
+      ========================================
+      Service Profile Association
+      ========================================
+      Organization: {{ fourth_estate_org_name }}
+      Association Mode: {{ sp_association_mode | default('auto') }}
+      ========================================
+
+- name: Query available blade servers
+  cisco.ucs.ucs_query:
+    hostname: "{{ ucs_hostname }}"
+    username: "{{ ucs_username }}"
+    password: "{{ ucs_password }}"
+    validate_certs: "{{ ucs_validate_certs | default(false) }}"
+    class_ids: computeBlade
+  register: blade_servers
+  delegate_to: localhost
+
+- name: Query available rack servers
+  cisco.ucs.ucs_query:
+    hostname: "{{ ucs_hostname }}"
+    username: "{{ ucs_username }}"
+    password: "{{ ucs_password }}"
+    validate_certs: "{{ ucs_validate_certs | default(false) }}"
+    class_ids: computeRackUnit
+  register: rack_servers
+  delegate_to: localhost
+
+- name: Display available servers
+  ansible.builtin.debug:
+    msg: |
+      Available Servers in UCS Cluster:
+
+      Blade Servers ({{ blade_servers.objects | length }}):
+      {% for blade in blade_servers.objects %}
+      - {{ blade.dn }}: {{ blade.model }} - {{ blade.oper_state }} - {{ blade.association }}
+      {% endfor %}
+
+      Rack Servers ({{ rack_servers.objects | length }}):
+      {% for rack in rack_servers.objects %}
+      - {{ rack.dn }}: {{ rack.model }} - {{ rack.oper_state }} - {{ rack.association }}
+      {% endfor %}
+
+- name: Query existing service profiles
+  cisco.ucs.ucs_query:
+    hostname: "{{ ucs_hostname }}"
+    username: "{{ ucs_username }}"
+    password: "{{ ucs_password }}"
+    validate_certs: "{{ ucs_validate_certs | default(false) }}"
+    class_ids: lsServer
+    filter_str: "dn contains 'org-{{ fourth_estate_org_name }}'"
+  register: service_profiles
+  delegate_to: localhost
+
+- name: Display service profiles and their association status
+  ansible.builtin.debug:
+    msg: |
+      Service Profiles in {{ fourth_estate_org_name }}:
+      {% for sp in service_profiles.objects %}
+      - {{ sp.name }}:
+          Type: {{ sp.type }}
+          Association: {{ sp.assoc_state }}
+          Server: {{ sp.pn_dn if sp.pn_dn else 'Not associated' }}
+          Operational State: {{ sp.oper_state }}
+      {% endfor %}
+
+- name: Associate service profiles with servers (manual mode)
+  cisco.ucs.ucs_service_profile_association:
+    hostname: "{{ ucs_hostname }}"
+    username: "{{ ucs_username }}"
+    password: "{{ ucs_password }}"
+    validate_certs: "{{ ucs_validate_certs | default(false) }}"
+    service_profile_name: "{{ item.service_profile }}"
+    server_dn: "{{ item.server_dn }}"
+    org_dn: "org-root/org-{{ fourth_estate_org_name }}"
+    state: "{{ 'present' if apply_changes else 'query' }}"
+  loop: "{{ sp_manual_associations }}"
+  when:
+    - sp_manual_associations is defined
+    - sp_association_mode | default('auto') == 'manual'
+    - apply_changes | default(false)
+  register: manual_associations
+  delegate_to: localhost
+
+- name: Configure server pool for auto-association
+  cisco.ucs.ucs_server_pool:
+    hostname: "{{ ucs_hostname }}"
+    username: "{{ ucs_username }}"
+    password: "{{ ucs_password }}"
+    validate_certs: "{{ ucs_validate_certs | default(false) }}"
+    name: "{{ sp_server_pool_name | default('FourthEstate-Pool') }}"
+    org_dn: "org-root/org-{{ fourth_estate_org_name }}"
+    state: "{{ 'present' if apply_changes else 'query' }}"
+  when:
+    - sp_association_mode | default('auto') == 'auto'
+    - apply_changes | default(false)
+  delegate_to: localhost
+
+- name: Add servers to server pool for auto-association
+  ansible.builtin.debug:
+    msg: "Adding server {{ item.server_dn }} to pool {{ sp_server_pool_name | default('FourthEstate-Pool') }}"
+  loop: "{{ sp_pool_servers }}"
+  when:
+    - sp_pool_servers is defined
+    - sp_association_mode | default('auto') == 'auto'
+
+- name: Enable auto-association on service profile template
+  ansible.builtin.debug:
+    msg: "Enabling auto-association for service profile template {{ item }}"
+  loop: "{{ sp_templates_for_auto_assoc }}"
+  when:
+    - sp_templates_for_auto_assoc is defined
+    - sp_association_mode | default('auto') == 'auto'
+
+- name: Query service profile association faults
+  cisco.ucs.ucs_query:
+    hostname: "{{ ucs_hostname }}"
+    username: "{{ ucs_username }}"
+    password: "{{ ucs_password }}"
+    validate_certs: "{{ ucs_validate_certs | default(false) }}"
+    class_ids: faultInst
+    filter_str: "affected RN contains 'ls-'"
+  register: sp_faults
+  delegate_to: localhost
+
+- name: Display service profile association faults
+  ansible.builtin.debug:
+    msg: |
+      Service Profile Association Faults:
+      {% if sp_faults.objects | length > 0 %}
+      {% for fault in sp_faults.objects %}
+      - [{{ fault.severity }}] {{ fault.descr }}
+        Affected: {{ fault.affected }}
+      {% endfor %}
+      {% else %}
+      No association faults detected
+      {% endif %}
+
+- name: Re-query service profiles after association
+  cisco.ucs.ucs_query:
+    hostname: "{{ ucs_hostname }}"
+    username: "{{ ucs_username }}"
+    password: "{{ ucs_password }}"
+    validate_certs: "{{ ucs_validate_certs | default(false) }}"
+    class_ids: lsServer
+    filter_str: "dn contains 'org-{{ fourth_estate_org_name }}'"
+  register: updated_service_profiles
+  delegate_to: localhost
+
+- name: Generate service profile association report
+  ansible.builtin.copy:
+    content: |
+      ================================================================================
+      Service Profile Association Report
+      ================================================================================
+      Generated: {{ ansible_date_time.iso8601 }}
+      Organization: {{ fourth_estate_org_name }}
+      Association Mode: {{ sp_association_mode | default('auto') }}
+
+      Available Servers:
+      - Blade Servers: {{ blade_servers.objects | length }}
+      - Rack Servers: {{ rack_servers.objects | length }}
+      - Total: {{ blade_servers.objects | length + rack_servers.objects | length }}
+
+      Service Profile Association Status:
+      {% for sp in updated_service_profiles.objects %}
+      - {{ sp.name }}:
+          Type: {{ sp.type }}
+          Association State: {{ sp.assoc_state }}
+          Assigned Server: {{ sp.pn_dn if sp.pn_dn else 'Not associated' }}
+          Operational State: {{ sp.oper_state }}
+          Configuration State: {{ sp.config_state }}
+      {% endfor %}
+
+      Association Summary:
+      - Total Service Profiles: {{ updated_service_profiles.objects | length }}
+      - Associated: {{ updated_service_profiles.objects | selectattr('assoc_state', 'equalto', 'associated') | list | length }}
+      - Associating: {{ updated_service_profiles.objects | selectattr('assoc_state', 'equalto', 'associating') | list | length }}
+      - Unassociated: {{ updated_service_profiles.objects | selectattr('assoc_state', 'equalto', 'unassociated') | list | length }}
+      - Failed: {{ updated_service_profiles.objects | selectattr('assoc_state', 'equalto', 'failed') | list | length }}
+
+      Association Faults:
+      {% if sp_faults.objects | length > 0 %}
+      {% for fault in sp_faults.objects %}
+      - [{{ fault.severity }}] {{ fault.descr }}
+        Affected: {{ fault.affected }}
+      {% endfor %}
+      {% else %}
+      No association faults detected
+      {% endif %}
+
+      {% if sp_association_mode | default('auto') == 'manual' and sp_manual_associations is defined %}
+      Manual Associations Configured:
+      {% for assoc in sp_manual_associations %}
+      - Service Profile: {{ assoc.service_profile }}
+        Server: {{ assoc.server_dn }}
+      {% endfor %}
+      {% endif %}
+
+      {% if sp_association_mode | default('auto') == 'auto' %}
+      Auto-Association Configuration:
+      - Server Pool: {{ sp_server_pool_name | default('FourthEstate-Pool') }}
+      - Templates Enabled: {{ sp_templates_for_auto_assoc | length if sp_templates_for_auto_assoc is defined else 0 }}
+      {% endif %}
+
+      Configuration Status: {{ 'APPLIED' if apply_changes else 'DRY-RUN (no changes made)' }}
+      ================================================================================
+    dest: "{{ ucs_artifacts_dir }}/service_profile_association.txt"
+    mode: '0644'
+  delegate_to: localhost
+
+- name: Display service profile association summary
+  ansible.builtin.debug:
+    msg: |
+      ========================================
+      Service Profile Association Complete
+      ========================================
+      Status: {{ 'APPLIED' if apply_changes else 'DRY-RUN' }}
+      Total Service Profiles: {{ updated_service_profiles.objects | length }}
+      Associated: {{ updated_service_profiles.objects | selectattr('assoc_state', 'equalto', 'associated') | list | length }}
+      Failed: {{ updated_service_profiles.objects | selectattr('assoc_state', 'equalto', 'failed') | list | length }}
+      Report: {{ ucs_artifacts_dir }}/service_profile_association.txt
+      ========================================
