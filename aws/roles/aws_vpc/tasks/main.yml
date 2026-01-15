@@ -1,0 +1,59 @@
+---
+# tasks file for aws_vpc
+
+- name: Create VPC
+  amazon.aws.ec2_vpc_net:
+    name: "{{ vpc_name }}"
+    cidr_block: "{{ vpc_cidr }}"
+    region: "{{ vpc_region }}"
+    dns_support: "{{ vpc_enable_dns_support }}"
+    dns_hostnames: "{{ vpc_enable_dns_hostnames }}"
+    tenancy: "{{ vpc_instance_tenancy }}"
+    state: "{{ vpc_state }}"
+    tags: "{{ vpc_tags }}"
+  register: vpc_result
+
+- name: Set VPC ID fact
+  ansible.builtin.set_fact:
+    vpc_id: "{{ vpc_result.vpc.id }}"
+  when: vpc_result.vpc is defined
+
+- name: Display VPC information
+  ansible.builtin.debug:
+    msg:
+      - "VPC Created: {{ vpc_name }}"
+      - "VPC ID: {{ vpc_id | default('N/A') }}"
+      - "CIDR Block: {{ vpc_cidr }}"
+      - "Region: {{ vpc_region }}"
+
+- name: Create DHCP options set
+  amazon.aws.ec2_vpc_dhcp_option:
+    domain_name: "{{ vpc_dhcp_options_domain_name }}"
+    dns_servers: "{{ vpc_dhcp_options_domain_name_servers }}"
+    vpc_id: "{{ vpc_id }}"
+    region: "{{ vpc_region }}"
+    tags: "{{ vpc_tags }}"
+    state: "{{ vpc_state }}"
+  when:
+    - vpc_dhcp_options_domain_name | length > 0
+    - vpc_id is defined
+
+- name: Enable VPC Flow Logs
+  community.aws.ec2_vpc_flow_log:
+    vpc_id: "{{ vpc_id }}"
+    log_destination_type: "{{ vpc_flow_logs_destination_type }}"
+    log_destination: "{{ vpc_flow_logs_log_group_name }}"
+    traffic_type: "{{ vpc_flow_logs_traffic_type }}"
+    region: "{{ vpc_region }}"
+    state: "{{ vpc_state }}"
+  when:
+    - vpc_enable_flow_logs | bool
+    - vpc_id is defined
+
+- name: Save VPC ID to file
+  ansible.builtin.copy:
+    content: "{{ vpc_id }}"
+    dest: "/tmp/{{ vpc_name }}_vpc_id.txt"
+    mode: '0644'
+  delegate_to: localhost
+  when: vpc_id is defined

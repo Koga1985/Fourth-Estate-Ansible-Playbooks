@@ -1,11 +1,30 @@
-# Veeam Ansible Playbooks
+# Veeam Backup & Replication
 
-BLUF: Playbooks and roles to automate Veeam Backup & Replication management — installs, repository/job management, exports, and operational tasks.
+This directory contains **6 Ansible roles** for automating **Veeam Backup & Replication** lifecycle management including installation, backup job configuration, restore operations, replication, cloud tiering, and automated testing with SureBackup.
+
+## Overview
+
+Comprehensive Veeam automation covering backup server installation, repository management, backup job creation and scheduling, restore operations, replication configuration, cloud archive tier setup, and automated backup testing.
+
+## 📋 Roles
+
+### Installation & Configuration (1 role)
+- **veeam_backup_server_install** - Veeam Backup & Replication server installation and initial configuration
+
+### Backup Operations (2 roles)
+- **veeam_backup_jobs** - Backup job creation, scheduling, and management
+- **veeam_restore_operations** - Automated restore workflows and testing
+
+### Advanced Features (3 roles)
+- **veeam_replication** - Replication job configuration for DR
+- **veeam_cloud_tier** - Cloud archive tier (AWS, Azure, S3-compatible) setup
+- **veeam_surebackup** - Automated backup verification and testing
 
 ## Contents
 
-- `roles/` — reusable roles (if present)
-- `tasks/` — standalone playbooks and task files
+- `roles/` — 6 production-ready roles
+- `tasks/` — standalone task files for common operations
+- `playbooks/` — example playbooks for common scenarios
 
 ## Prerequisites
 
