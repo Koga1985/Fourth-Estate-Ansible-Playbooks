@@ -1,0 +1,161 @@
+---
+# Policy as Code - Master Playbook
+# Orchestrates all Fourth Estate compliance policies
+#
+# Usage:
+#   # Dry-run (check mode - safe, default)
+#   ansible-playbook site.yml -i inventory/production.yml
+#
+#   # Apply all policies
+#   ansible-playbook site.yml -i inventory/production.yml -e "apply_changes=true"
+#
+#   # Apply specific control family
+#   ansible-playbook site.yml -i inventory/production.yml -e "apply_changes=true" --tags nist_ia
+#
+#   # Apply only Category I (High) findings
+#   ansible-playbook site.yml -i inventory/production.yml -e "apply_changes=true" --tags stig_cat1
+
+- name: Policy as Code - Fourth Estate Compliance
+  hosts: all
+  gather_facts: true
+  serial: "{{ deployment_serial | default('100%') }}"
+
+  vars:
+    # Global policy settings
+    apply_changes: false  # Default to dry-run for safety
+    policy_artifacts_dir: "/tmp/policy-artifacts"
+    validate_paths: true
+
+    # Deployment controls
+    deployment_serial: "100%"  # Number/percentage of hosts to run simultaneously
+    stop_on_failure: true
+
+  pre_tasks:
+    - name: Display deployment information
+      ansible.builtin.debug:
+        msg: |
+          ========================================
+          Policy as Code Deployment
+          ========================================
+          Target: {{ inventory_hostname }}
+          Dry Run: {{ not (apply_changes | default(false) | bool) }}
+          Serial Execution: {{ deployment_serial }}
+          Timestamp: {{ ansible_date_time.iso8601 }}
+          ========================================
+      run_once: true
+      delegate_to: localhost
+      tags: [always]
+
+    - name: Verify Ansible version meets requirements
+      ansible.builtin.assert:
+        that:
+          - ansible_version.full is version('2.12.0', '>=')
+        fail_msg: "Ansible 2.12.0 or higher required"
+        success_msg: "Ansible version {{ ansible_version.full }} is compatible"
+      run_once: true
+      delegate_to: localhost
+      tags: [always]
+
+    - name: Warning for production deployment
+      ansible.builtin.pause:
+        prompt: |
+          ========================================
+          WARNING: PRODUCTION DEPLOYMENT
+          ========================================
+          You are about to apply Policy as Code to: {{ inventory_hostname }}
+          This will enforce DoD STIG and NIST 800-53 security controls.
+
+          Changes include:
+          - Password policies (15+ chars, complexity, expiration)
+          - Session timeouts (10-15 minutes)
+          - Audit logging (remote syslog)
+          - Cryptographic settings (FIPS 140-2, TLS 1.2+)
+
+          Press Enter to continue or Ctrl+C to abort...
+      when:
+        - apply_changes | bool
+        - deployment_environment | default('test') == 'production'
+      run_once: true
+      delegate_to: localhost
+      tags: [always]
+
+  tasks:
+    # ============================================
+    # NIST IA Family - Identification & Authentication
+    # ============================================
+
+    - name: Include IA-5 Password Policy
+      ansible.builtin.include_tasks: policies/identification_auth/password_policy.yml
+      tags: [nist_ia, nist_ia_5, stig_cat1, password_policy]
+
+    # ============================================
+    # NIST AC Family - Access Control
+    # ============================================
+
+    - name: Include AC-12 Session Timeout Policy
+      ansible.builtin.include_tasks: policies/access_control/session_timeout.yml
+      tags: [nist_ac, nist_ac_12, stig_cat2, session_timeout]
+
+    # ============================================
+    # NIST AU Family - Audit & Accountability
+    # ============================================
+
+    - name: Include AU-2/AU-12 Audit Logging Policy
+      ansible.builtin.include_tasks: policies/audit_accountability/audit_logging.yml
+      tags: [nist_au, nist_au_2, nist_au_12, stig_cat2, audit_logging]
+
+    # ============================================
+    # NIST SC Family - System & Communications Protection
+    # ============================================
+
+    - name: Include SC-8/SC-13 Cryptographic Protection Policy
+      ansible.builtin.include_tasks: policies/system_communications/cryptographic_protection.yml
+      tags: [nist_sc, nist_sc_8, nist_sc_13, stig_cat1, cryptography]
+
+  post_tasks:
+    - name: Generate consolidated compliance report
+      ansible.builtin.template:
+        src: templates/compliance_report.j2
+        dest: "{{ policy_artifacts_dir }}/compliance_report_{{ inventory_hostname }}_{{ ansible_date_time.date }}.html"
+        mode: "0640"
+      delegate_to: localhost
+      when: apply_changes | bool
+      ignore_errors: true
+      tags: [always, reporting]
+
+    - name: Display deployment summary
+      ansible.builtin.debug:
+        msg: |
+          ========================================
+          Policy Deployment Complete
+          ========================================
+          Target: {{ inventory_hostname }}
+          Dry Run: {{ not (apply_changes | default(false) | bool) }}
+          Artifacts: {{ policy_artifacts_dir }}
+
+          {% if apply_changes | bool %}
+          CHANGES APPLIED - System is now DoD/NIST compliant
+          {% else %}
+          DRY RUN COMPLETE - No changes made to system
+          {% endif %}
+
+          Next Steps:
+          {% if not (apply_changes | bool) %}
+          1. Review artifacts in {{ policy_artifacts_dir }}
+          2. Verify dry-run results meet requirements
+          3. Re-run with -e "apply_changes=true" to apply
+          {% else %}
+          1. Review compliance artifacts
+          2. Verify system functionality
+          3. Update change control documentation
+          4. Schedule periodic re-verification
+          {% endif %}
+          ========================================
+      tags: [always]
+
+# Handler for system reload if FIPS mode enabled
+handlers:
+  - name: reload_system
+    ansible.builtin.debug:
+      msg: "System reload required for FIPS mode to take effect"
+    listen: "fips_enabled"

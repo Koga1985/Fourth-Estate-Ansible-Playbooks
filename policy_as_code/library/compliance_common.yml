@@ -1,0 +1,84 @@
+---
+# Common compliance validation and enforcement tasks
+# Reusable across all policy implementations
+
+- name: Validate required policy variables
+  ansible.builtin.assert:
+    that:
+      - control_id is defined
+      - control_id is string
+      - control_id | length > 0
+      - policy_name is defined
+      - policy_name is string
+    fail_msg: "Required policy variables missing: control_id and policy_name must be defined"
+    success_msg: "Policy variables validated: {{ control_id }} - {{ policy_name }}"
+  tags: [always, validation]
+
+- name: Ensure policy artifacts directory exists (least privilege)
+  ansible.builtin.file:
+    path: "{{ policy_artifacts_dir | default('/tmp/policy-artifacts') }}/{{ ansible_date_time.date }}_{{ ansible_date_time.time | replace(':', '') }}"
+    state: directory
+    mode: "0750"
+    owner: "{{ ansible_user_id }}"
+    group: "{{ ansible_user_gid }}"
+  delegate_to: localhost
+  run_once: true
+  register: artifacts_dir_created
+  tags: [always, setup]
+
+- name: Set artifact directory path fact
+  ansible.builtin.set_fact:
+    current_artifact_dir: "{{ artifacts_dir_created.path }}"
+  tags: [always, setup]
+
+- name: Security validation - prevent symlink attacks
+  when: validate_paths | default(true) | bool
+  block:
+    - name: Stat artifact directory
+      ansible.builtin.stat:
+        path: "{{ current_artifact_dir }}"
+        follow: false
+      register: artifact_dir_stat
+      delegate_to: localhost
+
+    - name: Assert artifact directory is secure
+      ansible.builtin.assert:
+        that:
+          - artifact_dir_stat.stat.exists
+          - artifact_dir_stat.stat.isdir
+          - not artifact_dir_stat.stat.islnk
+          - artifact_dir_stat.stat.mode == "0750"
+        fail_msg: "Security violation: Artifact directory has insecure properties"
+        success_msg: "Artifact directory security validated"
+  tags: [always, security, validation]
+
+- name: Initialize policy execution metadata
+  ansible.builtin.set_fact:
+    policy_execution_metadata:
+      control_id: "{{ control_id }}"
+      policy_name: "{{ policy_name }}"
+      nist_family: "{{ nist_family | default('Unknown') }}"
+      stig_findings: "{{ stig_findings | default([]) }}"
+      severity: "{{ severity | default('Not Specified') }}"
+      executor: "{{ ansible_user_id }}"
+      execution_host: "{{ inventory_hostname }}"
+      timestamp: "{{ ansible_date_time.iso8601 }}"
+      dry_run: "{{ not (apply_changes | default(false) | bool) }}"
+      ansible_version: "{{ ansible_version.full }}"
+  tags: [always, metadata]
+
+- name: Log policy execution start
+  ansible.builtin.debug:
+    msg: |
+      ========================================
+      Policy Execution Started
+      ========================================
+      Control: {{ control_id }} - {{ policy_name }}
+      NIST Family: {{ nist_family | default('N/A') }}
+      STIG Findings: {{ stig_findings | default([]) | join(', ') }}
+      Severity: {{ severity | default('N/A') }}
+      Dry Run: {{ not (apply_changes | default(false) | bool) }}
+      Target: {{ inventory_hostname }}
+      Timestamp: {{ ansible_date_time.iso8601 }}
+      ========================================
+  tags: [always, logging]

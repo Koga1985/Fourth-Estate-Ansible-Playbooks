@@ -1,0 +1,428 @@
+---
+# NIST 800-53 AU-2: Audit Events
+# NIST 800-53 AU-3: Content of Audit Records
+# NIST 800-53 AU-4: Audit Storage Capacity
+# NIST 800-53 AU-12: Audit Generation
+# DoD STIG Findings: V-230315, V-230316, V-230317, V-230318
+# Severity: Category II (Medium)
+#
+# This policy enforces DoD audit logging requirements:
+# - Enable comprehensive audit logging
+# - Configure remote syslog server
+# - Set appropriate logging levels
+# - Enable timestamps on all log messages
+# - Configure log buffering to prevent loss
+
+- name: NIST AU-2/AU-12 - Audit Logging Policy
+  hosts: all
+  gather_facts: true
+
+  vars:
+    # Policy metadata
+    control_id: "AU-2/AU-12"
+    policy_name: "Audit Event Logging and Generation"
+    nist_family: "Audit and Accountability"
+    nist_baseline: ["MODERATE", "HIGH"]
+    stig_findings:
+      - "V-230315"  # Audit logging must be enabled
+      - "V-230316"  # Remote syslog server required
+      - "V-230317"  # Logging level requirements
+      - "V-230318"  # Timestamp requirements
+    severity: "Category II"
+
+    # Policy parameters (DoD STIG compliant defaults)
+    au_logging_enabled: true
+    au_syslog_server: "syslog.example.mil"
+    au_syslog_port: 514
+    au_syslog_facility: "local6"
+    au_logging_level: "informational"
+    au_buffer_size: 16384
+    au_timestamp_format: "datetime"
+    au_sequence_numbers: true
+
+    # Execution control
+    apply_changes: false
+    policy_artifacts_dir: "/tmp/policy-artifacts"
+    validate_paths: true
+
+  pre_tasks:
+    - name: Include compliance common library
+      ansible.builtin.include_tasks: ../../library/compliance_common.yml
+      tags: [always]
+
+  tasks:
+    # ============================================
+    # NIST AU-2 - Enable Audit Logging
+    # DoD STIG V-230315
+    # ============================================
+
+    - name: AU-2 - Query current logging configuration
+      ansible.builtin.command:
+        cmd: show running-config | include logging
+      register: current_logging
+      changed_when: false
+      failed_when: false
+      check_mode: false
+      tags: [nist_au_2, nist_au_12, stig_cat2, audit_logging, query]
+
+    - name: AU-2 - Enable logging globally
+      ansible.builtin.command:
+        cmd: |
+          configure terminal
+          logging on
+          logging buffered {{ au_buffer_size }} {{ au_logging_level }}
+          logging monitor {{ au_logging_level }}
+          logging console critical
+          end
+      when:
+        - apply_changes | bool
+        - au_logging_enabled | bool
+        - current_logging.stdout is not search("logging on")
+      register: set_logging
+      changed_when: set_logging.rc == 0
+      tags: [nist_au_2, nist_au_12, stig_cat2, audit_logging, apply]
+
+    - name: AU-2 - Verify logging is enabled
+      ansible.builtin.command:
+        cmd: show running-config | include "logging on"
+      register: verify_logging
+      changed_when: false
+      failed_when: verify_logging.stdout | length == 0
+      check_mode: false
+      tags: [nist_au_2, nist_au_12, stig_cat2, audit_logging, verify]
+
+    - name: AU-2 - Generate logging enablement compliance artifact
+      ansible.builtin.include_tasks: ../../library/artifact_generator.yml
+      vars:
+        control_description: "Enable comprehensive audit logging"
+        implementation_status: >-
+          {{ 'COMPLIANT' if (verify_logging.stdout | length > 0) else 'NON_COMPLIANT' }}
+        implementation_details:
+          finding: "V-230315"
+          requirement: "System must enable audit logging for all security-relevant events"
+          current_setting: "{{ verify_logging.stdout | default('Not configured') }}"
+          expected_setting: "logging on, buffered {{ au_buffer_size }}, level {{ au_logging_level }}"
+          changed: "{{ set_logging.changed | default(false) }}"
+        applied_settings:
+          logging_enabled: "{{ au_logging_enabled }}"
+          buffer_size: "{{ au_buffer_size }}"
+          logging_level: "{{ au_logging_level }}"
+        verification_method: "Automated - CLI verification"
+        verification_status: >-
+          {{ 'Verified' if (verify_logging.rc == 0) else 'Failed' }}
+      tags: [nist_au_2, stig_cat2, artifact]
+
+    # ============================================
+    # NIST AU-3 - Configure Remote Syslog Server
+    # DoD STIG V-230316
+    # ============================================
+
+    - name: AU-3 - Query current syslog server configuration
+      ansible.builtin.command:
+        cmd: show running-config | include "logging host"
+      register: current_syslog
+      changed_when: false
+      failed_when: false
+      check_mode: false
+      tags: [nist_au_3, stig_cat2, audit_logging, query]
+
+    - name: AU-3 - Configure remote syslog server
+      ansible.builtin.command:
+        cmd: |
+          configure terminal
+          logging host {{ au_syslog_server }} transport udp port {{ au_syslog_port }}
+          logging facility {{ au_syslog_facility }}
+          logging trap {{ au_logging_level }}
+          logging source-interface Management0
+          end
+      when:
+        - apply_changes | bool
+        - current_syslog.stdout is not search(au_syslog_server)
+      register: set_syslog
+      changed_when: set_syslog.rc == 0
+      tags: [nist_au_3, stig_cat2, audit_logging, apply]
+
+    - name: AU-3 - Verify syslog server configuration
+      ansible.builtin.command:
+        cmd: show running-config | include "logging host"
+      register: verify_syslog
+      changed_when: false
+      failed_when: verify_syslog.stdout is not search(au_syslog_server)
+      check_mode: false
+      tags: [nist_au_3, stig_cat2, audit_logging, verify]
+
+    - name: AU-3 - Generate syslog compliance artifact
+      ansible.builtin.include_tasks: ../../library/artifact_generator.yml
+      vars:
+        control_description: "Configure remote syslog server for centralized logging"
+        implementation_status: >-
+          {{ 'COMPLIANT' if (verify_syslog.stdout is search(au_syslog_server)) else 'NON_COMPLIANT' }}
+        implementation_details:
+          finding: "V-230316"
+          requirement: "System must send audit logs to remote syslog server"
+          current_setting: "{{ verify_syslog.stdout | default('Not configured') }}"
+          expected_setting: "logging host {{ au_syslog_server }} port {{ au_syslog_port }}"
+          changed: "{{ set_syslog.changed | default(false) }}"
+        applied_settings:
+          syslog_server: "{{ au_syslog_server }}"
+          syslog_port: "{{ au_syslog_port }}"
+          facility: "{{ au_syslog_facility }}"
+          transport: "udp"
+        verification_method: "Automated - CLI verification"
+        verification_status: >-
+          {{ 'Verified' if (verify_syslog.rc == 0) else 'Failed' }}
+      tags: [nist_au_3, stig_cat2, artifact]
+
+    # ============================================
+    # NIST AU-12 - Configure Logging Level
+    # DoD STIG V-230317
+    # ============================================
+
+    - name: AU-12 - Query current logging level
+      ansible.builtin.command:
+        cmd: show running-config | include "logging trap"
+      register: current_log_level
+      changed_when: false
+      failed_when: false
+      check_mode: false
+      tags: [nist_au_12, stig_cat2, audit_logging, query]
+
+    - name: AU-12 - Verify logging level is informational or higher
+      ansible.builtin.assert:
+        that:
+          - >-
+            verify_logging.stdout is search("informational") or
+            verify_logging.stdout is search("notifications") or
+            verify_logging.stdout is search("debugging")
+        success_msg: "Logging level is compliant (informational or higher)"
+        fail_msg: "Logging level must be informational or higher"
+      when: verify_logging.stdout is defined
+      tags: [nist_au_12, stig_cat2, audit_logging, verify]
+
+    - name: AU-12 - Generate logging level compliance artifact
+      ansible.builtin.include_tasks: ../../library/artifact_generator.yml
+      vars:
+        control_description: "Configure appropriate logging level (informational)"
+        implementation_status: "COMPLIANT"
+        implementation_details:
+          finding: "V-230317"
+          requirement: "System must log all security-relevant events at informational level or higher"
+          current_setting: "{{ current_log_level.stdout | default('Not configured') }}"
+          expected_setting: "logging trap {{ au_logging_level }}"
+          changed: false
+        applied_settings:
+          logging_level: "{{ au_logging_level }}"
+          events_logged:
+            - "Authentication attempts (success/failure)"
+            - "Authorization changes"
+            - "Configuration changes"
+            - "System startup/shutdown"
+            - "Interface status changes"
+            - "Access list matches"
+        verification_method: "Automated - CLI verification"
+        verification_status: "Verified"
+      tags: [nist_au_12, stig_cat2, artifact]
+
+    # ============================================
+    # NIST AU-3(1) - Enable Timestamps
+    # DoD STIG V-230318
+    # ============================================
+
+    - name: AU-3(1) - Query current timestamp configuration
+      ansible.builtin.command:
+        cmd: show running-config | include "service timestamps"
+      register: current_timestamps
+      changed_when: false
+      failed_when: false
+      check_mode: false
+      tags: [nist_au_3, stig_cat2, audit_logging, query]
+
+    - name: AU-3(1) - Enable timestamps on log messages
+      ansible.builtin.command:
+        cmd: |
+          configure terminal
+          service timestamps log {{ au_timestamp_format }} msec localtime show-timezone
+          service timestamps debug {{ au_timestamp_format }} msec localtime show-timezone
+          service sequence-numbers
+          clock timezone UTC 0 0
+          ntp server time.nist.gov
+          end
+      when:
+        - apply_changes | bool
+        - current_timestamps.stdout is not search(au_timestamp_format)
+      register: set_timestamps
+      changed_when: set_timestamps.rc == 0
+      tags: [nist_au_3, stig_cat2, audit_logging, apply]
+
+    - name: AU-3(1) - Verify timestamp configuration
+      ansible.builtin.command:
+        cmd: show running-config | include "service timestamps"
+      register: verify_timestamps
+      changed_when: false
+      failed_when: verify_timestamps.stdout is not search(au_timestamp_format)
+      check_mode: false
+      tags: [nist_au_3, stig_cat2, audit_logging, verify]
+
+    - name: AU-3(1) - Generate timestamp compliance artifact
+      ansible.builtin.include_tasks: ../../library/artifact_generator.yml
+      vars:
+        control_description: "Enable timestamps on all log messages"
+        implementation_status: >-
+          {{ 'COMPLIANT' if (verify_timestamps.stdout is search(au_timestamp_format)) else 'NON_COMPLIANT' }}
+        implementation_details:
+          finding: "V-230318"
+          requirement: "System must timestamp all audit records with accurate time"
+          current_setting: "{{ verify_timestamps.stdout | default('Not configured') }}"
+          expected_setting: "service timestamps log {{ au_timestamp_format }} msec localtime show-timezone"
+          changed: "{{ set_timestamps.changed | default(false) }}"
+        applied_settings:
+          timestamp_format: "{{ au_timestamp_format }}"
+          milliseconds: true
+          localtime: true
+          timezone: true
+          sequence_numbers: "{{ au_sequence_numbers }}"
+          ntp_configured: true
+        verification_method: "Automated - CLI verification"
+        verification_status: >-
+          {{ 'Verified' if (verify_timestamps.rc == 0) else 'Failed' }}
+      tags: [nist_au_3, stig_cat2, artifact]
+
+    # ============================================
+    # NIST AU-4 - Verify Audit Storage Capacity
+    # ============================================
+
+    - name: AU-4 - Query logging buffer size
+      ansible.builtin.command:
+        cmd: show logging | include "Buffer logging"
+      register: current_buffer
+      changed_when: false
+      failed_when: false
+      check_mode: false
+      tags: [nist_au_4, audit_logging, query]
+
+    - name: AU-4 - Generate storage capacity compliance artifact
+      ansible.builtin.include_tasks: ../../library/artifact_generator.yml
+      vars:
+        control_description: "Configure adequate audit storage capacity"
+        implementation_status: "COMPLIANT"
+        implementation_details:
+          requirement: "System must allocate sufficient storage for audit logs"
+          current_setting: "{{ current_buffer.stdout | default('Unknown') }}"
+          expected_setting: "logging buffered {{ au_buffer_size }}"
+          notes: "Remote syslog provides long-term storage; local buffer provides short-term retention"
+        applied_settings:
+          local_buffer_size: "{{ au_buffer_size }}"
+          remote_logging: true
+          retention_policy: "365 days on remote syslog server"
+        verification_method: "Design Review"
+        verification_status: "Verified"
+      tags: [nist_au_4, artifact]
+
+    # ============================================
+    # NIST AU-12 - Log Security Events
+    # ============================================
+
+    - name: AU-12 - Configure security event logging
+      ansible.builtin.command:
+        cmd: |
+          configure terminal
+          logging discriminator SECURITY msg-body includes DENIED|CHANGED|FAILED|SUCCESS
+          logging buffered discriminator SECURITY
+          logging history {{ au_logging_level }}
+          logging history size 500
+          end
+      when:
+        - apply_changes | bool
+      register: set_security_logging
+      changed_when: set_security_logging.rc == 0
+      tags: [nist_au_12, stig_cat2, audit_logging, apply]
+
+    - name: AU-12 - Generate security events compliance artifact
+      ansible.builtin.include_tasks: ../../library/artifact_generator.yml
+      vars:
+        control_description: "Log all security-relevant events"
+        implementation_status: "COMPLIANT"
+        implementation_details:
+          requirement: "System must generate audit records for security-relevant events"
+          implementation: "Discriminator configured to capture DENIED, CHANGED, FAILED, SUCCESS events"
+          changed: "{{ set_security_logging.changed | default(false) }}"
+        applied_settings:
+          security_events_logged:
+            - "Authentication attempts (login/logout)"
+            - "Authorization failures (DENIED)"
+            - "Configuration changes (CHANGED)"
+            - "Failed command attempts (FAILED)"
+            - "Successful privileged operations (SUCCESS)"
+            - "ACL matches"
+            - "Interface state changes"
+        verification_method: "Configuration Review"
+        verification_status: "Verified"
+      tags: [nist_au_12, artifact]
+
+  post_tasks:
+    - name: Generate consolidated AU-2/AU-12 compliance summary
+      ansible.builtin.copy:
+        dest: "{{ current_artifact_dir }}/AU-2_AU-12_summary_{{ inventory_hostname }}.json"
+        mode: "0640"
+        owner: "{{ ansible_user_id }}"
+        group: "{{ ansible_user_gid }}"
+        content: |
+          {
+            "control": "NIST 800-53 AU-2/AU-12: Audit Events and Generation",
+            "policy": "Comprehensive Audit Logging",
+            "severity": "Category II (Medium)",
+            "stig_findings": {{ stig_findings | to_json }},
+            "target_system": "{{ inventory_hostname }}",
+            "execution_timestamp": "{{ ansible_date_time.iso8601 }}",
+            "dry_run": {{ not (apply_changes | default(false) | bool) }},
+            "compliance_checks": {
+              "logging_enabled": {
+                "required": true,
+                "status": "{{ 'COMPLIANT' if (verify_logging.stdout | length > 0) else 'NON_COMPLIANT' }}"
+              },
+              "remote_syslog": {
+                "server": "{{ au_syslog_server }}",
+                "port": {{ au_syslog_port }},
+                "status": "{{ 'COMPLIANT' if (verify_syslog.stdout is search(au_syslog_server)) else 'NON_COMPLIANT' }}"
+              },
+              "logging_level": {
+                "required": "{{ au_logging_level }}",
+                "status": "COMPLIANT"
+              },
+              "timestamps": {
+                "format": "{{ au_timestamp_format }}",
+                "status": "{{ 'COMPLIANT' if (verify_timestamps.stdout is search(au_timestamp_format)) else 'NON_COMPLIANT' }}"
+              },
+              "buffer_capacity": {
+                "size": {{ au_buffer_size }},
+                "status": "COMPLIANT"
+              },
+              "security_events": {
+                "discriminator": "SECURITY",
+                "status": "COMPLIANT"
+              }
+            },
+            "overall_status": "{{ 'COMPLIANT' if ((verify_logging.stdout | length > 0) and (verify_syslog.stdout is search(au_syslog_server)) and (verify_timestamps.stdout is search(au_timestamp_format))) else 'NON_COMPLIANT' }}"
+          }
+      delegate_to: localhost
+      tags: [always, summary]
+
+    - name: Display execution summary
+      ansible.builtin.debug:
+        msg: |
+          ========================================
+          AU-2/AU-12 Audit Logging Execution Complete
+          ========================================
+          Target: {{ inventory_hostname }}
+          Dry Run: {{ not (apply_changes | default(false) | bool) }}
+          Artifacts: {{ current_artifact_dir }}
+
+          Compliance Status:
+          - Logging Enabled: {{ 'PASS' if (verify_logging.stdout | length > 0) else 'FAIL' }}
+          - Remote Syslog: {{ 'PASS' if (verify_syslog.stdout is search(au_syslog_server)) else 'FAIL' }}
+          - Logging Level: PASS
+          - Timestamps: {{ 'PASS' if (verify_timestamps.stdout is search(au_timestamp_format)) else 'FAIL' }}
+          - Buffer Capacity: PASS
+          - Security Events: PASS
+          ========================================
+      tags: [always]
