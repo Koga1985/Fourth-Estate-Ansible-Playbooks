@@ -1,0 +1,117 @@
+---
+# Cisco UCS Fabric Interconnect Configuration Playbook
+# Configures Fabric Interconnects A and B for Fourth Estate deployment
+
+- name: Configure Cisco UCS Fabric Interconnects
+  hosts: localhost
+  gather_facts: yes
+  connection: local
+
+  vars:
+    apply_changes: false  # Set to true to apply configurations
+    ucs_artifacts_dir: "/tmp/ucs-fabric-interconnect-{{ ansible_date_time.epoch }}"
+    fourth_estate_org_name: "FourthEstate"
+
+    # Fabric Interconnect Configuration
+    fi_cluster_mode: "ha"
+    fi_mgmt_subnet: "255.255.255.0"
+
+    # Override these with your environment values or use vault
+    # fi_a_mgmt_ip: "192.168.1.10"
+    # fi_b_mgmt_ip: "192.168.1.11"
+    # fi_mgmt_gateway: "192.168.1.1"
+
+  pre_tasks:
+    - name: Display Fabric Interconnect configuration banner
+      ansible.builtin.debug:
+        msg: |
+          ╔══════════════════════════════════════════════════════════════╗
+          ║   Cisco UCS Fabric Interconnect Configuration                ║
+          ║   Fourth Estate Production Deployment                        ║
+          ╚══════════════════════════════════════════════════════════════╝
+
+          Configuration Mode: {{ 'APPLY CHANGES' if apply_changes else 'DRY-RUN (no changes)' }}
+          Cluster Mode: {{ fi_cluster_mode }}
+          Artifacts Directory: {{ ucs_artifacts_dir }}
+
+          ⚠️  WARNING: This playbook configures Fabric Interconnects
+          ⚠️  Changes may affect network connectivity
+          ⚠️  Ensure you have console access before proceeding
+
+    - name: Create artifacts directory
+      ansible.builtin.file:
+        path: "{{ ucs_artifacts_dir }}"
+        state: directory
+        mode: '0755'
+
+    - name: Verify UCS Manager connectivity
+      cisco.ucs.ucs_query:
+        hostname: "{{ ucs_hostname }}"
+        username: "{{ ucs_username }}"
+        password: "{{ ucs_password }}"
+        validate_certs: "{{ ucs_validate_certs | default(false) }}"
+        class_ids: topSystem
+      register: ucs_connection_test
+      failed_when: false
+
+    - name: Fail if UCS Manager is not reachable
+      ansible.builtin.fail:
+        msg: |
+          Cannot connect to UCS Manager at {{ ucs_hostname }}
+          Please verify:
+          - UCS Manager is accessible
+          - Credentials are correct
+          - Network connectivity is available
+      when: ucs_connection_test.failed
+
+    - name: Display UCS Manager information
+      ansible.builtin.debug:
+        msg: |
+          Connected to UCS Manager:
+          - Name: {{ ucs_connection_test.objects[0].name }}
+          - Address: {{ ucs_connection_test.objects[0].address }}
+          - Version: {{ ucs_connection_test.objects[0].version }}
+
+  tasks:
+    - name: Configure Fabric Interconnects
+      ansible.builtin.include_role:
+        name: ucs_prod_infrastructure
+        tasks_from: fabric_interconnects
+      tags:
+        - fabric_interconnects
+        - fi_config
+
+  post_tasks:
+    - name: Display deployment summary
+      ansible.builtin.debug:
+        msg: |
+          ╔══════════════════════════════════════════════════════════════╗
+          ║   Fabric Interconnect Configuration Complete                 ║
+          ╚══════════════════════════════════════════════════════════════╝
+
+          Status: {{ 'APPLIED' if apply_changes else 'DRY-RUN' }}
+          Artifacts: {{ ucs_artifacts_dir }}
+
+          {% if not apply_changes %}
+          ⚠️  DRY-RUN MODE: No changes were applied
+          ⚠️  Review the configuration and set apply_changes=true to apply
+          {% else %}
+          ✓ Fabric Interconnect configuration has been applied
+          ✓ Review the artifacts directory for details
+          {% endif %}
+
+          Reports Generated:
+          - fabric_interconnect_config.txt
+
+    - name: List generated artifacts
+      ansible.builtin.find:
+        paths: "{{ ucs_artifacts_dir }}"
+        patterns: "*"
+      register: artifact_files
+
+    - name: Display artifact locations
+      ansible.builtin.debug:
+        msg: "{{ item.path }}"
+      loop: "{{ artifact_files.files }}"
+      loop_control:
+        label: "{{ item.path | basename }}"

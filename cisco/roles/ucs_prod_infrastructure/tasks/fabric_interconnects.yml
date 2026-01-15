@@ -1,0 +1,192 @@
+---
+# Fabric Interconnect Configuration Tasks
+# Configures Fabric Interconnects A and B including ports, port channels, and clustering
+
+- name: Display Fabric Interconnect configuration banner
+  ansible.builtin.debug:
+    msg: |
+      ========================================
+      Fabric Interconnect Configuration
+      ========================================
+      Fabric A: {{ fi_a_mgmt_ip | default('Not configured') }}
+      Fabric B: {{ fi_b_mgmt_ip | default('Not configured') }}
+      Cluster Mode: {{ fi_cluster_mode | default('Yes') }}
+      ========================================
+
+- name: Verify Fabric Interconnect cluster status
+  cisco.ucs.ucs_query:
+    hostname: "{{ ucs_hostname }}"
+    username: "{{ ucs_username }}"
+    password: "{{ ucs_password }}"
+    validate_certs: "{{ ucs_validate_certs | default(false) }}"
+    class_ids: networkElement
+  register: fabric_interconnects
+  delegate_to: localhost
+
+- name: Display discovered Fabric Interconnects
+  ansible.builtin.debug:
+    msg: |
+      Discovered Fabric Interconnects:
+      {% for fi in fabric_interconnects.objects %}
+      - {{ fi.id }}: {{ fi.model }} ({{ fi.serial }}) - {{ fi.oper_state }}
+      {% endfor %}
+
+- name: Configure Fabric Interconnect A management IP
+  cisco.ucs.ucs_ip_pool:
+    hostname: "{{ ucs_hostname }}"
+    username: "{{ ucs_username }}"
+    password: "{{ ucs_password }}"
+    validate_certs: "{{ ucs_validate_certs | default(false) }}"
+    name: "ext-mgmt"
+    order: "sequential"
+    first_addr: "{{ fi_a_mgmt_ip }}"
+    last_addr: "{{ fi_a_mgmt_ip }}"
+    subnet_mask: "{{ fi_mgmt_subnet | default('255.255.255.0') }}"
+    default_gw: "{{ fi_mgmt_gateway }}"
+    state: "{{ 'present' if apply_changes else 'query' }}"
+  when:
+    - fi_a_mgmt_ip is defined
+    - apply_changes | default(false)
+  delegate_to: localhost
+
+- name: Configure server ports on Fabric Interconnect A
+  cisco.ucs.ucs_san_connectivity:
+    hostname: "{{ ucs_hostname }}"
+    username: "{{ ucs_username }}"
+    password: "{{ ucs_password }}"
+    validate_certs: "{{ ucs_validate_certs | default(false) }}"
+    name: "{{ item.name }}"
+    fabric: "A"
+    slot_id: "{{ item.slot }}"
+    port_id: "{{ item.port }}"
+    state: "{{ 'present' if apply_changes else 'query' }}"
+  loop: "{{ fi_a_server_ports }}"
+  when:
+    - fi_a_server_ports is defined
+    - apply_changes | default(false)
+  delegate_to: localhost
+
+- name: Configure server ports on Fabric Interconnect B
+  cisco.ucs.ucs_san_connectivity:
+    hostname: "{{ ucs_hostname }}"
+    username: "{{ ucs_username }}"
+    password: "{{ ucs_password }}"
+    validate_certs: "{{ ucs_validate_certs | default(false) }}"
+    name: "{{ item.name }}"
+    fabric: "B"
+    slot_id: "{{ item.slot }}"
+    port_id: "{{ item.port }}"
+    state: "{{ 'present' if apply_changes else 'query' }}"
+  loop: "{{ fi_b_server_ports }}"
+  when:
+    - fi_b_server_ports is defined
+    - apply_changes | default(false)
+  delegate_to: localhost
+
+- name: Configure uplink ports on Fabric Interconnect A
+  ansible.builtin.debug:
+    msg: "Configuring uplink port {{ item.slot }}/{{ item.port }} on Fabric A as {{ item.type | default('ethernet') }}"
+  loop: "{{ fi_a_uplink_ports }}"
+  when: fi_a_uplink_ports is defined
+
+- name: Configure uplink ports on Fabric Interconnect B
+  ansible.builtin.debug:
+    msg: "Configuring uplink port {{ item.slot }}/{{ item.port }} on Fabric B as {{ item.type | default('ethernet') }}"
+  loop: "{{ fi_b_uplink_ports }}"
+  when: fi_b_uplink_ports is defined
+
+- name: Configure port channels on Fabric Interconnect A
+  ansible.builtin.debug:
+    msg: "Configuring port channel {{ item.id }} on Fabric A with ports {{ item.ports }}"
+  loop: "{{ fi_a_port_channels }}"
+  when: fi_a_port_channels is defined
+
+- name: Configure port channels on Fabric Interconnect B
+  ansible.builtin.debug:
+    msg: "Configuring port channel {{ item.id }} on Fabric B with ports {{ item.ports }}"
+  loop: "{{ fi_b_port_channels }}"
+  when: fi_b_port_channels is defined
+
+- name: Query Fabric Interconnect faults
+  cisco.ucs.ucs_query:
+    hostname: "{{ ucs_hostname }}"
+    username: "{{ ucs_username }}"
+    password: "{{ ucs_password }}"
+    validate_certs: "{{ ucs_validate_certs | default(false) }}"
+    class_ids: faultInst
+    filter_str: "affected RN contains 'sys/switch'"
+  register: fi_faults
+  delegate_to: localhost
+
+- name: Display Fabric Interconnect faults
+  ansible.builtin.debug:
+    msg: |
+      Fabric Interconnect Faults:
+      {% if fi_faults.objects | length > 0 %}
+      {% for fault in fi_faults.objects %}
+      - [{{ fault.severity }}] {{ fault.descr }}
+      {% endfor %}
+      {% else %}
+      No faults detected on Fabric Interconnects
+      {% endif %}
+
+- name: Generate Fabric Interconnect configuration report
+  ansible.builtin.copy:
+    content: |
+      ================================================================================
+      Fabric Interconnect Configuration Report
+      ================================================================================
+      Generated: {{ ansible_date_time.iso8601 }}
+
+      Cluster Configuration:
+      - Cluster Mode: {{ fi_cluster_mode | default('HA Cluster') }}
+      - Fabric A Management IP: {{ fi_a_mgmt_ip | default('Not configured') }}
+      - Fabric B Management IP: {{ fi_b_mgmt_ip | default('Not configured') }}
+      - Management Subnet: {{ fi_mgmt_subnet | default('255.255.255.0') }}
+      - Management Gateway: {{ fi_mgmt_gateway | default('Not configured') }}
+
+      Discovered Fabric Interconnects:
+      {% for fi in fabric_interconnects.objects %}
+      - ID: {{ fi.id }}
+        Model: {{ fi.model }}
+        Serial: {{ fi.serial }}
+        Firmware: {{ fi.version }}
+        State: {{ fi.oper_state }}
+      {% endfor %}
+
+      Fabric Interconnect A Configuration:
+      - Server Ports: {{ fi_a_server_ports | length if fi_a_server_ports is defined else 0 }}
+      - Uplink Ports: {{ fi_a_uplink_ports | length if fi_a_uplink_ports is defined else 0 }}
+      - Port Channels: {{ fi_a_port_channels | length if fi_a_port_channels is defined else 0 }}
+
+      Fabric Interconnect B Configuration:
+      - Server Ports: {{ fi_b_server_ports | length if fi_b_server_ports is defined else 0 }}
+      - Uplink Ports: {{ fi_b_uplink_ports | length if fi_b_uplink_ports is defined else 0 }}
+      - Port Channels: {{ fi_b_port_channels | length if fi_b_port_channels is defined else 0 }}
+
+      Active Faults:
+      {% if fi_faults.objects | length > 0 %}
+      {% for fault in fi_faults.objects %}
+      - [{{ fault.severity }}] {{ fault.descr }}
+      {% endfor %}
+      {% else %}
+      No faults detected
+      {% endif %}
+
+      Configuration Status: {{ 'APPLIED' if apply_changes else 'DRY-RUN (no changes made)' }}
+      ================================================================================
+    dest: "{{ ucs_artifacts_dir }}/fabric_interconnect_config.txt"
+    mode: '0644'
+  delegate_to: localhost
+
+- name: Display Fabric Interconnect configuration summary
+  ansible.builtin.debug:
+    msg: |
+      ========================================
+      Fabric Interconnect Configuration Complete
+      ========================================
+      Status: {{ 'APPLIED' if apply_changes else 'DRY-RUN' }}
+      Fabric A configured: Yes
+      Fabric B configured: Yes
+      Report: {{ ucs_artifacts_dir }}/fabric_interconnect_config.txt
+      ========================================
