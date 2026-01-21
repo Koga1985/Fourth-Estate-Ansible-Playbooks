@@ -1,2 +1,208 @@
 ---
-# tasks file for azure_conditional_access
+# tasks file for azure_conditional_access - Azure AD Conditional Access Policies
+# Fourth Estate Azure Government Cloud - FedRAMP High
+
+- name: Validate conditional access configuration
+  ansible.builtin.assert:
+    that:
+      - azure_tenant_id is defined
+      - azure_cloud_environment is defined
+    fail_msg: "Azure tenant configuration required"
+
+- name: Create conditional access policies
+  azure.azcollection.azure_rm_resource:
+    resource_group: "{{ azure_resource_group }}"
+    provider: Microsoft.Graph
+    resource_type: identity/conditionalAccess/policies
+    resource_name: "{{ item.name }}"
+    api_version: "v1.0"
+    body:
+      displayName: "{{ item.display_name }}"
+      state: "{{ item.state | default('enabled') }}"
+      conditions:
+        applications:
+          includeApplications: "{{ item.include_applications | default(['All']) }}"
+          excludeApplications: "{{ item.exclude_applications | default([]) }}"
+        users:
+          includeUsers: "{{ item.include_users | default(['All']) }}"
+          excludeUsers: "{{ item.exclude_users | default([]) }}"
+          includeGroups: "{{ item.include_groups | default([]) }}"
+          excludeGroups: "{{ item.exclude_groups | default([]) }}"
+        locations:
+          includeLocations: "{{ item.include_locations | default(['All']) }}"
+          excludeLocations: "{{ item.exclude_locations | default(['AllTrusted']) }}"
+        platforms:
+          includePlatforms: "{{ item.include_platforms | default(['all']) }}"
+          excludePlatforms: "{{ item.exclude_platforms | default([]) }}"
+        clientAppTypes: "{{ item.client_app_types | default(['all']) }}"
+        signInRiskLevels: "{{ item.signin_risk_levels | default(['high', 'medium']) }}"
+        userRiskLevels: "{{ item.user_risk_levels | default(['high']) }}"
+      grantControls:
+        operator: "{{ item.grant_operator | default('AND') }}"
+        builtInControls: "{{ item.grant_controls | default(['mfa', 'compliantDevice']) }}"
+        customAuthenticationFactors: "{{ item.custom_auth_factors | default([]) }}"
+      sessionControls:
+        signInFrequency:
+          value: "{{ item.signin_frequency_value | default(1) }}"
+          type: "{{ item.signin_frequency_type | default('hours') }}"
+        persistentBrowser:
+          mode: "{{ item.persistent_browser_mode | default('never') }}"
+        cloudAppSecurity:
+          isEnabled: "{{ item.cloud_app_security_enabled | default(true) }}"
+          cloudAppSecurityType: "{{ item.cloud_app_security_type | default('monitorOnly') }}"
+    state: "{{ item.policy_state | default('present') }}"
+    cloud_environment: "{{ azure_cloud_environment }}"
+  loop: "{{ azure_conditional_access_policies }}"
+  when: azure_conditional_access_policies is defined
+  register: ca_policies_result
+  notify: Log conditional access changes
+
+- name: Create Fourth Estate baseline conditional access policies
+  azure.azcollection.azure_rm_resource:
+    resource_group: "{{ azure_resource_group }}"
+    provider: Microsoft.Graph
+    resource_type: identity/conditionalAccess/policies
+    resource_name: "{{ item.name }}"
+    api_version: "v1.0"
+    body: "{{ item.policy }}"
+    state: present
+    cloud_environment: "{{ azure_cloud_environment }}"
+  loop:
+    - name: "4E-RequireMFA-AllUsers"
+      policy:
+        displayName: "Fourth Estate: Require MFA for All Users"
+        state: enabled
+        conditions:
+          applications:
+            includeApplications: ["All"]
+          users:
+            includeUsers: ["All"]
+            excludeUsers: []
+            excludeGroups: ["{{ azure_breakglass_group_id | default('') }}"]
+          locations:
+            includeLocations: ["All"]
+        grantControls:
+          operator: "OR"
+          builtInControls: ["mfa"]
+    - name: "4E-BlockLegacyAuth"
+      policy:
+        displayName: "Fourth Estate: Block Legacy Authentication"
+        state: enabled
+        conditions:
+          applications:
+            includeApplications: ["All"]
+          users:
+            includeUsers: ["All"]
+          clientAppTypes: ["exchangeActiveSync", "other"]
+        grantControls:
+          operator: "OR"
+          builtInControls: ["block"]
+    - name: "4E-RequireCompliantDevice"
+      policy:
+        displayName: "Fourth Estate: Require Compliant or Hybrid Joined Device"
+        state: enabled
+        conditions:
+          applications:
+            includeApplications: ["All"]
+          users:
+            includeUsers: ["All"]
+            excludeGroups: ["{{ azure_breakglass_group_id | default('') }}"]
+          platforms:
+            includePlatforms: ["all"]
+        grantControls:
+          operator: "OR"
+          builtInControls: ["compliantDevice", "domainJoinedDevice"]
+    - name: "4E-BlockHighRiskSignIns"
+      policy:
+        displayName: "Fourth Estate: Block High Risk Sign-ins"
+        state: enabled
+        conditions:
+          applications:
+            includeApplications: ["All"]
+          users:
+            includeUsers: ["All"]
+          signInRiskLevels: ["high"]
+        grantControls:
+          operator: "OR"
+          builtInControls: ["block"]
+    - name: "4E-RequireMFA-HighRiskUsers"
+      policy:
+        displayName: "Fourth Estate: Require MFA and Password Change for High Risk Users"
+        state: enabled
+        conditions:
+          applications:
+            includeApplications: ["All"]
+          users:
+            includeUsers: ["All"]
+          userRiskLevels: ["high"]
+        grantControls:
+          operator: "AND"
+          builtInControls: ["mfa", "passwordChange"]
+  when: azure_ca_deploy_baseline_policies | default(true)
+  register: baseline_policies_result
+  notify: Log conditional access changes
+
+- name: Configure named locations for conditional access
+  azure.azcollection.azure_rm_resource:
+    resource_group: "{{ azure_resource_group }}"
+    provider: Microsoft.Graph
+    resource_type: identity/conditionalAccess/namedLocations
+    resource_name: "{{ item.name }}"
+    api_version: "v1.0"
+    body:
+      displayName: "{{ item.display_name }}"
+      isTrusted: "{{ item.is_trusted | default(false) }}"
+      ipRanges: "{{ item.ip_ranges }}"
+    state: "{{ item.state | default('present') }}"
+    cloud_environment: "{{ azure_cloud_environment }}"
+  loop: "{{ azure_ca_named_locations }}"
+  when: azure_ca_named_locations is defined
+  register: named_locations_result
+  notify: Log conditional access changes
+
+- name: Configure authentication strength policies
+  azure.azcollection.azure_rm_resource:
+    resource_group: "{{ azure_resource_group }}"
+    provider: Microsoft.Graph
+    resource_type: identity/conditionalAccess/authenticationStrength/policies
+    resource_name: "{{ item.name }}"
+    api_version: "beta"
+    body:
+      displayName: "{{ item.display_name }}"
+      description: "{{ item.description }}"
+      policyType: custom
+      requirementsSatisfied: "{{ item.requirements_satisfied | default(['mfa']) }}"
+      allowedCombinations: "{{ item.allowed_combinations }}"
+    state: "{{ item.state | default('present') }}"
+    cloud_environment: "{{ azure_cloud_environment }}"
+  loop: "{{ azure_ca_auth_strength_policies }}"
+  when: azure_ca_auth_strength_policies is defined
+  register: auth_strength_result
+  notify: Log conditional access changes
+
+- name: Enable conditional access audit logging
+  azure.azcollection.azure_rm_monitordiagnosticsetting:
+    name: conditional-access-diagnostics
+    resource_uri: "/providers/Microsoft.AADIAM/conditionalAccess"
+    workspace_id: "{{ azure_log_analytics_workspace_id }}"
+    logs:
+      - category: ConditionalAccessPolicyApplication
+        enabled: true
+        retention_policy:
+          enabled: true
+          days: 365
+    state: present
+    cloud_environment: "{{ azure_cloud_environment }}"
+  when: azure_ca_enable_diagnostics | default(true)
+  register: diagnostics_result
+  notify: Log conditional access changes
+
+- name: Display conditional access summary
+  ansible.builtin.debug:
+    msg:
+      - "Conditional Access Configuration Complete"
+      - "Custom policies created: {{ (ca_policies_result.results | default([]) | selectattr('changed', 'equalto', true) | list | length) }}"
+      - "Baseline policies deployed: {{ (baseline_policies_result.results | default([]) | selectattr('changed', 'equalto', true) | list | length) }}"
+      - "Named locations configured: {{ (named_locations_result.results | default([]) | selectattr('changed', 'equalto', true) | list | length) }}"
+      - "Audit logging enabled: {{ azure_ca_enable_diagnostics | default(true) }}"
+  when: azure_ca_display_summary | default(true)

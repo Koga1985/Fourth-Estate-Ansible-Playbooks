@@ -1,2 +1,168 @@
 ---
-# tasks file for azure_ad
+# tasks file for azure_ad - Azure AD Users and Groups Management
+# Fourth Estate Azure Government Cloud - FedRAMP High
+
+- name: Validate Azure Government Cloud configuration
+  ansible.builtin.assert:
+    that:
+      - azure_cloud_environment is defined
+      - azure_cloud_environment in ['AzureUSGovernment', 'AzureCloud']
+    fail_msg: "Azure cloud environment must be specified for Fourth Estate deployments"
+
+- name: Create Azure AD Groups
+  azure.azcollection.azure_rm_adgroup:
+    tenant: "{{ azure_tenant_id }}"
+    display_name: "{{ item.display_name }}"
+    mail_nickname: "{{ item.mail_nickname | default(item.display_name | lower | regex_replace('[^a-z0-9]', '')) }}"
+    description: "{{ item.description | default(omit) }}"
+    mail_enabled: "{{ item.mail_enabled | default(false) }}"
+    security_enabled: "{{ item.security_enabled | default(true) }}"
+    state: "{{ item.state | default('present') }}"
+    cloud_environment: "{{ azure_cloud_environment }}"
+  loop: "{{ azure_ad_groups }}"
+  when: azure_ad_groups is defined
+  register: ad_groups_result
+  notify:
+    - Log Azure AD changes
+    - Update Azure AD inventory
+
+- name: Create Azure AD Users
+  azure.azcollection.azure_rm_aduser:
+    tenant: "{{ azure_tenant_id }}"
+    user_principal_name: "{{ item.user_principal_name }}"
+    display_name: "{{ item.display_name }}"
+    mail_nickname: "{{ item.mail_nickname | default(item.user_principal_name.split('@')[0]) }}"
+    given_name: "{{ item.given_name | default(omit) }}"
+    surname: "{{ item.surname | default(omit) }}"
+    password: "{{ item.password | default(omit) }}"
+    account_enabled: "{{ item.account_enabled | default(true) }}"
+    force_change_password_next_sign_in: "{{ item.force_change_password | default(true) }}"
+    usage_location: "{{ item.usage_location | default('US') }}"
+    state: "{{ item.state | default('present') }}"
+    cloud_environment: "{{ azure_cloud_environment }}"
+  loop: "{{ azure_ad_users }}"
+  when: azure_ad_users is defined
+  register: ad_users_result
+  no_log: "{{ azure_ad_no_log | default(true) }}"
+  notify:
+    - Log Azure AD changes
+    - Update Azure AD inventory
+
+- name: Add users to groups
+  azure.azcollection.azure_rm_adgroup_member:
+    tenant: "{{ azure_tenant_id }}"
+    group: "{{ item.0.display_name }}"
+    member: "{{ item.1 }}"
+    state: present
+    cloud_environment: "{{ azure_cloud_environment }}"
+  loop: "{{ azure_ad_groups | subelements('members', skip_missing=True) }}"
+  when:
+    - azure_ad_groups is defined
+    - item.0.members is defined
+  register: group_membership_result
+  notify: Log Azure AD changes
+
+- name: Configure Azure AD security defaults
+  azure.azcollection.azure_rm_resource:
+    resource_group: "{{ azure_resource_group }}"
+    provider: Microsoft.Graph
+    resource_type: policies
+    resource_name: identitySecurityDefaultsEnforcementPolicy
+    api_version: "v1.0"
+    body:
+      isEnabled: "{{ azure_ad_security_defaults_enabled | default(true) }}"
+    state: present
+    cloud_environment: "{{ azure_cloud_environment }}"
+  when: azure_ad_manage_security_defaults | default(true)
+  register: security_defaults_result
+  notify: Log Azure AD changes
+
+- name: Configure password policies
+  azure.azcollection.azure_rm_resource:
+    resource_group: "{{ azure_resource_group }}"
+    provider: Microsoft.Graph
+    resource_type: domains
+    resource_name: "{{ azure_tenant_domain }}"
+    api_version: "v1.0"
+    body:
+      passwordValidityPeriodInDays: "{{ azure_ad_password_validity_days | default(90) }}"
+      passwordNotificationWindowInDays: "{{ azure_ad_password_notification_days | default(14) }}"
+    state: present
+    cloud_environment: "{{ azure_cloud_environment }}"
+  when: azure_ad_configure_password_policy | default(true)
+  register: password_policy_result
+  notify: Log Azure AD changes
+
+- name: Enable Azure AD audit logging
+  azure.azcollection.azure_rm_loganalyticssolution:
+    resource_group: "{{ azure_resource_group }}"
+    location: "{{ azure_region }}"
+    workspace_name: "{{ azure_log_analytics_workspace }}"
+    solution_name: AzureActiveDirectory
+    plan:
+      name: AzureActiveDirectory
+      publisher: Microsoft
+      product: OMSGallery/AzureActiveDirectory
+    state: present
+    cloud_environment: "{{ azure_cloud_environment }}"
+  when: azure_ad_enable_audit_logging | default(true)
+  register: audit_logging_result
+  notify: Log Azure AD changes
+
+- name: Configure Azure AD diagnostic settings
+  azure.azcollection.azure_rm_monitordiagnosticsetting:
+    name: "{{ azure_ad_diagnostic_setting_name | default('ad-diagnostics') }}"
+    resource_uri: "/providers/Microsoft.AADIAM/diagnosticSettings/{{ azure_ad_diagnostic_setting_name | default('ad-diagnostics') }}"
+    workspace_id: "{{ azure_log_analytics_workspace_id }}"
+    logs:
+      - category: AuditLogs
+        enabled: true
+        retention_policy:
+          enabled: true
+          days: "{{ azure_ad_audit_retention_days | default(365) }}"
+      - category: SignInLogs
+        enabled: true
+        retention_policy:
+          enabled: true
+          days: "{{ azure_ad_signin_retention_days | default(365) }}"
+      - category: NonInteractiveUserSignInLogs
+        enabled: true
+        retention_policy:
+          enabled: true
+          days: "{{ azure_ad_signin_retention_days | default(365) }}"
+      - category: ServicePrincipalSignInLogs
+        enabled: true
+        retention_policy:
+          enabled: true
+          days: "{{ azure_ad_signin_retention_days | default(365) }}"
+      - category: RiskyUsers
+        enabled: true
+        retention_policy:
+          enabled: true
+          days: "{{ azure_ad_risk_retention_days | default(365) }}"
+    state: present
+    cloud_environment: "{{ azure_cloud_environment }}"
+  when: azure_ad_configure_diagnostics | default(true)
+  register: diagnostics_result
+  notify: Log Azure AD changes
+
+- name: Tag Azure AD resources for cost management
+  ansible.builtin.set_fact:
+    azure_ad_resource_tags:
+      Environment: "{{ azure_environment | default('Production') }}"
+      CostCenter: "{{ azure_cost_center | default('4thEstate') }}"
+      Classification: "{{ azure_classification | default('SECRET') }}"
+      Compliance: "FedRAMP-High"
+      ManagedBy: "Ansible"
+      LastUpdated: "{{ ansible_date_time.iso8601 }}"
+
+- name: Display Azure AD configuration summary
+  ansible.builtin.debug:
+    msg:
+      - "Azure AD Configuration Complete"
+      - "Groups created/updated: {{ (ad_groups_result.results | default([]) | selectattr('changed', 'equalto', true) | list | length) }}"
+      - "Users created/updated: {{ (ad_users_result.results | default([]) | selectattr('changed', 'equalto', true) | list | length) }}"
+      - "Security defaults enabled: {{ azure_ad_security_defaults_enabled | default(true) }}"
+      - "Audit logging enabled: {{ azure_ad_enable_audit_logging | default(true) }}"
+      - "Cloud environment: {{ azure_cloud_environment }}"
+  when: azure_ad_display_summary | default(true)

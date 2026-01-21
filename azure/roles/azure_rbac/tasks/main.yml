@@ -1,2 +1,152 @@
 ---
-# tasks file for azure_rbac
+# tasks file for azure_rbac - Azure Role-Based Access Control
+# Fourth Estate Azure Government Cloud - FedRAMP High
+
+- name: Validate RBAC configuration
+  ansible.builtin.assert:
+    that:
+      - azure_subscription_id is defined
+      - azure_tenant_id is defined
+    fail_msg: "Azure subscription and tenant required for RBAC"
+
+- name: Create custom RBAC roles
+  azure.azcollection.azure_rm_roledefinition:
+    name: "{{ item.name }}"
+    description: "{{ item.description }}"
+    scope: "{{ item.scope | default('/subscriptions/' + azure_subscription_id) }}"
+    permissions:
+      - actions: "{{ item.actions }}"
+        not_actions: "{{ item.not_actions | default([]) }}"
+        data_actions: "{{ item.data_actions | default([]) }}"
+        not_data_actions: "{{ item.not_data_actions | default([]) }}"
+    assignable_scopes: "{{ item.assignable_scopes | default(['/subscriptions/' + azure_subscription_id]) }}"
+    state: "{{ item.state | default('present') }}"
+    cloud_environment: "{{ azure_cloud_environment }}"
+  loop: "{{ azure_rbac_custom_roles }}"
+  when: azure_rbac_custom_roles is defined
+  register: custom_roles_result
+  notify: Log RBAC changes
+
+- name: Assign built-in roles to users
+  azure.azcollection.azure_rm_roleassignment:
+    scope: "{{ item.scope | default('/subscriptions/' + azure_subscription_id) }}"
+    assignee_object_id: "{{ item.assignee_object_id }}"
+    role_definition_name: "{{ item.role_name }}"
+    state: "{{ item.state | default('present') }}"
+    cloud_environment: "{{ azure_cloud_environment }}"
+  loop: "{{ azure_rbac_user_assignments }}"
+  when: azure_rbac_user_assignments is defined
+  register: user_assignments_result
+  notify: Log RBAC changes
+
+- name: Assign roles to groups
+  azure.azcollection.azure_rm_roleassignment:
+    scope: "{{ item.scope | default('/subscriptions/' + azure_subscription_id) }}"
+    assignee_object_id: "{{ item.group_object_id }}"
+    role_definition_name: "{{ item.role_name }}"
+    state: "{{ item.state | default('present') }}"
+    cloud_environment: "{{ azure_cloud_environment }}"
+  loop: "{{ azure_rbac_group_assignments }}"
+  when: azure_rbac_group_assignments is defined
+  register: group_assignments_result
+  notify: Log RBAC changes
+
+- name: Assign roles to service principals
+  azure.azcollection.azure_rm_roleassignment:
+    scope: "{{ item.scope | default('/subscriptions/' + azure_subscription_id) }}"
+    assignee_object_id: "{{ item.sp_object_id }}"
+    role_definition_name: "{{ item.role_name }}"
+    state: "{{ item.state | default('present') }}"
+    cloud_environment: "{{ azure_cloud_environment }}"
+  loop: "{{ azure_rbac_sp_assignments }}"
+  when: azure_rbac_sp_assignments is defined
+  register: sp_assignments_result
+  notify: Log RBAC changes
+
+- name: Configure Privileged Identity Management (PIM)
+  azure.azcollection.azure_rm_resource:
+    resource_group: "{{ azure_resource_group }}"
+    provider: Microsoft.Authorization
+    resource_type: roleAssignmentScheduleRequests
+    api_version: "2020-10-01"
+    body:
+      properties:
+        principalId: "{{ item.principal_id }}"
+        roleDefinitionId: "{{ item.role_definition_id }}"
+        requestType: AdminAssign
+        scheduleInfo:
+          startDateTime: "{{ item.start_datetime | default(ansible_date_time.iso8601) }}"
+          expiration:
+            type: "{{ item.expiration_type | default('AfterDuration') }}"
+            duration: "{{ item.duration | default('PT8H') }}"
+        justification: "{{ item.justification }}"
+    state: present
+    cloud_environment: "{{ azure_cloud_environment }}"
+  loop: "{{ azure_rbac_pim_assignments }}"
+  when:
+    - azure_rbac_pim_assignments is defined
+    - azure_rbac_enable_pim | default(true)
+  register: pim_result
+  notify: Log RBAC changes
+
+- name: Deny assignments for least privilege
+  azure.azcollection.azure_rm_resource:
+    resource_group: "{{ azure_resource_group }}"
+    provider: Microsoft.Authorization
+    resource_type: denyAssignments
+    resource_name: "{{ item.name }}"
+    api_version: "2022-01-01-preview"
+    body:
+      properties:
+        principalId: "{{ item.principal_id }}"
+        permissions:
+          - actions: "{{ item.denied_actions }}"
+        scope: "{{ item.scope | default('/subscriptions/' + azure_subscription_id) }}"
+        condition: "{{ item.condition | default(omit) }}"
+    state: "{{ item.state | default('present') }}"
+    cloud_environment: "{{ azure_cloud_environment }}"
+  loop: "{{ azure_rbac_deny_assignments }}"
+  when: azure_rbac_deny_assignments is defined
+  register: deny_assignments_result
+  notify: Log RBAC changes
+
+- name: Configure RBAC audit logging
+  azure.azcollection.azure_rm_monitordiagnosticsetting:
+    name: rbac-audit-diagnostics
+    resource_uri: "/subscriptions/{{ azure_subscription_id }}"
+    workspace_id: "{{ azure_log_analytics_workspace_id }}"
+    logs:
+      - category: Administrative
+        enabled: true
+        retention_policy:
+          enabled: true
+          days: 365
+      - category: Policy
+        enabled: true
+        retention_policy:
+          enabled: true
+          days: 365
+    state: present
+    cloud_environment: "{{ azure_cloud_environment }}"
+  when: azure_rbac_enable_audit_logging | default(true)
+  register: audit_result
+  notify: Log RBAC changes
+
+- name: Create RBAC compliance report
+  ansible.builtin.template:
+    src: rbac_compliance_report.j2
+    dest: "{{ azure_rbac_report_path | default('/tmp/rbac_compliance_report.json') }}"
+    mode: '0600'
+  when: azure_rbac_generate_report | default(true)
+  delegate_to: localhost
+
+- name: Display RBAC configuration summary
+  ansible.builtin.debug:
+    msg:
+      - "RBAC Configuration Complete"
+      - "Custom roles created: {{ (custom_roles_result.results | default([]) | selectattr('changed', 'equalto', true) | list | length) }}"
+      - "User assignments: {{ (user_assignments_result.results | default([]) | selectattr('changed', 'equalto', true) | list | length) }}"
+      - "Group assignments: {{ (group_assignments_result.results | default([]) | selectattr('changed', 'equalto', true) | list | length) }}"
+      - "Service principal assignments: {{ (sp_assignments_result.results | default([]) | selectattr('changed', 'equalto', true) | list | length) }}"
+      - "PIM enabled: {{ azure_rbac_enable_pim | default(true) }}"
+  when: azure_rbac_display_summary | default(true)
