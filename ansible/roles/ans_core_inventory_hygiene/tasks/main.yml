@@ -1,66 +1,57 @@
-
 ---
-- name: ansible-inventory --list
-  ansible.builtin.shell: |
-    set -euo pipefail
-    ansible-inventory -i "{{ inventory_path }}" --list
-  args: { executable: /bin/bash }
-  register: inv
-  changed_when: false
-  ignore_errors: true
+- name: Get all inventories
+  ansible.builtin.uri:
+    url: "{{ controller_host }}/api/v2/inventories/"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ controller_oauthtoken }}"
+    validate_certs: "{{ validate_certs }}"
+  register: inventories
 
-- name: Write inventory JSON
+- name: Find stale hosts
+  when: cleanup_stale_hosts | bool
+  ansible.builtin.uri:
+    url: "{{ controller_host }}/api/v2/hosts/?last_job__lt={{ stale_days }}"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ controller_oauthtoken }}"
+    validate_certs: "{{ validate_certs }}"
+  register: stale_hosts
+
+- name: Remove stale hosts
+  when: apply_changes | bool and cleanup_stale_hosts | bool
+  ansible.builtin.uri:
+    url: "{{ controller_host }}/api/v2/hosts/{{ item.id }}/"
+    method: DELETE
+    headers:
+      Authorization: "Bearer {{ controller_oauthtoken }}"
+    validate_certs: "{{ validate_certs }}"
+    status_code: [204]
+  loop: "{{ stale_hosts.json.results | default([]) }}"
+
+- name: Find empty groups
+  when: cleanup_empty_groups | bool
+  ansible.builtin.uri:
+    url: "{{ controller_host }}/api/v2/groups/?hosts__count=0"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ controller_oauthtoken }}"
+    validate_certs: "{{ validate_certs }}"
+  register: empty_groups
+
+- name: Generate hygiene report
   ansible.builtin.copy:
-    dest: "{{ artifacts_dir }}/inventory_list.json"
+    dest: "{{ artifacts_dir }}/inventory_hygiene_report.json"
     mode: "0644"
-    content: "{{ inv.stdout | default('{}') }}"
+    content: |
+      {
+        "stale_hosts": {{ stale_hosts.json.count | default(0) }},
+        "empty_groups": {{ empty_groups.json.count | default(0) }},
+        "total_inventories": {{ inventories.json.count | default(0) }}
+      }
 
-- name: Graph + dupe heuristic
-  ansible.builtin.shell: |
-    set -euo pipefail
-    ansible-inventory -i "{{ inventory_path }}" --graph | tee "{{ artifacts_dir }}/inventory_graph.txt"
-    python3 - <<'PY'
-    import re,sys,json
-    g=open("{{ artifacts_dir }}/inventory_graph.txt").read().splitlines()
-    dupes=set(); seen=set()
-    for ln in g:
-      m=re.match(r"\|\s+([\w.-]+)", ln)
-      if m:
-        n=m.group(1)
-        if n in seen: dupes.add(n)
-        else: seen.add(n)
-    print(json.dumps({"dupes":sorted(dupes)}))
-    PY
-  args: { executable: /bin/bash }
-  register: lintres
-  changed_when: false
-
-- name: Write lint result
-  ansible.builtin.copy:
-    dest: "{{ artifacts_dir }}/inventory_lint.json"
-    mode: "0644"
-    content: "{{ lintres.stdout | default('{}') }}"
-
-- name: Discover var files
-  ansible.builtin.shell: |
-    set -euo pipefail
-    find {{ vars_roots | join(' ') }} -type f -name "*.yml" -o -name "*.yaml" 2>/dev/null || true
-  args: { executable: /bin/bash }
-  register: varfiles
-  changed_when: false
-
-- name: Validate against JSON Schemas (filename match)
-  when: apply_changes | bool
-  loop: "{{ varfiles.stdout_lines | default([]) }}"
-  loop_control: { label: "{{ item }}" }
-  community.general.jsonschema:
-    data: "{{ lookup('file', item) | from_yaml | default({}) }}"
-    schema: "{{ lookup('file', schemas_dir ~ '/' ~ (item | basename | regex_replace('\.(yml|yaml)$','.schema.json'))) | default('{}', true) | from_json }}"
-  register: schemares
-  ignore_errors: true
-
-- name: Write schema results
-  ansible.builtin.copy:
-    dest: "{{ artifacts_dir }}/vars_schema_results.json"
-    mode: "0644"
-    content: "{{ schemares | to_nice_json }}"
+- name: Display hygiene summary
+  ansible.builtin.debug:
+    msg:
+      - "Stale Hosts Found: {{ stale_hosts.json.count | default(0) }}"
+      - "Empty Groups Found: {{ empty_groups.json.count | default(0) }}"

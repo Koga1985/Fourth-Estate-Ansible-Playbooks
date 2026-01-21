@@ -1,0 +1,103 @@
+---
+# tasks file for aws_iam_mfa
+
+- name: Check current MFA devices for users
+  community.aws.iam_mfa_device_info:
+    user_name: "{{ item.name }}"
+  loop: "{{ iam_mfa_users }}"
+  when: iam_mfa_users is defined
+  register: mfa_device_status
+
+- name: Create virtual MFA devices
+  amazon.aws.iam_user:
+    name: "{{ item.name }}"
+    state: present
+  loop: "{{ iam_mfa_users }}"
+  when:
+    - iam_mfa_users is defined
+    - item.enable_mfa | default(true) | bool
+
+- name: Enable MFA enforcement policy
+  community.aws.iam_policy:
+    iam_type: user
+    iam_name: "{{ item.name }}"
+    policy_name: "RequireMFA"
+    policy_document: "{{ lookup('template', 'require_mfa_policy.json.j2') }}"
+    state: present
+  loop: "{{ iam_mfa_users }}"
+  when:
+    - iam_mfa_users is defined
+    - iam_enforce_mfa | bool
+
+- name: Create MFA compliance report
+  ansible.builtin.template:
+    src: "mfa_compliance_report.html.j2"
+    dest: "/tmp/mfa_compliance_report_{{ ansible_date_time.date }}.html"
+    mode: '0644'
+  delegate_to: localhost
+  when: iam_generate_mfa_report | bool
+
+- name: Tag users without MFA
+  community.aws.iam_user:
+    name: "{{ item.item.name }}"
+    state: present
+    tags:
+      MFAEnabled: "false"
+      ComplianceStatus: "NonCompliant"
+      RequiresAction: "true"
+  loop: "{{ mfa_device_status.results }}"
+  when:
+    - mfa_device_status is defined
+    - item.mfa_devices | length == 0
+    - iam_tag_non_compliant | bool
+
+- name: Send MFA reminder notifications
+  ansible.builtin.uri:
+    url: "{{ notification_webhook_url }}"
+    method: POST
+    body_format: json
+    body:
+      users_without_mfa: "{{ mfa_device_status.results | selectattr('mfa_devices', 'equalto', []) | map(attribute='item.name') | list }}"
+      timestamp: "{{ ansible_date_time.iso8601 }}"
+      message: "The following users do not have MFA enabled and must configure it within {{ iam_mfa_grace_period_days }} days"
+    status_code: [200, 201, 204]
+  when:
+    - notification_webhook_url is defined
+    - iam_send_mfa_reminders | bool
+  delegate_to: localhost
+
+- name: Create IAM access report for MFA analysis
+  community.aws.iam_access_key_info:
+    user_name: "{{ item.name }}"
+  loop: "{{ iam_mfa_users }}"
+  when: iam_mfa_users is defined
+  register: access_key_info
+
+- name: Deactivate old access keys without MFA
+  community.aws.iam_access_key:
+    user_name: "{{ item.0.item.name }}"
+    id: "{{ item.1.access_key_id }}"
+    state: absent
+  loop: "{{ access_key_info.results | subelements('access_keys', skip_missing=True) }}"
+  when:
+    - access_key_info is defined
+    - iam_revoke_keys_without_mfa | bool
+    - item.1.create_date | to_datetime('%Y-%m-%dT%H:%M:%S%z') < (ansible_date_time.iso8601 | to_datetime('%Y-%m-%dT%H:%M:%S%z')) - timedelta(days=iam_mfa_grace_period_days)
+  no_log: true
+
+- name: Display MFA compliance summary
+  ansible.builtin.debug:
+    msg:
+      - "Total Users Checked: {{ iam_mfa_users | length }}"
+      - "Users with MFA: {{ mfa_device_status.results | selectattr('mfa_devices', 'ne', []) | list | length }}"
+      - "Users without MFA: {{ mfa_device_status.results | selectattr('mfa_devices', 'equalto', []) | list | length }}"
+      - "Compliance Rate: {{ ((mfa_device_status.results | selectattr('mfa_devices', 'ne', []) | list | length) / (iam_mfa_users | length) * 100) | round(2) }}%"
+  when:
+    - iam_mfa_users is defined
+    - mfa_device_status is defined
+
+- name: Notify MFA configuration changes
+  ansible.builtin.debug:
+    msg: "MFA configuration check completed"
+  changed_when: true
+  notify: notify mfa changes

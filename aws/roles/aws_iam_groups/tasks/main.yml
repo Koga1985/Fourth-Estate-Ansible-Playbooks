@@ -1,0 +1,95 @@
+---
+# tasks file for aws_iam_groups
+
+- name: Create IAM groups
+  community.aws.iam_group:
+    name: "{{ item.name }}"
+    state: "{{ item.state | default(iam_group_state) }}"
+    managed_policies: "{{ item.managed_policies | default([]) }}"
+  loop: "{{ iam_groups }}"
+  when: iam_groups is defined
+  register: iam_group_result
+
+- name: Attach inline policies to groups
+  community.aws.iam_policy:
+    iam_type: group
+    iam_name: "{{ item.0.name }}"
+    policy_name: "{{ item.1.name }}"
+    policy_document: "{{ lookup('template', item.1.template) }}"
+    state: "{{ item.0.state | default(iam_group_state) }}"
+  loop: "{{ iam_groups | subelements('inline_policies', skip_missing=True) }}"
+  when: iam_groups is defined
+
+- name: Add users to groups
+  community.aws.iam_group:
+    name: "{{ item.0.name }}"
+    state: present
+    users: "{{ item.0.users | default([]) }}"
+    purge_users: "{{ item.0.purge_users | default(false) }}"
+  loop: "{{ iam_groups }}"
+  when:
+    - iam_groups is defined
+    - item.users is defined
+
+- name: Create group-specific permissions boundaries
+  community.aws.iam_managed_policy:
+    policy_name: "{{ item.name }}-Boundary"
+    policy_description: "Permissions boundary for {{ item.name }} group"
+    policy: "{{ lookup('template', item.boundary_template | default('group_boundary.json.j2')) }}"
+    state: "{{ item.state | default(iam_group_state) }}"
+  loop: "{{ iam_groups }}"
+  when:
+    - iam_groups is defined
+    - item.create_boundary | default(false) | bool
+  register: boundary_policies
+
+- name: Configure group MFA requirements
+  community.aws.iam_policy:
+    iam_type: group
+    iam_name: "{{ item.name }}"
+    policy_name: "EnforceMFA"
+    policy_document: "{{ lookup('template', 'enforce_mfa_policy.json.j2') }}"
+    state: "{{ item.state | default(iam_group_state) }}"
+  loop: "{{ iam_groups }}"
+  when:
+    - iam_groups is defined
+    - item.enforce_mfa | default(iam_enforce_mfa) | bool
+
+- name: Apply service control policies to groups
+  community.aws.iam_policy:
+    iam_type: group
+    iam_name: "{{ item.0.name }}"
+    policy_name: "{{ item.1.name }}"
+    policy_document: "{{ item.1.policy }}"
+    state: "{{ item.0.state | default(iam_group_state) }}"
+  loop: "{{ iam_groups | subelements('service_policies', skip_missing=True) }}"
+  when: iam_groups is defined
+
+- name: Tag IAM groups for compliance
+  community.aws.iam_group:
+    name: "{{ item.name }}"
+    state: present
+    tags: "{{ item.tags | default(iam_group_tags) | combine({'ManagedBy': 'Ansible'}) }}"
+  loop: "{{ iam_groups }}"
+  when:
+    - iam_groups is defined
+    - item.state | default(iam_group_state) == 'present'
+
+- name: Display IAM group creation summary
+  ansible.builtin.debug:
+    msg:
+      - "IAM Groups Created: {{ iam_group_result.results | selectattr('changed', 'equalto', true) | list | length }}"
+      - "Total Groups Managed: {{ iam_groups | length }}"
+      - "Groups with MFA Enforcement: {{ iam_groups | selectattr('enforce_mfa', 'defined') | selectattr('enforce_mfa', 'equalto', true) | list | length }}"
+  when:
+    - iam_groups is defined
+    - iam_group_result is defined
+
+- name: Notify IAM group changes
+  ansible.builtin.debug:
+    msg: "IAM group changes completed"
+  changed_when: true
+  notify: notify iam group changes
+  when:
+    - iam_group_result is defined
+    - iam_group_result.changed | default(false)

@@ -1,0 +1,52 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AllowListActions",
+      "Effect": "Allow",
+      "Action": [
+        "iam:ListUsers",
+        "iam:ListVirtualMFADevices",
+        "iam:GetUser"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "AllowIndividualUserToManageTheirOwnMFA",
+      "Effect": "Allow",
+      "Action": [
+        "iam:CreateVirtualMFADevice",
+        "iam:DeleteVirtualMFADevice",
+        "iam:EnableMFADevice",
+        "iam:ResyncMFADevice"
+      ],
+      "Resource": [
+        "arn:{{ aws_partition | default('aws-us-gov') }}:iam::*:user/${aws:username}",
+        "arn:{{ aws_partition | default('aws-us-gov') }}:iam::*:mfa/${aws:username}"
+      ]
+    },
+    {
+      "Sid": "DenyEverythingExceptForBelowUnlessMFAd",
+      "Effect": "Deny",
+      "NotAction": [
+        "iam:ListMFADevices",
+        "iam:ListUsers",
+        "iam:ListVirtualMFADevices",
+        "iam:CreateVirtualMFADevice",
+        "iam:EnableMFADevice",
+        "iam:ResyncMFADevice",
+        "iam:ChangePassword",
+        "iam:GetUser"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "BoolIfExists": {
+          "aws:MultiFactorAuthPresent": "false"
+        },
+        "NumericLessThan": {
+          "aws:MultiFactorAuthAge": "{{ iam_mfa_max_age_seconds | default(3600) }}"
+        }
+      }
+    }
+  ]
+}

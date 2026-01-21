@@ -1,0 +1,29 @@
+---
+# tasks file for aws_cloudwatch_alarms
+
+- name: Create CloudWatch metric alarms
+  community.aws.cloudwatch_metric_alarm:
+    name: "{{ item.name }}"
+    description: "{{ item.description | default('Alarm managed by Ansible') }}"
+    namespace: "{{ item.namespace }}"
+    metric_name: "{{ item.metric }}"
+    statistic: "{{ item.statistic | default('Average') }}"
+    comparison: "{{ item.comparison }}"
+    threshold: "{{ item.threshold }}"
+    period: "{{ item.period | default(300) }}"
+    evaluation_periods: "{{ item.evaluation_periods | default(2) }}"
+    datapoints_to_alarm: "{{ item.datapoints_to_alarm | default(omit) }}"
+    dimensions: "{{ item.dimensions | default({}) }}"
+    alarm_actions: "{{ item.alarm_actions | default([]) }}"
+    ok_actions: "{{ item.ok_actions | default([]) }}"
+    insufficient_data_actions: "{{ item.insufficient_data_actions | default([]) }}"
+    treat_missing_data: "{{ item.treat_missing_data | default('notBreaching') }}"
+    state: "{{ item.state | default(cloudwatch_alarm_state) }}"
+  loop: "{{ cloudwatch_alarms }}"
+  when: cloudwatch_alarms is defined
+  register: alarm_result
+
+- name: Display CloudWatch alarms summary
+  ansible.builtin.debug:
+    msg:
+      - "Alarms Created: {{ alarm_result.results | selectattr('changed', 'equalto', true) | list | length if alarm_result is defined else 0 }}"

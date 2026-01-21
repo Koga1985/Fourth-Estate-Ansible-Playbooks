@@ -1,0 +1,115 @@
+---
+# tasks file for aws_iam_users
+
+- name: Create IAM users
+  community.aws.iam_user:
+    name: "{{ item.name }}"
+    state: "{{ item.state | default(iam_user_state) }}"
+    managed_policies: "{{ item.managed_policies | default([]) }}"
+    tags: "{{ item.tags | default(iam_user_tags) | combine({'ManagedBy': 'Ansible'}) }}"
+  loop: "{{ iam_users }}"
+  when: iam_users is defined
+  register: iam_user_result
+
+- name: Create login profiles for console access
+  community.aws.iam_user:
+    name: "{{ item.name }}"
+    state: present
+    password: "{{ item.password | default(omit) }}"
+    password_reset_required: "{{ item.password_reset_required | default(true) }}"
+    update_password: "{{ item.update_password | default('on_create') }}"
+  loop: "{{ iam_users }}"
+  when:
+    - iam_users is defined
+    - item.console_access | default(false) | bool
+  no_log: true
+
+- name: Attach inline policies to users
+  community.aws.iam_policy:
+    iam_type: user
+    iam_name: "{{ item.0.name }}"
+    policy_name: "{{ item.1.name }}"
+    policy_document: "{{ lookup('template', item.1.template) }}"
+    state: "{{ item.0.state | default(iam_user_state) }}"
+  loop: "{{ iam_users | subelements('inline_policies', skip_missing=True) }}"
+  when: iam_users is defined
+
+- name: Create access keys for programmatic access
+  community.aws.iam_access_key:
+    user_name: "{{ item.name }}"
+    state: present
+  loop: "{{ iam_users }}"
+  when:
+    - iam_users is defined
+    - item.programmatic_access | default(false) | bool
+    - item.state | default(iam_user_state) == 'present'
+  register: iam_access_keys
+  no_log: true
+
+- name: Save access keys to secure location
+  ansible.builtin.copy:
+    content: |
+      User: {{ item.item.name }}
+      Access Key ID: {{ item.access_key.access_key_id }}
+      Secret Access Key: {{ item.secret_access_key }}
+      Created: {{ item.access_key.create_date }}
+    dest: "{{ iam_user_keys_output_dir }}/{{ item.item.name }}_credentials.txt"
+    mode: '0600'
+  loop: "{{ iam_access_keys.results }}"
+  when:
+    - iam_access_keys is defined
+    - item.changed | default(false)
+    - item.access_key is defined
+  delegate_to: localhost
+  no_log: true
+
+- name: Configure user permissions boundary
+  community.aws.iam_user:
+    name: "{{ item.name }}"
+    state: present
+    boundary: "{{ item.permissions_boundary | default(iam_user_permissions_boundary) }}"
+  loop: "{{ iam_users }}"
+  when:
+    - iam_users is defined
+    - item.permissions_boundary is defined or iam_user_permissions_boundary is defined
+    - item.state | default(iam_user_state) == 'present'
+
+- name: Add users to groups
+  community.aws.iam_group:
+    name: "{{ item.1 }}"
+    state: present
+    users:
+      - "{{ item.0.name }}"
+  loop: "{{ iam_users | subelements('groups', skip_missing=True) }}"
+  when: iam_users is defined
+
+- name: Enable MFA enforcement tags
+  community.aws.iam_user:
+    name: "{{ item.name }}"
+    state: present
+    tags: "{{ item.tags | default(iam_user_tags) | combine({'MFAEnabled': 'false', 'MFAEnforced': 'true'}) }}"
+  loop: "{{ iam_users }}"
+  when:
+    - iam_users is defined
+    - iam_enforce_mfa | bool
+    - item.state | default(iam_user_state) == 'present'
+
+- name: Display IAM user creation summary
+  ansible.builtin.debug:
+    msg:
+      - "IAM Users Created: {{ iam_user_result.results | selectattr('changed', 'equalto', true) | list | length }}"
+      - "Total Users Managed: {{ iam_users | length }}"
+      - "Users with Console Access: {{ iam_users | selectattr('console_access', 'defined') | selectattr('console_access', 'equalto', true) | list | length }}"
+      - "Users with Programmatic Access: {{ iam_users | selectattr('programmatic_access', 'defined') | selectattr('programmatic_access', 'equalto', true) | list | length }}"
+  when:
+    - iam_users is defined
+    - iam_user_result is defined
+
+- name: Notify IAM user changes
+  ansible.builtin.debug:
+    msg: "IAM user changes completed"
+  changed_when: true
+  notify: notify iam user changes
+  when:
+    - iam_user_result is defined
+    - iam_user_result.changed | default(false)

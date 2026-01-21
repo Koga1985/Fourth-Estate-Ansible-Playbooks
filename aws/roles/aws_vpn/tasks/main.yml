@@ -1,0 +1,145 @@
+---
+# tasks file for aws_vpn
+
+- name: Create Virtual Private Gateway
+  community.aws.ec2_vpc_vgw:
+    vpc_id: "{{ vpn_vpc_id | default(vpc_id) }}"
+    name: "{{ vpn_gateway_name }}"
+    type: "{{ vpn_gateway_type }}"
+    asn: "{{ vpn_gateway_asn | default(omit) }}"
+    region: "{{ vpn_region | default(aws_region) }}"
+    tags: "{{ vpn_tags | combine({'Name': vpn_gateway_name, 'ManagedBy': 'Ansible'}) }}"
+    state: "{{ vpn_state }}"
+  when: create_vpn_gateway | bool
+  register: vpn_gateway_result
+
+- name: Create Customer Gateways
+  community.aws.ec2_customer_gateway:
+    ip_address: "{{ item.ip_address }}"
+    bgp_asn: "{{ item.bgp_asn | default(65000) }}"
+    name: "{{ item.name }}"
+    region: "{{ vpn_region | default(aws_region) }}"
+    tags: "{{ item.tags | default(vpn_tags) | combine({'Name': item.name, 'ManagedBy': 'Ansible'}) }}"
+    state: "{{ item.state | default(vpn_state) }}"
+  loop: "{{ customer_gateways }}"
+  when: customer_gateways is defined
+  register: customer_gateway_result
+
+- name: Create VPN Connections
+  community.aws.ec2_vpc_vpn:
+    customer_gateway_id: "{{ item.customer_gateway_id }}"
+    vpn_gateway_id: "{{ vpn_gateway_result.vgw.id if vpn_gateway_result is defined else item.vpn_gateway_id }}"
+    static_only: "{{ item.static_only | default(false) }}"
+    routes: "{{ item.routes | default([]) }}"
+    tunnel_options: "{{ item.tunnel_options | default([]) }}"
+    region: "{{ vpn_region | default(aws_region) }}"
+    tags: "{{ item.tags | default(vpn_tags) | combine({'Name': item.name, 'ManagedBy': 'Ansible'}) }}"
+    state: "{{ item.state | default(vpn_state) }}"
+  loop: "{{ vpn_connections }}"
+  when: vpn_connections is defined
+  register: vpn_connection_result
+
+- name: Configure VPN tunnel options for FedRAMP compliance
+  community.aws.ec2_vpc_vpn:
+    vpn_connection_id: "{{ item.vpn_connection.vpn_connection_id }}"
+    tunnel_options:
+      - tunnel_inside_cidr: "169.254.10.0/30"
+        pre_shared_key: "{{ item.item.psk | default(omit) }}"
+        phase1_encryption_algorithms: ["AES256"]
+        phase2_encryption_algorithms: ["AES256"]
+        phase1_integrity_algorithms: ["SHA2-256"]
+        phase2_integrity_algorithms: ["SHA2-256"]
+        phase1_dh_group_numbers: [14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24]
+        phase2_dh_group_numbers: [14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24]
+        ike_versions: ["ikev2"]
+        phase1_lifetime_seconds: 28800
+        phase2_lifetime_seconds: 3600
+      - tunnel_inside_cidr: "169.254.11.0/30"
+        pre_shared_key: "{{ item.item.psk_backup | default(omit) }}"
+        phase1_encryption_algorithms: ["AES256"]
+        phase2_encryption_algorithms: ["AES256"]
+        phase1_integrity_algorithms: ["SHA2-256"]
+        phase2_integrity_algorithms: ["SHA2-256"]
+        phase1_dh_group_numbers: [14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24]
+        phase2_dh_group_numbers: [14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24]
+        ike_versions: ["ikev2"]
+        phase1_lifetime_seconds: 28800
+        phase2_lifetime_seconds: 3600
+    lookup: id
+    state: "{{ vpn_state }}"
+  loop: "{{ vpn_connection_result.results }}"
+  when:
+    - vpn_connection_result is defined
+    - vpn_enable_fedramp_encryption | bool
+    - item.vpn_connection is defined
+  no_log: true
+
+- name: Enable VPN connection monitoring
+  community.aws.cloudwatch_metric_alarm:
+    name: "{{ item.vpn_connection.vpn_connection_id }}-TunnelState"
+    description: "Alert when VPN tunnel is down"
+    namespace: "AWS/VPN"
+    metric_name: "TunnelState"
+    statistic: "Average"
+    comparison: "LessThanThreshold"
+    threshold: 1.0
+    period: 300
+    evaluation_periods: 2
+    dimensions:
+      VpnId: "{{ item.vpn_connection.vpn_connection_id }}"
+    alarm_actions: "{{ vpn_alarm_sns_topic }}"
+    state: "{{ vpn_state }}"
+  loop: "{{ vpn_connection_result.results }}"
+  when:
+    - vpn_connection_result is defined
+    - vpn_enable_monitoring | bool
+    - vpn_alarm_sns_topic is defined
+    - item.vpn_connection is defined
+
+- name: Create VPN CloudWatch log group
+  community.aws.cloudwatchlogs_log_group:
+    log_group_name: "/aws/vpn/{{ vpn_gateway_name }}"
+    retention_in_days: "{{ vpn_log_retention_days }}"
+    kms_key_id: "{{ kms_key_id | default(omit) }}"
+    tags: "{{ vpn_tags }}"
+    state: "{{ vpn_state }}"
+  when:
+    - vpn_enable_logging | bool
+    - vpn_gateway_result is defined
+
+- name: Tag VPN resources for compliance
+  community.aws.ec2_tag:
+    resource: "{{ item.vpn_connection.vpn_connection_id }}"
+    region: "{{ vpn_region | default(aws_region) }}"
+    tags: "{{ vpn_tags | combine({'Compliance': 'FedRAMP-High', 'Encryption': 'AES256-SHA256'}) }}"
+    state: "{{ vpn_state }}"
+  loop: "{{ vpn_connection_result.results }}"
+  when:
+    - vpn_connection_result is defined
+    - item.vpn_connection is defined
+
+- name: Save VPN configuration to file
+  ansible.builtin.template:
+    src: "vpn_config.j2"
+    dest: "/tmp/vpn_config_{{ ansible_date_time.date }}.txt"
+    mode: '0600'
+  delegate_to: localhost
+  when:
+    - vpn_save_config | bool
+    - vpn_connection_result is defined
+
+- name: Display VPN summary
+  ansible.builtin.debug:
+    msg:
+      - "VPN Gateway ID: {{ vpn_gateway_result.vgw.id if vpn_gateway_result is defined and vpn_gateway_result.vgw is defined else 'N/A' }}"
+      - "Customer Gateways Created: {{ customer_gateway_result.results | selectattr('changed', 'equalto', true) | list | length if customer_gateway_result is defined else 0 }}"
+      - "VPN Connections Created: {{ vpn_connection_result.results | selectattr('changed', 'equalto', true) | list | length if vpn_connection_result is defined else 0 }}"
+
+- name: Notify VPN changes
+  ansible.builtin.debug:
+    msg: "VPN configuration completed"
+  changed_when: true
+  notify: notify vpn changes
+  when:
+    - vpn_connection_result is defined
+    - vpn_connection_result.changed | default(false)

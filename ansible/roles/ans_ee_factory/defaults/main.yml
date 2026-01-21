@@ -1,9 +1,134 @@
 ---
-# Common defaults shared by most roles
-apply_changes: false              # guard: require explicit true for mutating actions
+# Common settings
+apply_changes: false
 artifacts_dir: "/tmp/ansible-artifacts"
 validate_certs: true
 
-
-ee_definitions: []   # [{name,image,context,bindep,python,galaxy,labels,sign:true}]
+# Container Registry
+ee_registry: "{{ lookup('env', 'EE_REGISTRY') | default('registry.example.mil') }}"
+ee_registry_username: "{{ lookup('env', 'REGISTRY_USERNAME') | default('') }}"
+ee_registry_password: "{{ lookup('env', 'REGISTRY_PASSWORD') | default('') }}"
+ee_registry_namespace: "fourth-estate"
 registry_push: true
+registry_verify_ssl: true
+
+# Build Configuration
+ee_builder_version: "3"
+ee_base_image: "quay.io/ansible/ansible-runner:latest"
+ee_builder_image: "quay.io/ansible/ansible-builder:latest"
+ee_build_arg_defaults:
+  ANSIBLE_GALAXY_CLI_COLLECTION_OPTS: "--pre"
+  PKGMGR_PRESERVE_CACHE: "always"
+
+# Execution Environment Definitions
+ee_definitions:
+  - name: "fourth-estate-base"
+    image: "{{ ee_registry }}/{{ ee_registry_namespace }}/base-ee"
+    tag: "latest"
+    description: "Base execution environment for Fourth Estate"
+    base_image: "{{ ee_base_image }}"
+    dependencies:
+      python:
+        - ansible-core>=2.15
+        - jmespath
+        - netaddr
+        - dnspython
+      system:
+        - git
+        - rsync
+        - openssh-clients
+      galaxy:
+        collections:
+          - name: ansible.posix
+          - name: ansible.utils
+          - name: community.general
+    build_args:
+      EE_BASE_IMAGE: "{{ ee_base_image }}"
+
+  - name: "fourth-estate-cloud"
+    image: "{{ ee_registry }}/{{ ee_registry_namespace }}/cloud-ee"
+    tag: "latest"
+    description: "Cloud automation execution environment"
+    base_image: "{{ ee_registry }}/{{ ee_registry_namespace }}/base-ee:latest"
+    dependencies:
+      python:
+        - boto3
+        - botocore
+        - azure-cli
+        - google-cloud-sdk
+      galaxy:
+        collections:
+          - name: amazon.aws
+          - name: azure.azcollection
+          - name: google.cloud
+
+  - name: "fourth-estate-network"
+    image: "{{ ee_registry }}/{{ ee_registry_namespace }}/network-ee"
+    tag: "latest"
+    description: "Network automation execution environment"
+    base_image: "{{ ee_registry }}/{{ ee_registry_namespace }}/base-ee:latest"
+    dependencies:
+      python:
+        - paramiko
+        - netmiko
+        - napalm
+      galaxy:
+        collections:
+          - name: cisco.ios
+          - name: cisco.nxos
+          - name: arista.eos
+          - name: junipernetworks.junos
+
+  - name: "fourth-estate-security"
+    image: "{{ ee_registry }}/{{ ee_registry_namespace }}/security-ee"
+    tag: "latest"
+    description: "Security and compliance execution environment"
+    base_image: "{{ ee_registry }}/{{ ee_registry_namespace }}/base-ee:latest"
+    dependencies:
+      python:
+        - hvac  # HashiCorp Vault
+        - cryptography
+        - pyyaml
+      system:
+        - openssl
+        - gnupg
+      galaxy:
+        collections:
+          - name: community.crypto
+          - name: community.hashi_vault
+
+# Image Signing
+ee_signing_enabled: true
+ee_signing_command: "cosign"
+ee_signing_key: ""
+ee_signature_registry_path: "signatures"
+
+# Image Scanning
+ee_scanning_enabled: true
+ee_scanner: "trivy"  # trivy, clair, anchore
+ee_scan_severity_threshold: "HIGH"
+ee_scan_fail_on_critical: true
+
+# Cache Configuration
+ee_cache_enabled: true
+ee_cache_path: "/var/cache/ansible-builder"
+
+# Build Optimization
+ee_parallel_builds: false
+ee_max_parallel: 3
+ee_build_timeout: 3600  # seconds
+ee_prune_on_success: true
+ee_keep_failed_builds: false
+
+# Controller Integration
+ee_register_in_controller: true
+controller_host: "{{ lookup('env', 'CONTROLLER_HOST') | default('https://controller.example.mil') }}"
+controller_oauthtoken: "{{ lookup('env', 'CONTROLLER_OAUTH_TOKEN') | default('') }}"
+controller_username: "{{ lookup('env', 'CONTROLLER_USERNAME') | default('') }}"
+controller_password: "{{ lookup('env', 'CONTROLLER_PASSWORD') | default('') }}"
+
+# Fourth Estate Specific
+fourth_estate_hardened_images: true
+fourth_estate_fips_mode: true
+fourth_estate_minimal_base: true
+fourth_estate_compliance_scan: true

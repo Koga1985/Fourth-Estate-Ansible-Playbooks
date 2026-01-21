@@ -1,0 +1,111 @@
+---
+# tasks file for aws_ec2_ebs_volumes
+
+- name: Create EBS volumes
+  amazon.aws.ec2_vol:
+    volume_size: "{{ item.size }}"
+    volume_type: "{{ item.type | default('gp3') }}"
+    iops: "{{ item.iops | default(omit) }}"
+    throughput: "{{ item.throughput | default(omit) }}"
+    encrypted: "{{ item.encrypted | default(true) }}"
+    kms_key_id: "{{ item.kms_key_id | default(kms_key_id) }}"
+    zone: "{{ item.zone }}"
+    region: "{{ item.region | default(aws_region) }}"
+    snapshot: "{{ item.snapshot | default(omit) }}"
+    tags: "{{ item.tags | default(ebs_tags) | combine({'Name': item.name, 'ManagedBy': 'Ansible'}) }}"
+    state: "{{ item.state | default(ebs_state) }}"
+  loop: "{{ ebs_volumes }}"
+  when: ebs_volumes is defined
+  register: ebs_volume_result
+
+- name: Attach EBS volumes to instances
+  amazon.aws.ec2_vol:
+    id: "{{ item.0.volume_id }}"
+    instance: "{{ item.0.item.instance_id }}"
+    device_name: "{{ item.0.item.device_name }}"
+    region: "{{ item.0.item.region | default(aws_region) }}"
+    delete_on_termination: "{{ item.0.item.delete_on_termination | default(false) }}"
+    state: present
+  loop: "{{ ebs_volume_result.results }}"
+  when:
+    - ebs_volume_result is defined
+    - item.volume_id is defined
+    - item.item.instance_id is defined
+
+- name: Enable EBS encryption by default
+  amazon.aws.ec2_ebs_encryption_by_default:
+    state: enabled
+    region: "{{ aws_region }}"
+  when: ebs_enforce_encryption_by_default | bool
+
+- name: Set default KMS key for EBS encryption
+  amazon.aws.ec2_ebs_default_kms_key:
+    kms_key_id: "{{ kms_key_id }}"
+    region: "{{ aws_region }}"
+    state: present
+  when:
+    - ebs_set_default_kms_key | bool
+    - kms_key_id is defined
+
+- name: Create volume snapshots for backup
+  amazon.aws.ec2_snapshot:
+    volume_id: "{{ item.volume_id }}"
+    description: "Automated snapshot of {{ item.item.name }}"
+    region: "{{ item.item.region | default(aws_region) }}"
+    snapshot_tags: "{{ ebs_tags | combine({'VolumeId': item.volume_id, 'VolumeName': item.item.name, 'BackupType': 'Automated'}) }}"
+    state: present
+  loop: "{{ ebs_volume_result.results }}"
+  when:
+    - ebs_volume_result is defined
+    - ebs_enable_automatic_snapshots | bool
+    - item.volume_id is defined
+  register: snapshot_result
+
+- name: Tag EBS volumes for compliance
+  amazon.aws.ec2_vol:
+    id: "{{ item.volume_id }}"
+    region: "{{ item.item.region | default(aws_region) }}"
+    tags: "{{ ebs_tags | combine({'Compliance': 'FedRAMP-High', 'Encrypted': 'true', 'BackupEnabled': 'true'}) }}"
+  loop: "{{ ebs_volume_result.results }}"
+  when:
+    - ebs_volume_result is defined
+    - item.volume_id is defined
+
+- name: Create CloudWatch alarms for volume metrics
+  community.aws.cloudwatch_metric_alarm:
+    name: "{{ item.item.name }}-HighIOWait"
+    description: "Alert when volume {{ item.item.name }} has high IO wait"
+    namespace: "AWS/EBS"
+    metric_name: "VolumeQueueLength"
+    statistic: "Average"
+    comparison: "GreaterThanThreshold"
+    threshold: 10
+    period: 300
+    evaluation_periods: 2
+    dimensions:
+      VolumeId: "{{ item.volume_id }}"
+    alarm_actions: "{{ ebs_alarm_sns_topic }}"
+    region: "{{ item.item.region | default(aws_region) }}"
+    state: present
+  loop: "{{ ebs_volume_result.results }}"
+  when:
+    - ebs_volume_result is defined
+    - ebs_enable_cloudwatch_alarms | bool
+    - ebs_alarm_sns_topic is defined
+    - item.volume_id is defined
+
+- name: Display EBS volume summary
+  ansible.builtin.debug:
+    msg:
+      - "EBS Volumes Created: {{ ebs_volume_result.results | selectattr('changed', 'equalto', true) | list | length if ebs_volume_result is defined else 0 }}"
+      - "Total Volume Size: {{ ebs_volume_result.results | map(attribute='item.size') | sum if ebs_volume_result is defined else 0 }} GB"
+      - "Snapshots Created: {{ snapshot_result.results | selectattr('changed', 'equalto', true) | list | length if snapshot_result is defined else 0 }}"
+
+- name: Notify EBS volume changes
+  ansible.builtin.debug:
+    msg: "EBS volume configuration completed"
+  changed_when: true
+  notify: notify ebs volume changes
+  when:
+    - ebs_volume_result is defined
+    - ebs_volume_result.changed | default(false)

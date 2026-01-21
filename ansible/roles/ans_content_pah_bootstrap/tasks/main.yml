@@ -1,28 +1,112 @@
-
 ---
-- name: Status check
+- name: Ensure artifacts directory exists
+  ansible.builtin.file:
+    path: "{{ artifacts_dir }}"
+    state: directory
+    mode: "0755"
+  delegate_to: localhost
+
+- name: Check Private Automation Hub status
   ansible.builtin.uri:
     url: "{{ ah_url }}/api/galaxy/pulp/api/v3/status/"
     method: GET
     force_basic_auth: true
     url_username: "{{ ah_username }}"
     url_password: "{{ ah_password }}"
-    validate_certs: true
-  register: status
+    validate_certs: "{{ validate_certs }}"
+    return_content: true
+  register: ah_status
   failed_when: false
 
-- name: Write status artifact
-  ansible.builtin.copy:
-    dest: "{{ artifacts_dir }}/pah_status.json"
-    mode: "0644"
-    content: "{{ status.json | default({'ok': false}) | to_nice_json }}"
+- name: Create namespaces
+  when: apply_changes | bool
+  ansible.builtin.uri:
+    url: "{{ ah_url }}/api/galaxy/_ui/v1/namespaces/"
+    method: POST
+    force_basic_auth: true
+    url_username: "{{ ah_username }}"
+    url_password: "{{ ah_password }}"
+    validate_certs: "{{ validate_certs }}"
+    body_format: json
+    body:
+      name: "{{ item.name }}"
+      description: "{{ item.description }}"
+    status_code: [201, 400]
+  loop: "{{ ah_namespaces }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: namespace_result
 
-- name: NOTE
+- name: Create groups
+  when: apply_changes | bool
+  ansible.builtin.uri:
+    url: "{{ ah_url }}/api/galaxy/_ui/v1/groups/"
+    method: POST
+    force_basic_auth: true
+    url_username: "{{ ah_username }}"
+    url_password: "{{ ah_password }}"
+    validate_certs: "{{ validate_certs }}"
+    body_format: json
+    body:
+      name: "{{ item.name }}"
+    status_code: [201, 400]
+  loop: "{{ ah_groups }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Configure remote repositories
+  when: apply_changes | bool
+  ansible.builtin.uri:
+    url: "{{ ah_url }}/api/galaxy/pulp/api/v3/remotes/ansible/collection/"
+    method: POST
+    force_basic_auth: true
+    url_username: "{{ ah_username }}"
+    url_password: "{{ ah_password }}"
+    validate_certs: "{{ validate_certs }}"
+    body_format: json
+    body:
+      name: "{{ item.name }}"
+      url: "{{ item.url }}"
+      requirements_file: "{{ item.requirements | to_yaml }}"
+    status_code: [201, 400]
+  loop: "{{ ah_remotes }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Sync remote repositories
+  when: apply_changes | bool and ah_sync_on_bootstrap
+  ansible.builtin.uri:
+    url: "{{ ah_url }}/api/galaxy/pulp/api/v3/remotes/ansible/collection/{{ item.name }}/sync/"
+    method: POST
+    force_basic_auth: true
+    url_username: "{{ ah_username }}"
+    url_password: "{{ ah_password }}"
+    validate_certs: "{{ validate_certs }}"
+    status_code: [202]
+  loop: "{{ ah_remotes }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Generate PAH bootstrap summary
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/pah_bootstrap_summary.json"
+    mode: "0644"
+    content: |
+      {
+        "automation_hub_url": "{{ ah_url }}",
+        "namespaces": {{ ah_namespaces | to_nice_json }},
+        "groups": {{ ah_groups | to_nice_json }},
+        "remotes": {{ ah_remotes | to_nice_json }},
+        "repositories": {{ ah_repositories | to_nice_json }},
+        "signing_enabled": {{ ah_collection_signing_enabled | bool | lower }}
+      }
+  delegate_to: localhost
+
+- name: Display PAH configuration summary
   ansible.builtin.debug:
-    msg: "Use redhat_cop.ah_configuration to manage remotes/repos/groups/SSO. This role emits plans and runs provider modules when available."
-
-- name: Plan inputs
-  ansible.builtin.copy:
-    dest: "{{ artifacts_dir }}/pah_bootstrap_plan.json"
-    mode: "0644"
-    content: "{{ {'sso': sso, 'groups': groups, 'remotes': remotes, 'promote_map': promote_map } | to_nice_json }}"
+    msg:
+      - "Private Automation Hub URL: {{ ah_url }}"
+      - "Namespaces Created: {{ ah_namespaces | length }}"
+      - "Groups Created: {{ ah_groups | length }}"
+      - "Remote Repositories: {{ ah_remotes | length }}"
+      - "Collection Signing: {{ ah_collection_signing_enabled }}"

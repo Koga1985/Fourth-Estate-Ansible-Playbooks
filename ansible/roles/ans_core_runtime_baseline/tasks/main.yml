@@ -1,36 +1,38 @@
-
 ---
-- name: Ensure junit dir
-  ansible.builtin.file: { path: "{{ junit_output_dir }}", state: directory, mode: "0755" }
-
-- name: Apply ansible.cfg defaults
+- name: Set runtime environment variables
   when: apply_changes | bool
-  loop:
-    - { option: 'strategy', value: '{{ strategy }}' }
-    - { option: 'forks', value: '{{ forks }}' }
-    - { option: 'timeout', value: '{{ timeout }}' }
-    - { option: 'callbacks_enabled', value: '{{ callbacks_enabled | join(",") }}' }
-    - { option: 'stdout_callback', value: '{{ stdout_callback }}' }
-  loop_control: { label: "{{ item.option }}" }
-  community.general.ini_file:
-    path: "{{ ansible_cfg_path }}"
-    section: defaults
-    option: "{{ item.option }}"
-    value: "{{ item.value }}"
-    no_extra_spaces: true
-    mode: "0644"
+  ansible.controller.settings:
+    controller_host: "{{ controller_host }}"
+    controller_oauthtoken: "{{ controller_oauthtoken }}"
+    validate_certs: "{{ validate_certs }}"
+    settings:
+      AWX_TASK_ENV:
+        PYTHONPATH: "/usr/lib/python{{ runtime_python_version }}/site-packages"
+        ANSIBLE_FORCE_COLOR: "false"
+        ANSIBLE_HOST_KEY_CHECKING: "false"
 
-- name: Configure fact cache
+- name: Configure job timeout
   when: apply_changes | bool
-  loop:
-    - { option: 'fact_caching', value: '{{ cache_backend }}' }
-    - { option: 'fact_caching_connection', value: '{{ cache_connection }}' }
-    - { option: 'fact_caching_timeout', value: '{{ cache_ttl }}' }
-  loop_control: { label: "{{ item.option }}" }
-  community.general.ini_file:
-    path: "{{ ansible_cfg_path }}"
-    section: defaults
-    option: "{{ item.option }}"
-    value: "{{ item.value }}"
-    no_extra_spaces: true
-    mode: "0644"
+  ansible.controller.settings:
+    controller_host: "{{ controller_host }}"
+    controller_oauthtoken: "{{ controller_oauthtoken }}"
+    validate_certs: "{{ validate_certs }}"
+    settings:
+      DEFAULT_JOB_TIMEOUT: "{{ runtime_job_timeout }}"
+      MAX_FORKS: "{{ runtime_max_forks }}"
+
+- name: Enable FIPS mode
+  when: apply_changes | bool and fourth_estate_fips_mode | bool
+  ansible.controller.settings:
+    controller_host: "{{ controller_host }}"
+    controller_oauthtoken: "{{ controller_oauthtoken }}"
+    validate_certs: "{{ validate_certs }}"
+    settings:
+      FIPS_MODE: true
+
+- name: Display runtime baseline
+  ansible.builtin.debug:
+    msg:
+      - "Python: {{ runtime_python_version }}"
+      - "Ansible: {{ runtime_ansible_version }}"
+      - "FIPS: {{ fourth_estate_fips_mode }}"

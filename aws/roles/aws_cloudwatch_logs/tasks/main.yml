@@ -1,0 +1,42 @@
+---
+# tasks file for aws_cloudwatch_logs
+
+- name: Create CloudWatch log groups
+  community.aws.cloudwatchlogs_log_group:
+    log_group_name: "{{ item.name }}"
+    retention_in_days: "{{ item.retention_days | default(cloudwatch_log_retention_days) }}"
+    kms_key_id: "{{ item.kms_key_id | default(kms_key_id) }}"
+    tags: "{{ item.tags | default(cloudwatch_log_tags) | combine({'Name': item.name, 'ManagedBy': 'Ansible'}) }}"
+    state: "{{ item.state | default(cloudwatch_log_state) }}"
+  loop: "{{ cloudwatch_log_groups }}"
+  when: cloudwatch_log_groups is defined
+  register: log_group_result
+
+- name: Create log group metric filters
+  community.aws.cloudwatchlogs_log_group_metric_filter:
+    log_group_name: "{{ item.log_group }}"
+    filter_name: "{{ item.name }}"
+    filter_pattern: "{{ item.pattern }}"
+    metric_transformation:
+      metric_name: "{{ item.metric_name }}"
+      metric_namespace: "{{ item.metric_namespace }}"
+      metric_value: "{{ item.metric_value | default('1') }}"
+    state: "{{ item.state | default(cloudwatch_log_state) }}"
+  loop: "{{ cloudwatch_metric_filters }}"
+  when: cloudwatch_metric_filters is defined
+
+- name: Create subscription filters for log aggregation
+  community.aws.cloudwatchlogs_log_group_subscription_filter:
+    log_group_name: "{{ item.log_group }}"
+    filter_name: "{{ item.name }}"
+    filter_pattern: "{{ item.pattern }}"
+    destination_arn: "{{ item.destination_arn }}"
+    role_arn: "{{ item.role_arn }}"
+    state: "{{ item.state | default(cloudwatch_log_state) }}"
+  loop: "{{ cloudwatch_subscription_filters }}"
+  when: cloudwatch_subscription_filters is defined
+
+- name: Display CloudWatch logs summary
+  ansible.builtin.debug:
+    msg:
+      - "Log Groups Created: {{ log_group_result.results | selectattr('changed', 'equalto', true) | list | length if log_group_result is defined else 0 }}"

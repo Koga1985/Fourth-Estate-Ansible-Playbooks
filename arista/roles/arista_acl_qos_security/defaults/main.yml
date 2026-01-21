@@ -1,6 +1,187 @@
 ---
-apply_changes: false
-artifacts_dir: "/tmp/arista-artifacts"
+# defaults file for arista_acl_qos_security
+# Production-ready ACL, QoS, and security defaults with DISA STIG compliance
 
-acls: [{ name: "MGMT-IN", afi: "ipv4", entries: [{ sequence: 10, action: "permit", source: "10.0.0.0/8" }, { sequence: 99, action: "deny", source: "any" }] }]
-apply_to: [{ interface: "Vlan10", direction: "in", acl: "MGMT-IN" }]
+arista_apply_changes: false
+arista_artifacts_dir: "/tmp/arista-artifacts"
+
+# IPv4 ACLs
+ipv4_acls:
+  - afi: "ipv4"
+    acls:
+      - name: "MGMT_ACCESS"
+        aces:
+          - sequence: 10
+            grant: "permit"
+            protocol: "tcp"
+            source:
+              address: "10.0.0.0/8"
+            destination:
+              any: true
+              port_protocol:
+                eq: "22"
+          - sequence: 20
+            grant: "permit"
+            protocol: "tcp"
+            source:
+              address: "10.0.0.0/8"
+            destination:
+              any: true
+              port_protocol:
+                eq: "443"
+          - sequence: 99
+            grant: "deny"
+            protocol: "ip"
+            source:
+              any: true
+            destination:
+              any: true
+            log: true
+
+# ACL to interface mappings
+acl_interfaces:
+  - name: "Management1"
+    afi: "ipv4"
+    acl: "MGMT_ACCESS"
+    direction: "in"
+
+# QoS Class Maps
+qos_class_maps:
+  - name: "VOICE"
+    type: "match-any"
+    match:
+      - "dscp ef"
+      - "cos 5"
+  - name: "VIDEO"
+    type: "match-any"
+    match:
+      - "dscp af41"
+      - "cos 4"
+  - name: "CRITICAL_DATA"
+    type: "match-any"
+    match:
+      - "dscp af31"
+      - "cos 3"
+
+# QoS Policy Maps
+qos_policy_maps:
+  - name: "QOS_POLICY"
+    type: "type qos"
+    classes:
+      - class: "VOICE"
+        dscp: "ef"
+        cos: "5"
+      - class: "VIDEO"
+        dscp: "af41"
+        cos: "4"
+      - class: "CRITICAL_DATA"
+        dscp: "af31"
+        cos: "3"
+
+# QoS interface applications
+qos_interfaces: []
+  # Example:
+  # - name: "Ethernet1"
+  #   direction: "input"
+  #   policy: "QOS_POLICY"
+
+# Storm Control
+storm_control_interfaces: []
+  # Example:
+  # - name: "Ethernet1"
+  #   broadcast_level: "10"
+  #   multicast_level: "10"
+  #   unknown_unicast_level: "10"
+
+# Port Security
+port_security_interfaces: []
+  # Example:
+  # - name: "Ethernet1"
+  #   max_addresses: 3
+  #   violation_mode: "restrict"
+  #   sticky: true
+
+# DHCP Snooping
+dhcp_snooping:
+  enabled: false
+  vlans:
+    - 10
+    - 20
+    - 30
+  trusted_interfaces:
+    - "Ethernet49"
+    - "Ethernet50"
+
+# Dynamic ARP Inspection
+arp_inspection:
+  enabled: false
+  vlans:
+    - 10
+    - 20
+    - 30
+  validation: "src-mac dst-mac ip"
+  trusted_interfaces:
+    - "Ethernet49"
+    - "Ethernet50"
+
+# IP Source Guard
+ip_source_guard_interfaces: []
+  # Example:
+  # - "Ethernet1"
+  # - "Ethernet2"
+
+# 802.1X Configuration
+dot1x_config:
+  enabled: false
+  server_group: "radius"
+
+dot1x_interfaces: []
+  # Example:
+  # - name: "Ethernet1"
+  #   pae: "authenticator"
+  #   port_control: "auto"
+  #   reauth_period: 3600
+
+# Static MAC Addresses
+static_mac_addresses: []
+  # Example:
+  # - mac: "0050.5600.0001"
+  #   vlan: 10
+  #   interface: "Ethernet1"
+
+# Unused Ports (DISA STIG Requirement)
+unused_ports: []
+  # Example:
+  # - "Ethernet5"
+  # - "Ethernet6-10"
+
+blackhole_vlan: 999
+
+# BPDU Guard Interfaces (Edge Ports)
+bpdu_guard_interfaces: []
+  # Example:
+  # - "Ethernet1"
+  # - "Ethernet2"
+
+# Root Guard Interfaces (Uplinks)
+root_guard_interfaces: []
+  # Example:
+  # - "Ethernet49"
+  # - "Ethernet50"
+
+# Rate Limiting
+rate_limiting:
+  enabled: true
+  acl: "RATE_LIMIT_ACL"
+
+# Security configuration composite
+security_config:
+  acls: "{{ ipv4_acls }}"
+  acl_interfaces: "{{ acl_interfaces }}"
+  qos_class_maps: "{{ qos_class_maps }}"
+  qos_policy_maps: "{{ qos_policy_maps }}"
+  dhcp_snooping: "{{ dhcp_snooping }}"
+  arp_inspection: "{{ arp_inspection }}"
+  dot1x: "{{ dot1x_config }}"
+  port_security: "{{ port_security_interfaces | length }}"
+  unused_ports: "{{ unused_ports | length }}"

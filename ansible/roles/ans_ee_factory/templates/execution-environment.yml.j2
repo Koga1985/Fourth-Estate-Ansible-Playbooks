@@ -1,0 +1,36 @@
+---
+version: {{ ee_builder_version }}
+
+images:
+  base_image:
+    name: "{{ item.base_image }}"
+
+dependencies:
+{% if item.dependencies.galaxy is defined %}
+  galaxy: requirements.yml
+{% endif %}
+{% if item.dependencies.python is defined %}
+  python: requirements.txt
+{% endif %}
+{% if item.dependencies.system is defined %}
+  system: bindep.txt
+{% endif %}
+
+additional_build_steps:
+  prepend:
+    - RUN echo "Building {{ item.name }}"
+{% if fourth_estate_hardened_images | bool %}
+    - RUN yum update -y && yum clean all
+    - RUN useradd -r -u 1000 -g 0 ansible
+{% endif %}
+  append:
+    - RUN echo "Build complete: {{ item.name }}"
+{% if fourth_estate_fips_mode | bool %}
+    - RUN update-crypto-policies --set FIPS
+{% endif %}
+    - USER 1000
+
+options:
+  package_manager_path: /usr/bin/microdnf
+
+build_arg_defaults: {{ ee_build_arg_defaults | to_json }}

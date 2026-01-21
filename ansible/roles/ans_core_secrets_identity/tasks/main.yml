@@ -1,35 +1,73 @@
-
 ---
-- name: Find vaulted files
+- name: Ensure artifacts directory exists
+  ansible.builtin.file:
+    path: "{{ artifacts_dir }}"
+    state: directory
+    mode: "0750"
+
+- name: Test Vault connectivity
+  when: vault_enabled | bool
+  ansible.builtin.uri:
+    url: "{{ vault_addr }}/v1/sys/health"
+    method: GET
+    headers:
+      X-Vault-Token: "{{ vault_token }}"
+    validate_certs: "{{ validate_certs }}"
+    return_content: true
+  register: vault_health
+
+- name: Sync credentials from Vault to Controller
+  when: apply_changes | bool and vault_credential_sync_enabled | bool
+  block:
+    - name: Read credentials from Vault
+      ansible.builtin.uri:
+        url: "{{ vault_addr }}/v1/{{ item.vault_path }}"
+        method: GET
+        headers:
+          X-Vault-Token: "{{ vault_token }}"
+          X-Vault-Namespace: "{{ vault_namespace }}"
+        validate_certs: "{{ validate_certs }}"
+        return_content: true
+      register: vault_creds
+      loop: "{{ vault_credentials }}"
+      loop_control:
+        label: "{{ item.name }}"
+      no_log: true
+
+    - name: Create/Update credentials in Controller
+      ansible.controller.credential:
+        controller_host: "{{ controller_host }}"
+        controller_oauthtoken: "{{ controller_oauthtoken }}"
+        validate_certs: "{{ validate_certs }}"
+        name: "{{ item.item.name }}"
+        credential_type: "{{ item.item.credential_type }}"
+        organization: "Fourth Estate"
+        inputs: "{{ item.json.data.data }}"
+        state: present
+      loop: "{{ vault_creds.results }}"
+      loop_control:
+        label: "{{ item.item.name }}"
+      no_log: true
+
+- name: Find Ansible Vault files
+  when: ansible_vault_enabled | bool
   ansible.builtin.shell: |
-    set -euo pipefail
     grep -rl "^\$ANSIBLE_VAULT;" "{{ repo_root }}" || true
-  args: { executable: /bin/bash }
-  register: vaulted
+  args:
+    executable: /bin/bash
+  register: vault_files
   changed_when: false
 
-- name: Rekey vaulted files (guarded)
-  when: apply_changes | bool and (vaulted.stdout_lines | length > 0)
-  ansible.builtin.shell: |
-    set -euo pipefail
-    while read -r f; do
-      [ -z "$f" ] && continue
-      ansible-vault rekey --vault-id {{ vault_id_label }}@prompt --new-vault-password-file {{ new_vault_password_file }} "$f"
-    done < <(printf "%s\n" {{ vaulted.stdout_lines | to_json }} | jq -r '.[]')
-  args: { executable: /bin/bash }
+- name: Rekey Ansible Vault files
+  when: apply_changes | bool and vault_rekey_enabled | bool and vault_files.stdout_lines | length > 0
+  ansible.builtin.command:
+    cmd: "ansible-vault rekey --vault-id {{ vault_id_label }}@{{ vault_password_file }} --new-vault-password-file {{ new_vault_password_file }} {{ item }}"
+  loop: "{{ vault_files.stdout_lines }}"
+  no_log: true
 
-- name: Encrypt plaintext files
-  when: apply_changes | bool
-  loop: "{{ files_to_encrypt }}"
-  loop_control: { label: "{{ item }}" }
-  ansible.builtin.shell: |
-    ansible-vault encrypt --vault-id {{ vault_id_label }}@prompt "{{ item }}"
-  args: { executable: /bin/bash }
-
-- name: Apply Controller SSO (settings)
-  when: apply_changes | bool and (sso_settings | length > 0)
-  ansible.controller.settings:
-    controller_host: "{{ controller_host }}"
-    controller_oauthtoken: "{{ controller_oauthtoken }}"
-    validate_certs: true
-    settings: "{{ sso_settings }}"
+- name: Display secrets summary
+  ansible.builtin.debug:
+    msg:
+      - "Vault Status: {{ 'Connected' if vault_health.status == 200 else 'Error' }}"
+      - "Credentials Synced: {{ vault_credentials | length }}"
+      - "Ansible Vault Files: {{ vault_files.stdout_lines | length }}"

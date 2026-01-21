@@ -1,18 +1,236 @@
 ---
-- name: Ensure artifacts dir
-  ansible.builtin/file: { path: "{{ artifacts_dir }}", state: directory }
-- name: Plan routing
-  ansible.builtin/copy:
-    dest: "{{ artifacts_dir }}/routing_plan.json"
-    content: "{{ {'loopbacks': loopbacks, 'static_routes': static_routes} | to_nice_json }}"
+# tasks file for arista_routing_baseline
+# Production-ready routing configuration (BGP, OSPF, ISIS) for Fourth Estate agencies
+
+- name: Ensure artifacts directory exists
+  ansible.builtin.file:
+    path: "{{ arista_artifacts_dir }}"
+    state: directory
+    mode: "0755"
+  delegate_to: localhost
+  run_once: true
+
+- name: Save routing configuration plan
+  ansible.builtin.copy:
+    dest: "{{ arista_artifacts_dir }}/{{ inventory_hostname }}_routing_plan.json"
+    content: "{{ routing_config | to_nice_json }}"
     mode: "0644"
-- name: Loopbacks
-  when: apply_changes | bool
+  delegate_to: localhost
+
+# Loopback Configuration
+- name: Configure loopback interfaces for routing
+  when: arista_apply_changes | bool and routing_loopbacks | length > 0
   arista.eos.eos_l3_interfaces:
-    config: "{{ loopbacks }}"
+    config: "{{ routing_loopbacks }}"
     state: merged
-- name: Static routes
-  when: apply_changes | bool
+  notify: save eos configuration
+
+# Static Routes
+- name: Configure static routes
+  when: arista_apply_changes | bool and static_routes | length > 0
   arista.eos.eos_static_routes:
     config: "{{ static_routes }}"
     state: merged
+  notify: save eos configuration
+
+# Prefix Lists
+- name: Configure prefix lists
+  when: arista_apply_changes | bool and prefix_lists | length > 0
+  loop: "{{ prefix_lists }}"
+  loop_control:
+    label: "{{ item.name }}"
+  arista.eos.eos_prefix_lists:
+    config:
+      - afi: "{{ item.afi | default('ipv4') }}"
+        prefix_lists:
+          - name: "{{ item.name }}"
+            entries: "{{ item.entries }}"
+    state: merged
+  notify: save eos configuration
+
+# Route Maps
+- name: Configure route maps
+  when: arista_apply_changes | bool and route_maps | length > 0
+  loop: "{{ route_maps }}"
+  loop_control:
+    label: "{{ item.name }}"
+  arista.eos.eos_route_maps:
+    config:
+      - map: "{{ item.name }}"
+        entries: "{{ item.entries }}"
+    state: merged
+  notify: save eos configuration
+
+# BGP Configuration
+- name: Configure BGP global settings
+  when: arista_apply_changes | bool and bgp_config.enabled | default(false)
+  arista.eos.eos_bgp_global:
+    config:
+      as_number: "{{ bgp_config.asn }}"
+      router_id: "{{ bgp_config.router_id | default(fabric_router_id) }}"
+      log_neighbor_changes: true
+      maximum_paths:
+        max_paths: "{{ bgp_config.max_paths | default(4) }}"
+        max_paths_ibgp: "{{ bgp_config.max_paths_ibgp | default(4) }}"
+    state: merged
+  notify: save eos configuration
+
+- name: Configure BGP address families
+  when: arista_apply_changes | bool and bgp_config.enabled | default(false)
+  arista.eos.eos_bgp_address_family:
+    config:
+      as_number: "{{ bgp_config.asn }}"
+      address_family: "{{ bgp_address_families }}"
+    state: merged
+  notify: save eos configuration
+
+- name: Configure BGP neighbors
+  when: arista_apply_changes | bool and bgp_config.enabled | default(false) and bgp_neighbors | length > 0
+  loop: "{{ bgp_neighbors }}"
+  loop_control:
+    label: "{{ item.neighbor }}"
+  arista.eos.eos_config:
+    lines:
+      - "router bgp {{ bgp_config.asn }}"
+      - "neighbor {{ item.neighbor }} remote-as {{ item.remote_as }}"
+      - "neighbor {{ item.neighbor }} description {{ item.description | default('BGP Peer') }}"
+      - "neighbor {{ item.neighbor }} send-community {{ item.send_community | default('extended') }}"
+      - "{% if item.update_source is defined %}neighbor {{ item.neighbor }} update-source {{ item.update_source }}{% endif %}"
+      - "{% if item.ebgp_multihop is defined %}neighbor {{ item.neighbor }} ebgp-multihop {{ item.ebgp_multihop }}{% endif %}"
+      - "{% if item.password is defined %}neighbor {{ item.neighbor }} password {{ item.password }}{% endif %}"
+      - "neighbor {{ item.neighbor }} maximum-routes {{ item.max_routes | default(12000) }}"
+  notify: save eos configuration
+
+- name: Configure BGP peer groups
+  when: arista_apply_changes | bool and bgp_config.enabled | default(false) and bgp_peer_groups | length > 0
+  loop: "{{ bgp_peer_groups }}"
+  loop_control:
+    label: "{{ item.name }}"
+  arista.eos.eos_config:
+    lines:
+      - "router bgp {{ bgp_config.asn }}"
+      - "neighbor {{ item.name }} peer group"
+      - "neighbor {{ item.name }} remote-as {{ item.remote_as }}"
+      - "{% if item.update_source is defined %}neighbor {{ item.name }} update-source {{ item.update_source }}{% endif %}"
+      - "neighbor {{ item.name }} send-community extended"
+      - "neighbor {{ item.name }} maximum-routes {{ item.max_routes | default(12000) }}"
+  notify: save eos configuration
+
+# EVPN Configuration for VXLAN
+- name: Configure BGP EVPN address family
+  when: arista_apply_changes | bool and bgp_config.enabled | default(false) and bgp_evpn.enabled | default(false)
+  arista.eos.eos_config:
+    lines:
+      - "router bgp {{ bgp_config.asn }}"
+      - "address-family evpn"
+      - "neighbor {{ bgp_evpn.peer_group }} activate"
+      - "neighbor {{ bgp_evpn.peer_group }} encapsulation vxlan"
+  notify: save eos configuration
+
+- name: Configure BGP VRF instances
+  when: arista_apply_changes | bool and bgp_config.enabled | default(false) and bgp_vrfs | length > 0
+  loop: "{{ bgp_vrfs }}"
+  loop_control:
+    label: "{{ item.name }}"
+  arista.eos.eos_config:
+    lines:
+      - "router bgp {{ bgp_config.asn }}"
+      - "vrf {{ item.name }}"
+      - "rd {{ item.rd }}"
+      - "route-target import {{ item.rt_import | join(' ') }}"
+      - "route-target export {{ item.rt_export | join(' ') }}"
+      - "redistribute connected"
+  notify: save eos configuration
+
+# OSPF Configuration
+- name: Configure OSPF global settings
+  when: arista_apply_changes | bool and ospf_config.enabled | default(false)
+  arista.eos.eos_ospfv2:
+    config:
+      processes:
+        - process_id: "{{ ospf_config.process_id | default(1) }}"
+          router_id: "{{ ospf_config.router_id | default(fabric_router_id) }}"
+          passive_interface:
+            default: "{{ ospf_config.passive_default | default(true) }}"
+          max_lsa: "{{ ospf_config.max_lsa | default(12000) }}"
+          redistribute:
+            - routes: "connected"
+    state: merged
+  notify: save eos configuration
+
+- name: Configure OSPF on interfaces
+  when: arista_apply_changes | bool and ospf_config.enabled | default(false) and ospf_interfaces | length > 0
+  arista.eos.eos_ospf_interfaces:
+    config: "{{ ospf_interfaces }}"
+    state: merged
+  notify: save eos configuration
+
+- name: Configure OSPF areas
+  when: arista_apply_changes | bool and ospf_config.enabled | default(false) and ospf_areas | length > 0
+  loop: "{{ ospf_areas }}"
+  loop_control:
+    label: "Area {{ item.area_id }}"
+  arista.eos.eos_config:
+    lines:
+      - "router ospf {{ ospf_config.process_id | default(1) }}"
+      - "area {{ item.area_id }} {% if item.type is defined %}{{ item.type }}{% endif %}"
+      - "{% if item.authentication is defined %}area {{ item.area_id }} authentication {{ item.authentication }}{% endif %}"
+  notify: save eos configuration
+
+# ISIS Configuration
+- name: Configure ISIS global settings
+  when: arista_apply_changes | bool and isis_config.enabled | default(false)
+  arista.eos.eos_config:
+    lines:
+      - "router isis {{ isis_config.instance | default('CORE') }}"
+      - "net {{ isis_config.net }}"
+      - "is-type {{ isis_config.is_type | default('level-2') }}"
+      - "log-adjacency-changes"
+      - "set-overload-bit on-startup wait-for-bgp timeout {{ isis_config.overload_timeout | default(180) }}"
+      - "authentication mode {{ isis_config.auth_mode | default('md5') }} level-2"
+      - "!
+        address-family ipv4 unicast"
+  notify: save eos configuration
+
+- name: Configure ISIS on interfaces
+  when: arista_apply_changes | bool and isis_config.enabled | default(false) and isis_interfaces | length > 0
+  loop: "{{ isis_interfaces }}"
+  loop_control:
+    label: "{{ item.name }}"
+  arista.eos.eos_config:
+    lines:
+      - "interface {{ item.name }}"
+      - "isis enable {{ isis_config.instance | default('CORE') }}"
+      - "isis circuit-type {{ item.circuit_type | default('level-2') }}"
+      - "isis network {{ item.network_type | default('point-to-point') }}"
+      - "{% if item.metric is defined %}isis metric {{ item.metric }}{% endif %}"
+      - "{% if item.passive is defined and item.passive %}isis passive{% endif %}"
+  notify: save eos configuration
+
+# BFD Configuration for fast failover
+- name: Configure BFD global settings
+  when: arista_apply_changes | bool and bfd_config.enabled | default(false)
+  arista.eos.eos_config:
+    lines:
+      - "bfd interval {{ bfd_config.interval | default(300) }} min-rx {{ bfd_config.min_rx | default(300) }} multiplier {{ bfd_config.multiplier | default(3) }}"
+  notify: save eos configuration
+
+- name: Save routing state to artifacts
+  when: arista_apply_changes | bool
+  arista.eos.eos_command:
+    commands:
+      - show ip route summary
+      - show bgp summary
+      - show bgp evpn summary
+      - show ospf neighbor
+      - show isis neighbors
+  register: routing_state
+  ignore_errors: true
+
+- name: Write routing state to artifacts
+  when: arista_apply_changes | bool and routing_state is defined
+  ansible.builtin.copy:
+    dest: "{{ arista_artifacts_dir }}/{{ inventory_hostname }}_routing_state.json"
+    content: "{{ routing_state | to_nice_json }}"
+    mode: "0644"
+  delegate_to: localhost

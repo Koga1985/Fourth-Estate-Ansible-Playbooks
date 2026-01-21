@@ -1,23 +1,31 @@
-
 ---
-- name: Preflight HTTP checks
+- name: Check for available upgrades
   ansible.builtin.uri:
-    url: "{{ item }}"
+    url: "{{ controller_host }}/api/v2/config/"
     method: GET
-    headers: { Authorization: "Bearer {{ controller_oauthtoken }}" }
-    validate_certs: true
-  loop: "{{ preflight_urls }}"
-  register: preflights
-  failed_when: false
+    headers:
+      Authorization: "Bearer {{ controller_oauthtoken }}"
+    validate_certs: "{{ validate_certs }}"
+  register: current_version
 
-- name: Write preflight artifacts
-  ansible.builtin.copy:
-    dest: "{{ artifacts_dir }}/upgrade_preflights.json"
-    mode: "0644"
-    content: "{{ preflights.results | to_nice_json }}"
+- name: Create maintenance schedule
+  when: apply_changes | bool
+  ansible.controller.schedule:
+    controller_host: "{{ controller_host }}"
+    controller_oauthtoken: "{{ controller_oauthtoken }}"
+    validate_certs: "{{ validate_certs }}"
+    name: "{{ item.name }}"
+    rrule: "DTSTART:20260101T000000Z RRULE:FREQ=MONTHLY;INTERVAL=1"
+    state: present
+  loop: "{{ maintenance_windows }}"
 
-- name: Publish maintenance banner (artifact only)
-  ansible.builtin.copy:
-    dest: "{{ artifacts_dir }}/maintenance_banner.txt"
-    mode: "0644"
-    content: "{{ maintenance_banner }}"
+- name: Send upgrade notification
+  when: upgrade_window_enabled | bool
+  ansible.builtin.debug:
+    msg: "Upgrade window scheduled - {{ upgrade_schedule }}"
+
+- name: Display upgrade summary
+  ansible.builtin.debug:
+    msg:
+      - "Upgrade Window: {{ upgrade_schedule }}"
+      - "Change Control: {{ fourth_estate_change_control }}"

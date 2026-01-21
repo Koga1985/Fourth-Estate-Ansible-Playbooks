@@ -1,8 +1,176 @@
 ---
-apply_changes: false
-artifacts_dir: "/tmp/arista-artifacts"
+# defaults file for arista_cvp_inventory_model
+# Production-ready CloudVision Portal defaults for Fourth Estate agencies
 
-cvp:
-  containers: [{ name: "DC1", parent: "Tenant" }]
-  devices: []
-  configlets: []
+# Control whether changes are applied or just planned
+arista_apply_changes: false
+
+# Artifacts directory
+arista_artifacts_dir: "/tmp/arista-artifacts"
+
+# CVP connection parameters (should be overridden in inventory/vault)
+cvp_host: "{{ lookup('env', 'CVP_HOST') | default('cvp.example.mil') }}"
+cvp_username: "{{ lookup('env', 'CVP_USERNAME') | default('cvpadmin') }}"
+cvp_password: "{{ lookup('env', 'CVP_PASSWORD') | default('') }}"
+cvp_protocol: "https"
+cvp_port: 443
+cvp_validate_certs: true
+
+# CVP operation settings
+cvp_apply_mode: "strict"  # Options: strict, loose
+cvp_search_key: "hostname"  # Options: hostname, fqdn, serialNumber
+
+# CVP container topology
+# Containers organize devices in CVP hierarchically
+cvp_containers:
+  - name: "Tenant"
+    parent: "root"
+  - name: "Fourth_Estate"
+    parent: "Tenant"
+  - name: "DC1"
+    parent: "Fourth_Estate"
+  - name: "DC1_Spines"
+    parent: "DC1"
+  - name: "DC1_Leafs"
+    parent: "DC1"
+  - name: "DC1_Borders"
+    parent: "DC1"
+  - name: "DC2"
+    parent: "Fourth_Estate"
+  - name: "DC2_Spines"
+    parent: "DC2"
+  - name: "DC2_Leafs"
+    parent: "DC2"
+  - name: "DC2_Borders"
+    parent: "DC2"
+
+# CVP configlets
+# Configlets are configuration snippets applied to devices
+cvp_configlets:
+  - name: "GLOBAL_BASELINE"
+    content: |
+      !
+      ! Global baseline configuration
+      ! Managed by Ansible CVP integration
+      !
+      service routing protocols model multi-agent
+      !
+      ip routing vrf MGMT
+      !
+      ip name-server vrf MGMT 10.0.0.20
+      ip name-server vrf MGMT 10.0.0.21
+      !
+      ntp server vrf MGMT 10.0.0.10 prefer
+      ntp server vrf MGMT 10.0.0.11
+      !
+      spanning-tree mode mstp
+      spanning-tree mst 0 priority 16384
+      !
+
+  - name: "SECURITY_BASELINE"
+    content: |
+      !
+      ! Security baseline - DISA STIG compliant
+      !
+      no ip http server
+      no ip telnet server enable
+      !
+      management ssh
+      ip ssh version 2
+      ip ssh cipher aes256-ctr aes192-ctr aes128-ctr
+      ip ssh mac hmac-sha2-512 hmac-sha2-256
+      ip ssh key-exchange ecdh-sha2-nistp521 ecdh-sha2-nistp384 ecdh-sha2-nistp256
+      !
+      management api http-commands
+         no protocol http
+         protocol https
+         vrf MGMT
+            no shutdown
+      !
+
+  - name: "AAA_CONFIG"
+    content: |
+      !
+      ! AAA configuration for Fourth Estate
+      !
+      aaa authentication login default group tacacs+ local
+      aaa authorization exec default group tacacs+ local
+      aaa authorization commands all default group tacacs+ local
+      aaa accounting exec default start-stop group tacacs+
+      aaa accounting commands all default start-stop group tacacs+
+      !
+      tacacs-server host 10.0.0.40 vrf MGMT key 7 <encrypted-key>
+      tacacs-server host 10.0.0.41 vrf MGMT key 7 <encrypted-key>
+      !
+
+  - name: "SYSLOG_CONFIG"
+    content: |
+      !
+      ! Centralized syslog configuration
+      !
+      logging vrf MGMT host 10.0.0.30 6514 protocol tcp
+      logging vrf MGMT host 10.0.0.31 6514 protocol tcp
+      logging facility local6
+      logging format timestamp high-resolution
+      logging format sequence-numbers
+      logging source-interface Management1
+      !
+
+# CVP device inventory
+# Maps physical devices to containers and configlets
+cvp_devices: []
+  # Example device entry:
+  # - fqdn: "spine1.dc1.example.mil"
+  #   parentContainerName: "DC1_Spines"
+  #   configlets:
+  #     - "GLOBAL_BASELINE"
+  #     - "SECURITY_BASELINE"
+  #     - "AAA_CONFIG"
+  #     - "SYSLOG_CONFIG"
+  #   systemMacAddress: "00:1c:73:00:00:01"
+
+# CVP device configlet mappings
+cvp_device_configlets: []
+  # Example:
+  # - device: "spine1.dc1.example.mil"
+  #   configlets:
+  #     - "GLOBAL_BASELINE"
+  #     - "SECURITY_BASELINE"
+
+# CVP change control settings
+cvp_change_control:
+  enabled: true
+  name: "Ansible Automated Change {{ ansible_date_time.epoch }}"
+  notes: "Automated configuration deployment via Ansible"
+  stage: "main"
+  mode: "series"  # Options: series, parallel
+  schedule_type: "immediate"  # Options: immediate, scheduled
+  start_time: ""  # ISO 8601 format for scheduled changes
+  auto_execute: false  # Automatically execute change control
+
+# CVP facts collection
+cvp_collect_facts: true
+cvp_facts_filter: ".*"  # Regex filter for facts collection
+
+# CVP compliance validation
+cvp_validate_compliance: true
+cvp_validation_mode: "stop_on_error"  # Options: stop_on_error, stop_on_warning, valid
+cvp_validation_type: "valid"  # Options: valid, time, stop_on_error, stop_on_warning
+
+# CVP inventory structure for fabric deployment
+cvp_inventory:
+  containers: "{{ cvp_containers }}"
+  configlets: "{{ cvp_configlets }}"
+  devices: "{{ cvp_devices }}"
+  device_configlets: "{{ cvp_device_configlets }}"
+  change_control: "{{ cvp_change_control }}"
+
+# CVP task management
+cvp_task_ids: []  # List of task IDs for change control
+cvp_task_timeout: 300  # Timeout in seconds for task execution
+cvp_task_retries: 3  # Number of retries for failed tasks
+
+# CVP backup settings
+cvp_backup_enabled: true
+cvp_backup_location: "{{ arista_artifacts_dir }}/cvp_backups"
+cvp_backup_retention_days: 30

@@ -1,0 +1,93 @@
+---
+# tasks file for aws_eks_node_groups
+
+- name: Create EKS node groups
+  community.aws.eks_nodegroup:
+    name: "{{ item.name }}"
+    cluster_name: "{{ item.cluster_name | default(eks_cluster_name) }}"
+    node_role: "{{ item.node_role }}"
+    subnets: "{{ item.subnets }}"
+    scaling_config: "{{ item.scaling_config }}"
+    instance_types: "{{ item.instance_types | default(['t3.medium']) }}"
+    ami_type: "{{ item.ami_type | default('AL2_x86_64') }}"
+    disk_size: "{{ item.disk_size | default(20) }}"
+    remote_access: "{{ item.remote_access | default(omit) }}"
+    labels: "{{ item.labels | default({}) }}"
+    taints: "{{ item.taints | default([]) }}"
+    tags: "{{ item.tags | default(node_group_tags) | combine({'Name': item.name, 'ManagedBy': 'Ansible'}) }}"
+    launch_template: "{{ item.launch_template | default(omit) }}"
+    capacity_type: "{{ item.capacity_type | default('ON_DEMAND') }}"
+    state: "{{ item.state | default(node_group_state) }}"
+  loop: "{{ eks_node_groups }}"
+  when: eks_node_groups is defined
+  register: node_group_result
+
+- name: Create launch template for node groups with FedRAMP compliance
+  amazon.aws.ec2_launch_template:
+    name: "{{ item.name }}-lt"
+    description: "Launch template for {{ item.name }} with FedRAMP compliance"
+    image_id: "{{ item.ami_id }}"
+    instance_type: "{{ item.instance_types[0] }}"
+    key_name: "{{ item.key_name | default(omit) }}"
+    network_interfaces:
+      - associate_public_ip_address: false
+        delete_on_termination: true
+        device_index: 0
+        groups: "{{ item.security_groups }}"
+    block_device_mappings:
+      - device_name: "/dev/xvda"
+        ebs:
+          volume_size: "{{ item.disk_size | default(20) }}"
+          volume_type: "gp3"
+          encrypted: true
+          kms_key_id: "{{ kms_key_id }}"
+          delete_on_termination: true
+    metadata_options:
+      http_endpoint: "enabled"
+      http_tokens: "required"
+      http_put_response_hop_limit: 1
+    user_data: "{{ lookup('template', 'node_userdata.sh.j2') | b64encode }}"
+    tags: "{{ node_group_tags }}"
+  loop: "{{ eks_node_groups }}"
+  when:
+    - eks_node_groups is defined
+    - item.use_launch_template | default(true) | bool
+    - node_group_enforce_imdsv2 | bool
+
+- name: Tag node group instances for compliance
+  amazon.aws.ec2_tag:
+    resource: "{{ item.1 }}"
+    region: "{{ aws_region }}"
+    tags: "{{ node_group_tags | combine({'Compliance': 'FedRAMP-High', 'PodSecurityStandard': 'restricted'}) }}"
+  loop: "{{ node_group_result.results | subelements('resources.autoscaling_groups[0].instances', skip_missing=True) }}"
+  when: node_group_result is defined
+
+- name: Configure node group auto-scaling
+  community.aws.autoscaling_policy:
+    name: "{{ item.item.name }}-scaling-policy"
+    asg_name: "{{ item.resources.autoscaling_groups[0].name }}"
+    policy_type: "TargetTrackingScaling"
+    target_tracking_config:
+      predefined_metric_type: "ASGAverageCPUUtilization"
+      target_value: "{{ item.item.target_cpu_utilization | default(70) }}"
+    region: "{{ aws_region }}"
+  loop: "{{ node_group_result.results }}"
+  when:
+    - node_group_result is defined
+    - node_group_enable_autoscaling | bool
+    - item.resources is defined
+
+- name: Display node group summary
+  ansible.builtin.debug:
+    msg:
+      - "Node Groups Created: {{ node_group_result.results | selectattr('changed', 'equalto', true) | list | length if node_group_result is defined else 0 }}"
+      - "Total Node Groups: {{ eks_node_groups | length if eks_node_groups is defined else 0 }}"
+
+- name: Notify node group changes
+  ansible.builtin.debug:
+    msg: "EKS node group configuration completed"
+  changed_when: true
+  notify: notify node group changes
+  when:
+    - node_group_result is defined
+    - node_group_result.changed | default(false)

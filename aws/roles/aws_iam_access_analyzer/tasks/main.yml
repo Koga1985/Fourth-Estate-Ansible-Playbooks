@@ -1,0 +1,111 @@
+---
+# tasks file for aws_iam_access_analyzer
+
+- name: Create IAM Access Analyzer
+  community.aws.accessanalyzer_analyzer:
+    name: "{{ iam_access_analyzer_name }}"
+    type: "{{ iam_access_analyzer_type }}"
+    tags: "{{ iam_access_analyzer_tags | combine({'ManagedBy': 'Ansible'}) }}"
+    state: "{{ iam_access_analyzer_state }}"
+  register: access_analyzer_result
+
+- name: Create archive rules for Access Analyzer
+  community.aws.accessanalyzer_archive_rule:
+    analyzer_name: "{{ iam_access_analyzer_name }}"
+    rule_name: "{{ item.name }}"
+    filter: "{{ item.filter }}"
+    state: "{{ item.state | default('present') }}"
+  loop: "{{ iam_access_analyzer_archive_rules }}"
+  when: iam_access_analyzer_archive_rules is defined
+
+- name: Get Access Analyzer findings
+  community.aws.accessanalyzer_finding_info:
+    analyzer_arn: "{{ access_analyzer_result.analyzer.arn }}"
+    filter: "{{ iam_access_analyzer_finding_filter | default(omit) }}"
+    max_results: "{{ iam_access_analyzer_max_findings | default(100) }}"
+  register: access_analyzer_findings
+  when:
+    - access_analyzer_result is defined
+    - access_analyzer_result.analyzer is defined
+
+- name: Create findings report
+  ansible.builtin.template:
+    src: "access_analyzer_findings_report.html.j2"
+    dest: "/tmp/access_analyzer_findings_{{ ansible_date_time.date }}.html"
+    mode: '0644'
+  delegate_to: localhost
+  when:
+    - access_analyzer_findings is defined
+    - iam_generate_findings_report | bool
+
+- name: Tag high-risk findings
+  community.aws.accessanalyzer_finding:
+    analyzer_arn: "{{ access_analyzer_result.analyzer.arn }}"
+    id: "{{ item.id }}"
+    status: "{{ 'ACTIVE' if item.status == 'ACTIVE' else item.status }}"
+  loop: "{{ access_analyzer_findings.findings | default([]) }}"
+  when:
+    - access_analyzer_findings is defined
+    - item.resource_type in iam_high_risk_resource_types
+
+- name: Send critical findings notification
+  ansible.builtin.uri:
+    url: "{{ security_webhook_url }}"
+    method: POST
+    body_format: json
+    body:
+      analyzer: "{{ iam_access_analyzer_name }}"
+      critical_findings: "{{ access_analyzer_findings.findings | selectattr('status', 'equalto', 'ACTIVE') | list | length }}"
+      findings: "{{ access_analyzer_findings.findings | default([]) | map(attribute='resource') | list }}"
+      timestamp: "{{ ansible_date_time.iso8601 }}"
+    status_code: [200, 201, 204]
+  when:
+    - security_webhook_url is defined
+    - access_analyzer_findings is defined
+    - access_analyzer_findings.findings | selectattr('status', 'equalto', 'ACTIVE') | list | length > 0
+  delegate_to: localhost
+
+- name: Create CloudWatch metric for findings
+  community.aws.cloudwatch_metric_alarm:
+    name: "{{ iam_access_analyzer_name }}-CriticalFindings"
+    description: "Alert on critical IAM Access Analyzer findings"
+    namespace: "AWS/AccessAnalyzer"
+    metric_name: "FindingCount"
+    statistic: "Sum"
+    comparison: "GreaterThanThreshold"
+    threshold: "{{ iam_access_analyzer_alert_threshold }}"
+    period: 300
+    evaluation_periods: 1
+    alarm_actions: "{{ iam_access_analyzer_sns_topic }}"
+    dimensions:
+      AnalyzerName: "{{ iam_access_analyzer_name }}"
+    state: "{{ iam_access_analyzer_state }}"
+  when:
+    - iam_create_cloudwatch_alarms | bool
+    - iam_access_analyzer_sns_topic is defined
+
+- name: Enable Access Analyzer for organization
+  community.aws.accessanalyzer_analyzer:
+    name: "{{ iam_access_analyzer_name }}-Organization"
+    type: "ORGANIZATION"
+    tags: "{{ iam_access_analyzer_tags | combine({'Scope': 'Organization'}) }}"
+    state: "{{ iam_access_analyzer_state }}"
+  when: iam_enable_organization_analyzer | bool
+
+- name: Display Access Analyzer summary
+  ansible.builtin.debug:
+    msg:
+      - "Access Analyzer Created: {{ iam_access_analyzer_name }}"
+      - "Analyzer ARN: {{ access_analyzer_result.analyzer.arn if access_analyzer_result.analyzer is defined else 'N/A' }}"
+      - "Total Findings: {{ access_analyzer_findings.findings | length if access_analyzer_findings is defined else 0 }}"
+      - "Active Findings: {{ access_analyzer_findings.findings | selectattr('status', 'equalto', 'ACTIVE') | list | length if access_analyzer_findings is defined else 0 }}"
+  when: access_analyzer_result is defined
+
+- name: Notify Access Analyzer changes
+  ansible.builtin.debug:
+    msg: "Access Analyzer configuration completed"
+  changed_when: true
+  notify: notify access analyzer changes
+  when:
+    - access_analyzer_result is defined
+    - access_analyzer_result.changed | default(false)

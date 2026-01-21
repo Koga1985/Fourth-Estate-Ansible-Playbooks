@@ -1,18 +1,213 @@
 ---
-- name: Ensure backup dir
-  ansible.builtin/file: { path: "{{ backup.dest_dir }}", state: directory, mode: "0750" }
-- name: Show running-config
-  when: apply_changes | bool and backup.enable | bool
-  arista.eos.eos_command:
-    commands: ["show running-config"]
-  register: run_cfg
-- name: Save file
-  when: apply_changes | bool and run_cfg.stdout is defined
-  ansible.builtin/copy:
-    dest: "{{ backup.dest_dir }}/{{ inventory_hostname }}.cfg"
-    content: "{{ run_cfg.stdout[0] }}"
-    mode: "0640"
-- name: Restore preview
-  when: restore.candidate | length > 0
+# tasks file for arista_backup_restore
+# Production-ready configuration backup and restore for Fourth Estate agencies
+
+- name: Ensure backup directory exists
+  ansible.builtin.file:
+    path: "{{ backup_dir }}"
+    state: directory
+    mode: "0755"
+  delegate_to: localhost
+  run_once: true
+
+- name: Ensure device-specific backup directory exists
+  ansible.builtin.file:
+    path: "{{ backup_dir }}/{{ inventory_hostname }}"
+    state: directory
+    mode: "0755"
+  delegate_to: localhost
+
+# Backup Operations
+- name: Backup running configuration
+  when: backup_operation == "backup" or backup_operation == "both"
+  arista.eos.eos_config:
+    backup: yes
+    backup_options:
+      filename: "{{ inventory_hostname }}_{{ ansible_date_time.date }}_{{ ansible_date_time.time | replace(':', '-') }}.cfg"
+      dir_path: "{{ backup_dir }}/{{ inventory_hostname }}"
+  register: backup_result
+
+- name: Display backup location
+  when: backup_operation == "backup" or backup_operation == "both"
   ansible.builtin.debug:
-    msg: "Would restore from {{ restore.candidate }} (dry_run={{ restore.dry_run }})"
+    msg: "Configuration backed up to: {{ backup_result.backup_path }}"
+
+- name: Collect device facts for backup metadata
+  when: backup_operation == "backup" or backup_operation == "both"
+  arista.eos.eos_facts:
+    gather_subset: all
+  register: device_facts
+
+- name: Save device facts metadata
+  when: backup_operation == "backup" or backup_operation == "both"
+  ansible.builtin.copy:
+    dest: "{{ backup_dir }}/{{ inventory_hostname }}/{{ inventory_hostname }}_facts_{{ ansible_date_time.date }}.json"
+    content: "{{ device_facts | to_nice_json }}"
+    mode: "0644"
+  delegate_to: localhost
+
+- name: Backup startup configuration
+  when: (backup_operation == "backup" or backup_operation == "both") and backup_startup | default(true)
+  arista.eos.eos_command:
+    commands:
+      - show startup-config
+  register: startup_config
+
+- name: Save startup configuration
+  when: (backup_operation == "backup" or backup_operation == "both") and backup_startup | default(true)
+  ansible.builtin.copy:
+    dest: "{{ backup_dir }}/{{ inventory_hostname }}/{{ inventory_hostname }}_startup_{{ ansible_date_time.date }}.cfg"
+    content: "{{ startup_config.stdout[0] }}"
+    mode: "0644"
+  delegate_to: localhost
+
+- name: Collect configuration snapshots
+  when: (backup_operation == "backup" or backup_operation == "both") and backup_snapshots | default(true)
+  arista.eos.eos_command:
+    commands:
+      - show running-config
+      - show version
+      - show inventory
+      - show vlan
+      - show interfaces status
+      - show ip route summary
+      - show bgp summary
+      - show ip interface brief
+  register: config_snapshots
+
+- name: Save configuration snapshots
+  when: (backup_operation == "backup" or backup_operation == "both") and backup_snapshots | default(true)
+  ansible.builtin.copy:
+    dest: "{{ backup_dir }}/{{ inventory_hostname }}/{{ inventory_hostname }}_snapshot_{{ ansible_date_time.date }}.json"
+    content: "{{ config_snapshots | to_nice_json }}"
+    mode: "0644"
+  delegate_to: localhost
+
+# Archive old backups
+- name: Find old backup files
+  when: (backup_operation == "backup" or backup_operation == "both") and backup_retention_days is defined
+  ansible.builtin.find:
+    paths: "{{ backup_dir }}/{{ inventory_hostname }}"
+    age: "{{ backup_retention_days }}d"
+    patterns: "*.cfg,*.json"
+  register: old_backups
+  delegate_to: localhost
+
+- name: Archive old backups
+  when: (backup_operation == "backup" or backup_operation == "both") and backup_retention_days is defined and old_backups.matched > 0
+  ansible.builtin.archive:
+    path: "{{ backup_dir }}/{{ inventory_hostname }}"
+    dest: "{{ backup_archive_dir }}/{{ inventory_hostname }}_archive_{{ ansible_date_time.date }}.tar.gz"
+    format: gz
+    remove: no
+  delegate_to: localhost
+  ignore_errors: true
+
+- name: Remove old backups after archiving
+  when: (backup_operation == "backup" or backup_operation == "both") and backup_retention_days is defined and old_backups.matched > 0
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: absent
+  loop: "{{ old_backups.files }}"
+  delegate_to: localhost
+
+# Restore Operations
+- name: Validate restore file exists
+  when: backup_operation == "restore" or backup_operation == "both"
+  ansible.builtin.stat:
+    path: "{{ restore_file }}"
+  register: restore_file_stat
+  delegate_to: localhost
+  failed_when: not restore_file_stat.stat.exists
+
+- name: Read restore configuration file
+  when: backup_operation == "restore" or backup_operation == "both"
+  ansible.builtin.slurp:
+    src: "{{ restore_file }}"
+  register: restore_config_content
+  delegate_to: localhost
+
+- name: Create pre-restore backup
+  when: (backup_operation == "restore" or backup_operation == "both") and pre_restore_backup | default(true)
+  arista.eos.eos_config:
+    backup: yes
+    backup_options:
+      filename: "{{ inventory_hostname }}_pre_restore_{{ ansible_date_time.date }}_{{ ansible_date_time.time | replace(':', '-') }}.cfg"
+      dir_path: "{{ backup_dir }}/{{ inventory_hostname }}"
+  register: pre_restore_backup_result
+
+- name: Display pre-restore backup location
+  when: (backup_operation == "restore" or backup_operation == "both") and pre_restore_backup | default(true)
+  ansible.builtin.debug:
+    msg: "Pre-restore backup saved to: {{ pre_restore_backup_result.backup_path }}"
+
+- name: Restore configuration (replace mode)
+  when: (backup_operation == "restore" or backup_operation == "both") and restore_mode == "replace"
+  arista.eos.eos_config:
+    src: "{{ restore_file }}"
+    replace: config
+    match: none
+  register: restore_result
+
+- name: Restore configuration (merge mode)
+  when: (backup_operation == "restore" or backup_operation == "both") and restore_mode == "merge"
+  arista.eos.eos_config:
+    src: "{{ restore_file }}"
+    replace: line
+    match: line
+  register: restore_result
+
+- name: Display restore results
+  when: backup_operation == "restore" or backup_operation == "both"
+  ansible.builtin.debug:
+    msg: "Configuration restored from: {{ restore_file }}"
+
+- name: Save running config after restore
+  when: (backup_operation == "restore" or backup_operation == "both") and save_after_restore | default(true)
+  arista.eos.eos_config:
+    save_when: always
+
+- name: Verify configuration after restore
+  when: (backup_operation == "restore" or backup_operation == "both") and verify_after_restore | default(true)
+  arista.eos.eos_command:
+    commands:
+      - show running-config | include hostname
+      - show version | include Software
+      - show interfaces status | include connected
+  register: post_restore_verification
+
+- name: Display post-restore verification
+  when: (backup_operation == "restore" or backup_operation == "both") and verify_after_restore | default(true)
+  ansible.builtin.debug:
+    msg: "Post-restore verification: {{ post_restore_verification }}"
+
+# Compare Configurations
+- name: Compare current config with baseline
+  when: backup_operation == "compare" and baseline_config is defined
+  arista.eos.eos_config:
+    diff_against: intended
+    intended_config: "{{ lookup('file', baseline_config) }}"
+  register: config_diff
+
+- name: Display configuration differences
+  when: backup_operation == "compare" and baseline_config is defined
+  ansible.builtin.debug:
+    msg: "Configuration differences: {{ config_diff.diff }}"
+  when: config_diff.diff is defined
+
+- name: Save configuration diff to file
+  when: backup_operation == "compare" and baseline_config is defined and config_diff.diff is defined
+  ansible.builtin.copy:
+    dest: "{{ backup_dir }}/{{ inventory_hostname }}/{{ inventory_hostname }}_diff_{{ ansible_date_time.date }}.txt"
+    content: "{{ config_diff.diff }}"
+    mode: "0644"
+  delegate_to: localhost
+
+# Generate backup report
+- name: Generate backup report
+  when: backup_operation == "backup" or backup_operation == "both"
+  ansible.builtin.template:
+    src: backup_report.j2
+    dest: "{{ backup_dir }}/{{ inventory_hostname }}/backup_report_{{ ansible_date_time.date }}.html"
+    mode: "0644"
+  delegate_to: localhost

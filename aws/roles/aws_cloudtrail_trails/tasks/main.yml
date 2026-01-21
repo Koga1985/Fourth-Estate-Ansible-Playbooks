@@ -1,0 +1,33 @@
+---
+# tasks file for aws_cloudtrail_trails
+
+- name: Create CloudTrail trails
+  community.aws.cloudtrail:
+    name: "{{ item.name }}"
+    s3_bucket_name: "{{ item.s3_bucket }}"
+    s3_key_prefix: "{{ item.s3_prefix | default('cloudtrail') }}"
+    sns_topic_name: "{{ item.sns_topic | default(omit) }}"
+    include_global_service_events: "{{ item.include_global_events | default(true) }}"
+    is_multi_region_trail: "{{ item.multi_region | default(true) }}"
+    enable_log_file_validation: "{{ item.log_file_validation | default(true) }}"
+    kms_key_id: "{{ item.kms_key_id | default(kms_key_id) }}"
+    cloudwatch_logs_log_group_arn: "{{ item.cloudwatch_log_group | default(omit) }}"
+    cloudwatch_logs_role_arn: "{{ item.cloudwatch_role | default(omit) }}"
+    tags: "{{ item.tags | default(cloudtrail_tags) | combine({'Name': item.name, 'ManagedBy': 'Ansible'}) }}"
+    state: "{{ item.state | default(cloudtrail_state) }}"
+  loop: "{{ cloudtrail_trails }}"
+  when: cloudtrail_trails is defined
+  register: trail_result
+
+- name: Enable CloudTrail logging
+  community.aws.cloudtrail:
+    name: "{{ item.item.name }}"
+    state: present
+    enable_logging: true
+  loop: "{{ trail_result.results }}"
+  when: trail_result is defined
+
+- name: Display CloudTrail summary
+  ansible.builtin.debug:
+    msg:
+      - "Trails Created: {{ trail_result.results | selectattr('changed', 'equalto', true) | list | length if trail_result is defined else 0 }}"

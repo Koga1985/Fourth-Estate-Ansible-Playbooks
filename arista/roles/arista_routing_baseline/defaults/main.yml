@@ -1,6 +1,164 @@
 ---
-apply_changes: false
-artifacts_dir: "/tmp/arista-artifacts"
+# defaults file for arista_routing_baseline
+# Production-ready routing defaults for Fourth Estate agencies
 
-loopbacks: [{ name: "Loopback0", ipv4: ["192.0.2.1/32"] }]
-static_routes: [{ dest: "0.0.0.0/0", next_hop: "10.10.10.254" }]
+arista_apply_changes: false
+arista_artifacts_dir: "/tmp/arista-artifacts"
+
+# Loopback interfaces
+routing_loopbacks:
+  - name: "Loopback0"
+    ipv4:
+      - address: "{{ fabric_router_id | default('10.255.255.1') }}/32"
+    description: "Router ID"
+
+# Static routes
+static_routes:
+  - vrf: "default"
+    address_families:
+      - afi: "ipv4"
+        routes:
+          - dest: "0.0.0.0/0"
+            next_hops:
+              - forward_router_address: "10.0.0.1"
+                admin_distance: 250
+
+# Prefix lists
+prefix_lists:
+  - name: "DEFAULT_ONLY"
+    afi: "ipv4"
+    entries:
+      - sequence: 10
+        action: "permit"
+        prefix: "0.0.0.0/0"
+  - name: "LOOPBACKS"
+    afi: "ipv4"
+    entries:
+      - sequence: 10
+        action: "permit"
+        prefix: "10.255.255.0/24"
+        le: 32
+
+# Route maps
+route_maps:
+  - name: "RM_CONNECTED_TO_BGP"
+    entries:
+      - sequence: 10
+        action: "permit"
+        match:
+          - "ip address prefix-list LOOPBACKS"
+
+# BGP Configuration
+bgp_config:
+  enabled: true
+  asn: "65000"
+  router_id: "{{ fabric_router_id | default('10.255.255.1') }}"
+  max_paths: 4
+  max_paths_ibgp: 4
+
+# BGP Address Families
+bgp_address_families:
+  - afi: "ipv4"
+    redistribute:
+      - protocol: "connected"
+        route_map: "RM_CONNECTED_TO_BGP"
+  - afi: "evpn"
+
+# BGP Neighbors
+bgp_neighbors: []
+  # Example:
+  # - neighbor: "10.1.1.1"
+  #   remote_as: "65000"
+  #   description: "SPINE1"
+  #   update_source: "Loopback0"
+  #   send_community: "extended"
+  #   max_routes: 12000
+
+# BGP Peer Groups
+bgp_peer_groups:
+  - name: "SPINE_UNDERLAY"
+    remote_as: "65000"
+    update_source: "Loopback0"
+    max_routes: 12000
+  - name: "SPINE_OVERLAY"
+    remote_as: "65000"
+    update_source: "Loopback0"
+    max_routes: 12000
+
+# BGP EVPN Configuration
+bgp_evpn:
+  enabled: true
+  peer_group: "SPINE_OVERLAY"
+
+# BGP VRFs
+bgp_vrfs: []
+  # Example:
+  # - name: "TENANT_A"
+  #   rd: "10.255.255.1:3001"
+  #   rt_import:
+  #     - "65000:3001"
+  #   rt_export:
+  #     - "65000:3001"
+
+# OSPF Configuration
+ospf_config:
+  enabled: false
+  process_id: 1
+  router_id: "{{ fabric_router_id | default('10.255.255.1') }}"
+  passive_default: true
+  max_lsa: 12000
+
+# OSPF Interfaces
+ospf_interfaces: []
+  # Example:
+  # - name: "Ethernet49"
+  #   address_family:
+  #     - afi: "ipv4"
+  #       area:
+  #         area_id: "0.0.0.0"
+  #       cost: 10
+  #       network: "point-to-point"
+
+# OSPF Areas
+ospf_areas: []
+  # Example:
+  # - area_id: "0.0.0.0"
+  #   type: "normal"
+
+# ISIS Configuration
+isis_config:
+  enabled: false
+  instance: "CORE"
+  net: "49.0001.0100.2552.5501.00"
+  is_type: "level-2"
+  overload_timeout: 180
+  auth_mode: "md5"
+
+# ISIS Interfaces
+isis_interfaces: []
+  # Example:
+  # - name: "Ethernet49"
+  #   circuit_type: "level-2"
+  #   network_type: "point-to-point"
+  #   metric: 10
+
+# BFD Configuration
+bfd_config:
+  enabled: true
+  interval: 300
+  min_rx: 300
+  multiplier: 3
+
+# Routing configuration composite
+routing_config:
+  loopbacks: "{{ routing_loopbacks }}"
+  static_routes: "{{ static_routes }}"
+  prefix_lists: "{{ prefix_lists }}"
+  route_maps: "{{ route_maps }}"
+  bgp: "{{ bgp_config }}"
+  bgp_neighbors: "{{ bgp_neighbors }}"
+  bgp_peer_groups: "{{ bgp_peer_groups }}"
+  bgp_evpn: "{{ bgp_evpn }}"
+  ospf: "{{ ospf_config }}"
+  isis: "{{ isis_config }}"
+  bfd: "{{ bfd_config }}"

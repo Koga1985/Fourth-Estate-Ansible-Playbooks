@@ -1,12 +1,195 @@
 ---
-apply_changes: false
-artifacts_dir: "/tmp/arista-artifacts"
+# defaults file for arista_platform_baseline
+# Production-ready defaults for Fourth Estate Arista EOS switches
 
-baseline:
-  hostname: "eos-switch"
-  mgmt_vrf: "MGMT"
-  ntp: [{ server: "10.0.0.10", vrf: "MGMT" }]
-  syslog: [{ host: "10.0.0.20", port: 514, protocol: "udp", vrf: "MGMT" }]
-  users: []
-  banners: { login: "UNCLASSIFIED // FOUO", motd: "DoD Notice" }
-  eapi: { enabled: true, vrf: "MGMT", https: true }
+# Control whether changes are applied or just planned
+arista_apply_changes: false
+
+# Artifacts directory for storing configuration plans and backups
+arista_artifacts_dir: "/tmp/arista-artifacts"
+
+# Baseline configuration structure
+arista_baseline:
+  # Hostname configuration
+  hostname: "{{ inventory_hostname }}"
+  domain_name: "{{ arista_domain_name | default('mil') }}"
+
+  # Management VRF configuration
+  mgmt_vrf:
+    enabled: true
+    name: "MGMT"
+    description: "Management VRF for out-of-band access"
+
+  # Management interface configuration
+  mgmt_interface:
+    name: "Management1"
+    ipv4_address: "{{ ansible_host }}/24"
+    gateway: "{{ arista_mgmt_gateway | default(omit) }}"
+
+  # Banner configuration (DISA STIG compliant)
+  banners:
+    login: |
+      ************************************************************************
+      *                         UNCLASSIFIED//FOUO                          *
+      *                                                                      *
+      * This is a U.S. Government system, restricted to authorized users.   *
+      * Unauthorized access or use may subject violators to criminal,       *
+      * civil, and/or administrative action. All activities on this system  *
+      * are subject to monitoring and recording. By continuing to use this  *
+      * system you indicate your awareness of and consent to these terms.   *
+      * If you do not agree, disconnect immediately.                        *
+      *                                                                      *
+      *                         UNCLASSIFIED//FOUO                          *
+      ************************************************************************
+    motd: |
+      ************************************************************************
+      *   WARNING: This system is for authorized use only. Unauthorized     *
+      *   use may result in criminal prosecution. All activities are        *
+      *   logged and monitored.                                             *
+      ************************************************************************
+
+  # NTP configuration (DISA STIG V-220522)
+  ntp_servers:
+    - server: "{{ arista_ntp_server_1 | default('10.0.0.10') }}"
+      vrf: "MGMT"
+      prefer: true
+    - server: "{{ arista_ntp_server_2 | default('10.0.0.11') }}"
+      vrf: "MGMT"
+  ntp_auth_enabled: true
+  ntp_auth_keys:
+    - id: 1
+      algorithm: "sha1"
+      encryption: 7
+      key: "{{ arista_ntp_key | default('CHANGEME') }}"
+  ntp_acl: "NTP_ACL"
+
+  # DNS configuration (DISA STIG V-220523)
+  dns_servers:
+    - "{{ arista_dns_server_1 | default('10.0.0.20') }}"
+    - "{{ arista_dns_server_2 | default('10.0.0.21') }}"
+
+  # Syslog configuration (DISA STIG V-220524, V-220525)
+  syslog_servers:
+    - name: "{{ arista_syslog_server_1 | default('10.0.0.30') }}"
+      vrf: "MGMT"
+      protocol: "tcp"
+      port: 6514
+    - name: "{{ arista_syslog_server_2 | default('10.0.0.31') }}"
+      vrf: "MGMT"
+      protocol: "tcp"
+      port: 6514
+  syslog_facility: "local6"
+  syslog_source_interface: "Management1"
+  syslog_policy: omit
+
+  # SNMP configuration (DISA STIG V-220526-V-220529)
+  snmp_communities:
+    - name: "{{ arista_snmp_ro_community | default('public') }}"
+      access: "ro"
+      acl: "SNMP_RO_ACL"
+    - name: "{{ arista_snmp_rw_community | default('private') }}"
+      access: "rw"
+      acl: "SNMP_RW_ACL"
+  snmp_location: "{{ arista_snmp_location | default('Data Center') }}"
+  snmp_contact: "{{ arista_snmp_contact | default('netops@agency.mil') }}"
+  snmpv3_users:
+    - name: "snmpv3admin"
+      group: "network-admin"
+      auth_protocol: "sha512"
+      auth_password: "{{ arista_snmpv3_auth_password | default('CHANGEME123456') }}"
+      priv_protocol: "aes256"
+      priv_password: "{{ arista_snmpv3_priv_password | default('CHANGEME123456') }}"
+
+  # TACACS+ configuration (DISA STIG V-220530, V-220531)
+  tacacs_servers:
+    - host: "{{ arista_tacacs_server_1 | default('10.0.0.40') }}"
+      key: "{{ arista_tacacs_key | default('CHANGEME') }}"
+      timeout: 5
+    - host: "{{ arista_tacacs_server_2 | default('10.0.0.41') }}"
+      key: "{{ arista_tacacs_key | default('CHANGEME') }}"
+      timeout: 5
+
+  # RADIUS configuration (DISA STIG V-220532, V-220533)
+  radius_servers:
+    - host: "{{ arista_radius_server_1 | default('10.0.0.50') }}"
+      key: "{{ arista_radius_key | default('CHANGEME') }}"
+      timeout: 5
+      retransmit: 3
+    - host: "{{ arista_radius_server_2 | default('10.0.0.51') }}"
+      key: "{{ arista_radius_key | default('CHANGEME') }}"
+      timeout: 5
+      retransmit: 3
+
+  # AAA configuration (DISA STIG V-220534)
+  aaa:
+    auth_method: "tacacs+"
+    accounting_method: "tacacs+"
+    authorization_method: "tacacs+"
+
+  # Local user accounts (DISA STIG V-220535)
+  local_users:
+    - name: "admin"
+      privilege: 15
+      role: "network-admin"
+      password: "{{ arista_admin_password | default(omit) }}"
+      ssh_key: "{{ arista_admin_ssh_key | default(omit) }}"
+      update_password: "on_create"
+    - name: "netops"
+      privilege: 15
+      role: "network-operator"
+      password: "{{ arista_netops_password | default(omit) }}"
+      ssh_key: "{{ arista_netops_ssh_key | default(omit) }}"
+      update_password: "on_create"
+
+  # SSH configuration (DISA STIG V-220538)
+  ssh_timeout: 60
+  ssh_retries: 3
+
+  # eAPI (management API) configuration (DISA STIG V-220539)
+  eapi:
+    enabled: true
+    https_port: 443
+    timeout: 15
+
+  # Session timeout (DISA STIG V-220540)
+  exec_timeout: 10
+
+  # Logging configuration (DISA STIG V-220541, V-220542)
+  logging_buffer_size: 32768
+  logging_level: "informational"
+
+  # Password policy (DISA STIG V-220543)
+  password_min_length: 15
+  password_encryption: "sha512"
+
+  # Control plane ACL (DISA STIG V-220545)
+  control_plane_acl: "CONTROL_PLANE_ACL"
+
+  # Timezone configuration (DISA STIG V-220546)
+  timezone: "UTC"
+
+# Additional security settings
+arista_security:
+  # Disable unused services
+  disable_http: true
+  disable_telnet: true
+  disable_bootp: true
+  disable_finger: true
+
+  # Enable security features
+  enable_password_encryption: true
+  enable_command_logging: true
+  enable_login_on_success: false
+  enable_login_on_failure: true
+
+# Quality of Service
+arista_qos:
+  enabled: false
+  default_cos: 0
+  trust_mode: "dscp"
+
+# Storm control
+arista_storm_control:
+  broadcast_threshold: 10
+  multicast_threshold: 10
+  unknown_unicast_threshold: 10

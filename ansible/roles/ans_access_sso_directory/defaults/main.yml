@@ -1,11 +1,99 @@
 ---
-# Common defaults shared by most roles
-apply_changes: false              # guard: require explicit true for mutating actions
+# AAP Controller connection
+apply_changes: false
 artifacts_dir: "/tmp/ansible-artifacts"
 validate_certs: true
+controller_host: "{{ lookup('env', 'CONTROLLER_HOST') | default('https://controller.example.mil') }}"
+controller_oauthtoken: "{{ lookup('env', 'CONTROLLER_OAUTH_TOKEN') | default('') }}"
+controller_username: "{{ lookup('env', 'CONTROLLER_USERNAME') | default('') }}"
+controller_password: "{{ lookup('env', 'CONTROLLER_PASSWORD') | default('') }}"
 
-
-controller_host: "https://controller.example.mil"
-controller_oauthtoken: "{{ lookup('env','TOWER_TOKEN') | default('') }}"
-sso_settings: {}
+# SSO Configuration
+sso_provider: "saml"  # saml, oidc, ldap, radius
+sso_enabled: true
 access_reviews: true
+access_review_output_format: "csv"  # csv, json, yaml
+
+# SAML Settings
+saml_auto_create_objects: true
+saml_attr_user_permanent_id: "name_id"
+saml_attr_first_name: "first_name"
+saml_attr_last_name: "last_name"
+saml_attr_username: "username"
+saml_attr_email: "email"
+saml_entity_id: "https://controller.example.mil"
+saml_callback_url: "https://controller.example.mil/sso/complete/saml/"
+saml_idp_url: "https://sso.example.mil/saml/sso"
+saml_idp_x509cert: ""
+saml_team_map: {}
+saml_organization_map: {}
+saml_security_config: {}
+
+# OIDC Settings
+oidc_key: ""
+oidc_secret: ""
+oidc_provider_url: "https://sso.example.mil"
+oidc_verify_ssl: true
+
+# LDAP Settings
+ldap_server_uri: "ldaps://ldap.example.mil:636"
+ldap_bind_dn: "cn=ansible,ou=service-accounts,dc=example,dc=mil"
+ldap_bind_password: ""
+ldap_start_tls: false
+ldap_user_dn_template: "uid=%(user)s,ou=users,dc=example,dc=mil"
+ldap_user_search:
+  - "ou=users,dc=example,dc=mil"
+  - "SCOPE_SUBTREE"
+  - "(uid=%(user)s)"
+ldap_group_search:
+  - "ou=groups,dc=example,dc=mil"
+  - "SCOPE_SUBTREE"
+  - "(objectClass=groupOfNames)"
+ldap_require_group: ""
+ldap_deny_group: ""
+ldap_user_attr_map:
+  first_name: "givenName"
+  last_name: "sn"
+  email: "mail"
+ldap_team_map: {}
+ldap_organization_map: {}
+
+# RADIUS Settings
+radius_server: ""
+radius_port: 1812
+radius_secret: ""
+
+# RBAC Configuration
+rbac_roles_to_create: []
+# Example:
+# - name: "news-editor"
+#   description: "Fourth Estate news editor role"
+#   permissions:
+#     - resource_type: "job_template"
+#       resource_name: "Deploy News App"
+#       role: "execute"
+
+# Team Mappings for Fourth Estate
+fourth_estate_team_mappings:
+  - ldap_group: "cn=journalists,ou=groups,dc=example,dc=mil"
+    ansible_team: "Journalists"
+    ansible_org: "Fourth Estate"
+    roles:
+      - resource_type: "inventory"
+        resource_name: "Production Servers"
+        role: "use"
+  - ldap_group: "cn=editors,ou=groups,dc=example,dc=mil"
+    ansible_team: "Editors"
+    ansible_org: "Fourth Estate"
+    roles:
+      - resource_type: "job_template"
+        resource_name: "*"
+        role: "execute"
+
+# Access Review Settings
+access_review_frequency: "weekly"  # daily, weekly, monthly
+access_review_recipients:
+  - "security@example.mil"
+  - "compliance@example.mil"
+access_review_include_inactive_users: false
+access_review_retention_days: 90

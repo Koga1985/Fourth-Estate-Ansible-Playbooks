@@ -1,0 +1,128 @@
+---
+# tasks file for aws_nacls
+
+- name: Create Network ACLs
+  amazon.aws.ec2_vpc_nacl:
+    vpc_id: "{{ item.vpc_id | default(vpc_id) }}"
+    name: "{{ item.name }}"
+    region: "{{ item.region | default(aws_region) }}"
+    subnets: "{{ item.subnets | default([]) }}"
+    ingress: "{{ item.ingress | default([]) }}"
+    egress: "{{ item.egress | default([]) }}"
+    tags: "{{ item.tags | default(nacl_tags) | combine({'Name': item.name, 'ManagedBy': 'Ansible'}) }}"
+    state: "{{ item.state | default(nacl_state) }}"
+  loop: "{{ network_acls }}"
+  when: network_acls is defined
+  register: nacl_result
+
+- name: Create public subnet NACL with strict rules
+  amazon.aws.ec2_vpc_nacl:
+    vpc_id: "{{ vpc_id }}"
+    name: "{{ nacl_public_name }}"
+    region: "{{ aws_region }}"
+    subnets: "{{ public_subnet_ids }}"
+    ingress:
+      - [100, 'tcp', 'allow', '0.0.0.0/0', null, null, 80, 80]
+      - [110, 'tcp', 'allow', '0.0.0.0/0', null, null, 443, 443]
+      - [120, 'tcp', 'allow', '0.0.0.0/0', null, null, 1024, 65535]
+      - [130, 'icmp', 'allow', '0.0.0.0/0', 0, 0]
+    egress:
+      - [100, 'tcp', 'allow', '0.0.0.0/0', null, null, 80, 80]
+      - [110, 'tcp', 'allow', '0.0.0.0/0', null, null, 443, 443]
+      - [120, 'tcp', 'allow', '0.0.0.0/0', null, null, 1024, 65535]
+      - [130, 'icmp', 'allow', '0.0.0.0/0', 0, 0]
+    tags: "{{ nacl_tags | combine({'Name': nacl_public_name, 'Type': 'Public'}) }}"
+    state: "{{ nacl_state }}"
+  when:
+    - create_public_nacl | bool
+    - public_subnet_ids is defined
+  register: public_nacl
+
+- name: Create private subnet NACL with restrictive rules
+  amazon.aws.ec2_vpc_nacl:
+    vpc_id: "{{ vpc_id }}"
+    name: "{{ nacl_private_name }}"
+    region: "{{ aws_region }}"
+    subnets: "{{ private_subnet_ids }}"
+    ingress:
+      - [100, 'tcp', 'allow', '{{ vpc_cidr }}', null, null, 0, 65535]
+      - [110, 'tcp', 'allow', '0.0.0.0/0', null, null, 1024, 65535]
+      - [120, 'icmp', 'allow', '{{ vpc_cidr }}', 0, 0]
+    egress:
+      - [100, 'tcp', 'allow', '0.0.0.0/0', null, null, 80, 80]
+      - [110, 'tcp', 'allow', '0.0.0.0/0', null, null, 443, 443]
+      - [120, 'tcp', 'allow', '{{ vpc_cidr }}', null, null, 0, 65535]
+      - [130, 'tcp', 'allow', '0.0.0.0/0', null, null, 1024, 65535]
+    tags: "{{ nacl_tags | combine({'Name': nacl_private_name, 'Type': 'Private'}) }}"
+    state: "{{ nacl_state }}"
+  when:
+    - create_private_nacl | bool
+    - private_subnet_ids is defined
+  register: private_nacl
+
+- name: Create database subnet NACL with strict isolation
+  amazon.aws.ec2_vpc_nacl:
+    vpc_id: "{{ vpc_id }}"
+    name: "{{ nacl_database_name }}"
+    region: "{{ aws_region }}"
+    subnets: "{{ database_subnet_ids }}"
+    ingress:
+      - [100, 'tcp', 'allow', '{{ app_subnet_cidr }}', null, null, 3306, 3306]
+      - [110, 'tcp', 'allow', '{{ app_subnet_cidr }}', null, null, 5432, 5432]
+      - [120, 'tcp', 'allow', '{{ vpc_cidr }}', null, null, 1024, 65535]
+    egress:
+      - [100, 'tcp', 'allow', '{{ vpc_cidr }}', null, null, 1024, 65535]
+      - [110, 'tcp', 'allow', '0.0.0.0/0', null, null, 443, 443]
+    tags: "{{ nacl_tags | combine({'Name': nacl_database_name, 'Type': 'Database'}) }}"
+    state: "{{ nacl_state }}"
+  when:
+    - create_database_nacl | bool
+    - database_subnet_ids is defined
+  register: database_nacl
+
+- name: Add FedRAMP compliance deny rules
+  amazon.aws.ec2_vpc_nacl:
+    vpc_id: "{{ vpc_id }}"
+    name: "{{ item.name }}"
+    region: "{{ aws_region }}"
+    nacl_id: "{{ item.nacl_id }}"
+    ingress: "{{ item.ingress + nacl_fedramp_deny_rules }}"
+    lookup: id
+    state: "{{ nacl_state }}"
+  loop: "{{ nacl_result.results }}"
+  when:
+    - nacl_result is defined
+    - apply_fedramp_deny_rules | bool
+    - item.nacl is defined
+
+- name: Create NACL for DMZ with enhanced security
+  amazon.aws.ec2_vpc_nacl:
+    vpc_id: "{{ vpc_id }}"
+    name: "{{ nacl_dmz_name }}"
+    region: "{{ aws_region }}"
+    subnets: "{{ dmz_subnet_ids }}"
+    ingress: "{{ nacl_dmz_ingress_rules }}"
+    egress: "{{ nacl_dmz_egress_rules }}"
+    tags: "{{ nacl_tags | combine({'Name': nacl_dmz_name, 'Type': 'DMZ', 'SecurityZone': 'Internet-Facing'}) }}"
+    state: "{{ nacl_state }}"
+  when:
+    - create_dmz_nacl | bool
+    - dmz_subnet_ids is defined
+  register: dmz_nacl
+
+- name: Display NACL summary
+  ansible.builtin.debug:
+    msg:
+      - "Network ACLs Created: {{ nacl_result.results | selectattr('changed', 'equalto', true) | list | length if nacl_result is defined else 0 }}"
+      - "Public NACL ID: {{ public_nacl.nacl_id if public_nacl is defined and public_nacl.nacl_id is defined else 'N/A' }}"
+      - "Private NACL ID: {{ private_nacl.nacl_id if private_nacl is defined and private_nacl.nacl_id is defined else 'N/A' }}"
+      - "Database NACL ID: {{ database_nacl.nacl_id if database_nacl is defined and database_nacl.nacl_id is defined else 'N/A' }}"
+
+- name: Notify NACL changes
+  ansible.builtin.debug:
+    msg: "Network ACL configuration completed"
+  changed_when: true
+  notify: notify nacl changes
+  when:
+    - nacl_result is defined
+    - nacl_result.changed | default(false)

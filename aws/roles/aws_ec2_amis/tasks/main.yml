@@ -1,0 +1,131 @@
+---
+# tasks file for aws_ec2_amis
+
+- name: Create AMI from EC2 instance
+  amazon.aws.ec2_ami:
+    instance_id: "{{ item.instance_id }}"
+    name: "{{ item.name }}"
+    description: "{{ item.description | default('AMI created by Ansible') }}"
+    region: "{{ item.region | default(aws_region) }}"
+    wait: "{{ item.wait | default(true) }}"
+    wait_timeout: "{{ item.wait_timeout | default(1800) }}"
+    tags: "{{ item.tags | default(ami_tags) | combine({'Name': item.name, 'ManagedBy': 'Ansible'}) }}"
+    device_mapping: "{{ item.device_mapping | default([]) }}"
+    no_reboot: "{{ item.no_reboot | default(true) }}"
+    state: "{{ item.state | default(ami_state) }}"
+  loop: "{{ ec2_amis }}"
+  when: ec2_amis is defined
+  register: ami_result
+
+- name: Create AMI with encrypted snapshots
+  amazon.aws.ec2_ami:
+    instance_id: "{{ item.instance_id }}"
+    name: "{{ item.name }}-encrypted"
+    description: "{{ item.description | default('Encrypted AMI created by Ansible') }}"
+    region: "{{ item.region | default(aws_region) }}"
+    wait: true
+    tags: "{{ item.tags | default(ami_tags) | combine({'Name': item.name, 'Encrypted': 'true', 'ManagedBy': 'Ansible'}) }}"
+    device_mapping:
+      - device_name: /dev/sda1
+        volume_type: gp3
+        delete_on_termination: true
+        encrypted: true
+        kms_key_id: "{{ kms_key_id }}"
+    no_reboot: true
+    state: "{{ item.state | default(ami_state) }}"
+  loop: "{{ ec2_amis }}"
+  when:
+    - ec2_amis is defined
+    - ami_enforce_encryption | bool
+    - kms_key_id is defined
+  register: encrypted_ami_result
+
+- name: Copy AMI to other regions
+  amazon.aws.ec2_ami_copy:
+    source_image_id: "{{ item.0.image_id }}"
+    source_region: "{{ item.0.item.region | default(aws_region) }}"
+    region: "{{ item.1 }}"
+    name: "{{ item.0.item.name }}-{{ item.1 }}"
+    description: "Copy of {{ item.0.item.name }} in {{ item.1 }}"
+    encrypted: true
+    kms_key_id: "{{ kms_key_id }}"
+    tags: "{{ ami_tags | combine({'SourceRegion': item.0.item.region | default(aws_region), 'TargetRegion': item.1}) }}"
+    wait: true
+  loop: "{{ ami_result.results | subelements('item.copy_to_regions', skip_missing=True) }}"
+  when:
+    - ami_result is defined
+    - ami_enable_cross_region_copy | bool
+  register: ami_copy_result
+
+- name: Share AMI with other accounts
+  amazon.aws.ec2_ami:
+    image_id: "{{ item.0.image_id }}"
+    region: "{{ item.0.item.region | default(aws_region) }}"
+    launch_permissions:
+      user_ids: "{{ item.0.item.share_with_accounts }}"
+    state: present
+  loop: "{{ ami_result.results }}"
+  when:
+    - ami_result is defined
+    - item.item.share_with_accounts is defined
+    - item.image_id is defined
+
+- name: Set AMI deprecation time
+  amazon.aws.ec2_ami:
+    image_id: "{{ item.image_id }}"
+    region: "{{ item.item.region | default(aws_region) }}"
+    deprecation_time: "{{ ami_deprecation_time }}"
+    state: present
+  loop: "{{ ami_result.results }}"
+  when:
+    - ami_result is defined
+    - ami_enable_deprecation | bool
+    - item.image_id is defined
+
+- name: Create lifecycle policy for AMI cleanup
+  community.aws.ec2_ami_info:
+    image_ids: "{{ ami_result.results | map(attribute='image_id') | list }}"
+    region: "{{ aws_region }}"
+  register: ami_info
+  when:
+    - ami_result is defined
+    - ami_enable_lifecycle_policy | bool
+
+- name: Deregister old AMIs
+  amazon.aws.ec2_ami:
+    image_id: "{{ item.image_id }}"
+    region: "{{ aws_region }}"
+    delete_snapshot: true
+    state: absent
+  loop: "{{ ami_info.images | default([]) }}"
+  when:
+    - ami_info is defined
+    - item.creation_date | to_datetime('%Y-%m-%dT%H:%M:%S.%fZ') < (ansible_date_time.iso8601 | to_datetime('%Y-%m-%dT%H:%M:%S%z')) - timedelta(days=ami_retention_days)
+    - ami_enable_lifecycle_policy | bool
+
+- name: Tag AMIs for compliance
+  amazon.aws.ec2_ami:
+    image_id: "{{ item.image_id }}"
+    region: "{{ item.item.region | default(aws_region) }}"
+    tags: "{{ ami_tags | combine({'Compliance': 'FedRAMP-High', 'Encrypted': 'true', 'BackupRetention': ami_retention_days | string}) }}"
+    state: present
+  loop: "{{ ami_result.results }}"
+  when:
+    - ami_result is defined
+    - item.image_id is defined
+
+- name: Display AMI summary
+  ansible.builtin.debug:
+    msg:
+      - "AMIs Created: {{ ami_result.results | selectattr('changed', 'equalto', true) | list | length if ami_result is defined else 0 }}"
+      - "Encrypted AMIs: {{ encrypted_ami_result.results | selectattr('changed', 'equalto', true) | list | length if encrypted_ami_result is defined else 0 }}"
+      - "Cross-Region Copies: {{ ami_copy_result.results | selectattr('changed', 'equalto', true) | list | length if ami_copy_result is defined else 0 }}"
+
+- name: Notify AMI changes
+  ansible.builtin.debug:
+    msg: "AMI creation and management completed"
+  changed_when: true
+  notify: notify ami changes
+  when:
+    - ami_result is defined
+    - ami_result.changed | default(false)

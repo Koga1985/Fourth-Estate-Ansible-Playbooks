@@ -1,0 +1,102 @@
+---
+# tasks file for aws_iam_policies
+
+- name: Create customer managed IAM policies
+  community.aws.iam_managed_policy:
+    policy_name: "{{ item.name }}"
+    policy_description: "{{ item.description | default('Managed by Ansible') }}"
+    policy: "{{ lookup('template', item.template) if item.template is defined else item.policy }}"
+    state: "{{ item.state | default(iam_policy_state) }}"
+    tags: "{{ item.tags | default(iam_policy_tags) | combine({'ManagedBy': 'Ansible'}) }}"
+  loop: "{{ iam_policies }}"
+  when: iam_policies is defined
+  register: iam_policy_result
+
+- name: Create FedRAMP compliance policies
+  community.aws.iam_managed_policy:
+    policy_name: "{{ item.name }}"
+    policy_description: "{{ item.description }}"
+    policy: "{{ lookup('template', item.template) }}"
+    state: present
+    tags: "{{ iam_policy_tags | combine({'Compliance': 'FedRAMP-High', 'Required': 'true'}) }}"
+  loop: "{{ iam_fedramp_policies }}"
+  when: iam_create_fedramp_policies | bool
+  register: fedramp_policy_result
+
+- name: Create permissions boundary policies
+  community.aws.iam_managed_policy:
+    policy_name: "{{ item.name }}-Boundary"
+    policy_description: "Permissions boundary for {{ item.name }}"
+    policy: "{{ lookup('template', 'permissions_boundary.json.j2') }}"
+    state: "{{ item.state | default(iam_policy_state) }}"
+    tags: "{{ iam_policy_tags | combine({'PolicyType': 'PermissionsBoundary'}) }}"
+  loop: "{{ iam_boundary_policies }}"
+  when: iam_boundary_policies is defined
+  register: boundary_result
+
+- name: Create service control policies for least privilege
+  community.aws.iam_managed_policy:
+    policy_name: "{{ item.service }}-LeastPrivilege"
+    policy_description: "Least privilege policy for {{ item.service }}"
+    policy: "{{ lookup('template', item.template) }}"
+    state: present
+    tags: "{{ iam_policy_tags | combine({'Service': item.service, 'Principle': 'LeastPrivilege'}) }}"
+  loop: "{{ iam_service_policies }}"
+  when: iam_service_policies is defined
+
+- name: Create encryption enforcement policies
+  community.aws.iam_managed_policy:
+    policy_name: "EnforceEncryptionAtRest"
+    policy_description: "Enforce encryption at rest for all storage services"
+    policy: "{{ lookup('template', 'enforce_encryption.json.j2') }}"
+    state: present
+    tags: "{{ iam_policy_tags | combine({'SecurityControl': 'Encryption', 'Compliance': 'FedRAMP-High'}) }}"
+  when: iam_enforce_encryption | bool
+
+- name: Create region restriction policies
+  community.aws.iam_managed_policy:
+    policy_name: "RestrictToGovCloudRegions"
+    policy_description: "Restrict operations to GovCloud regions only"
+    policy: "{{ lookup('template', 'region_restriction.json.j2') }}"
+    state: present
+    tags: "{{ iam_policy_tags | combine({'SecurityControl': 'RegionRestriction', 'Compliance': 'FedRAMP-High'}) }}"
+  when: iam_restrict_regions | bool
+
+- name: Attach policies to roles
+  community.aws.iam_role:
+    name: "{{ item.0.role }}"
+    managed_policies: "{{ item.0.policies }}"
+    state: present
+  loop: "{{ iam_policy_attachments | subelements('policies', skip_missing=True) }}"
+  when: iam_policy_attachments is defined
+
+- name: Create policy versions for audit trail
+  community.aws.iam_managed_policy:
+    policy_name: "{{ item.name }}"
+    policy: "{{ lookup('template', item.template) }}"
+    state: present
+    make_default: true
+  loop: "{{ iam_policies }}"
+  when:
+    - iam_policies is defined
+    - item.versioning | default(true) | bool
+    - iam_policy_result.changed | default(false)
+
+- name: Display IAM policy creation summary
+  ansible.builtin.debug:
+    msg:
+      - "IAM Policies Created: {{ iam_policy_result.results | selectattr('changed', 'equalto', true) | list | length }}"
+      - "Total Policies Managed: {{ iam_policies | length }}"
+      - "FedRAMP Policies: {{ fedramp_policy_result.results | selectattr('changed', 'equalto', true) | list | length if fedramp_policy_result is defined else 0 }}"
+  when:
+    - iam_policies is defined
+    - iam_policy_result is defined
+
+- name: Notify IAM policy changes
+  ansible.builtin.debug:
+    msg: "IAM policy changes completed"
+  changed_when: true
+  notify: notify iam policy changes
+  when:
+    - iam_policy_result is defined
+    - iam_policy_result.changed | default(false)

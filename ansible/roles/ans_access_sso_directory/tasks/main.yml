@@ -1,34 +1,154 @@
-
 ---
-- name: Plan SSO
+- name: Ensure artifacts directory exists
+  ansible.builtin.file:
+    path: "{{ artifacts_dir }}"
+    state: directory
+    mode: "0755"
+  delegate_to: localhost
+
+- name: Build SSO settings based on provider
+  ansible.builtin.set_fact:
+    sso_settings: "{{ lookup('template', 'sso_settings_' + sso_provider + '.yml.j2') | from_yaml }}"
+  when: sso_enabled | bool
+
+- name: Plan SSO configuration
   ansible.builtin.copy:
-    dest: "{{ artifacts_dir }}/sso_plan.json"
+    dest: "{{ artifacts_dir }}/sso_plan_{{ sso_provider }}.json"
     mode: "0644"
     content: "{{ sso_settings | to_nice_json }}"
+  delegate_to: localhost
 
-- name: Apply Controller SSO
-  when: apply_changes | bool and (sso_settings | length > 0)
+- name: Configure LDAP authentication
+  when: apply_changes | bool and sso_provider == 'ldap'
   ansible.controller.settings:
     controller_host: "{{ controller_host }}"
     controller_oauthtoken: "{{ controller_oauthtoken }}"
-    validate_certs: true
+    controller_username: "{{ controller_username }}"
+    controller_password: "{{ controller_password }}"
+    validate_certs: "{{ validate_certs }}"
     settings: "{{ sso_settings }}"
 
-- name: Export principals/roles (access review)
+- name: Configure SAML authentication
+  when: apply_changes | bool and sso_provider == 'saml'
+  ansible.controller.settings:
+    controller_host: "{{ controller_host }}"
+    controller_oauthtoken: "{{ controller_oauthtoken }}"
+    controller_username: "{{ controller_username }}"
+    controller_password: "{{ controller_password }}"
+    validate_certs: "{{ validate_certs }}"
+    settings: "{{ sso_settings }}"
+
+- name: Configure OIDC authentication
+  when: apply_changes | bool and sso_provider == 'oidc'
+  ansible.controller.settings:
+    controller_host: "{{ controller_host }}"
+    controller_oauthtoken: "{{ controller_oauthtoken }}"
+    controller_username: "{{ controller_username }}"
+    controller_password: "{{ controller_password }}"
+    validate_certs: "{{ validate_certs }}"
+    settings: "{{ sso_settings }}"
+
+- name: Create Fourth Estate organizations
+  when: apply_changes | bool
+  ansible.controller.organization:
+    controller_host: "{{ controller_host }}"
+    controller_oauthtoken: "{{ controller_oauthtoken }}"
+    controller_username: "{{ controller_username }}"
+    controller_password: "{{ controller_password }}"
+    validate_certs: "{{ validate_certs }}"
+    name: "{{ item.ansible_org }}"
+    state: present
+  loop: "{{ fourth_estate_team_mappings }}"
+  loop_control:
+    label: "{{ item.ansible_org }}"
+  when: fourth_estate_team_mappings | length > 0
+
+- name: Create Fourth Estate teams
+  when: apply_changes | bool
+  ansible.controller.team:
+    controller_host: "{{ controller_host }}"
+    controller_oauthtoken: "{{ controller_oauthtoken }}"
+    controller_username: "{{ controller_username }}"
+    controller_password: "{{ controller_password }}"
+    validate_certs: "{{ validate_certs }}"
+    name: "{{ item.ansible_team }}"
+    organization: "{{ item.ansible_org }}"
+    state: present
+  loop: "{{ fourth_estate_team_mappings }}"
+  loop_control:
+    label: "{{ item.ansible_team }}"
+  when: fourth_estate_team_mappings | length > 0
+
+- name: Export user data for access review
   when: access_reviews | bool
   ansible.builtin.uri:
-    url: "{{ controller_host }}/api/v2/roles/"
+    url: "{{ controller_host }}/api/v2/users/"
     method: GET
-    headers: { Authorization: "Bearer {{ controller_oauthtoken }}" }
-    validate_certs: true
-  register: roles
+    headers:
+      Authorization: "Bearer {{ controller_oauthtoken }}"
+    validate_certs: "{{ validate_certs }}"
+    return_content: true
+  register: users_data
+  delegate_to: localhost
 
-- name: Write access matrix CSV (basic)
+- name: Export role assignments for access review
+  when: access_reviews | bool
+  ansible.builtin.uri:
+    url: "{{ controller_host }}/api/v2/role_user_assignments/"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ controller_oauthtoken }}"
+    validate_certs: "{{ validate_certs }}"
+    return_content: true
+  register: role_assignments
+  delegate_to: localhost
+
+- name: Export team memberships for access review
+  when: access_reviews | bool
+  ansible.builtin.uri:
+    url: "{{ controller_host }}/api/v2/teams/"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ controller_oauthtoken }}"
+    validate_certs: "{{ validate_certs }}"
+    return_content: true
+  register: teams_data
+  delegate_to: localhost
+
+- name: Generate comprehensive access review report (CSV)
+  when: access_reviews | bool and access_review_output_format == 'csv'
+  ansible.builtin.template:
+    src: access_review.csv.j2
+    dest: "{{ artifacts_dir }}/access_review_{{ ansible_date_time.date }}.csv"
+    mode: "0644"
+  delegate_to: localhost
+
+- name: Generate comprehensive access review report (JSON)
+  when: access_reviews | bool and access_review_output_format == 'json'
   ansible.builtin.copy:
-    dest: "{{ artifacts_dir }}/access_review.csv"
+    dest: "{{ artifacts_dir }}/access_review_{{ ansible_date_time.date }}.json"
     mode: "0644"
     content: |
-      name,role,resource
-      {% for r in roles.json.results | default([]) -%}
-      {{ r.summary_fields.user.username if r.summary_fields.user is defined else (r.summary_fields.team.name if r.summary_fields.team is defined else 'n/a') }},{{ r.name }},{{ r.summary_fields.resource_name | default('') }}
-      {% endfor %}
+      {
+        "generated": "{{ ansible_date_time.iso8601 }}",
+        "users": {{ users_data.json | default({}) | to_nice_json }},
+        "role_assignments": {{ role_assignments.json | default({}) | to_nice_json }},
+        "teams": {{ teams_data.json | default({}) | to_nice_json }}
+      }
+  delegate_to: localhost
+
+- name: Archive old access review reports
+  when: access_reviews | bool
+  ansible.builtin.shell: |
+    find "{{ artifacts_dir }}" -name "access_review_*.{{ access_review_output_format }}" -type f -mtime +{{ access_review_retention_days }} -delete
+  delegate_to: localhost
+  changed_when: false
+
+- name: Display SSO configuration summary
+  ansible.builtin.debug:
+    msg:
+      - "SSO Provider: {{ sso_provider }}"
+      - "SSO Enabled: {{ sso_enabled }}"
+      - "Access Reviews: {{ access_reviews }}"
+      - "Review Output: {{ artifacts_dir }}/access_review_{{ ansible_date_time.date }}.{{ access_review_output_format }}"
+      - "Team Mappings Configured: {{ fourth_estate_team_mappings | length }}"

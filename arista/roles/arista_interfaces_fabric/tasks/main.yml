@@ -1,27 +1,303 @@
 ---
-- name: Ensure artifacts dir
-  ansible.builtin/file: { path: "{{ artifacts_dir }}", state: directory }
-- name: Plan L2/L3
-  ansible.builtin/copy:
-    dest: "{{ artifacts_dir }}/interfaces_fabric_plan.json"
-    content: "{{ {'vlans': vlans, 'l2_interfaces': l2_interfaces, 'l3_interfaces': l3_interfaces, 'mtu': mtu} | to_nice_json }}"
+# tasks file for arista_interfaces_fabric
+# Production-ready VXLAN/EVPN fabric and MLAG configuration for Fourth Estate agencies
+
+- name: Ensure artifacts directory exists
+  ansible.builtin.file:
+    path: "{{ arista_artifacts_dir }}"
+    state: directory
+    mode: "0755"
+  delegate_to: localhost
+  run_once: true
+
+- name: Gather EOS facts
+  arista.eos.eos_facts:
+    gather_subset: all
+  register: eos_facts
+
+- name: Save fabric configuration plan
+  ansible.builtin.copy:
+    dest: "{{ arista_artifacts_dir }}/{{ inventory_hostname }}_fabric_plan.json"
+    content: "{{ fabric_config | to_nice_json }}"
     mode: "0644"
-- name: VLANs
-  when: apply_changes | bool
+  delegate_to: localhost
+
+# VLAN Configuration
+- name: Configure VLANs
+  when: arista_apply_changes | bool and fabric_vlans | length > 0
   arista.eos.eos_vlans:
-    config: "{{ vlans }}"
+    config: "{{ fabric_vlans }}"
     state: merged
-- name: L2 interfaces
-  when: apply_changes | bool and (l2_interfaces | length) > 0
-  arista.eos.eos_l2_interfaces:
-    config: "{{ l2_interfaces }}"
-    state: merged
-- name: SVIs
-  when: apply_changes | bool and (l3_interfaces | length) > 0
-  arista.eos.eos_l3_interfaces:
-    config: "{{ l3_interfaces }}"
-    state: merged
-- name: System MTU
-  when: apply_changes | bool and mtu is defined
+  notify: save eos configuration
+
+# VRF Configuration for multi-tenancy
+- name: Configure VRFs
+  when: arista_apply_changes | bool and fabric_vrfs | length > 0
+  loop: "{{ fabric_vrfs }}"
+  loop_control:
+    label: "{{ item.name }}"
   arista.eos.eos_config:
-    lines: [ "mtu {{ mtu }}" ]
+    lines:
+      - "vrf instance {{ item.name }}"
+      - "description {{ item.description | default('VRF ' + item.name) }}"
+      - "rd {{ item.rd }}"
+  notify: save eos configuration
+
+- name: Configure VRF route targets
+  when: arista_apply_changes | bool and fabric_vrfs | length > 0
+  loop: "{{ fabric_vrfs }}"
+  loop_control:
+    label: "{{ item.name }}"
+  arista.eos.eos_config:
+    lines:
+      - "route-target import {{ item.rt_import | join(' ') }}"
+      - "route-target export {{ item.rt_export | join(' ') }}"
+    parents:
+      - "vrf instance {{ item.name }}"
+  when: item.rt_import is defined and item.rt_export is defined
+  notify: save eos configuration
+
+# MLAG Configuration
+- name: Configure MLAG domain
+  when: arista_apply_changes | bool and mlag_config.enabled | default(false)
+  arista.eos.eos_config:
+    lines:
+      - "mlag configuration"
+      - "domain-id {{ mlag_config.domain_id }}"
+      - "local-interface {{ mlag_config.local_interface }}"
+      - "peer-address {{ mlag_config.peer_address }}"
+      - "peer-link {{ mlag_config.peer_link }}"
+      - "reload-delay mlag {{ mlag_config.reload_delay | default(300) }}"
+      - "reload-delay non-mlag {{ mlag_config.reload_delay_non_mlag | default(330) }}"
+  notify: save eos configuration
+
+- name: Configure MLAG peer-link interface
+  when: arista_apply_changes | bool and mlag_config.enabled | default(false)
+  arista.eos.eos_interfaces:
+    config:
+      - name: "{{ mlag_config.peer_link }}"
+        description: "MLAG Peer Link"
+        enabled: true
+    state: merged
+  notify: save eos configuration
+
+- name: Configure MLAG peer-link as trunk
+  when: arista_apply_changes | bool and mlag_config.enabled | default(false)
+  arista.eos.eos_l2_interfaces:
+    config:
+      - name: "{{ mlag_config.peer_link }}"
+        mode: trunk
+        trunk:
+          allowed_vlans: "{{ mlag_config.peer_link_vlans | default('1-4094') }}"
+    state: merged
+  notify: save eos configuration
+
+- name: Configure MLAG VLAN for peer communication
+  when: arista_apply_changes | bool and mlag_config.enabled | default(false)
+  arista.eos.eos_vlans:
+    config:
+      - vlan_id: "{{ mlag_config.peer_vlan }}"
+        name: "MLAG_PEER"
+        state: active
+    state: merged
+  notify: save eos configuration
+
+- name: Configure MLAG peer SVI
+  when: arista_apply_changes | bool and mlag_config.enabled | default(false)
+  arista.eos.eos_l3_interfaces:
+    config:
+      - name: "Vlan{{ mlag_config.peer_vlan }}"
+        ipv4:
+          - address: "{{ mlag_config.local_peer_ip }}/31"
+    state: merged
+  notify: save eos configuration
+
+# Loopback Interfaces for VXLAN
+- name: Configure loopback interfaces
+  when: arista_apply_changes | bool and fabric_loopbacks | length > 0
+  arista.eos.eos_l3_interfaces:
+    config: "{{ fabric_loopbacks }}"
+    state: merged
+  notify: save eos configuration
+
+# VXLAN Configuration
+- name: Enable VXLAN interface
+  when: arista_apply_changes | bool and vxlan_config.enabled | default(false)
+  arista.eos.eos_interfaces:
+    config:
+      - name: "Vxlan1"
+        description: "VXLAN Tunnel Interface"
+        enabled: true
+    state: merged
+  notify: save eos configuration
+
+- name: Configure VXLAN source interface
+  when: arista_apply_changes | bool and vxlan_config.enabled | default(false)
+  arista.eos.eos_config:
+    lines:
+      - "interface Vxlan1"
+      - "vxlan source-interface {{ vxlan_config.source_interface }}"
+      - "vxlan udp-port {{ vxlan_config.udp_port | default(4789) }}"
+  notify: save eos configuration
+
+- name: Configure VXLAN virtual-router MAC (for MLAG)
+  when: arista_apply_changes | bool and vxlan_config.enabled | default(false) and mlag_config.enabled | default(false)
+  arista.eos.eos_config:
+    lines:
+      - "interface Vxlan1"
+      - "vxlan virtual-router encapsulation mac-address mlag-system-id"
+  notify: save eos configuration
+
+- name: Configure VXLAN VNI to VLAN mappings
+  when: arista_apply_changes | bool and vxlan_config.enabled | default(false) and vxlan_vni_mappings | length > 0
+  loop: "{{ vxlan_vni_mappings }}"
+  loop_control:
+    label: "VNI {{ item.vni }} -> VLAN {{ item.vlan }}"
+  arista.eos.eos_config:
+    lines:
+      - "interface Vxlan1"
+      - "vxlan vlan {{ item.vlan }} vni {{ item.vni }}"
+  notify: save eos configuration
+
+- name: Configure VXLAN VRF to VNI mappings (L3VNI)
+  when: arista_apply_changes | bool and vxlan_config.enabled | default(false) and vxlan_vrf_mappings | length > 0
+  loop: "{{ vxlan_vrf_mappings }}"
+  loop_control:
+    label: "VRF {{ item.vrf }} -> VNI {{ item.vni }}"
+  arista.eos.eos_config:
+    lines:
+      - "interface Vxlan1"
+      - "vxlan vrf {{ item.vrf }} vni {{ item.vni }}"
+  notify: save eos configuration
+
+# Fabric Interface Configuration
+- name: Configure fabric uplink interfaces
+  when: arista_apply_changes | bool and fabric_uplinks | length > 0
+  arista.eos.eos_interfaces:
+    config: "{{ fabric_uplinks }}"
+    state: merged
+  notify: save eos configuration
+
+- name: Configure fabric uplink L3 addressing
+  when: arista_apply_changes | bool and fabric_uplinks_l3 | length > 0
+  arista.eos.eos_l3_interfaces:
+    config: "{{ fabric_uplinks_l3 }}"
+    state: merged
+  notify: save eos configuration
+
+- name: Configure downlink access ports
+  when: arista_apply_changes | bool and fabric_access_ports | length > 0
+  arista.eos.eos_l2_interfaces:
+    config: "{{ fabric_access_ports }}"
+    state: merged
+  notify: save eos configuration
+
+- name: Configure downlink trunk ports
+  when: arista_apply_changes | bool and fabric_trunk_ports | length > 0
+  arista.eos.eos_l2_interfaces:
+    config: "{{ fabric_trunk_ports }}"
+    state: merged
+  notify: save eos configuration
+
+- name: Configure MLAG port-channels
+  when: arista_apply_changes | bool and mlag_port_channels | length > 0
+  loop: "{{ mlag_port_channels }}"
+  loop_control:
+    label: "{{ item.name }}"
+  arista.eos.eos_config:
+    lines:
+      - "interface {{ item.name }}"
+      - "description {{ item.description }}"
+      - "switchport mode {{ item.mode | default('trunk') }}"
+      - "switchport trunk allowed vlan {{ item.vlans | default('1-4094') }}"
+      - "mlag {{ item.mlag_id }}"
+      - "no shutdown"
+  notify: save eos configuration
+
+# SVI Configuration for VXLAN Anycast Gateway
+- name: Configure SVIs for VXLAN anycast gateway
+  when: arista_apply_changes | bool and fabric_svis | length > 0
+  arista.eos.eos_l3_interfaces:
+    config: "{{ fabric_svis }}"
+    state: merged
+  notify: save eos configuration
+
+- name: Configure SVI virtual MAC for anycast gateway
+  when: arista_apply_changes | bool and fabric_svis | length > 0 and vxlan_config.anycast_mac is defined
+  loop: "{{ fabric_svis }}"
+  loop_control:
+    label: "{{ item.name }}"
+  arista.eos.eos_config:
+    lines:
+      - "interface {{ item.name }}"
+      - "ip virtual-router address {{ item.virtual_ip }}"
+    parents: []
+  when: item.virtual_ip is defined
+  notify: save eos configuration
+
+- name: Configure global virtual-router MAC address
+  when: arista_apply_changes | bool and vxlan_config.anycast_mac is defined
+  arista.eos.eos_config:
+    lines:
+      - "ip virtual-router mac-address {{ vxlan_config.anycast_mac }}"
+  notify: save eos configuration
+
+# Spanning Tree Configuration
+- name: Configure spanning tree mode
+  when: arista_apply_changes | bool
+  arista.eos.eos_config:
+    lines:
+      - "spanning-tree mode {{ fabric_spanning_tree.mode | default('mstp') }}"
+  notify: save eos configuration
+
+- name: Configure spanning tree priority
+  when: arista_apply_changes | bool and fabric_spanning_tree.priority is defined
+  arista.eos.eos_config:
+    lines:
+      - "spanning-tree mst 0 priority {{ fabric_spanning_tree.priority }}"
+  notify: save eos configuration
+
+- name: Disable spanning tree on VXLAN interface
+  when: arista_apply_changes | bool and vxlan_config.enabled | default(false)
+  arista.eos.eos_config:
+    lines:
+      - "interface Vxlan1"
+      - "no spanning-tree vlan-id 1-4094"
+  notify: save eos configuration
+
+# MAC address table configuration
+- name: Configure MAC address-table aging time
+  when: arista_apply_changes | bool
+  arista.eos.eos_config:
+    lines:
+      - "mac address-table aging-time {{ fabric_mac_aging_time | default(300) }}"
+  notify: save eos configuration
+
+# Link Aggregation (LAG) Configuration
+- name: Configure LACP system priority
+  when: arista_apply_changes | bool and mlag_config.enabled | default(false)
+  arista.eos.eos_config:
+    lines:
+      - "lacp system-priority {{ mlag_config.lacp_priority | default(32768) }}"
+  notify: save eos configuration
+
+- name: Save fabric state to artifacts
+  when: arista_apply_changes | bool
+  arista.eos.eos_command:
+    commands:
+      - show vlan
+      - show interfaces status
+      - show mlag
+      - show vxlan vtep
+      - show vxlan vni
+      - show bgp evpn summary
+  register: fabric_state
+  ignore_errors: true
+
+- name: Write fabric state to artifacts
+  when: arista_apply_changes | bool and fabric_state is defined
+  ansible.builtin.copy:
+    dest: "{{ arista_artifacts_dir }}/{{ inventory_hostname }}_fabric_state.json"
+    content: "{{ fabric_state | to_nice_json }}"
+    mode: "0644"
+  delegate_to: localhost

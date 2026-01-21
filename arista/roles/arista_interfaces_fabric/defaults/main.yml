@@ -1,11 +1,218 @@
 ---
-apply_changes: false
-artifacts_dir: "/tmp/arista-artifacts"
+# defaults file for arista_interfaces_fabric
+# Production-ready VXLAN/EVPN fabric and MLAG defaults for Fourth Estate agencies
 
-vlans: [{ id: 10, name: "USERS" }]
-l2_interfaces:
-  - { name: "Ethernet1", mode: "access", access_vlan: 10 }
-l3_interfaces:
-  - { name: "Vlan10", ipv4: ["10.10.10.1/24"] }
-port_channels: []
-mtu: 9216
+# Control whether changes are applied or just planned
+arista_apply_changes: false
+
+# Artifacts directory
+arista_artifacts_dir: "/tmp/arista-artifacts"
+
+# VLAN Configuration
+fabric_vlans:
+  # Infrastructure VLANs
+  - vlan_id: 10
+    name: "USERS"
+    state: active
+  - vlan_id: 20
+    name: "SERVERS"
+    state: active
+  - vlan_id: 30
+    name: "DMZ"
+    state: active
+  - vlan_id: 40
+    name: "GUEST"
+    state: active
+  - vlan_id: 100
+    name: "VOICE"
+    state: active
+  # VXLAN L3VNI Transit VLANs
+  - vlan_id: 3001
+    name: "L3VNI_TENANT_A"
+    state: active
+  - vlan_id: 3002
+    name: "L3VNI_TENANT_B"
+    state: active
+
+# VRF Configuration for multi-tenancy
+fabric_vrfs:
+  - name: "TENANT_A"
+    description: "Tenant A VRF"
+    rd: "{{ fabric_router_id }}:3001"
+    rt_import:
+      - "65000:3001"
+    rt_export:
+      - "65000:3001"
+  - name: "TENANT_B"
+    description: "Tenant B VRF"
+    rd: "{{ fabric_router_id }}:3002"
+    rt_import:
+      - "65000:3002"
+    rt_export:
+      - "65000:3002"
+
+# MLAG Configuration
+mlag_config:
+  enabled: false
+  domain_id: "MLAG_DOMAIN_1"
+  local_interface: "Vlan4094"
+  peer_vlan: 4094
+  peer_address: "169.254.255.1"  # Peer switch MLAG IP
+  local_peer_ip: "169.254.255.0"  # This switch MLAG IP
+  peer_link: "Port-Channel1"
+  peer_link_vlans: "1-4094"
+  reload_delay: 300
+  reload_delay_non_mlag: 330
+  lacp_priority: 32768
+
+# VXLAN Configuration
+vxlan_config:
+  enabled: false
+  source_interface: "Loopback1"
+  udp_port: 4789
+  anycast_mac: "00:1c:73:00:dc:01"  # Virtual-router MAC for anycast gateway
+
+# VXLAN VNI to VLAN Mappings (L2VNI)
+vxlan_vni_mappings:
+  - vlan: 10
+    vni: 10010
+  - vlan: 20
+    vni: 10020
+  - vlan: 30
+    vni: 10030
+  - vlan: 40
+    vni: 10040
+  - vlan: 100
+    vni: 10100
+
+# VXLAN VRF to VNI Mappings (L3VNI)
+vxlan_vrf_mappings:
+  - vrf: "TENANT_A"
+    vni: 13001
+    vlan: 3001
+  - vrf: "TENANT_B"
+    vni: 13002
+    vlan: 3002
+
+# Loopback Interfaces
+fabric_loopbacks:
+  - name: "Loopback0"
+    ipv4:
+      - address: "{{ fabric_router_id }}/32"
+    description: "Router ID for BGP"
+  - name: "Loopback1"
+    ipv4:
+      - address: "{{ fabric_vtep_ip }}/32"
+    description: "VTEP IP for VXLAN"
+
+# Fabric uplink interfaces (to spines) - Physical attributes
+fabric_uplinks:
+  - name: "Ethernet49"
+    description: "Uplink to SPINE1"
+    enabled: true
+    mtu: 9214
+  - name: "Ethernet50"
+    description: "Uplink to SPINE2"
+    enabled: true
+    mtu: 9214
+
+# Fabric uplink L3 configuration
+fabric_uplinks_l3:
+  - name: "Ethernet49"
+    ipv4:
+      - address: "{{ fabric_uplink_1_ip }}/31"
+  - name: "Ethernet50"
+    ipv4:
+      - address: "{{ fabric_uplink_2_ip }}/31"
+
+# Access ports configuration
+fabric_access_ports:
+  - name: "Ethernet1"
+    mode: "access"
+    access:
+      vlan: 10
+  - name: "Ethernet2"
+    mode: "access"
+    access:
+      vlan: 20
+
+# Trunk ports configuration
+fabric_trunk_ports:
+  - name: "Ethernet3"
+    mode: "trunk"
+    trunk:
+      allowed_vlans: "10,20,30,40,100"
+  - name: "Ethernet4"
+    mode: "trunk"
+    trunk:
+      allowed_vlans: "10,20,30,40,100"
+
+# MLAG port-channels
+mlag_port_channels: []
+  # Example:
+  # - name: "Port-Channel10"
+  #   description: "MLAG to Server1"
+  #   mode: "trunk"
+  #   vlans: "10,20,30"
+  #   mlag_id: 10
+  #   member_interfaces:
+  #     - "Ethernet10"
+  #     - "Ethernet11"
+
+# SVIs for VXLAN anycast gateway
+fabric_svis:
+  - name: "Vlan10"
+    ipv4:
+      - address: "10.10.10.1/24"
+    description: "USERS Gateway"
+    virtual_ip: "10.10.10.254"
+  - name: "Vlan20"
+    ipv4:
+      - address: "10.20.20.1/24"
+    description: "SERVERS Gateway"
+    virtual_ip: "10.20.20.254"
+  - name: "Vlan30"
+    ipv4:
+      - address: "10.30.30.1/24"
+    description: "DMZ Gateway"
+    virtual_ip: "10.30.30.254"
+  - name: "Vlan40"
+    ipv4:
+      - address: "10.40.40.1/24"
+    description: "GUEST Gateway"
+    virtual_ip: "10.40.40.254"
+  - name: "Vlan100"
+    ipv4:
+      - address: "10.100.100.1/24"
+    description: "VOICE Gateway"
+    virtual_ip: "10.100.100.254"
+
+# Spanning Tree Configuration
+fabric_spanning_tree:
+  mode: "mstp"
+  priority: 16384
+
+# MAC address-table aging time (seconds)
+fabric_mac_aging_time: 300
+
+# Fabric configuration composite
+fabric_config:
+  vlans: "{{ fabric_vlans }}"
+  vrfs: "{{ fabric_vrfs }}"
+  mlag: "{{ mlag_config }}"
+  vxlan: "{{ vxlan_config }}"
+  vni_mappings: "{{ vxlan_vni_mappings }}"
+  vrf_vni_mappings: "{{ vxlan_vrf_mappings }}"
+  loopbacks: "{{ fabric_loopbacks }}"
+  uplinks: "{{ fabric_uplinks }}"
+  uplinks_l3: "{{ fabric_uplinks_l3 }}"
+  access_ports: "{{ fabric_access_ports }}"
+  trunk_ports: "{{ fabric_trunk_ports }}"
+  svis: "{{ fabric_svis }}"
+  spanning_tree: "{{ fabric_spanning_tree }}"
+
+# Device-specific variables (should be set in host_vars)
+# fabric_router_id: "10.255.255.1"
+# fabric_vtep_ip: "10.255.254.1"
+# fabric_uplink_1_ip: "10.1.1.0"
+# fabric_uplink_2_ip: "10.1.1.2"
