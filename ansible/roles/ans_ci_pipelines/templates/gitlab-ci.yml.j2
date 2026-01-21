@@ -1,0 +1,47 @@
+---
+stages: {{ gitlab_ci_stages | to_json }}
+
+variables:
+{% for key, value in gitlab_ci_variables.items() %}
+  {{ key }}: "{{ value }}"
+{% endfor %}
+
+lint:
+  stage: lint
+  image: quay.io/ansible/creator-ee:latest
+  script:
+    - ansible-lint --version
+    - ansible-lint
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+test:
+  stage: test
+  image: quay.io/ansible/creator-ee:latest
+  script:
+    - ansible-test --version || true
+    - molecule test || true
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+build:
+  stage: build
+  image: quay.io/ansible/ansible-builder:latest
+  script:
+    - ansible-builder build -t {{ ee_registry }}/fourth-estate-ee:$CI_COMMIT_SHORT_SHA
+    - podman push {{ ee_registry }}/fourth-estate-ee:$CI_COMMIT_SHORT_SHA
+  rules:
+    - if: $CI_COMMIT_TAG
+  only:
+    - tags
+
+deploy:
+  stage: deploy
+  image: quay.io/ansible/awx-ee:latest
+  script:
+    - ansible-playbook ci/playbooks/deploy.yml
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      when: manual

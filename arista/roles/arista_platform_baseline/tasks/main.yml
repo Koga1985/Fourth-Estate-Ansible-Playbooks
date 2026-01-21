@@ -1,42 +1,332 @@
 ---
-- name: Ensure artifacts dir
-  ansible.builtin/file: { path: "{{ artifacts_dir }}", state: directory, mode: "0755" }
-- name: Plan baseline
-  ansible.builtin/copy:
-    dest: "{{ artifacts_dir }}/platform_baseline_plan.json"
-    content: "{{ baseline | to_nice_json }}"
+# tasks file for arista_platform_baseline
+# Production-ready Arista EOS baseline configuration for Fourth Estate agencies
+# DISA STIG compliant network device configuration
+
+- name: Ensure artifacts directory exists
+  ansible.builtin.file:
+    path: "{{ arista_artifacts_dir }}"
+    state: directory
+    mode: "0755"
+  delegate_to: localhost
+  run_once: true
+
+- name: Gather EOS facts
+  arista.eos.eos_facts:
+    gather_subset: all
+  register: eos_facts
+
+- name: Save baseline configuration plan
+  ansible.builtin.copy:
+    dest: "{{ arista_artifacts_dir }}/{{ inventory_hostname }}_baseline_plan.json"
+    content: "{{ arista_baseline | to_nice_json }}"
     mode: "0644"
-- name: Set hostname
-  when: apply_changes | bool
-  arista.eos.eos_hostname:
-    config: { hostname: "{{ baseline.hostname }}" }
-    state: merged
-- name: Login banner
-  when: apply_changes | bool
+  delegate_to: localhost
+
+- name: Configure system hostname (STIG V-220518)
+  when: arista_apply_changes | bool
+  arista.eos.eos_system:
+    hostname: "{{ arista_baseline.hostname | default(inventory_hostname) }}"
+  notify: save eos configuration
+
+- name: Configure domain name (STIG V-220519)
+  when: arista_apply_changes | bool and arista_baseline.domain_name is defined
+  arista.eos.eos_config:
+    lines:
+      - "ip domain-name {{ arista_baseline.domain_name }}"
+  notify: save eos configuration
+
+- name: Configure login banner (STIG V-220520)
+  when: arista_apply_changes | bool
   arista.eos.eos_banner:
     banner: login
-    text: "{{ baseline.banners.login }}"
+    text: "{{ arista_baseline.banners.login }}"
     state: present
-- name: MOTD banner
-  when: apply_changes | bool
+  notify: save eos configuration
+
+- name: Configure MOTD banner (STIG V-220521)
+  when: arista_apply_changes | bool
   arista.eos.eos_banner:
     banner: motd
-    text: "{{ baseline.banners.motd }}"
+    text: "{{ arista_baseline.banners.motd }}"
     state: present
-- name: NTP
-  when: apply_changes | bool
-  arista.eos.eos_ntp:
-    config: { servers: "{{ baseline.ntp }}" }
+  notify: save eos configuration
+
+- name: Configure management VRF
+  when: arista_apply_changes | bool and arista_baseline.mgmt_vrf.enabled | default(true)
+  arista.eos.eos_config:
+    lines:
+      - "vrf instance {{ arista_baseline.mgmt_vrf.name }}"
+      - "description {{ arista_baseline.mgmt_vrf.description }}"
+  notify: save eos configuration
+
+- name: Configure management interface
+  when: arista_apply_changes | bool
+  arista.eos.eos_l3_interfaces:
+    config:
+      - name: "{{ arista_baseline.mgmt_interface.name }}"
+        ipv4:
+          - address: "{{ arista_baseline.mgmt_interface.ipv4_address }}"
     state: merged
-- name: Syslog
-  when: apply_changes | bool
-  arista.eos.eos_logging:
-    config: { hosts: "{{ baseline.syslog }}" }
+  notify: save eos configuration
+
+- name: Assign management interface to VRF
+  when: arista_apply_changes | bool and arista_baseline.mgmt_vrf.enabled | default(true)
+  arista.eos.eos_config:
+    lines:
+      - "interface {{ arista_baseline.mgmt_interface.name }}"
+      - "vrf {{ arista_baseline.mgmt_vrf.name }}"
+      - "no shutdown"
+  notify: save eos configuration
+
+- name: Configure NTP servers (STIG V-220522)
+  when: arista_apply_changes | bool and arista_baseline.ntp_servers | length > 0
+  arista.eos.eos_ntp_global:
+    config:
+      authenticate:
+        enable: "{{ arista_baseline.ntp_auth_enabled | default(true) }}"
+      authentication_keys:
+        "{{ arista_baseline.ntp_auth_keys | default([]) }}"
+      servers:
+        "{{ arista_baseline.ntp_servers }}"
+      serve:
+        access_lists:
+          - afi: "ipv4"
+            acls:
+              - acl_name: "{{ arista_baseline.ntp_acl | default('NTP_ACL') }}"
+                direction: "in"
     state: merged
-- name: Enable eAPI
-  when: apply_changes | bool and baseline.eapi.enabled | default(true)
+  notify: save eos configuration
+
+- name: Configure DNS name servers (STIG V-220523)
+  when: arista_apply_changes | bool and arista_baseline.dns_servers | length > 0
+  arista.eos.eos_config:
+    lines: "{{ arista_baseline.dns_servers | map('regex_replace', '^(.*)$', 'ip name-server vrf ' + arista_baseline.mgmt_vrf.name + ' \\1') | list }}"
+  notify: save eos configuration
+
+- name: Configure syslog servers (STIG V-220524, V-220525)
+  when: arista_apply_changes | bool and arista_baseline.syslog_servers | length > 0
+  arista.eos.eos_logging_global:
+    config:
+      hosts:
+        "{{ arista_baseline.syslog_servers }}"
+      facility: "{{ arista_baseline.syslog_facility | default('local6') }}"
+      format:
+        hostname: fqdn
+        timestamp: high-resolution
+        sequence_numbers: true
+      policy:
+        invert_result: false
+        match_list: "{{ arista_baseline.syslog_policy | default(omit) }}"
+      source_interface: "{{ arista_baseline.syslog_source_interface | default(arista_baseline.mgmt_interface.name) }}"
+      vrfs:
+        - name: "{{ arista_baseline.mgmt_vrf.name }}"
+          source_interface: "{{ arista_baseline.mgmt_interface.name }}"
+          hosts: "{{ arista_baseline.syslog_servers }}"
+    state: merged
+  notify: save eos configuration
+
+- name: Configure SNMP community strings (STIG V-220526)
+  when: arista_apply_changes | bool and arista_baseline.snmp_communities | length > 0
+  loop: "{{ arista_baseline.snmp_communities }}"
+  loop_control:
+    label: "{{ item.name }}"
+  no_log: true
+  arista.eos.eos_config:
+    lines:
+      - "snmp-server community {{ item.name }} {{ item.access }} {{ item.acl | default('') }}"
+  notify: save eos configuration
+
+- name: Configure SNMP location (STIG V-220527)
+  when: arista_apply_changes | bool and arista_baseline.snmp_location is defined
+  arista.eos.eos_config:
+    lines:
+      - "snmp-server location {{ arista_baseline.snmp_location }}"
+  notify: save eos configuration
+
+- name: Configure SNMP contact (STIG V-220528)
+  when: arista_apply_changes | bool and arista_baseline.snmp_contact is defined
+  arista.eos.eos_config:
+    lines:
+      - "snmp-server contact {{ arista_baseline.snmp_contact }}"
+  notify: save eos configuration
+
+- name: Configure SNMPv3 users (STIG V-220529)
+  when: arista_apply_changes | bool and arista_baseline.snmpv3_users | length > 0
+  loop: "{{ arista_baseline.snmpv3_users }}"
+  loop_control:
+    label: "{{ item.name }}"
+  no_log: true
+  arista.eos.eos_config:
+    lines:
+      - "snmp-server user {{ item.name }} {{ item.group }} v3 auth {{ item.auth_protocol }} {{ item.auth_password }} priv {{ item.priv_protocol }} {{ item.priv_password }}"
+  notify: save eos configuration
+
+- name: Configure TACACS+ servers (STIG V-220530, V-220531)
+  when: arista_apply_changes | bool and arista_baseline.tacacs_servers | length > 0
+  arista.eos.eos_config:
+    lines:
+      - "tacacs-server host {{ item.host }} vrf {{ arista_baseline.mgmt_vrf.name }} key 7 {{ item.key }}"
+      - "tacacs-server timeout {{ item.timeout | default(5) }}"
+    parents: []
+  loop: "{{ arista_baseline.tacacs_servers }}"
+  loop_control:
+    label: "{{ item.host }}"
+  no_log: true
+  notify: save eos configuration
+
+- name: Configure RADIUS servers (STIG V-220532, V-220533)
+  when: arista_apply_changes | bool and arista_baseline.radius_servers | length > 0
+  arista.eos.eos_config:
+    lines:
+      - "radius-server host {{ item.host }} vrf {{ arista_baseline.mgmt_vrf.name }} key 7 {{ item.key }}"
+      - "radius-server timeout {{ item.timeout | default(5) }}"
+      - "radius-server retransmit {{ item.retransmit | default(3) }}"
+  loop: "{{ arista_baseline.radius_servers }}"
+  loop_control:
+    label: "{{ item.host }}"
+  no_log: true
+  notify: save eos configuration
+
+- name: Configure AAA authentication (STIG V-220534)
+  when: arista_apply_changes | bool
+  arista.eos.eos_config:
+    lines:
+      - "aaa authentication login default group {{ arista_baseline.aaa.auth_method }} local"
+      - "aaa authentication enable default group {{ arista_baseline.aaa.auth_method }} local"
+      - "aaa authorization exec default group {{ arista_baseline.aaa.auth_method }} local"
+      - "aaa authorization commands all default group {{ arista_baseline.aaa.auth_method }} local"
+      - "aaa accounting exec default start-stop group {{ arista_baseline.aaa.accounting_method }}"
+      - "aaa accounting commands all default start-stop group {{ arista_baseline.aaa.accounting_method }}"
+  notify: save eos configuration
+
+- name: Configure local users (STIG V-220535)
+  when: arista_apply_changes | bool and arista_baseline.local_users | length > 0
+  loop: "{{ arista_baseline.local_users }}"
+  loop_control:
+    label: "{{ item.name }}"
+  no_log: true
+  arista.eos.eos_user:
+    name: "{{ item.name }}"
+    privilege: "{{ item.privilege | default(15) }}"
+    role: "{{ item.role | default('network-admin') }}"
+    sshkey: "{{ item.ssh_key | default(omit) }}"
+    configured_password: "{{ item.password | default(omit) }}"
+    update_password: "{{ item.update_password | default('on_create') }}"
+    state: present
+  notify: save eos configuration
+
+- name: Disable insecure protocols - Telnet (STIG V-220536)
+  when: arista_apply_changes | bool
+  arista.eos.eos_config:
+    lines:
+      - "no ip telnet server enable"
+  notify: save eos configuration
+
+- name: Disable insecure protocols - HTTP (STIG V-220537)
+  when: arista_apply_changes | bool
+  arista.eos.eos_config:
+    lines:
+      - "no management api http-commands protocol http"
+  notify: save eos configuration
+
+- name: Enable SSH server (STIG V-220538)
+  when: arista_apply_changes | bool
+  arista.eos.eos_config:
+    lines:
+      - "management ssh"
+      - "ip ssh version 2"
+      - "ip ssh cipher aes256-ctr aes192-ctr aes128-ctr"
+      - "ip ssh mac hmac-sha2-512 hmac-sha2-256"
+      - "ip ssh key-exchange ecdh-sha2-nistp521 ecdh-sha2-nistp384 ecdh-sha2-nistp256"
+      - "ip ssh timeout {{ arista_baseline.ssh_timeout | default(60) }}"
+      - "ip ssh authentication retries {{ arista_baseline.ssh_retries | default(3) }}"
+  notify: save eos configuration
+
+- name: Configure management API (eAPI) - HTTPS only (STIG V-220539)
+  when: arista_apply_changes | bool and arista_baseline.eapi.enabled | default(true)
   arista.eos.eos_eapi:
     http: false
-    https: "{{ baseline.eapi.https | default(true) }}"
+    https: true
+    https_port: "{{ arista_baseline.eapi.https_port | default(443) }}"
+    local_http: false
+    local_http_port: 8080
+    socket: false
+    timeout: "{{ arista_baseline.eapi.timeout | default(15) }}"
+    vrf: "{{ arista_baseline.mgmt_vrf.name }}"
     state: started
-    vrf: "{{ baseline.eapi.vrf | default('MGMT') }}"
+  notify: save eos configuration
+
+- name: Configure session timeout (STIG V-220540)
+  when: arista_apply_changes | bool
+  arista.eos.eos_config:
+    lines:
+      - "exec-timeout {{ arista_baseline.exec_timeout | default(10) }} 0"
+    parents: "line vty 0 4"
+  notify: save eos configuration
+
+- name: Configure logging buffer size (STIG V-220541)
+  when: arista_apply_changes | bool
+  arista.eos.eos_config:
+    lines:
+      - "logging buffered {{ arista_baseline.logging_buffer_size | default(32768) }} {{ arista_baseline.logging_level | default('informational') }}"
+  notify: save eos configuration
+
+- name: Enable logging of user commands (STIG V-220542)
+  when: arista_apply_changes | bool
+  arista.eos.eos_config:
+    lines:
+      - "logging console {{ arista_baseline.logging_level | default('informational') }}"
+      - "logging monitor {{ arista_baseline.logging_level | default('informational') }}"
+      - "logging synchronous"
+  notify: save eos configuration
+
+- name: Configure password policies (STIG V-220543)
+  when: arista_apply_changes | bool
+  arista.eos.eos_config:
+    lines:
+      - "security password minimum-length {{ arista_baseline.password_min_length | default(15) }}"
+      - "security password encryption-type {{ arista_baseline.password_encryption | default('sha512') }}"
+  notify: save eos configuration
+
+- name: Disable unused services (STIG V-220544)
+  when: arista_apply_changes | bool
+  arista.eos.eos_config:
+    lines:
+      - "no ip http server"
+      - "no ip bootp server"
+      - "no ip domain-lookup"
+      - "no ip finger"
+      - "no service tcp-keepalives-in"
+      - "no service tcp-keepalives-out"
+  notify: save eos configuration
+
+- name: Configure control-plane policing (STIG V-220545)
+  when: arista_apply_changes | bool and arista_baseline.control_plane_acl is defined
+  arista.eos.eos_config:
+    lines:
+      - "control-plane"
+      - "ip access-group {{ arista_baseline.control_plane_acl }} in"
+  notify: save eos configuration
+
+- name: Set timezone (STIG V-220546)
+  when: arista_apply_changes | bool
+  arista.eos.eos_config:
+    lines:
+      - "clock timezone {{ arista_baseline.timezone | default('UTC') }} 0"
+  notify: save eos configuration
+
+- name: Save configuration state to artifacts
+  when: arista_apply_changes | bool
+  arista.eos.eos_command:
+    commands:
+      - show running-config
+  register: running_config
+
+- name: Write running configuration to artifacts
+  when: arista_apply_changes | bool
+  ansible.builtin.copy:
+    dest: "{{ arista_artifacts_dir }}/{{ inventory_hostname }}_running_config.txt"
+    content: "{{ running_config.stdout[0] }}"
+    mode: "0644"
+  delegate_to: localhost

@@ -1,0 +1,59 @@
+---
+# defaults file for aws_nacls
+
+# NACL Configuration
+nacl_state: "present"
+nacl_public_name: "{{ vpc_name | default('main') }}-public-nacl"
+nacl_private_name: "{{ vpc_name | default('main') }}-private-nacl"
+nacl_database_name: "{{ vpc_name | default('main') }}-database-nacl"
+nacl_dmz_name: "{{ vpc_name | default('main') }}-dmz-nacl"
+
+# Feature flags
+create_public_nacl: true
+create_private_nacl: true
+create_database_nacl: true
+create_dmz_nacl: false
+apply_fedramp_deny_rules: true
+
+# Default tags
+nacl_tags:
+  ManagedBy: "Ansible"
+  Environment: "{{ aws_environment | default('production') }}"
+  Compliance: "FedRAMP-High"
+  SecurityControl: "NetworkACL"
+  CostCenter: "{{ cost_center | default('IT-Infrastructure') }}"
+
+# Network ACLs configuration (override in inventory/playbook)
+network_acls: []
+#  - name: "custom-nacl"
+#    vpc_id: "vpc-xxxxx"
+#    subnets:
+#      - "subnet-xxxxx"
+#    ingress:
+#      - [100, 'tcp', 'allow', '0.0.0.0/0', null, null, 80, 80]
+#      - [110, 'tcp', 'allow', '0.0.0.0/0', null, null, 443, 443]
+#    egress:
+#      - [100, 'all', 'allow', '0.0.0.0/0', null, null, null, null]
+#    state: present
+
+# FedRAMP compliance deny rules
+nacl_fedramp_deny_rules:
+  - [900, 'tcp', 'deny', '0.0.0.0/0', null, null, 22, 22]    # Deny SSH from internet
+  - [910, 'tcp', 'deny', '0.0.0.0/0', null, null, 3389, 3389]  # Deny RDP from internet
+  - [920, 'tcp', 'deny', '0.0.0.0/0', null, null, 23, 23]    # Deny Telnet
+  - [930, 'tcp', 'deny', '0.0.0.0/0', null, null, 21, 21]    # Deny FTP
+
+# DMZ NACL rules (override as needed)
+nacl_dmz_ingress_rules:
+  - [100, 'tcp', 'allow', '0.0.0.0/0', null, null, 80, 80]
+  - [110, 'tcp', 'allow', '0.0.0.0/0', null, null, 443, 443]
+  - [120, 'tcp', 'allow', '0.0.0.0/0', null, null, 1024, 65535]
+
+nacl_dmz_egress_rules:
+  - [100, 'tcp', 'allow', '0.0.0.0/0', null, null, 80, 80]
+  - [110, 'tcp', 'allow', '0.0.0.0/0', null, null, 443, 443]
+  - [120, 'tcp', 'allow', '{{ vpc_cidr | default("10.0.0.0/16") }}', null, null, 0, 65535]
+  - [130, 'tcp', 'allow', '0.0.0.0/0', null, null, 1024, 65535]
+
+# CIDR blocks
+app_subnet_cidr: "10.0.10.0/24"

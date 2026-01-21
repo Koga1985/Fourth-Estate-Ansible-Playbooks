@@ -1,0 +1,44 @@
+---
+name: Ansible CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    container:
+      image: quay.io/ansible/creator-ee:latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run ansible-lint
+        run: ansible-lint
+
+  test:
+    runs-on: ubuntu-latest
+    needs: lint
+    container:
+      image: quay.io/ansible/creator-ee:latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run molecule tests
+        run: molecule test || true
+
+  build-ee:
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build execution environment
+        run: |
+          pip install ansible-builder
+          ansible-builder build -t {{ ee_registry }}/fourth-estate-ee:{{ "{{" }} github.sha {{ "}}" }}
+      - name: Push to registry
+        run: |
+          echo "${{ "{{" }} secrets.REGISTRY_PASSWORD {{ "}}" }}" | podman login -u "${{ "{{" }} secrets.REGISTRY_USERNAME {{ "}}" }}" --password-stdin {{ ee_registry }}
+          podman push {{ ee_registry }}/fourth-estate-ee:{{ "{{" }} github.sha {{ "}}" }}

@@ -1,0 +1,47 @@
+---
+# tasks file for aws_s3_lifecycle
+
+- name: Configure S3 bucket lifecycle policies
+  amazon.aws.s3_lifecycle:
+    name: "{{ item.bucket_name }}"
+    state: "{{ item.state | default(s3_lifecycle_state) }}"
+    rule_id: "{{ item.rule_id }}"
+    prefix: "{{ item.prefix | default('') }}"
+    status: "{{ item.status | default('enabled') }}"
+    expiration_days: "{{ item.expiration_days | default(omit) }}"
+    expiration_date: "{{ item.expiration_date | default(omit) }}"
+    noncurrent_version_expiration_days: "{{ item.noncurrent_version_expiration_days | default(omit) }}"
+    transitions: "{{ item.transitions | default([]) }}"
+    noncurrent_version_transitions: "{{ item.noncurrent_version_transitions | default([]) }}"
+    abort_incomplete_multipart_upload_days: "{{ item.abort_incomplete_multipart_upload_days | default(7) }}"
+  loop: "{{ s3_lifecycle_rules }}"
+  when: s3_lifecycle_rules is defined
+  register: lifecycle_result
+
+- name: Configure intelligent tiering for cost optimization
+  amazon.aws.s3_lifecycle:
+    name: "{{ item.bucket_name }}"
+    rule_id: "intelligent-tiering-{{ item.bucket_name }}"
+    status: "enabled"
+    transitions:
+      - days: 0
+        storage_class: "INTELLIGENT_TIERING"
+    state: present
+  loop: "{{ s3_buckets_for_tiering }}"
+  when:
+    - s3_buckets_for_tiering is defined
+    - s3_enable_intelligent_tiering | bool
+
+- name: Display S3 lifecycle summary
+  ansible.builtin.debug:
+    msg:
+      - "Lifecycle Rules Configured: {{ lifecycle_result.results | selectattr('changed', 'equalto', true) | list | length if lifecycle_result is defined else 0 }}"
+
+- name: Notify S3 lifecycle changes
+  ansible.builtin.debug:
+    msg: "S3 lifecycle configuration completed"
+  changed_when: true
+  notify: notify s3 lifecycle changes
+  when:
+    - lifecycle_result is defined
+    - lifecycle_result.changed | default(false)

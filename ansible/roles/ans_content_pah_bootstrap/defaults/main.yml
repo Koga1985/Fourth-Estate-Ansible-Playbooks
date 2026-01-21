@@ -1,14 +1,96 @@
 ---
-# Common defaults shared by most roles
-apply_changes: false              # guard: require explicit true for mutating actions
+# Common settings
+apply_changes: false
 artifacts_dir: "/tmp/ansible-artifacts"
 validate_certs: true
 
+# Private Automation Hub connection
+ah_url: "{{ lookup('env', 'AH_HOST') | default('https://pah.example.mil') }}"
+ah_username: "{{ lookup('env', 'AH_USERNAME') | default('admin') }}"
+ah_password: "{{ lookup('env', 'AH_PASSWORD') | default('') }}"
+ah_token: "{{ lookup('env', 'AH_TOKEN') | default('') }}"
 
-ah_url: "https://pah.example.mil"
-ah_username: "admin"
-ah_password: ""
-sso: {}
-groups: []
-remotes: []   # redhat_cop.ah_configuration.ah_repository + ah_remote patterns
-promote_map: []
+# Repository Configuration
+ah_repositories:
+  - name: "fourth-estate-certified"
+    description: "Fourth Estate Certified Content"
+    distribution: "fourth-estate-certified"
+    remote: "rh-certified"
+  - name: "fourth-estate-validated"
+    description: "Fourth Estate Validated Content"
+    distribution: "fourth-estate-validated"
+  - name: "fourth-estate-community"
+    description: "Fourth Estate Community Content"
+    distribution: "fourth-estate-community"
+    remote: "community"
+
+# Remote Repositories
+ah_remotes:
+  - name: "rh-certified"
+    url: "https://console.redhat.com/api/automation-hub/content/published/"
+    auth_url: "https://sso.redhat.com/auth/realms/redhat-external/protocol/openid-connect/token"
+    requirements:
+      - ansible.posix
+      - ansible.utils
+      - ansible.windows
+      - community.general
+      - community.postgresql
+  - name: "community"
+    url: "https://galaxy.ansible.com/api/"
+    requirements:
+      - community.docker
+      - community.crypto
+
+# Groups and RBAC
+ah_groups:
+  - name: "Fourth Estate Admins"
+    permissions:
+      - "galaxy.add_namespace"
+      - "galaxy.upload_to_namespace"
+      - "galaxy.change_namespace"
+  - name: "Fourth Estate Contributors"
+    permissions:
+      - "galaxy.upload_to_namespace"
+  - name: "Fourth Estate Consumers"
+    permissions:
+      - "galaxy.view_namespace"
+
+# Content Promotion Pipeline
+ah_content_promotion:
+  - from: "staging"
+    to: "fourth-estate-validated"
+    approval_required: true
+  - from: "fourth-estate-validated"
+    to: "fourth-estate-certified"
+    approval_required: true
+    approvers:
+      - "ansible-admin@example.mil"
+
+# Collection Signing
+ah_collection_signing_enabled: true
+ah_signing_service: "ansible-default"
+ah_gpg_key_id: ""
+
+# Namespace Configuration
+ah_namespaces:
+  - name: "fourth_estate"
+    description: "Fourth Estate Official Collections"
+    groups:
+      - name: "Fourth Estate Admins"
+        role: "owners"
+      - name: "Fourth Estate Contributors"
+        role: "contributors"
+  - name: "news_automation"
+    description: "News Automation Content"
+    groups:
+      - name: "Fourth Estate Contributors"
+        role: "owners"
+
+# SSO Configuration
+ah_sso_enabled: false
+ah_sso_settings: {}
+
+# Backup and Sync
+ah_backup_enabled: true
+ah_backup_path: "{{ artifacts_dir }}/pah_backup"
+ah_sync_on_bootstrap: true

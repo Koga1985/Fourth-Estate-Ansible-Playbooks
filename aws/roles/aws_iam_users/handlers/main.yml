@@ -1,0 +1,32 @@
+---
+# handlers file for aws_iam_users
+
+- name: notify iam user changes
+  ansible.builtin.debug:
+    msg: "IAM user configuration has been updated. Review access keys and ensure MFA is configured."
+
+- name: trigger compliance scan
+  ansible.builtin.uri:
+    url: "{{ compliance_webhook_url }}"
+    method: POST
+    body_format: json
+    body:
+      event: "iam_user_change"
+      timestamp: "{{ ansible_date_time.iso8601 }}"
+      resource_type: "IAM User"
+    status_code: [200, 201, 204]
+  when: compliance_webhook_url is defined
+  delegate_to: localhost
+
+- name: log to cloudwatch
+  community.aws.cloudwatchlogs_log_group_metric_filter:
+    log_group_name: "/aws/ansible/iam"
+    filter_name: "IAMUserChanges"
+    filter_pattern: "{ $.eventName = CreateUser || $.eventName = DeleteUser || $.eventName = UpdateUser }"
+    metric_transformation:
+      metric_name: "IAMUserModifications"
+      metric_namespace: "AnsibleAutomation"
+      metric_value: "1"
+    state: present
+  when: cloudwatch_logging_enabled | default(false) | bool
+  delegate_to: localhost

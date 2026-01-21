@@ -1,21 +1,258 @@
 ---
-- name: Ensure artifacts dir
-  ansible.builtin/file: { path: "{{ artifacts_dir }}", state: directory }
-- name: Plan ACLs
-  ansible.builtin/copy:
-    dest: "{{ artifacts_dir }}/acl_plan.json"
-    content: "{{ {'acls': acls, 'apply_to': apply_to} | to_nice_json }}"
+# tasks file for arista_acl_qos_security
+# Production-ready ACL, QoS, and security configuration with DISA STIG compliance
+
+- name: Ensure artifacts directory exists
+  ansible.builtin.file:
+    path: "{{ arista_artifacts_dir }}"
+    state: directory
+    mode: "0755"
+  delegate_to: localhost
+  run_once: true
+
+- name: Save security configuration plan
+  ansible.builtin.copy:
+    dest: "{{ arista_artifacts_dir }}/{{ inventory_hostname }}_security_plan.json"
+    content: "{{ security_config | to_nice_json }}"
     mode: "0644"
-- name: Configure ACLs
-  when: apply_changes | bool
+  delegate_to: localhost
+
+# ACL Configuration
+- name: Configure IPv4 ACLs
+  when: arista_apply_changes | bool and ipv4_acls | length > 0
   arista.eos.eos_acls:
-    config: "{{ acls }}"
+    config: "{{ ipv4_acls }}"
     state: merged
-- name: Bind ACLs
-  when: apply_changes | bool and (apply_to | length) > 0
-  loop: "{{ apply_to }}"
-  loop_control: { label: "{{ item.interface }} {{ item.direction }}" }
+  notify: save eos configuration
+
+- name: Apply ACLs to interfaces
+  when: arista_apply_changes | bool and acl_interfaces | length > 0
+  loop: "{{ acl_interfaces }}"
+  loop_control:
+    label: "{{ item.name }} - {{ item.direction }}"
+  arista.eos.eos_acl_interfaces:
+    config:
+      - name: "{{ item.name }}"
+        access_groups:
+          - afi: "{{ item.afi | default('ipv4') }}"
+            acls:
+              - name: "{{ item.acl }}"
+                direction: "{{ item.direction }}"
+    state: merged
+  notify: save eos configuration
+
+# QoS Configuration
+- name: Configure QoS class maps
+  when: arista_apply_changes | bool and qos_class_maps | length > 0
+  loop: "{{ qos_class_maps }}"
+  loop_control:
+    label: "{{ item.name }}"
   arista.eos.eos_config:
     lines:
-      - "interface {{ item.interface }}"
-      - "ip access-group {{ item.acl }} {{ item.direction }}"
+      - "class-map {{ item.type | default('match-any') }} {{ item.name }}"
+      - "{% for match in item.match %}match {{ match }}{% endfor %}"
+  notify: save eos configuration
+
+- name: Configure QoS policy maps
+  when: arista_apply_changes | bool and qos_policy_maps | length > 0
+  loop: "{{ qos_policy_maps }}"
+  loop_control:
+    label: "{{ item.name }}"
+  arista.eos.eos_config:
+    lines:
+      - "policy-map {{ item.type | default('type qos') }} {{ item.name }}"
+      - "{% for class_policy in item.classes %}class {{ class_policy.class }} set dscp {{ class_policy.dscp }} set cos {{ class_policy.cos }}{% endfor %}"
+  notify: save eos configuration
+
+- name: Apply QoS policies to interfaces
+  when: arista_apply_changes | bool and qos_interfaces | length > 0
+  loop: "{{ qos_interfaces }}"
+  loop_control:
+    label: "{{ item.name }}"
+  arista.eos.eos_config:
+    lines:
+      - "interface {{ item.name }}"
+      - "service-policy {{ item.direction }} {{ item.policy }}"
+  notify: save eos configuration
+
+# Storm Control (DISA STIG)
+- name: Configure storm control
+  when: arista_apply_changes | bool and storm_control_interfaces | length > 0
+  loop: "{{ storm_control_interfaces }}"
+  loop_control:
+    label: "{{ item.name }}"
+  arista.eos.eos_config:
+    lines:
+      - "interface {{ item.name }}"
+      - "storm-control broadcast level {{ item.broadcast_level | default('10') }}"
+      - "storm-control multicast level {{ item.multicast_level | default('10') }}"
+      - "storm-control unknown-unicast level {{ item.unknown_unicast_level | default('10') }}"
+  notify: save eos configuration
+
+# Port Security
+- name: Configure port security
+  when: arista_apply_changes | bool and port_security_interfaces | length > 0
+  loop: "{{ port_security_interfaces }}"
+  loop_control:
+    label: "{{ item.name }}"
+  arista.eos.eos_config:
+    lines:
+      - "interface {{ item.name }}"
+      - "switchport port-security"
+      - "switchport port-security maximum {{ item.max_addresses | default(3) }}"
+      - "switchport port-security violation {{ item.violation_mode | default('restrict') }}"
+      - "{% if item.sticky | default(false) %}switchport port-security mac-address sticky{% endif %}"
+  notify: save eos configuration
+
+# DHCP Snooping
+- name: Enable DHCP snooping globally
+  when: arista_apply_changes | bool and dhcp_snooping.enabled | default(false)
+  arista.eos.eos_config:
+    lines:
+      - "ip dhcp snooping"
+      - "ip dhcp snooping vlan {{ dhcp_snooping.vlans | join(',') }}"
+  notify: save eos configuration
+
+- name: Configure DHCP snooping trusted interfaces
+  when: arista_apply_changes | bool and dhcp_snooping.enabled | default(false)
+  loop: "{{ dhcp_snooping.trusted_interfaces | default([]) }}"
+  arista.eos.eos_config:
+    lines:
+      - "interface {{ item }}"
+      - "ip dhcp snooping trust"
+  notify: save eos configuration
+
+# Dynamic ARP Inspection
+- name: Enable Dynamic ARP Inspection
+  when: arista_apply_changes | bool and arp_inspection.enabled | default(false)
+  arista.eos.eos_config:
+    lines:
+      - "ip arp inspection vlan {{ arp_inspection.vlans | join(',') }}"
+      - "ip arp inspection validate {{ arp_inspection.validation | default('src-mac dst-mac ip') }}"
+  notify: save eos configuration
+
+- name: Configure ARP inspection trusted interfaces
+  when: arista_apply_changes | bool and arp_inspection.enabled | default(false)
+  loop: "{{ arp_inspection.trusted_interfaces | default([]) }}"
+  arista.eos.eos_config:
+    lines:
+      - "interface {{ item }}"
+      - "ip arp inspection trust"
+  notify: save eos configuration
+
+# IP Source Guard
+- name: Configure IP source guard
+  when: arista_apply_changes | bool and ip_source_guard_interfaces | length > 0
+  loop: "{{ ip_source_guard_interfaces }}"
+  arista.eos.eos_config:
+    lines:
+      - "interface {{ item }}"
+      - "ip verify source"
+  notify: save eos configuration
+
+# 802.1X Port-Based Authentication
+- name: Configure 802.1X globally
+  when: arista_apply_changes | bool and dot1x_config.enabled | default(false)
+  arista.eos.eos_config:
+    lines:
+      - "aaa authentication dot1x default group {{ dot1x_config.server_group | default('radius') }}"
+      - "dot1x system-auth-control"
+  notify: save eos configuration
+
+- name: Configure 802.1X on interfaces
+  when: arista_apply_changes | bool and dot1x_interfaces | length > 0
+  loop: "{{ dot1x_interfaces }}"
+  loop_control:
+    label: "{{ item.name }}"
+  arista.eos.eos_config:
+    lines:
+      - "interface {{ item.name }}"
+      - "dot1x pae {{ item.pae | default('authenticator') }}"
+      - "dot1x reauthentication"
+      - "dot1x port-control {{ item.port_control | default('auto') }}"
+      - "dot1x timeout reauth-period {{ item.reauth_period | default(3600) }}"
+  notify: save eos configuration
+
+# MAC Address Filtering
+- name: Configure static MAC addresses
+  when: arista_apply_changes | bool and static_mac_addresses | length > 0
+  loop: "{{ static_mac_addresses }}"
+  loop_control:
+    label: "{{ item.mac }}"
+  arista.eos.eos_config:
+    lines:
+      - "mac address-table static {{ item.mac }} vlan {{ item.vlan }} interface {{ item.interface }}"
+  notify: save eos configuration
+
+# Secure Unused Ports (DISA STIG)
+- name: Shutdown unused ports
+  when: arista_apply_changes | bool and unused_ports | length > 0
+  loop: "{{ unused_ports }}"
+  arista.eos.eos_interfaces:
+    config:
+      - name: "{{ item }}"
+        description: "UNUSED - SECURITY SHUTDOWN"
+        enabled: false
+    state: merged
+  notify: save eos configuration
+
+- name: Place unused ports in blackhole VLAN
+  when: arista_apply_changes | bool and unused_ports | length > 0 and blackhole_vlan is defined
+  loop: "{{ unused_ports }}"
+  arista.eos.eos_l2_interfaces:
+    config:
+      - name: "{{ item }}"
+        mode: "access"
+        access:
+          vlan: "{{ blackhole_vlan }}"
+    state: merged
+  notify: save eos configuration
+
+# BPDU Guard and Root Guard
+- name: Configure BPDU guard on edge ports
+  when: arista_apply_changes | bool and bpdu_guard_interfaces | length > 0
+  loop: "{{ bpdu_guard_interfaces }}"
+  arista.eos.eos_config:
+    lines:
+      - "interface {{ item }}"
+      - "spanning-tree bpduguard enable"
+      - "spanning-tree portfast"
+  notify: save eos configuration
+
+- name: Configure root guard on uplinks
+  when: arista_apply_changes | bool and root_guard_interfaces | length > 0
+  loop: "{{ root_guard_interfaces }}"
+  arista.eos.eos_config:
+    lines:
+      - "interface {{ item }}"
+      - "spanning-tree guard root"
+  notify: save eos configuration
+
+# Rate Limiting
+- name: Configure rate limiting for control plane
+  when: arista_apply_changes | bool and rate_limiting.enabled | default(false)
+  arista.eos.eos_config:
+    lines:
+      - "control-plane"
+      - "ip access-group {{ rate_limiting.acl | default('RATE_LIMIT_ACL') }} in"
+  notify: save eos configuration
+
+- name: Save security state to artifacts
+  when: arista_apply_changes | bool
+  arista.eos.eos_command:
+    commands:
+      - show ip access-lists
+      - show port-security
+      - show ip dhcp snooping
+      - show ip arp inspection
+      - show dot1x all
+  register: security_state
+  ignore_errors: true
+
+- name: Write security state to artifacts
+  when: arista_apply_changes | bool and security_state is defined
+  ansible.builtin.copy:
+    dest: "{{ arista_artifacts_dir }}/{{ inventory_hostname }}_security_state.json"
+    content: "{{ security_state | to_nice_json }}"
+    mode: "0644"
+  delegate_to: localhost

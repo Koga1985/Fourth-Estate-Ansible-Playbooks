@@ -1,14 +1,89 @@
 ---
-# Common defaults shared by most roles
-apply_changes: false              # guard: require explicit true for mutating actions
+# Common settings
+apply_changes: false
 artifacts_dir: "/tmp/ansible-artifacts"
 validate_certs: true
-
-
 repo_root: "."
+
+# Controller connection
+controller_host: "{{ lookup('env', 'CONTROLLER_HOST') | default('https://controller.example.mil') }}"
+controller_oauthtoken: "{{ lookup('env', 'CONTROLLER_OAUTH_TOKEN') | default('') }}"
+controller_username: "{{ lookup('env', 'CONTROLLER_USERNAME') | default('') }}"
+controller_password: "{{ lookup('env', 'CONTROLLER_PASSWORD') | default('') }}"
+
+# HashiCorp Vault Configuration
+vault_enabled: true
+vault_addr: "{{ lookup('env', 'VAULT_ADDR') | default('https://vault.example.mil:8200') }}"
+vault_token: "{{ lookup('env', 'VAULT_TOKEN') | default('') }}"
+vault_namespace: "{{ lookup('env', 'VAULT_NAMESPACE') | default('fourth-estate') }}"
+vault_role_id: "{{ lookup('env', 'VAULT_ROLE_ID') | default('') }}"
+vault_secret_id: "{{ lookup('env', 'VAULT_SECRET_ID') | default('') }}"
+
+# Vault Paths
+vault_kv_mount: "secret"
+vault_kv_version: "v2"
+vault_ansible_path: "ansible"
+vault_credentials_path: "{{ vault_kv_mount }}/data/{{ vault_ansible_path }}/credentials"
+vault_ssh_keys_path: "{{ vault_kv_mount }}/data/{{ vault_ansible_path }}/ssh"
+vault_api_keys_path: "{{ vault_kv_mount }}/data/{{ vault_ansible_path }}/api-keys"
+
+# Ansible Vault Configuration
+ansible_vault_enabled: true
 vault_id_label: "default"
+vault_password_file: "~/.vault_pass.txt"
 new_vault_password_file: "~/.vault_pass_new.txt"
+vault_rekey_enabled: false
 files_to_encrypt: []
-controller_host: "https://controller.example.mil"
-controller_oauthtoken: "{{ lookup('env','TOWER_TOKEN') | default('') }}"
-sso_settings: {}
+
+# Credential Types to Sync from Vault
+vault_credential_sync_enabled: true
+vault_credentials:
+  - name: "AWS Credentials"
+    vault_path: "{{ vault_credentials_path }}/aws"
+    credential_type: "Amazon Web Services"
+    inputs:
+      username: "access_key_id"
+      password: "secret_access_key"
+  - name: "Azure Credentials"
+    vault_path: "{{ vault_credentials_path }}/azure"
+    credential_type: "Microsoft Azure Resource Manager"
+  - name: "SSH Key - Production"
+    vault_path: "{{ vault_ssh_keys_path }}/production"
+    credential_type: "Machine"
+    inputs:
+      username: "ansible"
+      ssh_key_data: "private_key"
+
+# Secret Rotation
+secret_rotation_enabled: false
+secret_rotation_schedule: "monthly"
+secret_rotation_notification: true
+secret_rotation_recipients:
+  - "security@example.mil"
+
+# Identity Management
+identity_provider: "ldap"  # ldap, saml, oidc, radius
+identity_sync_enabled: true
+identity_sync_schedule: "hourly"
+
+# Certificate Management
+cert_management_enabled: true
+cert_vault_path: "pki"
+cert_renewal_threshold_days: 30
+cert_auto_renewal: false
+
+# SSH Key Management
+ssh_key_rotation_enabled: false
+ssh_key_rotation_days: 90
+ssh_key_vault_storage: true
+
+# API Token Management
+api_token_rotation_enabled: true
+api_token_max_age_days: 90
+api_token_vault_storage: true
+
+# Fourth Estate Specific
+fourth_estate_secret_scanning: true
+fourth_estate_secret_leak_prevention: true
+fourth_estate_audit_secret_access: true
+fourth_estate_require_mfa: true

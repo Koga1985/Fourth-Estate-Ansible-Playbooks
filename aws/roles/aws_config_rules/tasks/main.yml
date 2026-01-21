@@ -1,0 +1,30 @@
+---
+# tasks file for aws_config_rules
+
+- name: Create AWS Config rules
+  community.aws.config_rule:
+    name: "{{ item.name }}"
+    description: "{{ item.description | default('Config rule managed by Ansible') }}"
+    source: "{{ item.source }}"
+    scope: "{{ item.scope | default(omit) }}"
+    input_parameters: "{{ item.input_parameters | default(omit) }}"
+    state: "{{ item.state | default(config_rule_state) }}"
+  loop: "{{ config_rules }}"
+  when: config_rules is defined
+  register: config_rule_result
+
+- name: Create FedRAMP compliance rules
+  community.aws.config_rule:
+    name: "{{ item.name }}"
+    description: "{{ item.description }}"
+    source:
+      owner: "AWS"
+      source_identifier: "{{ item.source_identifier }}"
+    state: present
+  loop: "{{ fedramp_config_rules }}"
+  when: config_enable_fedramp_rules | bool
+
+- name: Display AWS Config summary
+  ansible.builtin.debug:
+    msg:
+      - "Config Rules Created: {{ config_rule_result.results | selectattr('changed', 'equalto', true) | list | length if config_rule_result is defined else 0 }}"

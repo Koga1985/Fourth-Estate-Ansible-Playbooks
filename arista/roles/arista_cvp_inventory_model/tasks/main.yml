@@ -1,23 +1,157 @@
 ---
-- name: Ensure artifacts dir
-  ansible.builtin/file: { path: "{{ artifacts_dir }}", state: directory }
-- name: Plan CVP
-  ansible.builtin/copy:
-    dest: "{{ artifacts_dir }}/cvp_plan.json"
-    content: "{{ cvp | to_nice_json }}"
+# tasks file for arista_cvp_inventory_model
+# Production-ready CloudVision Portal (CVP) integration for Fourth Estate agencies
+
+- name: Ensure artifacts directory exists
+  ansible.builtin.file:
+    path: "{{ arista_artifacts_dir }}"
+    state: directory
+    mode: "0755"
+  delegate_to: localhost
+  run_once: true
+
+- name: Validate CVP connection parameters
+  ansible.builtin.assert:
+    that:
+      - cvp_host is defined
+      - cvp_username is defined
+      - cvp_password is defined
+    fail_msg: "CVP connection parameters (cvp_host, cvp_username, cvp_password) must be defined"
+    quiet: true
+
+- name: Save CVP configuration plan
+  ansible.builtin.copy:
+    dest: "{{ arista_artifacts_dir }}/cvp_inventory_plan.json"
+    content: "{{ cvp_inventory | to_nice_json }}"
     mode: "0644"
-- name: Containers
-  when: apply_changes | bool and (cvp.containers | length) > 0
+  delegate_to: localhost
+
+- name: Create CVP container topology
+  when: arista_apply_changes | bool and cvp_containers | length > 0
   arista.cvp.cv_container_v3:
+    topology: "{{ cvp_containers }}"
     state: present
-    containers: "{{ cvp.containers }}"
-- name: Configlets
-  when: apply_changes | bool and (cvp.configlets | length) > 0
+    apply_mode: "{{ cvp_apply_mode | default('strict') }}"
+  register: cvp_container_result
+  delegate_to: localhost
+
+- name: Display container creation results
+  when: arista_apply_changes | bool and cvp_container_result is defined
+  ansible.builtin.debug:
+    msg: "Container topology created: {{ cvp_container_result }}"
+    verbosity: 1
+
+- name: Upload configlets to CVP
+  when: arista_apply_changes | bool and cvp_configlets | length > 0
   arista.cvp.cv_configlet_v3:
+    configlets: "{{ cvp_configlets }}"
     state: present
-    configlets: "{{ cvp.configlets }}"
-- name: Devices
-  when: apply_changes | bool and (cvp.devices | length) > 0
+    configlets_notes: "Managed by Ansible - {{ ansible_date_time.iso8601 }}"
+  register: cvp_configlet_result
+  delegate_to: localhost
+
+- name: Display configlet upload results
+  when: arista_apply_changes | bool and cvp_configlet_result is defined
+  ansible.builtin.debug:
+    msg: "Configlets uploaded: {{ cvp_configlet_result }}"
+    verbosity: 1
+
+- name: Register devices in CVP inventory
+  when: arista_apply_changes | bool and cvp_devices | length > 0
   arista.cvp.cv_device_v3:
+    devices: "{{ cvp_devices }}"
     state: present
-    devices: "{{ cvp.devices }}"
+    apply_mode: "{{ cvp_apply_mode | default('strict') }}"
+    search_key: "{{ cvp_search_key | default('hostname') }}"
+  register: cvp_device_result
+  delegate_to: localhost
+
+- name: Display device registration results
+  when: arista_apply_changes | bool and cvp_device_result is defined
+  ansible.builtin.debug:
+    msg: "Devices registered: {{ cvp_device_result }}"
+    verbosity: 1
+
+- name: Apply configlets to devices
+  when: arista_apply_changes | bool and cvp_device_configlets | length > 0
+  loop: "{{ cvp_device_configlets }}"
+  loop_control:
+    label: "{{ item.device }}"
+  arista.cvp.cv_device_v3:
+    devices:
+      - fqdn: "{{ item.device }}"
+        configlets: "{{ item.configlets }}"
+    state: present
+  register: cvp_configlet_apply_result
+  delegate_to: localhost
+
+- name: Create change controls for CVP tasks
+  when: arista_apply_changes | bool and cvp_change_control.enabled | default(false)
+  arista.cvp.cv_change_control_v3:
+    state: "{{ cvp_change_control.state | default('set') }}"
+    change:
+      name: "{{ cvp_change_control.name }}"
+      notes: "{{ cvp_change_control.notes | default('Automated change via Ansible') }}"
+      activities:
+        - task_id: "{{ item }}"
+          stage: "{{ cvp_change_control.stage | default('main') }}"
+      stages:
+        - name: "{{ cvp_change_control.stage | default('main') }}"
+          mode: "{{ cvp_change_control.mode | default('series') }}"
+    schedule:
+      type: "{{ cvp_change_control.schedule_type | default('immediate') }}"
+      start_time: "{{ cvp_change_control.start_time | default(omit) }}"
+  loop: "{{ cvp_task_ids | default([]) }}"
+  when: cvp_task_ids is defined and cvp_task_ids | length > 0
+  register: cvp_change_control_result
+  delegate_to: localhost
+
+- name: Execute change control
+  when: arista_apply_changes | bool and cvp_change_control.auto_execute | default(false)
+  arista.cvp.cv_change_control_v3:
+    state: approve
+    change:
+      name: "{{ cvp_change_control.name }}"
+  delegate_to: localhost
+
+- name: Collect device facts from CVP
+  when: cvp_collect_facts | default(true)
+  arista.cvp.cv_facts_v3:
+    facts:
+      - devices
+      - containers
+      - configlets
+      - tasks
+    regexp_filter: "{{ cvp_facts_filter | default('.*') }}"
+  register: cvp_facts
+  delegate_to: localhost
+
+- name: Save CVP facts to artifacts
+  when: cvp_collect_facts | default(true) and cvp_facts is defined
+  ansible.builtin.copy:
+    dest: "{{ arista_artifacts_dir }}/cvp_facts.json"
+    content: "{{ cvp_facts | to_nice_json }}"
+    mode: "0644"
+  delegate_to: localhost
+
+- name: Validate device compliance in CVP
+  when: cvp_validate_compliance | default(true) and arista_apply_changes | bool
+  arista.cvp.cv_validate_v3:
+    mode: "{{ cvp_validation_mode | default('stop_on_error') }}"
+    validate_mode: "{{ cvp_validation_type | default('valid') }}"
+  register: cvp_validation_result
+  delegate_to: localhost
+  ignore_errors: true
+
+- name: Display compliance validation results
+  when: cvp_validate_compliance | default(true) and cvp_validation_result is defined
+  ansible.builtin.debug:
+    msg: "Compliance validation: {{ cvp_validation_result }}"
+
+- name: Generate CVP deployment report
+  when: arista_apply_changes | bool
+  ansible.builtin.template:
+    src: cvp_deployment_report.j2
+    dest: "{{ arista_artifacts_dir }}/cvp_deployment_report_{{ ansible_date_time.epoch }}.html"
+    mode: "0644"
+  delegate_to: localhost

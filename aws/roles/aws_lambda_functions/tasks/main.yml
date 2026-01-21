@@ -1,0 +1,52 @@
+---
+# tasks file for aws_lambda_functions
+
+- name: Create Lambda functions
+  community.aws.lambda:
+    name: "{{ item.name }}"
+    runtime: "{{ item.runtime }}"
+    handler: "{{ item.handler }}"
+    role: "{{ item.role }}"
+    zip_file: "{{ item.zip_file | default(omit) }}"
+    s3_bucket: "{{ item.s3_bucket | default(omit) }}"
+    s3_key: "{{ item.s3_key | default(omit) }}"
+    description: "{{ item.description | default('Lambda function managed by Ansible') }}"
+    timeout: "{{ item.timeout | default(30) }}"
+    memory_size: "{{ item.memory_size | default(128) }}"
+    environment_variables: "{{ item.environment | default({}) }}"
+    vpc_subnet_ids: "{{ item.vpc_subnets | default([]) }}"
+    vpc_security_group_ids: "{{ item.vpc_security_groups | default([]) }}"
+    tags: "{{ item.tags | default(lambda_tags) | combine({'Name': item.name, 'ManagedBy': 'Ansible'}) }}"
+    kms_key_arn: "{{ item.kms_key_arn | default(kms_key_arn) }}"
+    tracing_mode: "{{ item.tracing_mode | default('Active') }}"
+    reserved_concurrent_executions: "{{ item.reserved_concurrent_executions | default(omit) }}"
+    layers: "{{ item.layers | default([]) }}"
+    state: "{{ item.state | default(lambda_state) }}"
+  loop: "{{ lambda_functions }}"
+  when: lambda_functions is defined
+  register: lambda_result
+
+- name: Configure Lambda function URLs
+  community.aws.lambda_function_url:
+    function_name: "{{ item.item.name }}"
+    auth_type: "{{ item.item.url_auth_type | default('AWS_IAM') }}"
+    cors: "{{ item.item.cors | default(omit) }}"
+  loop: "{{ lambda_result.results }}"
+  when:
+    - lambda_result is defined
+    - item.item.enable_function_url | default(false) | bool
+
+- name: Enable Lambda insights for monitoring
+  community.aws.lambda:
+    name: "{{ item.item.name }}"
+    layers: "{{ item.item.layers | default([]) + [lambda_insights_layer_arn] }}"
+    state: present
+  loop: "{{ lambda_result.results }}"
+  when:
+    - lambda_result is defined
+    - lambda_enable_insights | bool
+
+- name: Display Lambda summary
+  ansible.builtin.debug:
+    msg:
+      - "Lambda Functions Created: {{ lambda_result.results | selectattr('changed', 'equalto', true) | list | length if lambda_result is defined else 0 }}"

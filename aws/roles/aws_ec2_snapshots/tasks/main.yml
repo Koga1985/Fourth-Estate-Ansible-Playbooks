@@ -1,0 +1,118 @@
+---
+# tasks file for aws_ec2_snapshots
+
+- name: Create EBS snapshots
+  amazon.aws.ec2_snapshot:
+    volume_id: "{{ item.volume_id }}"
+    description: "{{ item.description | default('Snapshot created by Ansible') }}"
+    region: "{{ item.region | default(aws_region) }}"
+    snapshot_tags: "{{ item.tags | default(snapshot_tags) | combine({'VolumeId': item.volume_id, 'ManagedBy': 'Ansible'}) }}"
+    wait: "{{ item.wait | default(true) }}"
+    state: "{{ item.state | default(snapshot_state) }}"
+  loop: "{{ ebs_snapshots }}"
+  when: ebs_snapshots is defined
+  register: snapshot_result
+
+- name: Copy snapshots to other regions
+  amazon.aws.ec2_snapshot_copy:
+    source_region: "{{ item.0.item.region | default(aws_region) }}"
+    source_snapshot_id: "{{ item.0.snapshot_id }}"
+    region: "{{ item.1 }}"
+    description: "Copy of {{ item.0.snapshot_id }} to {{ item.1 }}"
+    encrypted: true
+    kms_key_id: "{{ kms_key_id }}"
+    tags: "{{ snapshot_tags | combine({'SourceRegion': item.0.item.region | default(aws_region), 'SourceSnapshot': item.0.snapshot_id}) }}"
+  loop: "{{ snapshot_result.results | subelements('item.copy_to_regions', skip_missing=True) }}"
+  when:
+    - snapshot_result is defined
+    - snapshot_enable_cross_region_copy | bool
+  register: snapshot_copy_result
+
+- name: Share snapshots with other accounts
+  community.aws.ec2_snapshot_copy:
+    snapshot_id: "{{ item.snapshot_id }}"
+    region: "{{ item.item.region | default(aws_region) }}"
+    modify_create_vol_permission:
+      user_ids: "{{ item.item.share_with_accounts }}"
+      operation: "add"
+  loop: "{{ snapshot_result.results }}"
+  when:
+    - snapshot_result is defined
+    - item.item.share_with_accounts is defined
+    - item.snapshot_id is defined
+
+- name: Create snapshot lifecycle policy
+  community.aws.ec2_snapshot_lifecycle_policy:
+    policy_name: "{{ snapshot_lifecycle_policy_name }}"
+    description: "Automated snapshot lifecycle management"
+    state: "{{ snapshot_state }}"
+    resource_types: ["VOLUME"]
+    target_tags: "{{ snapshot_lifecycle_target_tags }}"
+    schedules:
+      - name: "Daily Snapshots"
+        create_rule:
+          interval: 24
+          interval_unit: "HOURS"
+          times: ["03:00"]
+        retain_rule:
+          count: "{{ snapshot_retention_count }}"
+        copy_tags: true
+        tags_to_add: "{{ snapshot_tags | combine({'ScheduleType': 'Daily'}) }}"
+    tags: "{{ snapshot_tags }}"
+  when: snapshot_enable_lifecycle_policy | bool
+  register: lifecycle_policy_result
+
+- name: Delete old snapshots
+  amazon.aws.ec2_snapshot:
+    snapshot_id: "{{ item.snapshot_id }}"
+    region: "{{ aws_region }}"
+    state: absent
+  loop: "{{ old_snapshots.snapshots | default([]) }}"
+  when:
+    - snapshot_enable_cleanup | bool
+    - item.start_time | to_datetime('%Y-%m-%dT%H:%M:%S.%fZ') < (ansible_date_time.iso8601 | to_datetime('%Y-%m-%dT%H:%M:%S%z')) - timedelta(days=snapshot_retention_days)
+
+- name: Get snapshot information for cleanup
+  amazon.aws.ec2_snapshot_info:
+    region: "{{ aws_region }}"
+    filters:
+      "tag:ManagedBy": "Ansible"
+      status: "completed"
+  register: old_snapshots
+  when: snapshot_enable_cleanup | bool
+
+- name: Tag snapshots for compliance
+  amazon.aws.ec2_snapshot:
+    snapshot_id: "{{ item.snapshot_id }}"
+    region: "{{ item.item.region | default(aws_region) }}"
+    snapshot_tags: "{{ snapshot_tags | combine({'Compliance': 'FedRAMP-High', 'Encrypted': 'true', 'RetentionDays': snapshot_retention_days | string}) }}"
+  loop: "{{ snapshot_result.results }}"
+  when:
+    - snapshot_result is defined
+    - item.snapshot_id is defined
+
+- name: Create snapshot catalog
+  ansible.builtin.template:
+    src: "snapshot_catalog.j2"
+    dest: "/tmp/snapshot_catalog_{{ ansible_date_time.date }}.html"
+    mode: '0644'
+  delegate_to: localhost
+  when:
+    - snapshot_create_catalog | bool
+    - snapshot_result is defined
+
+- name: Display snapshot summary
+  ansible.builtin.debug:
+    msg:
+      - "Snapshots Created: {{ snapshot_result.results | selectattr('changed', 'equalto', true) | list | length if snapshot_result is defined else 0 }}"
+      - "Cross-Region Copies: {{ snapshot_copy_result.results | selectattr('changed', 'equalto', true) | list | length if snapshot_copy_result is defined else 0 }}"
+      - "Lifecycle Policy: {{ 'Enabled' if lifecycle_policy_result is defined else 'Disabled' }}"
+
+- name: Notify snapshot changes
+  ansible.builtin.debug:
+    msg: "EBS snapshot configuration completed"
+  changed_when: true
+  notify: notify snapshot changes
+  when:
+    - snapshot_result is defined
+    - snapshot_result.changed | default(false)

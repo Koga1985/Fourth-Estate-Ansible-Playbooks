@@ -1,0 +1,33 @@
+---
+# tasks file for aws_guardduty_detector
+
+- name: Enable GuardDuty detector
+  community.aws.guardduty_detector:
+    state: "{{ guardduty_state }}"
+    enable: true
+    finding_publishing_frequency: "{{ guardduty_finding_frequency }}"
+  register: guardduty_detector_result
+
+- name: Configure GuardDuty S3 protection
+  community.aws.guardduty_detector:
+    detector_id: "{{ guardduty_detector_result.detector_id }}"
+    enable_s3_logs: true
+    state: present
+  when:
+    - guardduty_detector_result is defined
+    - guardduty_enable_s3_protection | bool
+
+- name: Configure GuardDuty Kubernetes protection
+  community.aws.guardduty_detector:
+    detector_id: "{{ guardduty_detector_result.detector_id }}"
+    enable_kubernetes_audit_logs: true
+    state: present
+  when:
+    - guardduty_detector_result is defined
+    - guardduty_enable_k8s_protection | bool
+
+- name: Display GuardDuty summary
+  ansible.builtin.debug:
+    msg:
+      - "GuardDuty Detector ID: {{ guardduty_detector_result.detector_id if guardduty_detector_result is defined else 'N/A' }}"
+      - "Status: Enabled"

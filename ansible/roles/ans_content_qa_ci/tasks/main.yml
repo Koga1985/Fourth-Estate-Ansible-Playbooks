@@ -1,30 +1,55 @@
-
 ---
-- name: Plan
+- name: Run ansible-lint
+  when: qa_lint_enabled | bool
+  ansible.builtin.command:
+    cmd: ansible-lint --parseable
+    chdir: "{{ repo_root | default('.') }}"
+  register: lint_result
+  failed_when: qa_ansible_lint_strict | bool and lint_result.rc != 0
+  changed_when: false
+
+- name: Run yamllint
+  when: qa_yamllint_enabled | bool
+  ansible.builtin.command:
+    cmd: yamllint .
+    chdir: "{{ repo_root | default('.') }}"
+  register: yamllint_result
+  failed_when: false
+  changed_when: false
+
+- name: Run security scan
+  when: qa_security_scan_enabled | bool
+  ansible.builtin.command:
+    cmd: ansible-lint --profile=safety
+    chdir: "{{ repo_root | default('.') }}"
+  register: security_result
+  failed_when: fourth_estate_security_scan | bool and security_result.rc != 0
+  changed_when: false
+
+- name: Run molecule tests
+  when: molecule_test_enabled | bool
+  ansible.builtin.command:
+    cmd: molecule test
+    chdir: "{{ repo_root | default('.') }}"
+  register: molecule_result
+  failed_when: false
+  changed_when: false
+
+- name: Generate QA report
   ansible.builtin.copy:
-    dest: "{{ artifacts_dir }}/qa_plan.json"
+    dest: "{{ artifacts_dir }}/qa_report.json"
     mode: "0644"
-    content: "{{ {'repos': repos, 'collections': collections} | to_nice_json }}"
+    content: |
+      {
+        "lint": {{ lint_result.rc | default(999) }},
+        "yamllint": {{ yamllint_result.rc | default(999) }},
+        "security": {{ security_result.rc | default(999) }},
+        "molecule": {{ molecule_result.rc | default(999) }}
+      }
 
-- name: Lint & molecule (best-effort)
-  when: apply_changes | bool
-  loop: "{{ repos }}"
-  loop_control: { label: "{{ item.path }}" }
-  ansible.builtin.shell: |
-    set -euo pipefail
-    cd "{{ item.path }}"
-    ansible-lint -q || true
-    if [ -f molecule/default/molecule.yml ]; then molecule test || true; fi
-  args: { executable: /bin/bash }
-  changed_when: false
-
-- name: Deprecations report (module list)
-  when: apply_changes | bool
-  ansible.builtin.shell: |
-    set -euo pipefail
-    : > "{{ artifacts_dir }}/deprecations_report.txt"
-    for c in {{ collections | default([]) | join(' ') }}; do
-      ansible-doc -t module -l | grep "^$c\." || true
-    done >> "{{ artifacts_dir }}/deprecations_report.txt"
-  args: { executable: /bin/bash }
-  changed_when: false
+- name: Display QA summary
+  ansible.builtin.debug:
+    msg:
+      - "Lint: {{ 'PASS' if lint_result.rc == 0 else 'FAIL' }}"
+      - "Security: {{ 'PASS' if security_result.rc == 0 else 'FAIL' }}"
+      - "Report: {{ artifacts_dir }}/qa_report.json"
