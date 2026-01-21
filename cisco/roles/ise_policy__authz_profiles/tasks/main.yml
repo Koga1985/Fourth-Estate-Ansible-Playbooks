@@ -1,19 +1,36 @@
 ---
-- name: Ensure artifacts dir
-  ansible.builtin.file:
-    path: "{{ artifacts_dir }}"
-    state: directory
+# tasks file for ise_policy__authz_profiles
+# Cisco ISE Authorization Profile Management
 
-- name: Emit profiles plan
-  ansible.builtin.copy:
-    dest: "{{ artifacts_dir }}/authz_profiles_plan.json"
-    mode: "0644"
-    content: "{{ authz_profiles | to_nice_json }}"
+- name: Validate ISE connection parameters
+  ansible.builtin.assert:
+    that: [ise_hostname is defined, ise_username is defined, ise_password is defined]
+    fail_msg: "Required ISE connection parameters not defined"
+  tags: [validation]
 
-- name: Ensure Authorization Profiles (guarded placeholder)
-  when: apply_changes | bool
+- name: Ensure artifacts directory
+  ansible.builtin.file: {path: "{{ ise_artifacts_dir }}", state: directory, mode: "0750"}
+  tags: [always]
+
+- name: Create authorization profiles
+  cisco.ise.authorization_profile:
+    ise_hostname: "{{ ise_hostname }}"
+    ise_username: "{{ ise_username }}"
+    ise_password: "{{ ise_password }}"
+    ise_verify: "{{ ise_verify_ssl }}"
+    state: present
+    name: "{{ item.name }}"
+    accessType: "{{ item.access_type | default('ACCESS_ACCEPT') }}"
+    vlan: "{{ item.vlan | default(omit) }}"
+    daclName: "{{ item.dacl | default(omit) }}"
+    securityGroup: "{{ item.sgt | default(omit) }}"
   loop: "{{ authz_profiles }}"
-  loop_control:
-    label: "{{ item.name }}"
-  ansible.builtin.debug:
-    msg: "Create/Update AuthZ Profile {{ item.name }}"
+  when: apply_changes | bool
+  tags: [authz, profiles]
+
+- name: Generate authorization profiles report
+  ansible.builtin.template:
+    src: ise_policy__authz_profiles_report.json.j2
+    dest: "{{ ise_artifacts_dir }}/authz_profiles_{{ ansible_date_time.epoch }}.json"
+    mode: "0640"
+  tags: [reporting]

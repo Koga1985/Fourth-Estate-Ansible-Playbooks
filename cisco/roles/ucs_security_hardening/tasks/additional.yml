@@ -1,0 +1,76 @@
+---
+# Additional tasks for ucs_security_hardening
+# Cisco UCS Security Hardening - DISA STIG compliance and security controls
+
+# Additional security hardening tasks for UCS
+
+- name: Configure password policy (DISA STIG)
+  cisco.ucs.ucs_managed_objects:
+    hostname: "{{ ucs_hostname }}"
+    username: "{{ ucs_username }}"
+    password: "{{ ucs_password }}"
+    objects:
+      - module: ucsmsdk.mometa.aaa.AaaUserEp
+        class: AaaUserEp
+        properties:
+          parent_mo_or_dn: "sys"
+          pwd_strength_check: "yes"
+  when: apply_changes | bool
+  tags: [security, stig]
+
+- name: Enable FIPS mode (DISA STIG requirement)
+  cisco.ucs.ucs_managed_objects:
+    hostname: "{{ ucs_hostname }}"
+    username: "{{ ucs_username }}"
+    password: "{{ ucs_password }}"
+    objects:
+      - module: ucsmsdk.mometa.sysdebug.SysdebugMEpLogPolicy
+        class: SysdebugMEpLogPolicy
+        properties:
+          parent_mo_or_dn: "sys"
+          fips_mode_enable: "yes"
+  when:
+    - apply_changes | bool
+    - enable_fips_mode | bool
+  tags: [security, fips, stig]
+
+- name: Configure session timeout (DISA STIG)
+  cisco.ucs.ucs_managed_objects:
+    hostname: "{{ ucs_hostname }}"
+    username: "{{ ucs_username }}"
+    password: "{{ ucs_password }}"
+    objects:
+      - module: ucsmsdk.mometa.comm.CommHttp
+        class: CommHttp
+        properties:
+          parent_mo_or_dn: "sys/svc-ext"
+          session_timeout: "{{ session_timeout }}"
+  when: apply_changes | bool
+  tags: [security, session, stig]
+
+- name: Disable insecure protocols (DISA STIG)
+  cisco.ucs.ucs_managed_objects:
+    hostname: "{{ ucs_hostname }}"
+    username: "{{ ucs_username }}"
+    password: "{{ ucs_password }}"
+    objects:
+      - module: ucsmsdk.mometa.comm.CommTelnet
+        class: CommTelnet
+        properties:
+          parent_mo_or_dn: "sys/svc-ext"
+          admin_state: "disabled"
+      - module: ucsmsdk.mometa.comm.CommSnmp
+        class: CommSnmp
+        properties:
+          parent_mo_or_dn: "sys/svc-ext"
+          admin_state: "disabled"
+          v3_privilege: "auth-priv"
+  when: apply_changes | bool
+  tags: [security, protocols, stig]
+
+- name: Generate STIG compliance report
+  ansible.builtin.template:
+    src: stig_compliance_report.json.j2
+    dest: "{{ ucs_artifacts_dir }}/ucs_stig_compliance_{{ ansible_date_time.epoch }}.json"
+    mode: "0640"
+  tags: [reporting, compliance, stig]

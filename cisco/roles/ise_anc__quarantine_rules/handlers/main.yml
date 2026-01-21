@@ -1,0 +1,37 @@
+---
+# handlers file for ise_anc__quarantine_rules
+
+- name: validate anc policies
+  cisco.ise.anc_policy_info:
+    ise_hostname: "{{ ise_hostname }}"
+    ise_username: "{{ ise_username }}"
+    ise_password: "{{ ise_password }}"
+    ise_verify: "{{ ise_verify_ssl }}"
+  register: anc_policy_validation
+
+- name: backup ise configuration
+  cisco.ise.backup_last_status_info:
+    ise_hostname: "{{ ise_hostname }}"
+    ise_username: "{{ ise_username }}"
+    ise_password: "{{ ise_password }}"
+    ise_verify: "{{ ise_verify_ssl }}"
+  when: ise_auto_backup | default(false) | bool
+
+- name: send anc notification
+  ansible.builtin.mail:
+    host: "{{ smtp_host | default('localhost') }}"
+    port: "{{ smtp_port | default(25) }}"
+    to: "{{ anc_notification_email }}"
+    subject: "ISE ANC Policy Change - {{ ansible_hostname }}"
+    body: "ANC quarantine policies have been updated on {{ ise_hostname }} at {{ ansible_date_time.iso8601 }}"
+  when:
+    - anc_notify_on_quarantine | bool
+    - anc_notification_email is defined
+  ignore_errors: true
+
+- name: log anc changes to syslog
+  ansible.builtin.syslog:
+    msg: "ISE ANC policies updated: {{ anc_policies | map(attribute='name') | list | join(', ') }}"
+    priority: "info"
+    facility: "local0"
+  when: anc_log_to_syslog | bool

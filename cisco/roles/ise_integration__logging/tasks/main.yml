@@ -1,24 +1,75 @@
 ---
-- name: Ensure artifacts dir
+# tasks file for ise_integration__logging
+# Cisco ISE Logging and SIEM Integration
+
+- name: Validate ISE connection parameters
+  ansible.builtin.assert:
+    that:
+      - ise_hostname is defined
+      - ise_username is defined
+      - ise_password is defined
+    fail_msg: "Required ISE connection parameters not defined"
+  tags: [validation, prerequisites]
+
+- name: Ensure artifacts directory
   ansible.builtin.file:
-    path: "{{ artifacts_dir }}"
+    path: "{{ ise_artifacts_dir }}"
     state: directory
+    mode: "0750"
+  tags: [always]
 
-- name: Emit logging integration plan
-  ansible.builtin.copy:
-    dest: "{{ artifacts_dir }}/logging_integration_plan.json"
-    mode: "0644"
-    content: "{{ {'splunk_hec': splunk_hec, 'syslog': syslog, 'routes': routes} | to_nice_json }}"
+- name: Configure remote syslog targets
+  cisco.ise.syslog_server:
+    ise_hostname: "{{ ise_hostname }}"
+    ise_username: "{{ ise_username }}"
+    ise_password: "{{ ise_password }}"
+    ise_verify: "{{ ise_verify_ssl }}"
+    state: present
+    name: "{{ item.name }}"
+    ipAddress: "{{ item.ip_address }}"
+    port: "{{ item.port | default(514) }}"
+    protocol: "{{ item.protocol | default('UDP') }}"
+  loop: "{{ syslog_servers }}"
+  when: apply_changes | bool
+  tags: [logging, syslog]
 
-- name: Configure Splunk HEC destination (guarded placeholder)
-  when: apply_changes | bool and splunk_hec.enabled | bool
-  ansible.builtin.debug:
-    msg: "Configure Splunk HEC {{ splunk_hec.url }} (batch={{ splunk_hec.batch_size }})"
+- name: Configure logging categories
+  ansible.builtin.uri:
+    url: "https://{{ ise_hostname }}/admin/API/mnt/LoggingCategory"
+    method: PUT
+    user: "{{ ise_username }}"
+    password: "{{ ise_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ ise_verify_ssl }}"
+    headers:
+      Content-Type: "application/json"
+      Accept: "application/json"
+    body_format: json
+    body:
+      loggingCategory: "{{ logging_categories }}"
+  when: apply_changes | bool
+  tags: [logging, categories]
 
-- name: Configure syslog targets (guarded placeholder)
-  when: apply_changes | bool and syslog.enabled | bool
-  loop: "{{ syslog.hosts }}"
-  loop_control:
-    label: "{{ item.host }}:{{ item.port | default(514) }}/{{ item.protocol | default('udp') }}"
-  ansible.builtin.debug:
-    msg: "Configure syslog {{ item.host }}"
+- name: Configure SIEM integration
+  ansible.builtin.uri:
+    url: "{{ siem_api_endpoint }}/configure"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ siem_api_token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      source: "cisco_ise"
+      hostname: "{{ ise_hostname }}"
+      log_types: "{{ siem_log_types }}"
+  when:
+    - apply_changes | bool
+    - siem_integration_enabled | bool
+  tags: [siem, integration]
+
+- name: Generate logging configuration report
+  ansible.builtin.template:
+    src: ise_integration__logging_report.json.j2
+    dest: "{{ ise_artifacts_dir }}/logging_config_{{ ansible_date_time.epoch }}.json"
+    mode: "0640"
+  tags: [reporting]

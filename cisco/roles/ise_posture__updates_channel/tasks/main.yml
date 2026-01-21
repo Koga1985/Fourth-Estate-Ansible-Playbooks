@@ -1,16 +1,51 @@
 ---
-- name: Ensure artifacts dir
-  ansible.builtin.file:
-    path: "{{ artifacts_dir }}"
-    state: directory
+# tasks file for ise_posture__updates_channel
+# Cisco ISE Posture Update Channel Management
 
-- name: Emit posture updates plan
-  ansible.builtin.copy:
-    dest: "{{ artifacts_dir }}/posture_updates_plan.json"
-    mode: "0644"
-    content: "{{ updates | to_nice_json }}"
+- name: Validate ISE connection parameters
+  ansible.builtin.assert:
+    that: [ise_hostname is defined, ise_username is defined, ise_password is defined]
+    fail_msg: "Required ISE connection parameters not defined"
+  tags: [validation]
 
-- name: Configure posture update channel (guarded placeholder)
-  when: apply_changes | bool and updates.enable | bool
-  ansible.builtin.debug:
-    msg: "Enable posture feed updates; schedule {{ updates.schedule }}"
+- name: Ensure artifacts directory
+  ansible.builtin.file: {path: "{{ ise_artifacts_dir }}", state: directory, mode: "0750"}
+  tags: [always]
+
+- name: Configure posture update feed
+  ansible.builtin.uri:
+    url: "https://{{ ise_hostname }}/ers/config/postureupdatefeed"
+    method: PUT
+    user: "{{ ise_username }}"
+    password: "{{ ise_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ ise_verify_ssl }}"
+    headers: {Content-Type: "application/json", Accept: "application/json"}
+    body_format: json
+    body:
+      PostureUpdateFeed:
+        enabled: "{{ posture_updates_enabled }}"
+        updateSchedule: "{{ posture_update_schedule }}"
+  when: apply_changes | bool
+  tags: [posture, updates]
+
+- name: Trigger posture update check
+  ansible.builtin.uri:
+    url: "https://{{ ise_hostname }}/ers/config/postureupdatefeed/checkForUpdate"
+    method: POST
+    user: "{{ ise_username }}"
+    password: "{{ ise_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ ise_verify_ssl }}"
+    headers: {Content-Type: "application/json"}
+  when:
+    - apply_changes | bool
+    - posture_force_update | bool
+  tags: [posture, updates]
+
+- name: Generate posture updates report
+  ansible.builtin.template:
+    src: ise_posture__updates_channel_report.json.j2
+    dest: "{{ ise_artifacts_dir }}/posture_updates_{{ ansible_date_time.epoch }}.json"
+    mode: "0640"
+  tags: [reporting]

@@ -1,5 +1,6 @@
 ---
 # Create/Update L4 services (TCP/UDP).
+# Fourth Estate: All custom services must be documented and justified
 # Vars:
 #   cp_services_tcp:
 #     - name: http-8080
@@ -15,6 +16,34 @@
 #       color: yellow
 #       comment: "Syslog"
 
+- name: Fourth Estate - validate TCP service definitions
+  ansible.builtin.assert:
+    that:
+      - item.name is defined
+      - item.port is defined
+      - item.port | int >= 1
+      - item.port | int <= 65535
+    fail_msg: "TCP service '{{ item.name | default('UNDEFINED') }}' has invalid port definition"
+    success_msg: "TCP service '{{ item.name }}' validated"
+  loop: "{{ cp_services_tcp | default([]) }}"
+  loop_control:
+    label: "{{ item.name | default('UNNAMED') }}"
+  when: cp_services_tcp is defined and cp_services_tcp | length > 0
+
+- name: Fourth Estate - validate UDP service definitions
+  ansible.builtin.assert:
+    that:
+      - item.name is defined
+      - item.port is defined
+      - item.port | int >= 1
+      - item.port | int <= 65535
+    fail_msg: "UDP service '{{ item.name | default('UNDEFINED') }}' has invalid port definition"
+    success_msg: "UDP service '{{ item.name }}' validated"
+  loop: "{{ cp_services_udp | default([]) }}"
+  loop_control:
+    label: "{{ item.name | default('UNNAMED') }}"
+  when: cp_services_udp is defined and cp_services_udp | length > 0
+
 - name: Create/Update TCP services
   when: (cp_services_tcp | default([])) | length > 0
   check_point.mgmt.cp_mgmt_service_tcp:
@@ -23,11 +52,12 @@
     port: "{{ item.port }}"
     session_timeout: "{{ item.session_timeout | default(omit) }}"
     match_for_any: "{{ item.match_for_any | default(omit) }}"
-    color: "{{ item.color | default(omit) }}"
-    comments: "{{ item.comment | default(omit) }}"
+    color: "{{ item.color | default('black') }}"
+    comments: "{{ item.comment | default('Fourth Estate Service Catalog - Managed by Ansible') }}"
   loop: "{{ cp_services_tcp | default([]) }}"
   loop_control:
     label: "{{ item.name }}"
+  register: tcp_creation
 
 - name: Create/Update UDP services
   when: (cp_services_udp | default([])) | length > 0
@@ -37,8 +67,16 @@
     port: "{{ item.port }}"
     session_timeout: "{{ item.session_timeout | default(omit) }}"
     match_for_any: "{{ item.match_for_any | default(omit) }}"
-    color: "{{ item.color | default(omit) }}"
-    comments: "{{ item.comment | default(omit) }}"
+    color: "{{ item.color | default('black') }}"
+    comments: "{{ item.comment | default('Fourth Estate Service Catalog - Managed by Ansible') }}"
   loop: "{{ cp_services_udp | default([]) }}"
   loop_control:
     label: "{{ item.name }}"
+  register: udp_creation
+
+- name: Log service creation summary
+  ansible.builtin.debug:
+    msg:
+      - "Created/updated {{ cp_services_tcp | default([]) | length }} TCP services"
+      - "Created/updated {{ cp_services_udp | default([]) | length }} UDP services"
+      - "Total custom services: {{ (cp_services_tcp | default([]) | length) + (cp_services_udp | default([]) | length) }}"

@@ -1,5 +1,7 @@
 ---
 # Create TP exceptions with optional expiry and ticket tagging.
+# Fourth Estate: All exceptions require business justification, expiration, and ISSO approval
+# WARNING: TP exceptions reduce security posture - minimize usage
 # Vars:
 #   tp_layer: "Threat Prevention"
 #   tp_exceptions:
@@ -10,7 +12,7 @@
 #       service: ["microsoft-ds"]
 #       protections: ["IPS","Anti-Virus"]    # or ["Any"]
 #       track: "log"                         # log | none
-#       expiration: "2026-03-31"             # ISO date (optional)
+#       expiration: "2026-03-31"             # ISO date (REQUIRED for Fourth Estate)
 #       comments: "CHG-12345 temporary exception"
 #       enabled: true
 #       tags: ["ticket:CHG-12345","owner:netops"]
@@ -18,6 +20,30 @@
 - name: Defaults
   ansible.builtin.set_fact:
     _tp_layer: "{{ tp_layer | default('Threat Prevention') }}"
+    _art_dir: "{{ artifacts_dir | default('/tmp/checkpoint-artifacts') }}"
+
+- name: Fourth Estate - validate exception documentation
+  ansible.builtin.assert:
+    that:
+      - item.name is defined
+      - item.comments is defined
+      - item.expiration is defined
+      - item.track is defined
+      - item.track == 'log'
+    fail_msg: "Fourth Estate Policy Violation: Exception '{{ item.name | default('UNNAMED') }}' missing required documentation, expiration, or logging"
+    success_msg: "Exception '{{ item.name }}' meets documentation requirements"
+  loop: "{{ tp_exceptions | default([]) }}"
+  loop_control: { label: "{{ item.name | default('UNNAMED') }}" }
+  when: tp_exceptions is defined and tp_exceptions | length > 0
+
+- name: Fourth Estate - warn about exception count
+  ansible.builtin.debug:
+    msg:
+      - "WARNING: {{ tp_exceptions | length }} threat prevention exceptions configured"
+      - "Fourth Estate policy requires ISSO/ISSM approval for all TP exceptions"
+      - "All exceptions must be reviewed quarterly and removed when no longer needed"
+      - "Each exception weakens the security posture - minimize usage"
+  when: tp_exceptions is defined and tp_exceptions | length > 0
 
 - name: Create/Update TP exceptions
   check_point.mgmt.cp_mgmt_threat_exception:
@@ -29,8 +55,8 @@
     service: "{{ item.service | default(['Any']) }}"
     protections: "{{ item.protections | default(['Any']) }}"
     track: "{{ item.track | default('log') }}"
-    comments: "{{ item.comments | default(omit) }}"
-    tags: "{{ item.tags | default(omit) }}"
+    comments: "{{ item.comments | default('Fourth Estate: Business justification required') }}"
+    tags: "{{ item.tags | default(['tp-exception', 'requires-isso-approval']) }}"
     time: >-
       {{
         (item.expiration is defined)
@@ -40,3 +66,62 @@
     state: present
   loop: "{{ tp_exceptions | default([]) }}"
   loop_control: { label: "{{ item.name }}" }
+  register: exception_results
+
+- name: Generate exception documentation for ISSO review
+  ansible.builtin.template:
+    src: tp_exception.j2
+    dest: "{{ _art_dir }}/tp_exception_{{ item.name | replace(' ', '_') }}.txt"
+    mode: '0640'
+  loop: "{{ tp_exceptions | default([]) }}"
+  delegate_to: localhost
+  when: tp_exceptions is defined and tp_exceptions | length > 0
+
+- name: Generate exception summary report
+  ansible.builtin.copy:
+    dest: "{{ _art_dir }}/tp_exceptions_summary_{{ ansible_date_time.date }}.txt"
+    mode: '0640'
+    content: |
+      ======================================================================
+        THREAT PREVENTION EXCEPTIONS SUMMARY - ISSO/ISSM REVIEW REQUIRED
+      ======================================================================
+
+      Report Date: {{ ansible_date_time.iso8601 }}
+      Total Exceptions: {{ tp_exceptions | default([]) | length }}
+      Layer: {{ _tp_layer }}
+
+      {% if tp_exceptions is defined and tp_exceptions | length > 0 %}
+      EXCEPTIONS CONFIGURED:
+      {% for exception in tp_exceptions %}
+      {{ loop.index }}. {{ exception.name }}
+         Source: {{ exception.source | default(['Any']) | join(', ') }}
+         Destination: {{ exception.destination | default(['Any']) | join(', ') }}
+         Protections Bypassed: {{ exception.protections | default(['Any']) | join(', ') }}
+         Expiration: {{ exception.expiration | default('NONE - VIOLATION') }}
+         Justification: {{ exception.comments | default('NONE - VIOLATION') }}
+         Status: {% if exception.expiration is defined %}COMPLIANT{% else %}NON-COMPLIANT - Missing expiration{% endif %}
+
+      {% endfor %}
+
+      COMPLIANCE STATUS:
+      {% set missing_expiration = tp_exceptions | selectattr('expiration', 'undefined') | list %}
+      {% if missing_expiration | length > 0 %}
+      WARNING: {{ missing_expiration | length }} exception(s) missing expiration date
+      ACTION REQUIRED: Set expiration date for all exceptions
+      {% else %}
+      All exceptions have expiration dates - COMPLIANT
+      {% endif %}
+
+      REQUIRED ACTIONS:
+      1. ISSO/ISSM review and approval for all exceptions
+      2. Document business justification for each exception
+      3. Schedule quarterly review of all exceptions
+      4. Remove exceptions when no longer required
+      5. Minimize exception count for optimal security posture
+
+      ISSO/ISSM Approval: _____________________________ Date: _______
+      {% else %}
+      NO EXCEPTIONS CONFIGURED - OPTIMAL SECURITY POSTURE
+      {% endif %}
+      ======================================================================
+  delegate_to: localhost

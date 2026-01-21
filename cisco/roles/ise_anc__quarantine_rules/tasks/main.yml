@@ -1,24 +1,164 @@
 ---
-- name: Ensure artifacts dir
+# tasks file for ise_anc__quarantine_rules
+# Cisco ISE Adaptive Network Control (ANC) Quarantine Rules
+# Provides automated threat response and quarantine capabilities
+
+- name: Validate ISE connection parameters
+  ansible.builtin.assert:
+    that:
+      - ise_hostname is defined
+      - ise_username is defined
+      - ise_password is defined
+      - ise_verify_ssl is defined
+    fail_msg: "Required ISE connection parameters not defined"
+    quiet: true
+  tags:
+    - validation
+    - prerequisites
+
+- name: Ensure artifacts directory exists
   ansible.builtin.file:
-    path: "{{ artifacts_dir }}"
+    path: "{{ ise_artifacts_dir }}"
     state: directory
+    mode: "0750"
+  tags:
+    - always
 
-- name: Emit ANC plan
+- name: Gather existing ANC policies
+  cisco.ise.anc_policy_info:
+    ise_hostname: "{{ ise_hostname }}"
+    ise_username: "{{ ise_username }}"
+    ise_password: "{{ ise_password }}"
+    ise_verify: "{{ ise_verify_ssl }}"
+  register: existing_anc_policies
+  tags:
+    - discovery
+    - audit
+
+- name: Create ANC policy plan document
   ansible.builtin.copy:
-    dest: "{{ artifacts_dir }}/anc_plan.json"
+    dest: "{{ ise_artifacts_dir }}/anc_quarantine_plan.json"
     mode: "0644"
-    content: "{{ {'policies': anc_policies, 'exceptions': exceptions} | to_nice_json }}"
+    content: "{{ anc_plan_doc | to_nice_json }}"
+  vars:
+    anc_plan_doc:
+      timestamp: "{{ ansible_date_time.iso8601 }}"
+      managed_policies: "{{ anc_policies }}"
+      exceptions: "{{ anc_exceptions }}"
+      existing_policies: "{{ existing_anc_policies.ise_response | default([]) }}"
+      compliance_frameworks: "{{ compliance_frameworks }}"
+  tags:
+    - documentation
+    - audit
 
-- name: Ensure ANC policies (guarded placeholder)
-  when: apply_changes | bool
+- name: Configure QUARANTINE ANC policy
+  cisco.ise.anc_policy:
+    ise_hostname: "{{ ise_hostname }}"
+    ise_username: "{{ ise_username }}"
+    ise_password: "{{ ise_password }}"
+    ise_verify: "{{ ise_verify_ssl }}"
+    state: present
+    name: "{{ item.name }}"
+    actions: "{{ item.actions }}"
   loop: "{{ anc_policies }}"
   loop_control:
     label: "{{ item.name }}"
-  ansible.builtin.debug:
-    msg: "Ensure ANC policy {{ item.name }} with actions {{ item.actions }}"
+  when:
+    - apply_changes | bool
+    - item.enabled | default(true)
+  notify:
+    - validate anc policies
+    - backup ise configuration
+  tags:
+    - anc
+    - policies
+    - quarantine
 
-- name: Register ANC exceptions (guarded placeholder)
-  when: apply_changes | bool and (exceptions|length) > 0
-  ansible.builtin.debug:
-    msg: "Register ANC exceptions (MAC/expiry)"
+- name: Configure ANC endpoint assignments
+  cisco.ise.anc_endpoint:
+    ise_hostname: "{{ ise_hostname }}"
+    ise_username: "{{ ise_username }}"
+    ise_password: "{{ ise_password }}"
+    ise_verify: "{{ ise_verify_ssl }}"
+    state: present
+    macAddress: "{{ item.mac_address }}"
+    policyName: "{{ item.policy_name }}"
+  loop: "{{ anc_endpoint_assignments }}"
+  loop_control:
+    label: "{{ item.mac_address }}"
+  when:
+    - apply_changes | bool
+    - anc_endpoint_assignments | length > 0
+  tags:
+    - anc
+    - endpoints
+    - quarantine
+
+- name: Register ANC exceptions (devices exempt from quarantine)
+  ansible.builtin.set_fact:
+    anc_exempted_macs: "{{ anc_exempted_macs | default([]) + [item.mac_address] }}"
+  loop: "{{ anc_exceptions }}"
+  loop_control:
+    label: "{{ item.mac_address }}"
+  when:
+    - anc_exceptions | length > 0
+    - item.enabled | default(true)
+  tags:
+    - anc
+    - exceptions
+
+- name: Document ANC exceptions
+  ansible.builtin.copy:
+    dest: "{{ ise_artifacts_dir }}/anc_exceptions.json"
+    mode: "0640"
+    content: "{{ anc_exception_doc | to_nice_json }}"
+  vars:
+    anc_exception_doc:
+      timestamp: "{{ ansible_date_time.iso8601 }}"
+      exceptions: "{{ anc_exceptions }}"
+      exempted_macs: "{{ anc_exempted_macs | default([]) }}"
+  when: anc_exceptions | length > 0
+  tags:
+    - documentation
+    - exceptions
+
+- name: Configure ANC policy with DISA STIG compliance settings
+  cisco.ise.anc_policy:
+    ise_hostname: "{{ ise_hostname }}"
+    ise_username: "{{ ise_username }}"
+    ise_password: "{{ ise_password }}"
+    ise_verify: "{{ ise_verify_ssl }}"
+    state: present
+    name: "{{ item.name }}"
+    actions: "{{ item.actions }}"
+  loop: "{{ disa_stig_anc_policies }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when:
+    - apply_changes | bool
+    - enable_disa_stig_compliance | bool
+  tags:
+    - anc
+    - compliance
+    - stig
+
+- name: Generate ANC quarantine report
+  ansible.builtin.template:
+    src: anc_quarantine_report.json.j2
+    dest: "{{ ise_artifacts_dir }}/anc_quarantine_report_{{ ansible_date_time.epoch }}.json"
+    mode: "0640"
+  tags:
+    - reporting
+    - audit
+
+- name: Verify ANC policies are active
+  cisco.ise.anc_policy_info:
+    ise_hostname: "{{ ise_hostname }}"
+    ise_username: "{{ ise_username }}"
+    ise_password: "{{ ise_password }}"
+    ise_verify: "{{ ise_verify_ssl }}"
+  register: anc_verification
+  when: apply_changes | bool
+  tags:
+    - validation
+    - verification

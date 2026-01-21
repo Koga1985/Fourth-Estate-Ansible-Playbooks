@@ -1,21 +1,71 @@
 ---
-- name: Ensure artifacts dir
+# tasks file for ise_integration__mse_dnac
+# Cisco ISE Integration with MSE and DNA Center
+
+- name: Validate ISE connection parameters
+  ansible.builtin.assert:
+    that:
+      - ise_hostname is defined
+      - ise_username is defined
+      - ise_password is defined
+    fail_msg: "Required ISE connection parameters not defined"
+  tags: [validation, prerequisites]
+
+- name: Ensure artifacts directory
   ansible.builtin.file:
-    path: "{{ artifacts_dir }}"
+    path: "{{ ise_artifacts_dir }}"
     state: directory
+    mode: "0750"
+  tags: [always]
 
-- name: Emit MSE/DNAC plan
-  ansible.builtin.copy:
-    dest: "{{ artifacts_dir }}/mse_dnac_plan.json"
-    mode: "0644"
-    content: "{{ {'dnac': dnac, 'mse': mse} | to_nice_json }}"
+- name: Enable pxGrid for MSE/DNAC integration
+  cisco.ise.px_grid_settings:
+    ise_hostname: "{{ ise_hostname }}"
+    ise_username: "{{ ise_username }}"
+    ise_password: "{{ ise_password }}"
+    ise_verify: "{{ ise_verify_ssl }}"
+    automaticApproval: "{{ pxgrid_auto_approval }}"
+  when: apply_changes | bool
+  tags: [pxgrid, integration]
 
-- name: Configure DNA Center context sharing (guarded placeholder)
-  when: apply_changes | bool and dnac.enabled | bool
-  ansible.builtin.debug:
-    msg: "Bind DNAC at {{ dnac.url }} to ISE"
+- name: Configure DNA Center integration
+  ansible.builtin.uri:
+    url: "https://{{ dnac_hostname }}/dna/intent/api/v1/network-device"
+    method: POST
+    headers:
+      X-Auth-Token: "{{ dnac_auth_token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      iseIntegration:
+        ipAddress: "{{ ise_hostname }}"
+        sharedSecret: "{{ dnac_ise_shared_secret }}"
+  when:
+    - apply_changes | bool
+    - dnac_integration_enabled | bool
+  tags: [dnac, integration]
 
-- name: Configure MSE context sharing (guarded placeholder)
-  when: apply_changes | bool and mse.enabled | bool
-  ansible.builtin.debug:
-    msg: "Bind MSE at {{ mse.url }} to ISE"
+- name: Configure MSE integration
+  ansible.builtin.uri:
+    url: "https://{{ mse_hostname }}/api/config/v1/aaa/ise-server"
+    method: POST
+    user: "{{ mse_username }}"
+    password: "{{ mse_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ mse_verify_ssl }}"
+    body_format: json
+    body:
+      iseServer:
+        ipAddress: "{{ ise_hostname }}"
+        sharedSecret: "{{ mse_ise_shared_secret }}"
+  when:
+    - apply_changes | bool
+    - mse_integration_enabled | bool
+  tags: [mse, integration]
+
+- name: Generate integration report
+  ansible.builtin.template:
+    src: ise_integration__mse_dnac_report.json.j2
+    dest: "{{ ise_artifacts_dir }}/mse_dnac_integration_{{ ansible_date_time.epoch }}.json"
+    mode: "0640"
+  tags: [reporting]

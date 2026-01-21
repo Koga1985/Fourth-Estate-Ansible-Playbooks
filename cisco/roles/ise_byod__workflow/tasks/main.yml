@@ -1,12 +1,69 @@
 ---
-- name: Ensure artifacts
-  ansible.builtin.file: { path: "{{ artifacts_dir }}", state: directory }
-- name: Plan BYOD workflow
-  ansible.builtin.copy:
-    dest: "{{ artifacts_dir }}/byod_plan.json"
-    content: "{{ byod | to_nice_json }}"
-    mode: "0644"
-- name: Configure BYOD flow (guarded placeholder)
-  when: apply_changes | bool and byod.enabled | bool
-  ansible.builtin.debug:
-    msg: "Enable BYOD: portal={{ byod.onboarding_portal }}, ACL={{ byod.redirect_acl }}, cert={{ byod.cert_template }}"
+# tasks file for ise_byod__workflow
+# Cisco ISE BYOD Workflow Configuration
+
+- name: Validate ISE connection parameters
+  ansible.builtin.assert:
+    that:
+      - ise_hostname is defined
+      - ise_username is defined
+      - ise_password is defined
+    fail_msg: "Required ISE connection parameters not defined"
+  tags: [validation, prerequisites]
+
+- name: Ensure artifacts directory
+  ansible.builtin.file:
+    path: "{{ ise_artifacts_dir }}"
+    state: directory
+    mode: "0750"
+  tags: [always]
+
+- name: Configure BYOD portal settings
+  cisco.ise.byod_portal:
+    ise_hostname: "{{ ise_hostname }}"
+    ise_username: "{{ ise_username }}"
+    ise_password: "{{ ise_password }}"
+    ise_verify: "{{ ise_verify_ssl }}"
+    state: present
+    name: "{{ byod_portal_name }}"
+    portalType: "BYOD"
+    settings:
+      portalSettings:
+        allowedInterfaces: "{{ byod_allowed_interfaces }}"
+        certificateGroupTag: "{{ byod_cert_group }}"
+        endpointIdentityGroup: "{{ byod_endpoint_group }}"
+  when: apply_changes | bool
+  tags: [byod, portal]
+
+- name: Configure BYOD certificate provisioning
+  cisco.ise.certificate_profile:
+    ise_hostname: "{{ ise_hostname }}"
+    ise_username: "{{ ise_username }}"
+    ise_password: "{{ ise_password }}"
+    ise_verify: "{{ ise_verify_ssl }}"
+    state: present
+    name: "{{ byod_cert_profile_name }}"
+    certificateAuthority: "{{ byod_cert_authority }}"
+  when: apply_changes | bool
+  tags: [byod, certificates]
+
+- name: Configure BYOD authorization profiles
+  cisco.ise.authorization_profile:
+    ise_hostname: "{{ ise_hostname }}"
+    ise_username: "{{ ise_username }}"
+    ise_password: "{{ ise_password }}"
+    ise_verify: "{{ ise_verify_ssl }}"
+    state: present
+    name: "{{ item.name }}"
+    accessType: "{{ item.access_type | default('ACCESS_ACCEPT') }}"
+    vlan: "{{ item.vlan | default(omit) }}"
+  loop: "{{ byod_authz_profiles }}"
+  when: apply_changes | bool
+  tags: [byod, authorization]
+
+- name: Generate BYOD configuration report
+  ansible.builtin.template:
+    src: ise_byod__workflow_report.json.j2
+    dest: "{{ ise_artifacts_dir }}/byod_workflow_{{ ansible_date_time.epoch }}.json"
+    mode: "0640"
+  tags: [reporting]

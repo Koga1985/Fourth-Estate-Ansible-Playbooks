@@ -1,27 +1,51 @@
 ---
-- name: Ensure artifacts dir
-  ansible.builtin.file:
-    path: "{{ artifacts_dir }}"
-    state: directory
+# tasks file for ise_posture__conditions_rules
+# Cisco ISE Posture Conditions and Rules
 
-- name: Emit posture plan
-  ansible.builtin.copy:
-    dest: "{{ artifacts_dir }}/posture_conditions_rules_plan.json"
-    mode: "0644"
-    content: "{{ {'conditions': conditions, 'rules': rules} | to_nice_json }}"
+- name: Validate ISE connection parameters
+  ansible.builtin.assert:
+    that: [ise_hostname is defined, ise_username is defined, ise_password is defined]
+    fail_msg: "Required ISE connection parameters not defined"
+  tags: [validation]
 
-- name: Ensure posture conditions (guarded placeholder)
+- name: Ensure artifacts directory
+  ansible.builtin.file: {path: "{{ ise_artifacts_dir }}", state: directory, mode: "0750"}
+  tags: [always]
+
+- name: Create posture conditions
+  cisco.ise.device_admin_condition:
+    ise_hostname: "{{ ise_hostname }}"
+    ise_username: "{{ ise_username }}"
+    ise_password: "{{ ise_password }}"
+    ise_verify: "{{ ise_verify_ssl }}"
+    state: present
+    name: "{{ item.name }}"
+    conditionType: "{{ item.type }}"
+    attributeName: "{{ item.attribute }}"
+    attributeValue: "{{ item.value }}"
+    operator: "{{ item.operator }}"
+  loop: "{{ posture_conditions }}"
   when: apply_changes | bool
-  loop: "{{ conditions }}"
-  loop_control:
-    label: "{{ item.name }}"
-  ansible.builtin.debug:
-    msg: "Ensure posture condition {{ item.name }}"
+  tags: [posture, conditions]
 
-- name: Ensure posture rules (guarded placeholder)
+- name: Create posture remediation actions
+  ansible.builtin.uri:
+    url: "https://{{ ise_hostname }}/ers/config/remediationaction"
+    method: POST
+    user: "{{ ise_username }}"
+    password: "{{ ise_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ ise_verify_ssl }}"
+    headers: {Content-Type: "application/json", Accept: "application/json"}
+    body_format: json
+    body: {RemediationAction: "{{ item }}"}
+  loop: "{{ remediation_actions }}"
   when: apply_changes | bool
-  loop: "{{ rules }}"
-  loop_control:
-    label: "{{ item.name }}"
-  ansible.builtin.debug:
-    msg: "Ensure posture rule {{ item.name }}"
+  tags: [posture, remediation]
+
+- name: Generate posture rules report
+  ansible.builtin.template:
+    src: ise_posture__conditions_rules_report.json.j2
+    dest: "{{ ise_artifacts_dir }}/posture_rules_{{ ansible_date_time.epoch }}.json"
+    mode: "0640"
+  tags: [reporting]

@@ -1,12 +1,59 @@
 ---
-- name: Ensure artifacts
-  ansible.builtin.file: { path: "{{ artifacts_dir }}", state: directory, mode: "0755" }
-- name: Plan sponsor portal
-  ansible.builtin.copy:
-    dest: "{{ artifacts_dir }}/sponsor_portal_plan.json"
-    content: "{{ sponsor_portal | to_nice_json }}"
-    mode: "0644"
-- name: Configure Sponsor portal (guarded placeholder)
+# tasks file for ise_guest__sponsor_portal
+# Cisco ISE Sponsor Portal Configuration
+
+- name: Validate ISE connection parameters
+  ansible.builtin.assert:
+    that:
+      - ise_hostname is defined
+      - ise_username is defined
+      - ise_password is defined
+    fail_msg: "Required ISE connection parameters not defined"
+  tags: [validation, prerequisites]
+
+- name: Ensure artifacts directory
+  ansible.builtin.file:
+    path: "{{ ise_artifacts_dir }}"
+    state: directory
+    mode: "0750"
+  tags: [always]
+
+- name: Configure sponsor portal
+  cisco.ise.sponsor_portal:
+    ise_hostname: "{{ ise_hostname }}"
+    ise_username: "{{ ise_username }}"
+    ise_password: "{{ ise_password }}"
+    ise_verify: "{{ ise_verify_ssl }}"
+    state: present
+    name: "{{ sponsor_portal_name }}"
+    portalType: "SPONSOR"
+    settings:
+      portalSettings:
+        certificateGroupTag: "{{ sponsor_portal_cert_group }}"
+        displayLang: "{{ sponsor_portal_language | default('ENGLISH') }}"
+      sponsorChangePasswordSettings:
+        allowSponsorToChangePwd: "{{ sponsor_allow_password_change }}"
   when: apply_changes | bool
-  ansible.builtin.debug:
-    msg: "Configure Sponsor Portal {{ sponsor_portal.name }} (SSO={{ sponsor_portal.sso.enabled }})"
+  tags: [guest, sponsor, portal]
+
+- name: Configure sponsor groups
+  cisco.ise.sponsor_group:
+    ise_hostname: "{{ ise_hostname }}"
+    ise_username: "{{ ise_username }}"
+    ise_password: "{{ ise_password }}"
+    ise_verify: "{{ ise_verify_ssl }}"
+    state: present
+    name: "{{ item.name }}"
+    isDefaultGroup: "{{ item.is_default | default(false) }}"
+    guestTypes: "{{ item.guest_types }}"
+    locations: "{{ item.locations | default(omit) }}"
+  loop: "{{ sponsor_groups }}"
+  when: apply_changes | bool
+  tags: [guest, sponsor, groups]
+
+- name: Generate sponsor portal report
+  ansible.builtin.template:
+    src: ise_guest__sponsor_portal_report.json.j2
+    dest: "{{ ise_artifacts_dir }}/sponsor_portal_{{ ansible_date_time.epoch }}.json"
+    mode: "0640"
+  tags: [reporting]

@@ -1,5 +1,6 @@
 ---
 # Creates/updates Host objects with color + comment.
+# Fourth Estate: All network objects must be documented in CMDB/IPAM
 # Vars:
 #   cp_hosts:
 #     - name: app01
@@ -12,13 +13,33 @@
     that: [ cp_hosts is iterable ]
     quiet: true
 
+- name: Fourth Estate - validate host object naming
+  ansible.builtin.assert:
+    that:
+      - item.name is defined
+      - item.name | length > 0
+      - item.ip is defined
+      - item.ip is match('^([0-9]{1,3}\.){3}[0-9]{1,3}$')
+    fail_msg: "Host object '{{ item.name | default('UNDEFINED') }}' has invalid name or IP address"
+    success_msg: "Host object '{{ item.name }}' validated"
+  loop: "{{ cp_hosts }}"
+  loop_control:
+    label: "{{ item.name | default('UNNAMED') }}"
+  when: cp_hosts is defined and cp_hosts | length > 0
+
 - name: Create / update hosts
   check_point.mgmt.cp_mgmt_host:
     state: present
     name: "{{ item.name }}"
     ip_address: "{{ item.ip }}"
-    color: "{{ item.color | default(omit) }}"
-    comments: "{{ item.comment | default(omit) }}"
+    color: "{{ item.color | default('black') }}"
+    comments: "{{ item.comment | default('Fourth Estate CMDB - Managed by Ansible') }}"
   loop: "{{ cp_hosts }}"
   loop_control:
     label: "{{ item.name }}"
+  register: host_creation
+
+- name: Log host creation results
+  ansible.builtin.debug:
+    msg: "Created/updated {{ cp_hosts | length }} host objects from source of truth"
+  when: cp_hosts is defined and cp_hosts | length > 0

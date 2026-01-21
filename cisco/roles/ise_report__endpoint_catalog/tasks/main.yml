@@ -1,14 +1,38 @@
 ---
-- name: Ensure artifacts
-  ansible.builtin.file: { path: "{{ artifacts_dir }}", state: directory }
-- name: Export endpoint catalog (placeholder)
-  ansible.builtin.shell: |
-    set -euo pipefail
-    echo "mac,group,sgt,portal" > "{{ export_csv }}"
-    echo "00:11:22:33:44:55,OT-HMI,OT-Trusted,Sponsor" >> "{{ export_csv }}"
-  args: { executable: /bin/bash }
-  changed_when: false
-- name: Drift vs SoT (placeholder compare)
-  when: drift_against_sot.enabled | bool and (drift_against_sot.sot_csv | length) > 0
-  ansible.builtin.debug:
-    msg: "Compare {{ export_csv }} against SoT {{ drift_against_sot.sot_csv }}"
+# tasks file for ise_report__endpoint_catalog
+# Cisco ISE Endpoint Catalog and Inventory Reporting
+
+- name: Validate ISE connection parameters
+  ansible.builtin.assert:
+    that: [ise_hostname is defined, ise_username is defined, ise_password is defined]
+    fail_msg: "Required ISE connection parameters not defined"
+  tags: [validation]
+
+- name: Ensure artifacts directory
+  ansible.builtin.file: {path: "{{ ise_artifacts_dir }}", state: directory, mode: "0750"}
+  tags: [always]
+
+- name: Get all endpoints
+  cisco.ise.endpoint_info:
+    ise_hostname: "{{ ise_hostname }}"
+    ise_username: "{{ ise_username }}"
+    ise_password: "{{ ise_password }}"
+    ise_verify: "{{ ise_verify_ssl }}"
+  register: all_endpoints
+  tags: [discovery, endpoints]
+
+- name: Analyze endpoint inventory
+  ansible.builtin.set_fact:
+    endpoint_inventory:
+      total_endpoints: "{{ all_endpoints.ise_response | default([]) | length }}"
+      by_profile: "{{ all_endpoints.ise_response | default([]) | groupby('profileId') }}"
+      by_group: "{{ all_endpoints.ise_response | default([]) | groupby('groupId') }}"
+  when: all_endpoints.ise_response is defined
+  tags: [analysis]
+
+- name: Generate endpoint catalog report
+  ansible.builtin.template:
+    src: ise_report__endpoint_catalog_report.json.j2
+    dest: "{{ ise_artifacts_dir }}/endpoint_catalog_{{ ansible_date_time.epoch }}.json"
+    mode: "0640"
+  tags: [reporting]

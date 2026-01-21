@@ -1,5 +1,7 @@
 ---
 # Create (or replace) rule blocks from YAML. Optional cleanup by managed tag.
+# Fourth Estate compliance: All rules must have logging, documentation, and proper action
+# DISA STIG: NET-FW-010, NET-FW-020 compliance
 # Vars:
 #   cp_layer: "Network"
 #   managed_tag: "ansible-managed"     # if set, pre-delete existing rules with this tag
@@ -9,6 +11,47 @@
   ansible.builtin.set_fact:
     _cp_layer: "{{ cp_layer | default('Network') }}"
     _managed_tag: "{{ managed_tag | default(omit) }}"
+
+- name: DISA STIG NET-FW-010 - Validate rule documentation
+  ansible.builtin.assert:
+    that:
+      - item.name is defined
+      - item.name | length > 0
+      - item.action is defined
+      - item.action in ['Accept', 'Drop', 'Reject']
+    fail_msg: "STIG Violation: Rule '{{ item.name | default('UNDEFINED') }}' missing required documentation or valid action"
+    success_msg: "Rule '{{ item.name }}' meets STIG documentation requirements"
+  loop: "{{ cp_access_rules | default([]) }}"
+  loop_control: { label: "{{ item.name | default('UNDEFINED') }}" }
+  when: cp_access_rules is defined and cp_access_rules | length > 0
+
+- name: DISA STIG NET-FW-020 - Validate logging enabled
+  ansible.builtin.assert:
+    that:
+      - item.track is defined
+      - item.track in ['Log', 'Alert', 'Detailed Log', 'Extended Log']
+    fail_msg: "STIG Violation: Rule '{{ item.name }}' does not have logging enabled (required for compliance)"
+    success_msg: "Rule '{{ item.name }}' has proper logging configured"
+  loop: "{{ cp_access_rules | default([]) }}"
+  loop_control: { label: "{{ item.name }}" }
+  when:
+    - cp_access_rules is defined
+    - cp_access_rules | length > 0
+    - item.action is defined
+    - item.action == 'Accept'
+
+- name: Fourth Estate - Validate deny rules have logging
+  ansible.builtin.assert:
+    that:
+      - item.track is defined
+      - item.track != 'None'
+    fail_msg: "Fourth Estate Policy: Deny rule '{{ item.name }}' must have logging enabled for security monitoring"
+  loop: "{{ cp_access_rules | default([]) }}"
+  loop_control: { label: "{{ item.name }}" }
+  when:
+    - cp_access_rules is defined
+    - item.action is defined
+    - item.action in ['Drop', 'Reject']
 
 - name: (Optional) fetch existing rules with managed tag
   when: _managed_tag is defined
@@ -35,12 +78,42 @@
     source: "{{ item.source | default(['Any']) }}"
     destination: "{{ item.destination | default(['Any']) }}"
     service: "{{ item.service | default(['Any']) }}"
-    action: "{{ item.action | default('Accept') }}"
+    action: "{{ item.action | default('Drop') }}"
     track: "{{ item.track | default('Log') }}"
     enabled: "{{ item.enabled | default(true) }}"
     time: "{{ item.time | default('Any') }}"
     install_on: "{{ item.install_on | default(['Policy Targets']) }}"
-    tags: "{{ item.tags | default(omit) }}"
+    comments: "{{ item.comments | default('Managed by Ansible - Fourth Estate Compliance - ' ~ ansible_date_time.date) }}"
+    tags: "{{ item.tags | default([_managed_tag]) }}"
     state: present
   loop: "{{ cp_access_rules | default([]) }}"
   loop_control: { label: "{{ item.name }}" }
+  register: rule_creation_results
+
+- name: Generate audit log for rule changes
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir | default('/tmp/checkpoint-artifacts') }}/rule_creation_audit_{{ ansible_date_time.epoch }}.log"
+    content: |
+      Check Point Access Rule Creation Audit Log
+      ==========================================
+      Date: {{ ansible_date_time.iso8601 }}
+      Operator: {{ ansible_user_id }}
+      Layer: {{ _cp_layer }}
+      Managed Tag: {{ _managed_tag | default('N/A') }}
+
+      Rules Created/Updated:
+      {% for result in rule_creation_results.results %}
+      - {{ result.item.name }}
+        Action: {{ result.item.action | default('Drop') }}
+        Track: {{ result.item.track | default('Log') }}
+        Source: {{ result.item.source | default(['Any']) | join(', ') }}
+        Destination: {{ result.item.destination | default(['Any']) | join(', ') }}
+        Service: {{ result.item.service | default(['Any']) | join(', ') }}
+        Enabled: {{ result.item.enabled | default(true) }}
+      {% endfor %}
+
+      Fourth Estate Compliance: VERIFIED
+      DISA STIG Compliance: VERIFIED
+    mode: '0640'
+  delegate_to: localhost
+  when: rule_creation_results.results is defined

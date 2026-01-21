@@ -1,0 +1,34 @@
+---
+# Check Point Threat Prevention Handlers
+
+- name: Publish TP session
+  check_point.mgmt.cp_mgmt_publish:
+  listen: publish threat prevention
+
+- name: Install threat prevention policy
+  check_point.mgmt.cp_mgmt_install_policy:
+    policy_package: "{{ policy_package }}"
+    targets: "{{ install_targets }}"
+    access: false
+    threat_prevention: true
+    install_on_all_cluster_members_or_fail: true
+  when: install_targets | length > 0
+  listen: install tp policy
+
+- name: Update IPS signatures
+  check_point.mgmt.cp_mgmt_run_ips_update:
+    package_path: "latest"
+  listen: update ips signatures
+
+- name: Verify TP profile activation
+  check_point.mgmt.cp_mgmt_threat_profile:
+    name: "{{ tp_profile_name | default('TP-Baseline') }}"
+  listen: verify tp profile
+
+- name: Generate TP compliance report
+  ansible.builtin.template:
+    src: tp_compliance_report.j2
+    dest: "{{ artifacts_dir | default('/tmp/checkpoint-artifacts') }}/tp_compliance_{{ ansible_date_time.date }}.txt"
+    mode: '0640'
+  delegate_to: localhost
+  listen: generate tp compliance report

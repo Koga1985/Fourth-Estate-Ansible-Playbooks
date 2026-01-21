@@ -1,5 +1,7 @@
 ---
 # Export zero/low-hit rules to CSV for a given layer.
+# Fourth Estate compliance: Quarterly rule hygiene review required
+# DISA STIG NET-FW-010: Remove unused firewall rules
 # Vars:
 #   cp_layer: "Network"
 #   hit_threshold: 0            # 0 = zero-hit; 10 = low-hit, etc.
@@ -16,6 +18,7 @@
     path: "{{ _art_dir }}"
     state: directory
     mode: "0755"
+  delegate_to: localhost
 
 - name: Fetch rulebase with hits
   check_point.mgmt.cp_mgmt_show_access_rulebase:
@@ -25,15 +28,132 @@
     show_hits: true
   register: _rb
 
+- name: Calculate hit statistics
+  ansible.builtin.set_fact:
+    _zero_hit_rules: >-
+      {% set out = [] %}
+      {% for r in _rb.access_rulebase | default([]) %}
+      {% set hits = r.get('hits',{}).get('value',0) %}
+      {% if hits | int == 0 %}
+      {% set _ = out.append(r) %}
+      {% endif %}
+      {% endfor %}
+      {{ out }}
+    _low_hit_rules: >-
+      {% set out = [] %}
+      {% for r in _rb.access_rulebase | default([]) %}
+      {% set hits = r.get('hits',{}).get('value',0) %}
+      {% if hits | int > 0 and hits | int <= _thresh %}
+      {% set _ = out.append(r) %}
+      {% endif %}
+      {% endfor %}
+      {{ out }}
+
 - name: Build CSV of rules with hits <= threshold
   ansible.builtin.copy:
     dest: "{{ _art_dir }}/policy_hitcount_{{ _cp_layer | lower }}.csv"
     mode: "0644"
     content: |
-      name,uid,position,hits,last_hit,enabled,action
+      name,uid,position,hits,last_hit,enabled,action,source,destination,service,comments
       {% for r in _rb.access_rulebase | default([]) %}
       {% set hits = r.get('hits',{}).get('value',0) %}
       {% if hits | int <= _thresh %}
-      {{ r.name | replace(',',';') }},{{ r.uid }},{{ r.position }},{{ hits }},{{ r.get('hits',{}).get('last-date','') }},{{ r.enabled }},{{ r.action }}
+      {{ r.name | replace(',',';') }},{{ r.uid }},{{ r.position }},{{ hits }},{{ r.get('hits',{}).get('last-date','Never') }},{{ r.enabled }},{{ r.action }},{{ (r.get('source',[]) | map(attribute='name') | list | join(';')) | default('Any') }},{{ (r.get('destination',[]) | map(attribute='name') | list | join(';')) | default('Any') }},{{ (r.get('service',[]) | map(attribute='name') | list | join(';')) | default('Any') }},{{ r.get('comments','') | replace(',',';') }}
       {% endif %}
       {% endfor %}
+  delegate_to: localhost
+
+- name: Generate Fourth Estate compliance report
+  ansible.builtin.copy:
+    dest: "{{ _art_dir }}/fourth_estate_hitcount_report_{{ ansible_date_time.date }}.txt"
+    mode: "0640"
+    content: |
+      ==========================================================================
+                    FOURTH ESTATE SECURITY COMPLIANCE REPORT
+                    Check Point Firewall Rule Hygiene Review
+      ==========================================================================
+
+      Report Generated: {{ ansible_date_time.iso8601 }}
+      Policy Layer: {{ _cp_layer }}
+      Hit Count Threshold: {{ _thresh }}
+      Report Period: Last 90 days
+
+      EXECUTIVE SUMMARY
+      -----------------
+      Total Rules Analyzed: {{ _rb.access_rulebase | default([]) | length }}
+      Zero Hit Rules: {{ _zero_hit_rules | length }}
+      Low Hit Rules (<= {{ _thresh }}): {{ _low_hit_rules | length }}
+      Rules Requiring Review: {{ (_zero_hit_rules | length) + (_low_hit_rules | length) }}
+
+      COMPLIANCE REQUIREMENTS
+      -----------------------
+      - DISA STIG NET-FW-010: Firewall must remove or disable unused rules
+      - Fourth Estate Policy: Quarterly rule hygiene reviews mandatory
+      - All zero-hit rules > 90 days must be evaluated for removal
+      - Business justification required for long-standing zero-hit rules
+
+      FINDINGS
+      --------
+      {% if _zero_hit_rules | length > 0 %}
+      Zero Hit Rules (Never Matched):
+      {% for rule in _zero_hit_rules %}
+        Rule: {{ rule.name }}
+        Position: {{ rule.position }}
+        Action: {{ rule.action }}
+        Status: {{ 'Enabled' if rule.enabled else 'Disabled' }}
+        Recommendation: {% if rule.enabled %}Review for removal{% else %}Safe to delete{% endif %}
+
+      {% endfor %}
+      {% else %}
+      No zero-hit rules found - COMPLIANT
+      {% endif %}
+
+      {% if _low_hit_rules | length > 0 %}
+      Low Hit Rules ({{ _thresh }} or fewer matches):
+      {% for rule in _low_hit_rules %}
+        Rule: {{ rule.name }}
+        Hits: {{ rule.get('hits',{}).get('value',0) }}
+        Last Hit: {{ rule.get('hits',{}).get('last-date','Unknown') }}
+        Recommendation: Verify still required
+
+      {% endfor %}
+      {% endif %}
+
+      RECOMMENDATIONS
+      ---------------
+      1. Review all zero-hit rules with security team
+      2. Document business justification for retention
+      3. Create change control for rule removal
+      4. Archive removed rules in configuration management
+      5. Schedule next review in 90 days
+
+      COMPLIANCE STATUS
+      -----------------
+      {% if (_zero_hit_rules | length) + (_low_hit_rules | length) == 0 %}
+      STATUS: COMPLIANT - No unused rules detected
+      {% elif (_zero_hit_rules | length) + (_low_hit_rules | length) < 10 %}
+      STATUS: ATTENTION REQUIRED - {{ (_zero_hit_rules | length) + (_low_hit_rules | length) }} rules need review
+      {% else %}
+      STATUS: NON-COMPLIANT - Immediate action required on {{ (_zero_hit_rules | length) + (_low_hit_rules | length) }} rules
+      {% endif %}
+
+      REVIEW SIGN-OFF
+      ---------------
+      Security Analyst: _____________________________ Date: __________
+      Network Engineer: _____________________________ Date: __________
+      ISSO/ISSM: ____________________________________ Date: __________
+
+      Report File: {{ _art_dir }}/policy_hitcount_{{ _cp_layer | lower }}.csv
+      ==========================================================================
+    mode: "0640"
+  delegate_to: localhost
+
+- name: Display report summary
+  ansible.builtin.debug:
+    msg:
+      - "Hitcount Report Generated: {{ _art_dir }}/policy_hitcount_{{ _cp_layer | lower }}.csv"
+      - "Compliance Report: {{ _art_dir }}/fourth_estate_hitcount_report_{{ ansible_date_time.date }}.txt"
+      - "Total Rules: {{ _rb.access_rulebase | default([]) | length }}"
+      - "Zero Hit Rules: {{ _zero_hit_rules | length }}"
+      - "Low Hit Rules: {{ _low_hit_rules | length }}"
+      - "Rules Requiring Review: {{ (_zero_hit_rules | length) + (_low_hit_rules | length) }}"

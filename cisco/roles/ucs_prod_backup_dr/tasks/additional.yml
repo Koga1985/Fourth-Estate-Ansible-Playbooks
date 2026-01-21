@@ -1,0 +1,44 @@
+---
+# Additional tasks for ucs_prod_backup_dr
+# Cisco UCS Backup and Disaster Recovery - Production-ready backup and restore operations
+
+# Additional tasks for UCS backup verification and scheduling
+
+- name: Verify backup integrity
+  cisco.ucs.ucs_query:
+    hostname: "{{ ucs_hostname }}"
+    username: "{{ ucs_username }}"
+    password: "{{ ucs_password }}"
+    class_ids: mgmtBackupPolicyConfig
+  register: backup_config
+  when: ucs_verify_backups | bool
+  tags: [backup, verification]
+
+- name: Schedule automated backups
+  cisco.ucs.ucs_managed_objects:
+    hostname: "{{ ucs_hostname }}"
+    username: "{{ ucs_username }}"
+    password: "{{ ucs_password }}"
+    objects:
+      - module: ucsmsdk.mometa.mgmt.MgmtBackupPolicy
+        class: MgmtBackupPolicy
+        properties:
+          parent_mo_or_dn: "sys"
+          name: "{{ backup_policy_name }}"
+          descr: "{{ backup_policy_description }}"
+          schedule: "{{ backup_schedule }}"
+          backup_type: "{{ backup_type }}"
+          protocol: "{{ backup_protocol }}"
+          hostname: "{{ backup_server }}"
+          user: "{{ backup_username }}"
+          pwd: "{{ backup_password }}"
+  when: apply_changes | bool
+  tags: [backup, scheduling]
+
+- name: Export UCS configuration to artifacts
+  ansible.builtin.copy:
+    content: "{{ ucs_backup_result.backup_data }}"
+    dest: "{{ ucs_artifacts_dir }}/ucs_backup_{{ ansible_date_time.epoch }}.xml"
+    mode: "0640"
+  when: ucs_backup_result is defined
+  tags: [backup, export]

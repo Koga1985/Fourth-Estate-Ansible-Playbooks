@@ -1,14 +1,44 @@
 ---
-- name: Ensure artifacts dir
-  ansible.builtin.file:
-    path: "{{ artifacts_dir }}"
-    state: directory
+# tasks file for ise_policy__hitcount_shadow_report
+# Cisco ISE Policy Hit Count and Shadow Rule Reporting
 
-- name: Generate low/zero-hit & shadowed-rules report (placeholder)
-  ansible.builtin.shell: |
-    set -euo pipefail
-    echo "policy_set,rule_name,hits,shadowed_by" > "{{ artifacts_dir }}/policy_hitcount_shadow.csv"
-    echo "{{ scan_policy_set }},ExampleRule,0,PriorBroaderRule" >> "{{ artifacts_dir }}/policy_hitcount_shadow.csv"
-  args:
-    executable: /bin/bash
-  changed_when: false
+- name: Validate ISE connection parameters
+  ansible.builtin.assert:
+    that: [ise_hostname is defined, ise_username is defined, ise_password is defined]
+    fail_msg: "Required ISE connection parameters not defined"
+  tags: [validation]
+
+- name: Ensure artifacts directory
+  ansible.builtin.file: {path: "{{ ise_artifacts_dir }}", state: directory, mode: "0750"}
+  tags: [always]
+
+- name: Retrieve policy hit counts
+  ansible.builtin.uri:
+    url: "https://{{ ise_hostname }}/admin/API/mnt/Policy/HitCount"
+    method: GET
+    user: "{{ ise_username }}"
+    password: "{{ ise_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ ise_verify_ssl }}"
+    headers: {Accept: "application/json"}
+  register: policy_hit_counts
+  tags: [hitcount]
+
+- name: Identify shadow rules (unused rules)
+  ansible.builtin.set_fact:
+    shadow_rules: >-
+      {{
+        policy_hit_counts.json.rules | default([])
+        | selectattr('hitCount', 'defined')
+        | selectattr('hitCount', 'eq', 0)
+        | list
+      }}
+  when: policy_hit_counts.json is defined
+  tags: [analysis]
+
+- name: Generate hit count and shadow rule report
+  ansible.builtin.template:
+    src: ise_policy__hitcount_shadow_report_report.json.j2
+    dest: "{{ ise_artifacts_dir }}/hitcount_shadow_{{ ansible_date_time.epoch }}.json"
+    mode: "0640"
+  tags: [reporting]

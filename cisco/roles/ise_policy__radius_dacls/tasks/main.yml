@@ -1,24 +1,35 @@
 ---
-- name: Ensure artifacts dir
-  ansible.builtin.file:
-    path: "{{ artifacts_dir }}"
-    state: directory
+# tasks file for ise_policy__radius_dacls
+# Cisco ISE Downloadable ACL (dACL) Management
 
-- name: Emit dACL plan
-  ansible.builtin.copy:
-    dest: "{{ artifacts_dir }}/radius_dacls_plan.json"
-    mode: "0644"
-    content: "{{ radius_dacls | to_nice_json }}"
+- name: Validate ISE connection parameters
+  ansible.builtin.assert:
+    that: [ise_hostname is defined, ise_username is defined, ise_password is defined]
+    fail_msg: "Required ISE connection parameters not defined"
+  tags: [validation]
 
-- name: Ensure downloadable ACLs (guarded placeholder)
+- name: Ensure artifacts directory
+  ansible.builtin.file: {path: "{{ ise_artifacts_dir }}", state: directory, mode: "0750"}
+  tags: [always]
+
+- name: Create downloadable ACLs
+  cisco.ise.downloadable_acl:
+    ise_hostname: "{{ ise_hostname }}"
+    ise_username: "{{ ise_username }}"
+    ise_password: "{{ ise_password }}"
+    ise_verify: "{{ ise_verify_ssl }}"
+    state: present
+    name: "{{ item.name }}"
+    description: "{{ item.description | default(omit) }}"
+    dacl: "{{ item.acl_content }}"
+    daclType: "{{ item.acl_type | default('IPV4') }}"
+  loop: "{{ downloadable_acls }}"
   when: apply_changes | bool
-  loop: "{{ radius_dacls }}"
-  loop_control:
-    label: "{{ item.name }}"
-  ansible.builtin.debug:
-    msg: "Ensure dACL {{ item.name }} with {{ item.entries | length }} entries"
+  tags: [dacl]
 
-- name: Verify push to NAD (optional placeholder)
-  when: apply_changes | bool and verify_push | bool and (nad_sample | length > 0)
-  ansible.builtin.debug:
-    msg: "Verify dACL download to NAD {{ nad_sample }}"
+- name: Generate dACL report
+  ansible.builtin.template:
+    src: ise_policy__radius_dacls_report.json.j2
+    dest: "{{ ise_artifacts_dir }}/dacls_{{ ansible_date_time.epoch }}.json"
+    mode: "0640"
+  tags: [reporting]
