@@ -1,0 +1,201 @@
+---
+# tasks file for azure_ad_mfa - Azure AD Multi-Factor Authentication
+# Fourth Estate Azure Government Cloud - FedRAMP High
+
+- name: Validate MFA configuration
+  ansible.builtin.assert:
+    that:
+      - azure_tenant_id is defined
+      - azure_cloud_environment is defined
+    fail_msg: "Azure tenant configuration required for MFA setup"
+
+- name: Enable Azure AD MFA service settings
+  azure.azcollection.azure_rm_resource:
+    resource_group: "{{ azure_resource_group }}"
+    provider: Microsoft.Graph
+    resource_type: policies/authenticationMethodsPolicy
+    api_version: "v1.0"
+    body:
+      registrationEnforcement:
+        authenticationMethodsRegistrationCampaign:
+          snoozeDurationInDays: 0
+          state: enabled
+          includeTargets:
+            - id: all_users
+              targetType: group
+              targetedAuthenticationMethod: microsoftAuthenticator
+      authenticationMethodConfigurations: "{{ azure_mfa_method_configurations }}"
+    state: present
+    cloud_environment: "{{ azure_cloud_environment }}"
+  when: azure_mfa_enable_service | default(true)
+  register: mfa_service_result
+  notify: Log MFA changes
+
+- name: Configure Microsoft Authenticator settings
+  azure.azcollection.azure_rm_resource:
+    resource_group: "{{ azure_resource_group }}"
+    provider: Microsoft.Graph
+    resource_type: policies/authenticationMethodsPolicy/authenticationMethodConfigurations/microsoftAuthenticator
+    api_version: "v1.0"
+    body:
+      state: enabled
+      featureSettings:
+        displayAppInformationRequiredState:
+          state: "{{ azure_mfa_display_app_info | default('enabled') }}"
+          includeTarget:
+            targetType: group
+            id: all_users
+        displayLocationInformationRequiredState:
+          state: "{{ azure_mfa_display_location | default('enabled') }}"
+          includeTarget:
+            targetType: group
+            id: all_users
+        numberMatchingRequiredState:
+          state: "{{ azure_mfa_number_matching | default('enabled') }}"
+          includeTarget:
+            targetType: group
+            id: all_users
+      includeTargets:
+        - id: all_users
+          targetType: group
+    state: present
+    cloud_environment: "{{ azure_cloud_environment }}"
+  when: azure_mfa_configure_authenticator | default(true)
+  register: authenticator_result
+  notify: Log MFA changes
+
+- name: Configure FIDO2 security key settings
+  azure.azcollection.azure_rm_resource:
+    resource_group: "{{ azure_resource_group }}"
+    provider: Microsoft.Graph
+    resource_type: policies/authenticationMethodsPolicy/authenticationMethodConfigurations/fido2
+    api_version: "v1.0"
+    body:
+      state: "{{ azure_mfa_fido2_enabled | default('enabled') }}"
+      isSelfServiceRegistrationAllowed: "{{ azure_mfa_fido2_self_service | default(true) }}"
+      isAttestationEnforced: "{{ azure_mfa_fido2_attestation | default(true) }}"
+      keyRestrictions:
+        isEnforced: true
+        enforcementType: "{{ azure_mfa_fido2_restriction_type | default('allow') }}"
+        aaGuids: "{{ azure_mfa_fido2_allowed_guids | default([]) }}"
+      includeTargets:
+        - id: "{{ azure_mfa_fido2_target_group | default('all_users') }}"
+          targetType: group
+    state: present
+    cloud_environment: "{{ azure_cloud_environment }}"
+  when: azure_mfa_enable_fido2 | default(true)
+  register: fido2_result
+  notify: Log MFA changes
+
+- name: Configure phone authentication settings
+  azure.azcollection.azure_rm_resource:
+    resource_group: "{{ azure_resource_group }}"
+    provider: Microsoft.Graph
+    resource_type: policies/authenticationMethodsPolicy/authenticationMethodConfigurations/sms
+    api_version: "v1.0"
+    body:
+      state: "{{ azure_mfa_sms_enabled | default('disabled') }}"
+      includeTargets:
+        - id: "{{ azure_mfa_sms_target_group | default('none') }}"
+          targetType: group
+    state: present
+    cloud_environment: "{{ azure_cloud_environment }}"
+  when: azure_mfa_configure_sms | default(true)
+  register: sms_result
+  notify: Log MFA changes
+
+- name: Configure MFA registration policy
+  azure.azcollection.azure_rm_resource:
+    resource_group: "{{ azure_resource_group }}"
+    provider: Microsoft.Graph
+    resource_type: policies/identitySecurityDefaultsEnforcementPolicy
+    api_version: "v1.0"
+    body:
+      isEnabled: "{{ azure_mfa_security_defaults | default(true) }}"
+    state: present
+    cloud_environment: "{{ azure_cloud_environment }}"
+  when: azure_mfa_configure_registration | default(true)
+  register: registration_result
+  notify: Log MFA changes
+
+- name: Configure per-user MFA settings
+  azure.azcollection.azure_rm_resource:
+    resource_group: "{{ azure_resource_group }}"
+    provider: Microsoft.Graph
+    resource_type: users/{{ item.user_id }}/authentication/requirements
+    api_version: "beta"
+    body:
+      perUserMfaState: "{{ item.mfa_state | default('enforced') }}"
+    state: present
+    cloud_environment: "{{ azure_cloud_environment }}"
+  loop: "{{ azure_mfa_per_user_settings }}"
+  when: azure_mfa_per_user_settings is defined
+  register: per_user_result
+  notify: Log MFA changes
+
+- name: Enable MFA fraud alert
+  azure.azcollection.azure_rm_resource:
+    resource_group: "{{ azure_resource_group }}"
+    provider: Microsoft.Graph
+    resource_type: organization/{{ azure_tenant_id }}/settings/mfa
+    api_version: "v1.0"
+    body:
+      fraudAlertSettings:
+        state: enabled
+        autoBlockEnabled: "{{ azure_mfa_fraud_auto_block | default(true) }}"
+        autoReportEnabled: "{{ azure_mfa_fraud_auto_report | default(true) }}"
+    state: present
+    cloud_environment: "{{ azure_cloud_environment }}"
+  when: azure_mfa_enable_fraud_alert | default(true)
+  register: fraud_alert_result
+  notify: Log MFA changes
+
+- name: Configure MFA remember devices settings
+  azure.azcollection.azure_rm_resource:
+    resource_group: "{{ azure_resource_group }}"
+    provider: Microsoft.Graph
+    resource_type: organization/{{ azure_tenant_id }}/settings/mfa
+    api_version: "v1.0"
+    body:
+      rememberDevicesSettings:
+        state: "{{ azure_mfa_remember_devices | default('disabled') }}"
+        daysToRemember: "{{ azure_mfa_remember_days | default(0) }}"
+    state: present
+    cloud_environment: "{{ azure_cloud_environment }}"
+  when: azure_mfa_configure_remember | default(false)
+  register: remember_result
+  notify: Log MFA changes
+
+- name: Enable MFA audit logging
+  azure.azcollection.azure_rm_monitordiagnosticsetting:
+    name: mfa-diagnostics
+    resource_uri: "/providers/Microsoft.AADIAM/mfa"
+    workspace_id: "{{ azure_log_analytics_workspace_id }}"
+    logs:
+      - category: MFALogs
+        enabled: true
+        retention_policy:
+          enabled: true
+          days: 365
+      - category: UserAuthenticationLogs
+        enabled: true
+        retention_policy:
+          enabled: true
+          days: 365
+    state: present
+    cloud_environment: "{{ azure_cloud_environment }}"
+  when: azure_mfa_enable_diagnostics | default(true)
+  register: mfa_diagnostics_result
+  notify: Log MFA changes
+
+- name: Display MFA configuration summary
+  ansible.builtin.debug:
+    msg:
+      - "MFA Configuration Complete"
+      - "MFA service enabled: {{ azure_mfa_enable_service | default(true) }}"
+      - "Microsoft Authenticator configured: {{ azure_mfa_configure_authenticator | default(true) }}"
+      - "FIDO2 enabled: {{ azure_mfa_enable_fido2 | default(true) }}"
+      - "SMS authentication: {{ azure_mfa_sms_enabled | default('disabled') }}"
+      - "Fraud alert enabled: {{ azure_mfa_enable_fraud_alert | default(true) }}"
+      - "Number matching: {{ azure_mfa_number_matching | default('enabled') }}"
+  when: azure_mfa_display_summary | default(true)

@@ -1,2 +1,151 @@
 ---
-# tasks file for azure_vnet
+# tasks file for azure_vnet - Azure Virtual Networks
+# Fourth Estate Azure Government Cloud - FedRAMP High
+
+- name: Validate network configuration
+  ansible.builtin.assert:
+    that:
+      - azure_resource_group is defined
+      - azure_region is defined
+      - azure_vnets is defined or (azure_vnet_name is defined and azure_vnet_address_prefixes is defined)
+    fail_msg: "Virtual network configuration required"
+
+- name: Create Azure Virtual Networks
+  azure.azcollection.azure_rm_virtualnetwork:
+    resource_group: "{{ azure_resource_group }}"
+    name: "{{ item.name }}"
+    location: "{{ item.location | default(azure_region) }}"
+    address_prefixes_cidr: "{{ item.address_prefixes }}"
+    dns_servers: "{{ item.dns_servers | default(omit) }}"
+    tags: "{{ azure_resource_tags | combine(item.tags | default({})) }}"
+    state: "{{ item.state | default('present') }}"
+    cloud_environment: "{{ azure_cloud_environment }}"
+  loop: "{{ azure_vnets | default([{'name': azure_vnet_name, 'address_prefixes': azure_vnet_address_prefixes}]) }}"
+  register: vnet_result
+  notify: Log network changes
+
+- name: Enable DDoS protection for VNets
+  azure.azcollection.azure_rm_resource:
+    resource_group: "{{ azure_resource_group }}"
+    provider: Microsoft.Network
+    resource_type: ddosProtectionPlans
+    resource_name: "{{ azure_ddos_plan_name | default('ddos-plan-prod') }}"
+    api_version: "2023-05-01"
+    body:
+      location: "{{ azure_region }}"
+      properties: {}
+      tags: "{{ azure_resource_tags }}"
+    state: present
+    cloud_environment: "{{ azure_cloud_environment }}"
+  when: azure_vnet_enable_ddos_protection | default(true)
+  register: ddos_plan_result
+  notify: Log network changes
+
+- name: Link DDoS protection to VNets
+  azure.azcollection.azure_rm_virtualnetwork:
+    resource_group: "{{ azure_resource_group }}"
+    name: "{{ item.name }}"
+    location: "{{ item.location | default(azure_region) }}"
+    address_prefixes_cidr: "{{ item.address_prefixes }}"
+    ddos_protection_plan:
+      id: "{{ ddos_plan_result.response.id }}"
+      enabled: true
+    state: present
+    cloud_environment: "{{ azure_cloud_environment }}"
+  loop: "{{ azure_vnets | default([{'name': azure_vnet_name, 'address_prefixes': azure_vnet_address_prefixes}]) }}"
+  when:
+    - azure_vnet_enable_ddos_protection | default(true)
+    - ddos_plan_result is defined
+  register: ddos_link_result
+  notify: Log network changes
+
+- name: Create VNet peerings
+  azure.azcollection.azure_rm_virtualnetworkpeering:
+    resource_group: "{{ item.0.resource_group | default(azure_resource_group) }}"
+    virtual_network: "{{ item.0.name }}"
+    name: "peer-{{ item.0.name }}-to-{{ item.1.name }}"
+    remote_virtual_network:
+      resource_group: "{{ item.1.resource_group | default(azure_resource_group) }}"
+      name: "{{ item.1.name }}"
+    allow_virtual_network_access: "{{ item.1.allow_vnet_access | default(true) }}"
+    allow_forwarded_traffic: "{{ item.1.allow_forwarded_traffic | default(true) }}"
+    allow_gateway_transit: "{{ item.1.allow_gateway_transit | default(false) }}"
+    use_remote_gateways: "{{ item.1.use_remote_gateways | default(false) }}"
+    state: present
+    cloud_environment: "{{ azure_cloud_environment }}"
+  loop: "{{ azure_vnets | subelements('peerings', skip_missing=True) }}"
+  when: azure_vnet_configure_peering | default(false)
+  register: peering_result
+  notify: Log network changes
+
+- name: Enable VNet flow logs
+  azure.azcollection.azure_rm_resource:
+    resource_group: "{{ azure_network_watcher_rg | default('NetworkWatcherRG') }}"
+    provider: Microsoft.Network
+    resource_type: networkWatchers/flowLogs
+    resource_name: "NetworkWatcher_{{ azure_region }}/{{ item.name }}-flowlog"
+    api_version: "2023-05-01"
+    body:
+      location: "{{ azure_region }}"
+      properties:
+        targetResourceId: "{{ item.id }}"
+        storageId: "{{ azure_flow_logs_storage_account_id }}"
+        enabled: true
+        retentionPolicy:
+          days: "{{ azure_flow_logs_retention_days | default(90) }}"
+          enabled: true
+        format:
+          type: JSON
+          version: 2
+        flowAnalyticsConfiguration:
+          networkWatcherFlowAnalyticsConfiguration:
+            enabled: true
+            workspaceId: "{{ azure_log_analytics_workspace_id }}"
+            workspaceRegion: "{{ azure_region }}"
+            workspaceResourceId: "{{ azure_log_analytics_workspace_resource_id }}"
+            trafficAnalyticsInterval: 10
+      tags: "{{ azure_resource_tags }}"
+    state: present
+    cloud_environment: "{{ azure_cloud_environment }}"
+  loop: "{{ vnet_result.results | default([]) }}"
+  when:
+    - azure_vnet_enable_flow_logs | default(true)
+    - item.state is defined
+  register: flow_logs_result
+  notify: Log network changes
+
+- name: Configure VNet diagnostic settings
+  azure.azcollection.azure_rm_monitordiagnosticsetting:
+    name: "{{ item.name }}-diagnostics"
+    resource_uri: "{{ item.id }}"
+    workspace_id: "{{ azure_log_analytics_workspace_id }}"
+    logs:
+      - category: VMProtectionAlerts
+        enabled: true
+        retention_policy:
+          enabled: true
+          days: 365
+    metrics:
+      - category: AllMetrics
+        enabled: true
+        retention_policy:
+          enabled: true
+          days: 365
+    state: present
+    cloud_environment: "{{ azure_cloud_environment }}"
+  loop: "{{ vnet_result.results | default([]) }}"
+  when:
+    - azure_vnet_enable_diagnostics | default(true)
+    - item.state is defined
+  register: vnet_diagnostics_result
+  notify: Log network changes
+
+- name: Display VNet configuration summary
+  ansible.builtin.debug:
+    msg:
+      - "Virtual Network Configuration Complete"
+      - "VNets created: {{ (vnet_result.results | default([]) | selectattr('changed', 'equalto', true) | list | length) }}"
+      - "DDoS protection enabled: {{ azure_vnet_enable_ddos_protection | default(true) }}"
+      - "Peerings configured: {{ (peering_result.results | default([]) | selectattr('changed', 'equalto', true) | list | length) }}"
+      - "Flow logs enabled: {{ azure_vnet_enable_flow_logs | default(true) }}"
+  when: azure_vnet_display_summary | default(true)

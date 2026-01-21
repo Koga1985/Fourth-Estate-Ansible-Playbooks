@@ -1,2 +1,138 @@
 ---
-# tasks file for azure_service_principals
+# tasks file for azure_service_principals - Azure Service Principal Management
+# Fourth Estate Azure Government Cloud - FedRAMP High
+
+- name: Validate Azure Government Cloud configuration
+  ansible.builtin.assert:
+    that:
+      - azure_cloud_environment is defined
+      - azure_tenant_id is defined
+    fail_msg: "Azure configuration required for Fourth Estate deployments"
+
+- name: Create Azure AD Application Registration
+  azure.azcollection.azure_rm_adapplication:
+    tenant: "{{ azure_tenant_id }}"
+    display_name: "{{ item.display_name }}"
+    identifier_uris: "{{ item.identifier_uris | default(omit) }}"
+    homepage: "{{ item.homepage | default(omit) }}"
+    reply_urls: "{{ item.reply_urls | default(omit) }}"
+    available_to_other_tenants: "{{ item.available_to_other_tenants | default(false) }}"
+    required_resource_accesses: "{{ item.required_resource_accesses | default(omit) }}"
+    state: "{{ item.state | default('present') }}"
+    cloud_environment: "{{ azure_cloud_environment }}"
+  loop: "{{ azure_service_principals }}"
+  when: azure_service_principals is defined
+  register: app_registration_result
+  notify: Log service principal changes
+
+- name: Create Service Principal for Application
+  azure.azcollection.azure_rm_adserviceprincipal:
+    tenant: "{{ azure_tenant_id }}"
+    app_id: "{{ item.app_id | default(item.display_name) }}"
+    state: "{{ item.state | default('present') }}"
+    cloud_environment: "{{ azure_cloud_environment }}"
+  loop: "{{ azure_service_principals }}"
+  when: azure_service_principals is defined
+  register: sp_result
+  notify: Log service principal changes
+
+- name: Assign RBAC roles to service principals
+  azure.azcollection.azure_rm_roleassignment:
+    scope: "{{ item.0.scope | default('/subscriptions/' + azure_subscription_id) }}"
+    assignee_object_id: "{{ item.0.object_id }}"
+    role_definition_id: "{{ item.1 }}"
+    state: present
+    cloud_environment: "{{ azure_cloud_environment }}"
+  loop: "{{ azure_service_principals | subelements('role_assignments', skip_missing=True) }}"
+  when: azure_service_principals is defined
+  register: sp_rbac_result
+  notify: Log service principal changes
+
+- name: Create service principal credentials (certificate-based)
+  azure.azcollection.azure_rm_adserviceprincipalcredential:
+    tenant: "{{ azure_tenant_id }}"
+    service_principal_object_id: "{{ item.object_id }}"
+    value: "{{ item.certificate_value }}"
+    end_date: "{{ item.end_date }}"
+    type: AsymmetricX509Cert
+    usage: Verify
+    state: present
+    cloud_environment: "{{ azure_cloud_environment }}"
+  loop: "{{ azure_service_principals }}"
+  when:
+    - azure_service_principals is defined
+    - item.use_certificate | default(true)
+    - item.certificate_value is defined
+  no_log: true
+  register: sp_cert_result
+  notify: Log service principal changes
+
+- name: Configure managed identity for service principals
+  azure.azcollection.azure_rm_resource:
+    resource_group: "{{ azure_resource_group }}"
+    provider: Microsoft.ManagedIdentity
+    resource_type: userAssignedIdentities
+    resource_name: "{{ item.managed_identity_name }}"
+    api_version: "2023-01-31"
+    body:
+      location: "{{ azure_region }}"
+      tags: "{{ azure_resource_tags }}"
+    state: present
+    cloud_environment: "{{ azure_cloud_environment }}"
+  loop: "{{ azure_service_principals }}"
+  when:
+    - azure_service_principals is defined
+    - item.use_managed_identity | default(false)
+  register: managed_identity_result
+  notify: Log service principal changes
+
+- name: Store service principal credentials in Key Vault
+  azure.azcollection.azure_rm_keyvaultsecret:
+    vault_uri: "{{ azure_key_vault_uri }}"
+    secret_name: "sp-{{ item.display_name | lower | regex_replace('[^a-z0-9-]', '-') }}"
+    secret_value: "{{ item.client_secret }}"
+    content_type: "application/json"
+    tags:
+      ServicePrincipal: "{{ item.display_name }}"
+      ManagedBy: "Ansible"
+      Classification: "SECRET"
+    state: present
+    cloud_environment: "{{ azure_cloud_environment }}"
+  loop: "{{ azure_service_principals }}"
+  when:
+    - azure_service_principals is defined
+    - item.client_secret is defined
+    - azure_store_credentials_in_keyvault | default(true)
+  no_log: true
+  register: keyvault_secret_result
+  notify: Log service principal changes
+
+- name: Configure service principal audit logging
+  azure.azcollection.azure_rm_monitordiagnosticsetting:
+    name: "sp-diagnostics-{{ item.display_name }}"
+    resource_uri: "/providers/Microsoft.AADIAM/servicePrincipals/{{ item.object_id }}"
+    workspace_id: "{{ azure_log_analytics_workspace_id }}"
+    logs:
+      - category: ServicePrincipalSignInLogs
+        enabled: true
+        retention_policy:
+          enabled: true
+          days: 365
+    state: present
+    cloud_environment: "{{ azure_cloud_environment }}"
+  loop: "{{ azure_service_principals }}"
+  when:
+    - azure_service_principals is defined
+    - azure_sp_enable_diagnostics | default(true)
+  register: sp_diagnostics_result
+  notify: Log service principal changes
+
+- name: Display service principal summary
+  ansible.builtin.debug:
+    msg:
+      - "Service Principal Configuration Complete"
+      - "Applications created: {{ (app_registration_result.results | default([]) | selectattr('changed', 'equalto', true) | list | length) }}"
+      - "Service principals created: {{ (sp_result.results | default([]) | selectattr('changed', 'equalto', true) | list | length) }}"
+      - "Certificate-based authentication: {{ azure_service_principals | selectattr('use_certificate', 'defined') | selectattr('use_certificate', 'equalto', true) | list | length }}"
+      - "Managed identities configured: {{ (managed_identity_result.results | default([]) | selectattr('changed', 'equalto', true) | list | length) }}"
+  when: azure_sp_display_summary | default(true)
