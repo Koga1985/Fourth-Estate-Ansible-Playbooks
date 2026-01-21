@@ -1,5 +1,6 @@
 ---
 # Create section scaffolding in a layer (e.g., by env/app tiers).
+# Fourth Estate compliance: Logical policy organization required
 # Vars:
 #   cp_layer: "Network"                 # default via role defaults
 #   cp_access_sections:
@@ -11,6 +12,16 @@
   ansible.builtin.set_fact:
     _cp_layer: "{{ cp_layer | default('Network') }}"
 
+- name: Fourth Estate compliance - validate section naming
+  ansible.builtin.assert:
+    that:
+      - item.name is match('^[0-9]{2}-[A-Za-z0-9_-]+$')
+    fail_msg: "Section name '{{ item.name }}' does not follow Fourth Estate naming convention (NN-Description)"
+    success_msg: "Section naming validated for {{ item.name }}"
+  loop: "{{ cp_access_sections | default([]) }}"
+  loop_control: { label: "{{ item.name }}" }
+  when: cp_access_sections is defined and cp_access_sections | length > 0
+
 - name: Create/Update access sections
   check_point.mgmt.cp_mgmt_access_section:
     layer: "{{ _cp_layer }}"
@@ -19,6 +30,14 @@
     state: present
   loop: "{{ cp_access_sections | default([]) }}"
   loop_control: { label: "{{ item.name }}" }
+  register: section_results
+
+- name: Log section creation for audit trail
+  ansible.builtin.debug:
+    msg: "Created/verified policy section: {{ item.item.name }} at position {{ item.item.position | default('top') }} in layer {{ _cp_layer }}"
+  loop: "{{ section_results.results }}"
+  loop_control: { label: "{{ item.item.name }}" }
+  when: section_results.results is defined
 
 - name: Publish section changes
   when: publish_changes | default(false) | bool

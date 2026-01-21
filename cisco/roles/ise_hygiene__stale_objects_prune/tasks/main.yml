@@ -1,30 +1,80 @@
 ---
-- name: Ensure artifacts
-  ansible.builtin.file: { path: "{{ artifacts_dir }}", state: directory }
-- name: Plan stale object removals
-  ansible.builtin.copy:
-    dest: "{{ artifacts_dir }}/stale_prune_plan.json"
-    content: "{{ candidates | to_nice_json }}"
-    mode: "0644"
-- name: Guarded deletion (dry-run supported)
-  when: apply_changes | bool and not dry_run
-  block:
-    - name: Delete SGTs
-      when: candidates.sgt | length > 0
-      loop: "{{ candidates.sgt }}"
-      ansible.builtin.debug:
-        msg: "Delete SGT {{ item }}"
-    - name: Delete SGACLs
-      when: candidates.sgacl | length > 0
-      loop: "{{ candidates.sgacl }}"
-      ansible.builtin.debug:
-        msg: "Delete SGACL {{ item }}"
-    - name: Delete Devices
-      when: candidates.devices | length > 0
-      loop: "{{ candidates.devices }}"
-      ansible.builtin.debug:
-        msg: "Delete Device {{ item }}"
-- name: Safety summary
-  ansible.builtin.debug:
-    msg: "Dry-run={{ dry_run }}; protected={{ protected_names }}"
-  changed_when: false
+# tasks file for ise_hygiene__stale_objects_prune
+# Cisco ISE Stale Object Cleanup and Database Maintenance
+
+- name: Validate ISE connection parameters
+  ansible.builtin.assert:
+    that:
+      - ise_hostname is defined
+      - ise_username is defined
+      - ise_password is defined
+    fail_msg: "Required ISE connection parameters not defined"
+  tags: [validation, prerequisites]
+
+- name: Ensure artifacts directory
+  ansible.builtin.file:
+    path: "{{ ise_artifacts_dir }}"
+    state: directory
+    mode: "0750"
+  tags: [always]
+
+- name: Get stale endpoint count
+  ansible.builtin.uri:
+    url: "https://{{ ise_hostname }}/ers/config/endpoint"
+    method: GET
+    user: "{{ ise_username }}"
+    password: "{{ ise_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ ise_verify_ssl }}"
+    headers:
+      Accept: "application/json"
+  register: all_endpoints
+  tags: [discovery, hygiene]
+
+- name: Identify stale endpoints (not seen in {{ stale_days }} days)
+  ansible.builtin.set_fact:
+    stale_endpoints: >-
+      {{
+        all_endpoints.json.SearchResult.resources | default([])
+        | selectattr('lastSeen', 'defined')
+        | rejectattr('lastSeen', 'ge', stale_threshold)
+        | list
+      }}
+  vars:
+    stale_threshold: "{{ (ansible_date_time.epoch | int - (stale_days * 86400)) }}"
+  tags: [hygiene, analysis]
+
+- name: Delete stale endpoints
+  cisco.ise.endpoint:
+    ise_hostname: "{{ ise_hostname }}"
+    ise_username: "{{ ise_username }}"
+    ise_password: "{{ ise_password }}"
+    ise_verify: "{{ ise_verify_ssl }}"
+    state: absent
+    id: "{{ item.id }}"
+  loop: "{{ stale_endpoints }}"
+  when:
+    - apply_changes | bool
+    - hygiene_delete_stale_endpoints | bool
+  tags: [hygiene, cleanup]
+
+- name: Purge old guest accounts
+  cisco.ise.guest_user:
+    ise_hostname: "{{ ise_hostname }}"
+    ise_username: "{{ ise_username }}"
+    ise_password: "{{ ise_password }}"
+    ise_verify: "{{ ise_verify_ssl }}"
+    state: absent
+    id: "{{ item.id }}"
+  loop: "{{ expired_guest_accounts }}"
+  when:
+    - apply_changes | bool
+    - hygiene_purge_expired_guests | bool
+  tags: [hygiene, guest]
+
+- name: Generate hygiene report
+  ansible.builtin.template:
+    src: ise_hygiene__stale_objects_prune_report.json.j2
+    dest: "{{ ise_artifacts_dir }}/hygiene_report_{{ ansible_date_time.epoch }}.json"
+    mode: "0640"
+  tags: [reporting]

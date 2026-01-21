@@ -1,0 +1,27 @@
+---
+# handlers file for ise_hygiene__stale_objects_prune
+
+- name: backup ise configuration
+  cisco.ise.backup_last_status_info:
+    ise_hostname: "{{ ise_hostname }}"
+    ise_username: "{{ ise_username }}"
+    ise_password: "{{ ise_password }}"
+    ise_verify: "{{ ise_verify_ssl }}"
+  when: ise_auto_backup | default(false) | bool
+
+- name: send notification
+  ansible.builtin.mail:
+    host: "{{ smtp_host | default('localhost') }}"
+    port: "{{ smtp_port | default(25) }}"
+    to: "{{ ise_hygiene__stale_objects_prune_notification_email }}"
+    subject: "ISE ise_hygiene__stale_objects_prune Configuration Update"
+    body: "ise_hygiene__stale_objects_prune has been updated on {{ ise_hostname }} at {{ ansible_date_time.iso8601 }}"
+  when: ise_hygiene__stale_objects_prune_notify_on_completion | bool
+  ignore_errors: true
+
+- name: log changes to syslog
+  ansible.builtin.syslog:
+    msg: "ISE ise_hygiene__stale_objects_prune configuration updated"
+    priority: "info"
+    facility: "local0"
+  when: ise_hygiene__stale_objects_prune_log_to_syslog | bool

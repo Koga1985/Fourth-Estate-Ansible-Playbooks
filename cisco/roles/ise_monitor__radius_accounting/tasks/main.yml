@@ -1,20 +1,82 @@
 ---
-- name: Ensure artifacts
-  ansible.builtin.file: { path: "{{ artifacts_dir }}", state: directory }
-- name: Plan RADIUS accounting enforcement
-  ansible.builtin.copy:
-    dest: "{{ artifacts_dir }}/radius_accounting_plan.json"
-    content: "{{ {'policy_sets': policy_sets, 'nad_samples': nad_samples} | to_nice_json }}"
-    mode: "0644"
-- name: Enforce accounting on policy sets (guarded placeholder)
-  when: apply_changes | bool
-  loop: "{{ policy_sets }}"
-  loop_control: { label: "{{ item }}" }
-  ansible.builtin.debug:
-    msg: "Ensure RADIUS accounting enabled on policy set {{ item }}"
-- name: Verify on sample NADs (optional)
-  when: apply_changes | bool and (nad_samples | length) > 0
-  loop: "{{ nad_samples }}"
-  loop_control: { label: "{{ item }}" }
-  ansible.builtin.debug:
-    msg: "Verify accounting packets received from NAD {{ item }}"
+# tasks file for ise_monitor__radius_accounting
+# Cisco ISE RADIUS Accounting Monitoring
+
+- name: Validate ISE connection parameters
+  ansible.builtin.assert:
+    that:
+      - ise_hostname is defined
+      - ise_username is defined
+      - ise_password is defined
+    fail_msg: "Required ISE connection parameters not defined"
+  tags: [validation, prerequisites]
+
+- name: Ensure artifacts directory
+  ansible.builtin.file:
+    path: "{{ ise_artifacts_dir }}"
+    state: directory
+    mode: "0750"
+  tags: [always]
+
+- name: Retrieve RADIUS accounting sessions
+  ansible.builtin.uri:
+    url: "https://{{ ise_hostname }}/admin/API/mnt/Session/ActiveList"
+    method: GET
+    user: "{{ ise_username }}"
+    password: "{{ ise_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ ise_verify_ssl }}"
+    headers:
+      Accept: "application/json"
+  register: active_sessions
+  tags: [monitoring, radius]
+
+- name: Retrieve accounting logs
+  ansible.builtin.uri:
+    url: "https://{{ ise_hostname }}/admin/API/mnt/Session/AccountingLogs"
+    method: GET
+    user: "{{ ise_username }}"
+    password: "{{ ise_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ ise_verify_ssl }}"
+    headers:
+      Accept: "application/json"
+    body_format: json
+    body:
+      startDate: "{{ accounting_start_date }}"
+      endDate: "{{ accounting_end_date }}"
+  register: accounting_logs
+  tags: [monitoring, accounting]
+
+- name: Parse session statistics
+  ansible.builtin.set_fact:
+    session_stats:
+      total_sessions: "{{ active_sessions.json.sessionList | default([]) | length }}"
+      authenticated_users: "{{ active_sessions.json.sessionList | default([]) | map(attribute='userName') | unique | list | length }}"
+      nas_devices: "{{ active_sessions.json.sessionList | default([]) | map(attribute='nas_ip_address') | unique | list | length }}"
+  when: active_sessions.json is defined
+  tags: [monitoring, analysis]
+
+- name: Generate accounting monitoring report
+  ansible.builtin.template:
+    src: ise_monitor__radius_accounting_report.json.j2
+    dest: "{{ ise_artifacts_dir }}/radius_accounting_{{ ansible_date_time.epoch }}.json"
+    mode: "0640"
+  tags: [reporting]
+
+- name: Export accounting data to SIEM
+  ansible.builtin.uri:
+    url: "{{ siem_endpoint }}/api/events"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ siem_api_token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      source: "ise_radius_accounting"
+      sessions: "{{ active_sessions.json.sessionList | default([]) }}"
+  when:
+    - siem_integration_enabled | bool
+    - active_sessions.json is defined
+  ignore_errors: true
+  tags: [siem, integration]

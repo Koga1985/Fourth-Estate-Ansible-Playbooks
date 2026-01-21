@@ -1,16 +1,36 @@
 ---
-- name: Ensure artifacts dir
-  ansible.builtin.file:
-    path: "{{ artifacts_dir }}"
-    state: directory
+# tasks file for ise_policy__conditions_library
+# Cisco ISE Policy Conditions Library Management
 
-- name: Emit library conditions
-  ansible.builtin.copy:
-    dest: "{{ artifacts_dir }}/conditions_library.json"
-    content: "{{ conditions | to_nice_json }}"
-    mode: "0644"
+- name: Validate ISE connection parameters
+  ansible.builtin.assert:
+    that: [ise_hostname is defined, ise_username is defined, ise_password is defined]
+    fail_msg: "Required ISE connection parameters not defined"
+  tags: [validation]
 
-- name: Apply library conditions (guarded placeholders)
+- name: Ensure artifacts directory
+  ansible.builtin.file: {path: "{{ ise_artifacts_dir }}", state: directory, mode: "0750"}
+  tags: [always]
+
+- name: Create policy conditions
+  cisco.ise.network_access_conditions:
+    ise_hostname: "{{ ise_hostname }}"
+    ise_username: "{{ ise_username }}"
+    ise_password: "{{ ise_password }}"
+    ise_verify: "{{ ise_verify_ssl }}"
+    state: present
+    name: "{{ item.name }}"
+    conditionType: "{{ item.type }}"
+    attributeName: "{{ item.attribute_name }}"
+    attributeValue: "{{ item.attribute_value }}"
+    operator: "{{ item.operator }}"
+  loop: "{{ policy_conditions }}"
   when: apply_changes | bool
-  ansible.builtin.debug:
-    msg: "Create/update conditions set"
+  tags: [conditions]
+
+- name: Generate conditions library report
+  ansible.builtin.template:
+    src: ise_policy__conditions_library_report.json.j2
+    dest: "{{ ise_artifacts_dir }}/conditions_{{ ansible_date_time.epoch }}.json"
+    mode: "0640"
+  tags: [reporting]

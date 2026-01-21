@@ -1,23 +1,54 @@
 ---
-- name: Ensure artifacts
-  ansible.builtin.file: { path: "{{ artifacts_dir }}", state: directory }
-- name: Load endpoints from CSV if provided
-  when: endpoints.source_csv | length > 0
-  community.general.read_csv:
-    path: "{{ endpoints.source_csv }}"
-  register: csv_eps
-- name: Build combined endpoints list
+# tasks file for ise_endpoints__register_bulk
+# Cisco ISE Bulk Endpoint Registration
+
+- name: Validate ISE connection parameters
+  ansible.builtin.assert:
+    that:
+      - ise_hostname is defined
+      - ise_username is defined
+      - ise_password is defined
+    fail_msg: "Required ISE connection parameters not defined"
+  tags: [validation, prerequisites]
+
+- name: Ensure artifacts directory
+  ansible.builtin.file:
+    path: "{{ ise_artifacts_dir }}"
+    state: directory
+    mode: "0750"
+  tags: [always]
+
+- name: Read endpoint CSV file
+  ansible.builtin.slurp:
+    src: "{{ endpoint_csv_file }}"
+  register: endpoint_csv_content
+  when: endpoint_csv_file is defined
+  tags: [bulk, import]
+
+- name: Parse endpoint CSV data
   ansible.builtin.set_fact:
-    eps_combined: >-
-      {{ (csv_eps.list if (csv_eps is defined) else []) + endpoints.items }}
-- name: Plan endpoint registration
-  ansible.builtin.copy:
-    dest: "{{ artifacts_dir }}/endpoints_register_plan.json"
-    content: "{{ eps_combined | default([]) | to_nice_json }}"
-    mode: "0644"
-- name: Register endpoints (guarded placeholder)
-  when: apply_changes | bool and (eps_combined | default([]) | length) > 0
-  loop: "{{ eps_combined }}"
-  loop_control: { label: "{{ item.mac }}" }
-  ansible.builtin.debug:
-    msg: "Register endpoint {{ item.mac }} to group {{ item.group | default(endpoints.default_group) }}"
+    endpoint_list: "{{ endpoint_csv_content['content'] | b64decode | community.general.from_csv }}"
+  when: endpoint_csv_content is defined
+  tags: [bulk, parsing]
+
+- name: Register endpoints in bulk
+  cisco.ise.endpoint:
+    ise_hostname: "{{ ise_hostname }}"
+    ise_username: "{{ ise_username }}"
+    ise_password: "{{ ise_password }}"
+    ise_verify: "{{ ise_verify_ssl }}"
+    state: present
+    mac: "{{ item.mac | default(item.MAC) }}"
+    description: "{{ item.description | default('Bulk registered endpoint') }}"
+    groupId: "{{ item.group_id | default(default_endpoint_group) }}"
+    staticGroupAssignment: true
+  loop: "{{ endpoint_list | default(endpoints) }}"
+  when: apply_changes | bool
+  tags: [bulk, registration]
+
+- name: Generate bulk registration report
+  ansible.builtin.template:
+    src: ise_endpoints__register_bulk_report.json.j2
+    dest: "{{ ise_artifacts_dir }}/bulk_registration_{{ ansible_date_time.epoch }}.json"
+    mode: "0640"
+  tags: [reporting]

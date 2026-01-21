@@ -1,10 +1,21 @@
 ---
 # Create/Update a Threat Prevention profile with sane defaults.
+# Fourth Estate compliance: All threat prevention must be in PREVENT mode
+# DISA STIG: NET-IPS-010, NET-FW-030 compliance
 # Vars:
 #   tp_profile_name: "TP-Baseline"
 #   tp_profile_desc: "Baseline: recommended protections; Prevent medium+"
 #   tp_profile_mode: "optimized"     # or "strict" / "custom"
 #   publish_changes: true|false
+
+- name: Fourth Estate compliance - validate TP profile settings
+  ansible.builtin.assert:
+    that:
+      - tp_profile_name is defined
+      - tp_profile_name | length > 0
+      - tp_profile_mode in ['optimized', 'strict', 'custom']
+    fail_msg: "Threat Prevention profile configuration invalid"
+    success_msg: "TP profile settings validated"
 
 - name: Create/Update Threat Prevention profile
   check_point.mgmt.cp_mgmt_threat_profile:
@@ -12,14 +23,31 @@
     active_protections: "recommended"     # follow Check Point recommendations
     optimize_security_profiles: "{{ (tp_profile_mode | default('optimized')) == 'optimized' }}"
     detect_malicious_mail_content: true
-    antivirus: "prevent"
-    anti_bot: "prevent"
+    antivirus: "prevent"                  # Fourth Estate: must be prevent
+    anti_bot: "prevent"                   # Fourth Estate: must be prevent
     ips:
-      mode: "prevent"
-      performance_impact: "medium_or_lower"     # balance perf / protection
-      severity: "medium_or_higher"
-    comments: "{{ tp_profile_desc | default(omit) }}"
+      mode: "prevent"                     # DISA STIG: must be prevent for high/critical
+      performance_impact: "medium_or_lower"
+      severity: "medium_or_higher"        # Fourth Estate minimum: medium
+    comments: "{{ tp_profile_desc | default('Fourth Estate Security Baseline - STIG Compliant') }}"
     state: present
+  register: tp_profile_result
+
+- name: Generate TP profile documentation
+  ansible.builtin.template:
+    src: tp_profile.j2
+    dest: "{{ artifacts_dir | default('/tmp/checkpoint-artifacts') }}/tp_profile_{{ tp_profile_name }}.txt"
+    mode: '0640'
+  delegate_to: localhost
+
+- name: Log TP profile creation
+  ansible.builtin.debug:
+    msg:
+      - "Threat Prevention profile created: {{ tp_profile_name }}"
+      - "Mode: {{ tp_profile_mode }}"
+      - "IPS: PREVENT mode (STIG compliant)"
+      - "Anti-Virus: PREVENT mode (Fourth Estate compliant)"
+      - "Anti-Bot: PREVENT mode (Fourth Estate compliant)"
 
 - name: Publish profile changes
   when: publish_changes | default(false) | bool

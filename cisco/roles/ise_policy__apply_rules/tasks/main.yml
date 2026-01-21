@@ -1,27 +1,71 @@
 ---
-- name: Ensure artifacts dir
+# tasks file for ise_policy__apply_rules
+# Cisco ISE Policy Rule Application and Enforcement
+
+- name: Validate ISE connection parameters
+  ansible.builtin.assert:
+    that:
+      - ise_hostname is defined
+      - ise_username is defined
+      - ise_password is defined
+    fail_msg: "Required ISE connection parameters not defined"
+  tags: [validation, prerequisites]
+
+- name: Ensure artifacts directory
   ansible.builtin.file:
-    path: "{{ artifacts_dir }}"
+    path: "{{ ise_artifacts_dir }}"
     state: directory
+    mode: "0750"
+  tags: [always]
 
-- name: Emit rules plan
-  ansible.builtin.copy:
-    dest: "{{ artifacts_dir }}/policy_rules_plan.json"
-    mode: "0644"
-    content: "{{ {'policy_set': policy_set_name, 'authn_rules': authn_rules, 'authz_rules': authz_rules} | to_nice_json }}"
+- name: Get existing policy sets
+  cisco.ise.network_access_policy_set_info:
+    ise_hostname: "{{ ise_hostname }}"
+    ise_username: "{{ ise_username }}"
+    ise_password: "{{ ise_password }}"
+    ise_verify: "{{ ise_verify_ssl }}"
+  register: existing_policy_sets
+  tags: [discovery, policy]
 
-- name: Apply Authentication rules (guarded placeholder)
+- name: Create or update authentication rules
+  cisco.ise.network_access_authentication_rules:
+    ise_hostname: "{{ ise_hostname }}"
+    ise_username: "{{ ise_username }}"
+    ise_password: "{{ ise_password }}"
+    ise_verify: "{{ ise_verify_ssl }}"
+    state: present
+    policyId: "{{ item.policy_set_id }}"
+    rule:
+      name: "{{ item.name }}"
+      default: "{{ item.is_default | default(false) }}"
+      rank: "{{ item.rank | default(omit) }}"
+      condition: "{{ item.condition | default(omit) }}"
+      identitySourceName: "{{ item.identity_source }}"
+  loop: "{{ authentication_rules }}"
   when: apply_changes | bool
-  loop: "{{ authn_rules }}"
-  loop_control:
-    label: "{{ item.name }}"
-  ansible.builtin.debug:
-    msg: "AuthN rule {{ item.name }} → {{ item.identity_source }} when {{ item.condition }}"
+  tags: [policy, authentication]
 
-- name: Apply Authorization rules (guarded placeholder)
+- name: Create or update authorization rules
+  cisco.ise.network_access_authorization_rules:
+    ise_hostname: "{{ ise_hostname }}"
+    ise_username: "{{ ise_username }}"
+    ise_password: "{{ ise_password }}"
+    ise_verify: "{{ ise_verify_ssl }}"
+    state: present
+    policyId: "{{ item.policy_set_id }}"
+    rule:
+      name: "{{ item.name }}"
+      default: "{{ item.is_default | default(false) }}"
+      rank: "{{ item.rank | default(omit) }}"
+      condition: "{{ item.condition | default(omit) }}"
+      profile: "{{ item.authorization_profile }}"
+  loop: "{{ authorization_rules }}"
   when: apply_changes | bool
-  loop: "{{ authz_rules }}"
-  loop_control:
-    label: "{{ item.name }}"
-  ansible.builtin.debug:
-    msg: "AuthZ rule {{ item.name }} → {{ item.profile | default('') }} / {{ item.sgt | default('') }} / {{ item.dacl | default('') }}"
+  tags: [policy, authorization]
+
+- name: Generate policy rules report
+  ansible.builtin.template:
+    src: ise_policy__apply_rules_report.json.j2
+    dest: "{{ ise_artifacts_dir }}/policy_rules_{{ ansible_date_time.epoch }}.json"
+    mode: "0640"
+  tags: [reporting]

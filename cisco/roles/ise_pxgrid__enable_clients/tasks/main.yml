@@ -1,32 +1,43 @@
 ---
-- name: Ensure artifacts dir
-  ansible.builtin.file:
-    path: "{{ artifacts_dir }}"
-    state: directory
+# tasks file for ise_pxgrid__enable_clients
+# Cisco ISE pxGrid Client Enablement and Integration
 
-- name: Emit pxGrid plan
-  ansible.builtin.copy:
-    dest: "{{ artifacts_dir }}/pxgrid_plan.json"
-    mode: "0644"
-    content: "{{ pxgrid | to_nice_json }}"
+- name: Validate ISE connection parameters
+  ansible.builtin.assert:
+    that: [ise_hostname is defined, ise_username is defined, ise_password is defined]
+    fail_msg: "Required ISE connection parameters not defined"
+  tags: [validation]
 
-- name: Enable pxGrid (guarded placeholder)
-  when: apply_changes | bool and pxgrid.enable | bool
-  ansible.builtin.debug:
-    msg: "Enable pxGrid"
+- name: Ensure artifacts directory
+  ansible.builtin.file: {path: "{{ ise_artifacts_dir }}", state: directory, mode: "0750"}
+  tags: [always]
 
-- name: Approve pxGrid clients (guarded placeholder)
+- name: Enable pxGrid service
+  cisco.ise.px_grid_settings:
+    ise_hostname: "{{ ise_hostname }}"
+    ise_username: "{{ ise_username }}"
+    ise_password: "{{ ise_password }}"
+    ise_verify: "{{ ise_verify_ssl }}"
+    automaticApproval: "{{ pxgrid_auto_approval }}"
   when: apply_changes | bool
-  loop: "{{ pxgrid.approve_clients }}"
-  loop_control:
-    label: "{{ item.name }}"
-  ansible.builtin.debug:
-    msg: "Approve pxGrid client {{ item.name }}"
+  tags: [pxgrid]
 
-- name: Subscribe topics (guarded placeholder)
+- name: Approve pxGrid clients
+  cisco.ise.px_grid_node:
+    ise_hostname: "{{ ise_hostname }}"
+    ise_username: "{{ ise_username }}"
+    ise_password: "{{ ise_password }}"
+    ise_verify: "{{ ise_verify_ssl }}"
+    state: present
+    name: "{{ item.name }}"
+    status: "ENABLED"
+  loop: "{{ pxgrid_clients }}"
   when: apply_changes | bool
-  loop: "{{ pxgrid.subscriptions }}"
-  loop_control:
-    label: "{{ item }}"
-  ansible.builtin.debug:
-    msg: "Subscribe {{ item }}"
+  tags: [pxgrid, clients]
+
+- name: Generate pxGrid configuration report
+  ansible.builtin.template:
+    src: ise_pxgrid__enable_clients_report.json.j2
+    dest: "{{ ise_artifacts_dir }}/pxgrid_{{ ansible_date_time.epoch }}.json"
+    mode: "0640"
+  tags: [reporting]

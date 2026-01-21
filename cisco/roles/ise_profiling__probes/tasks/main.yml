@@ -1,16 +1,42 @@
 ---
-- name: Ensure artifacts dir
-  ansible.builtin.file:
-    path: "{{ artifacts_dir }}"
-    state: directory
+# tasks file for ise_profiling__probes
+# Cisco ISE Profiling Probe Configuration
 
-- name: Emit probe plan
-  ansible.builtin.copy:
-    dest: "{{ artifacts_dir }}/profiling_probes_plan.json"
-    mode: "0644"
-    content: "{{ probes | to_nice_json }}"
+- name: Validate ISE connection parameters
+  ansible.builtin.assert:
+    that: [ise_hostname is defined, ise_username is defined, ise_password is defined]
+    fail_msg: "Required ISE connection parameters not defined"
+  tags: [validation]
 
-- name: Apply probe settings (guarded placeholder)
+- name: Ensure artifacts directory
+  ansible.builtin.file: {path: "{{ ise_artifacts_dir }}", state: directory, mode: "0750"}
+  tags: [always]
+
+- name: Configure profiling probes
+  ansible.builtin.uri:
+    url: "https://{{ ise_hostname }}/ers/config/profilerservice"
+    method: PUT
+    user: "{{ ise_username }}"
+    password: "{{ ise_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ ise_verify_ssl }}"
+    headers: {Content-Type: "application/json", Accept: "application/json"}
+    body_format: json
+    body:
+      ProfilerService:
+        dhcp: "{{ profiling_dhcp_probe_enabled }}"
+        dhcpSpan: "{{ profiling_dhcp_span_enabled }}"
+        radius: "{{ profiling_radius_probe_enabled }}"
+        snmpQuery: "{{ profiling_snmp_probe_enabled }}"
+        snmpTrap: "{{ profiling_snmp_trap_enabled }}"
+        netflow: "{{ profiling_netflow_probe_enabled }}"
+        dns: "{{ profiling_dns_probe_enabled }}"
   when: apply_changes | bool
-  ansible.builtin.debug:
-    msg: "Apply probe settings {{ probes }}"
+  tags: [profiling, probes]
+
+- name: Generate profiling probes report
+  ansible.builtin.template:
+    src: ise_profiling__probes_report.json.j2
+    dest: "{{ ise_artifacts_dir }}/profiling_probes_{{ ansible_date_time.epoch }}.json"
+    mode: "0640"
+  tags: [reporting]

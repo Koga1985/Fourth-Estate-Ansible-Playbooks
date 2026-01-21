@@ -1,10 +1,43 @@
 ---
-- name: Ensure artifacts
-  ansible.builtin.file: { path: "{{ artifacts_dir }}", state: directory }
-- name: Export failed authentications (placeholder)
-  ansible.builtin.shell: |
-    set -euo pipefail
-    echo "timestamp,username,endpoint,reason,nad" > "{{ export_csv }}"
-    echo "2025-10-22T12:00Z,user1,00:11:22:33:44:55,BadCredentials,sw1" >> "{{ export_csv }}"
-  args: { executable: /bin/bash }
-  changed_when: false
+# tasks file for ise_report__auth_failures
+# Cisco ISE Authentication Failure Reporting
+
+- name: Validate ISE connection parameters
+  ansible.builtin.assert:
+    that: [ise_hostname is defined, ise_username is defined, ise_password is defined]
+    fail_msg: "Required ISE connection parameters not defined"
+  tags: [validation]
+
+- name: Ensure artifacts directory
+  ansible.builtin.file: {path: "{{ ise_artifacts_dir }}", state: directory, mode: "0750"}
+  tags: [always]
+
+- name: Retrieve authentication failure logs
+  ansible.builtin.uri:
+    url: "https://{{ ise_hostname }}/admin/API/mnt/AuthStatus/MnTFailure"
+    method: GET
+    user: "{{ ise_username }}"
+    password: "{{ ise_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ ise_verify_ssl }}"
+    headers: {Accept: "application/json"}
+    body_format: json
+    body: {startDate: "{{ report_start_date }}", endDate: "{{ report_end_date }}"}
+  register: auth_failures
+  tags: [reporting, failures]
+
+- name: Analyze failure reasons
+  ansible.builtin.set_fact:
+    failure_analysis:
+      total_failures: "{{ auth_failures.json.failures | default([]) | length }}"
+      by_reason: "{{ auth_failures.json.failures | default([]) | groupby('failureReason') }}"
+      by_identity_store: "{{ auth_failures.json.failures | default([]) | groupby('identityStore') }}"
+  when: auth_failures.json is defined
+  tags: [analysis]
+
+- name: Generate authentication failures report
+  ansible.builtin.template:
+    src: ise_report__auth_failures_report.json.j2
+    dest: "{{ ise_artifacts_dir }}/auth_failures_{{ ansible_date_time.epoch }}.json"
+    mode: "0640"
+  tags: [reporting]

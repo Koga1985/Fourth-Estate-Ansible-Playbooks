@@ -1,14 +1,39 @@
 ---
-- name: Ensure artifacts
-  ansible.builtin.file: { path: "{{ artifacts_dir }}", state: directory }
-- name: Export active sessions (placeholder)
-  ansible.builtin.shell: |
-    set -euo pipefail
-    echo "username,endpoint,method,nad,started" > "{{ export_csv }}"
-    echo "user1,00:11:22:33:44:55,802.1X,sw1,2025-10-21T10:00:00Z" >> "{{ export_csv }}"
-  args: { executable: /bin/bash }
-  changed_when: false
-- name: Guarded stale-session cleanup
-  when: apply_changes | bool and stale_cleanup.enabled | bool
-  ansible.builtin.debug:
-    msg: "Cleanup sessions older than {{ stale_cleanup.older_than_minutes }} minutes (guarded)"
+# tasks file for ise_sessions__export_active
+# Cisco ISE Active Session Export and Reporting
+
+- name: Validate ISE connection parameters
+  ansible.builtin.assert:
+    that: [ise_hostname is defined, ise_username is defined, ise_password is defined]
+    fail_msg: "Required ISE connection parameters not defined"
+  tags: [validation]
+
+- name: Ensure artifacts directory
+  ansible.builtin.file: {path: "{{ ise_artifacts_dir }}", state: directory, mode: "0750"}
+  tags: [always]
+
+- name: Retrieve active sessions
+  ansible.builtin.uri:
+    url: "https://{{ ise_hostname }}/admin/API/mnt/Session/ActiveList"
+    method: GET
+    user: "{{ ise_username }}"
+    password: "{{ ise_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ ise_verify_ssl }}"
+    headers: {Accept: "application/json"}
+  register: active_sessions
+  tags: [sessions]
+
+- name: Export sessions to CSV
+  ansible.builtin.template:
+    src: sessions_export.csv.j2
+    dest: "{{ ise_artifacts_dir }}/active_sessions_{{ ansible_date_time.epoch }}.csv"
+    mode: "0640"
+  tags: [export]
+
+- name: Export sessions to JSON
+  ansible.builtin.template:
+    src: ise_sessions__export_active_report.json.j2
+    dest: "{{ ise_artifacts_dir }}/active_sessions_{{ ansible_date_time.epoch }}.json"
+    mode: "0640"
+  tags: [export, reporting]

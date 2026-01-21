@@ -1,30 +1,59 @@
 ---
-- name: Ensure artifacts
-  ansible.builtin.file: { path: "{{ artifacts_dir }}", state: directory }
-- name: Load guest accounts from CSV if provided
-  when: guest_accounts.source_csv | length > 0
-  community.general.read_csv:
-    path: "{{ guest_accounts.source_csv }}"
-  register: csv_accounts
-- name: Build combined account list
+# tasks file for ise_guest__accounts_bulk
+# Cisco ISE Bulk Guest Account Creation
+
+- name: Validate ISE connection parameters
+  ansible.builtin.assert:
+    that:
+      - ise_hostname is defined
+      - ise_username is defined
+      - ise_password is defined
+    fail_msg: "Required ISE connection parameters not defined"
+  tags: [validation, prerequisites]
+
+- name: Ensure artifacts directory
+  ansible.builtin.file:
+    path: "{{ ise_artifacts_dir }}"
+    state: directory
+    mode: "0750"
+  tags: [always]
+
+- name: Read guest CSV file
+  ansible.builtin.slurp:
+    src: "{{ guest_csv_file }}"
+  register: guest_csv_content
+  when: guest_csv_file is defined
+  tags: [bulk, import]
+
+- name: Parse guest CSV data
   ansible.builtin.set_fact:
-    accounts_combined: >-
-      {{ (csv_accounts.list if (csv_accounts is defined) else []) + guest_accounts.items }}
-- name: Plan bulk accounts
-  ansible.builtin.copy:
-    dest: "{{ artifacts_dir }}/guest_accounts_plan.json"
-    content: "{{ accounts_combined | default([]) | to_nice_json }}"
-    mode: "0644"
-- name: Create/time-box guest accounts (guarded placeholder)
-  when: apply_changes | bool and (accounts_combined | default([]) | length) > 0
-  loop: "{{ accounts_combined }}"
-  loop_control: { label: "{{ item.username | default(item.name | default('guest')) }}" }
-  ansible.builtin.debug:
-    msg: "Create guest {{ item.username | default(item.name) }} valid {{ item.valid_days | default(guest_accounts.default_valid_days) }} days"
-- name: Export created accounts CSV (artifact)
-  ansible.builtin.shell: |
-    set -euo pipefail
-    echo "username,expiry" > "{{ export_csv }}"
-    echo "sample,2025-12-31T00:00:00Z" >> "{{ export_csv }}"
-  args: { executable: /bin/bash }
-  changed_when: false
+    guest_list: "{{ guest_csv_content['content'] | b64decode | community.general.from_csv }}"
+  when: guest_csv_content is defined
+  tags: [bulk, parsing]
+
+- name: Create guest users in bulk
+  cisco.ise.guest_user:
+    ise_hostname: "{{ ise_hostname }}"
+    ise_username: "{{ ise_username }}"
+    ise_password: "{{ ise_password }}"
+    ise_verify: "{{ ise_verify_ssl }}"
+    state: present
+    name: "{{ item.username | default(item.name) }}"
+    guestInfo:
+      firstName: "{{ item.first_name | default('Guest') }}"
+      lastName: "{{ item.last_name | default('User') }}"
+      emailAddress: "{{ item.email | default(omit) }}"
+      phoneNumber: "{{ item.phone | default(omit) }}"
+      company: "{{ item.company | default(omit) }}"
+    guestType: "{{ item.guest_type | default(default_guest_type) }}"
+    portalId: "{{ item.portal_id | default(default_portal_id) }}"
+  loop: "{{ guest_list | default(guest_accounts) }}"
+  when: apply_changes | bool
+  tags: [guest, bulk]
+
+- name: Generate guest credential report
+  ansible.builtin.template:
+    src: ise_guest__accounts_bulk_report.json.j2
+    dest: "{{ ise_artifacts_dir }}/guest_bulk_{{ ansible_date_time.epoch }}.json"
+    mode: "0640"
+  tags: [reporting]

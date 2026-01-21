@@ -1,20 +1,36 @@
 ---
-- name: Ensure artifacts dir
-  ansible.builtin.file:
-    path: "{{ artifacts_dir }}"
-    state: directory
-    mode: "0755"
+# tasks file for ise_policy__policy_sets_scaffold
+# Cisco ISE Policy Sets Scaffolding and Structure
 
-- name: Emit planned policy sets
-  ansible.builtin.copy:
-    dest: "{{ artifacts_dir }}/policy_sets_plan.json"
-    mode: "0644"
-    content: "{{ policy_sets | to_nice_json }}"
+- name: Validate ISE connection parameters
+  ansible.builtin.assert:
+    that: [ise_hostname is defined, ise_username is defined, ise_password is defined]
+    fail_msg: "Required ISE connection parameters not defined"
+  tags: [validation]
 
-- name: Create/ensure Policy Sets (guarded placeholder; swap with module/REST as needed)
-  when: apply_changes | bool
+- name: Ensure artifacts directory
+  ansible.builtin.file: {path: "{{ ise_artifacts_dir }}", state: directory, mode: "0750"}
+  tags: [always]
+
+- name: Create policy sets
+  cisco.ise.network_access_policy_set:
+    ise_hostname: "{{ ise_hostname }}"
+    ise_username: "{{ ise_username }}"
+    ise_password: "{{ ise_password }}"
+    ise_verify: "{{ ise_verify_ssl }}"
+    state: present
+    name: "{{ item.name }}"
+    description: "{{ item.description | default(omit) }}"
+    condition: "{{ item.condition | default(omit) }}"
+    isProxy: "{{ item.is_proxy | default(false) }}"
+    serviceName: "{{ item.service_name | default('Default Network Access') }}"
   loop: "{{ policy_sets }}"
-  loop_control:
-    label: "{{ item.name }}"
-  ansible.builtin.debug:
-    msg: "Ensure Policy Set {{ item.name }} with condition {{ item.condition }}"
+  when: apply_changes | bool
+  tags: [policy, sets]
+
+- name: Generate policy sets report
+  ansible.builtin.template:
+    src: ise_policy__policy_sets_scaffold_report.json.j2
+    dest: "{{ ise_artifacts_dir }}/policy_sets_{{ ansible_date_time.epoch }}.json"
+    mode: "0640"
+  tags: [reporting]

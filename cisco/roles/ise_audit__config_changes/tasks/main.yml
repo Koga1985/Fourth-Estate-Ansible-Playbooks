@@ -1,16 +1,194 @@
 ---
-- name: Ensure artifacts
-  ansible.builtin.file: { path: "{{ artifacts_dir }}", state: directory }
-- name: Emit change log CSV (placeholder)
-  ansible.builtin.shell: |
-    set -euo pipefail
-    echo "when,who,object,action" > "{{ artifacts_dir }}/config_changes.csv"
-    echo "2025-10-22T11:00Z,admin,PolicySet,UPDATE" >> "{{ artifacts_dir }}/config_changes.csv"
-  args: { executable: /bin/bash }
-  changed_when: false
-- name: Bundle audit artifacts
+# tasks file for ise_audit__config_changes
+# Cisco ISE Configuration Change Auditing and Compliance Tracking
+
+- name: Validate ISE connection parameters
+  ansible.builtin.assert:
+    that:
+      - ise_hostname is defined
+      - ise_username is defined
+      - ise_password is defined
+      - ise_verify_ssl is defined
+    fail_msg: "Required ISE connection parameters not defined"
+    quiet: true
+  tags:
+    - validation
+    - prerequisites
+
+- name: Ensure artifacts directory exists
+  ansible.builtin.file:
+    path: "{{ ise_artifacts_dir }}"
+    state: directory
+    mode: "0750"
+  tags:
+    - always
+
+- name: Get ISE deployment information
+  cisco.ise.node_deployment_info:
+    ise_hostname: "{{ ise_hostname }}"
+    ise_username: "{{ ise_username }}"
+    ise_password: "{{ ise_password }}"
+    ise_verify: "{{ ise_verify_ssl }}"
+  register: ise_deployment_info
+  tags:
+    - discovery
+    - audit
+
+- name: Retrieve configuration change audit logs
+  ansible.builtin.uri:
+    url: "https://{{ ise_hostname }}/admin/API/mnt/Session/AuditLogs"
+    method: GET
+    user: "{{ ise_username }}"
+    password: "{{ ise_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ ise_verify_ssl }}"
+    headers:
+      Accept: "application/json"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      startDate: "{{ audit_start_date }}"
+      endDate: "{{ audit_end_date }}"
+      configChangeCategory: "{{ audit_change_categories }}"
+  register: config_change_logs
+  when: ise_enable_api_audit | bool
+  tags:
+    - audit
+    - logs
+
+- name: Parse configuration change events
+  ansible.builtin.set_fact:
+    parsed_config_changes: "{{ config_change_logs.json | default({}) }}"
+  when:
+    - config_change_logs is defined
+    - config_change_logs.json is defined
+  tags:
+    - audit
+    - parsing
+
+- name: Generate configuration change CSV report
+  ansible.builtin.template:
+    src: config_changes.csv.j2
+    dest: "{{ ise_artifacts_dir }}/ise_config_changes_{{ ansible_date_time.epoch }}.csv"
+    mode: "0640"
+  tags:
+    - reporting
+    - audit
+
+- name: Generate configuration change JSON report
+  ansible.builtin.template:
+    src: config_changes.json.j2
+    dest: "{{ ise_artifacts_dir }}/ise_config_changes_{{ ansible_date_time.epoch }}.json"
+    mode: "0640"
+  tags:
+    - reporting
+    - audit
+
+- name: Check for unauthorized configuration changes
+  ansible.builtin.set_fact:
+    unauthorized_changes: >-
+      {{
+        parsed_config_changes.changes | default([])
+        | selectattr('user', 'defined')
+        | rejectattr('user', 'in', authorized_admin_users)
+        | list
+      }}
+  when: parsed_config_changes is defined
+  tags:
+    - security
+    - compliance
+
+- name: Alert on unauthorized configuration changes
+  ansible.builtin.debug:
+    msg: "WARNING: Unauthorized configuration changes detected by users: {{ unauthorized_changes | map(attribute='user') | unique | list }}"
+  when:
+    - unauthorized_changes is defined
+    - unauthorized_changes | length > 0
+  tags:
+    - security
+    - alerting
+
+- name: Check for DISA STIG compliance violations
+  ansible.builtin.set_fact:
+    stig_violations: >-
+      {{
+        parsed_config_changes.changes | default([])
+        | selectattr('action', 'defined')
+        | selectattr('action', 'in', stig_restricted_actions)
+        | list
+      }}
+  when:
+    - enable_disa_stig_compliance | bool
+    - parsed_config_changes is defined
+  tags:
+    - compliance
+    - stig
+
+- name: Generate DISA STIG compliance report
+  ansible.builtin.template:
+    src: stig_compliance_report.json.j2
+    dest: "{{ ise_artifacts_dir }}/ise_stig_compliance_{{ ansible_date_time.epoch }}.json"
+    mode: "0640"
+  when: enable_disa_stig_compliance | bool
+  tags:
+    - compliance
+    - stig
+    - reporting
+
+- name: Export audit logs to SIEM
+  ansible.builtin.uri:
+    url: "{{ siem_endpoint }}/api/events"
+    method: POST
+    body_format: json
+    body:
+      source: "ise_audit"
+      hostname: "{{ ise_hostname }}"
+      events: "{{ parsed_config_changes.changes | default([]) }}"
+    headers:
+      Authorization: "Bearer {{ siem_api_token }}"
+      Content-Type: "application/json"
+    status_code: [200, 201, 202]
+  when:
+    - audit_siem_integration_enabled | bool
+    - parsed_config_changes is defined
+    - siem_endpoint is defined
+  ignore_errors: true
+  tags:
+    - siem
+    - integration
+
+- name: Archive audit artifacts
   community.general.archive:
-    path:
-      - "{{ artifacts_dir }}/config_changes.csv"
-    dest: "{{ export_zip }}"
+    path: "{{ ise_artifacts_dir }}/*{{ ansible_date_time.epoch }}*"
+    dest: "{{ audit_export_zip }}"
     format: zip
+    mode: "0640"
+  tags:
+    - archive
+    - backup
+
+- name: Send audit report notification
+  ansible.builtin.mail:
+    host: "{{ smtp_host | default('localhost') }}"
+    port: "{{ smtp_port | default(25) }}"
+    to: "{{ audit_notification_email }}"
+    subject: "ISE Configuration Change Audit Report - {{ ansible_date_time.date }}"
+    body: |
+      ISE Configuration Change Audit Report
+
+      ISE Deployment: {{ ise_hostname }}
+      Audit Period: {{ audit_start_date }} to {{ audit_end_date }}
+      Total Changes: {{ parsed_config_changes.changes | default([]) | length }}
+      Unauthorized Changes: {{ unauthorized_changes | default([]) | length }}
+      STIG Violations: {{ stig_violations | default([]) | length }}
+
+      Report generated at: {{ ansible_date_time.iso8601 }}
+    attach:
+      - "{{ audit_export_zip }}"
+  when:
+    - audit_notify_on_completion | bool
+    - audit_notification_email is defined
+  ignore_errors: true
+  tags:
+    - notification
+    - reporting

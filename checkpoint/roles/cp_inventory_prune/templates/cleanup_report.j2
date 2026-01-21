@@ -1,0 +1,78 @@
+==========================================================================
+            CHECK POINT INVENTORY CLEANUP REPORT
+              Fourth Estate Configuration Hygiene
+==========================================================================
+
+Report Date: {{ ansible_date_time.iso8601 }}
+Operator: {{ ansible_user_id }}
+Mode: {{ 'DRY RUN (no changes made)' if dry_run | default(true) | bool else 'LIVE - changes applied' }}
+
+EXECUTIVE SUMMARY
+-----------------
+This report identifies Check Point network objects that exist in the
+management database but are not present in the source of truth (CMDB/IPAM).
+
+Protected Objects (Never Deleted):
+{% for protected in protected_names | default([]) %}
+- {{ protected }}
+{% endfor %}
+
+STALE OBJECTS IDENTIFIED
+-------------------------
+{% if stale_hosts is defined and stale_hosts | length > 0 %}
+Stale Hosts: {{ stale_hosts | length }}
+{% for host in stale_hosts %}
+- {{ host }}
+{% endfor %}
+{% else %}
+Stale Hosts: 0 (All hosts in sync)
+{% endif %}
+
+{% if stale_networks is defined and stale_networks | length > 0 %}
+Stale Networks: {{ stale_networks | length }}
+{% for network in stale_networks %}
+- {{ network }}
+{% endfor %}
+{% else %}
+Stale Networks: 0 (All networks in sync)
+{% endif %}
+
+{% if stale_groups is defined and stale_groups | length > 0 %}
+Stale Groups: {{ stale_groups | length }}
+{% for group in stale_groups %}
+- {{ group }}
+{% endfor %}
+{% else %}
+Stale Groups: 0 (All groups in sync)
+{% endif %}
+
+RECOMMENDED ACTIONS
+-------------------
+1. Review stale objects list with network team
+2. Verify objects are truly unused (check rule usage)
+3. Document business justification if objects should be retained
+4. Update source of truth if objects are still valid
+5. Create change control for object removal
+6. Execute cleanup with dry_run: false when approved
+
+COMPLIANCE
+----------
+Fourth Estate policy requires quarterly inventory hygiene reviews.
+All network objects must be documented in source of truth.
+Unused objects should be removed to maintain clean configuration.
+
+APPROVAL REQUIRED
+-----------------
+Network Team: _____________________________ Date: _______
+Security Team: ____________________________ Date: _______
+Change Control: _______________
+
+{% if dry_run | default(true) | bool %}
+DRY RUN MODE - No objects were deleted
+Set dry_run: false and cp_allow_delete: true to execute cleanup
+{% else %}
+CLEANUP EXECUTED - Objects have been removed
+Backup created before cleanup
+{% endif %}
+
+==========================================================================

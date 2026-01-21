@@ -1,0 +1,36 @@
+---
+# Check Point Access Policy Handlers
+# These handlers are triggered after policy changes to publish and install
+
+- name: Publish Check Point session
+  check_point.mgmt.cp_mgmt_publish:
+  listen: publish checkpoint session
+
+- name: Install Check Point policy
+  check_point.mgmt.cp_mgmt_install_policy:
+    policy_package: "{{ policy_package }}"
+    targets: "{{ install_targets }}"
+    access: true
+    threat_prevention: true
+    install_on_all_cluster_members_or_fail: true
+  when: install_targets | length > 0
+  listen: install checkpoint policy
+
+- name: Verify policy installation
+  check_point.mgmt.cp_mgmt_run_script:
+    script_name: "Policy Installation Verification"
+    script: |
+      clish -c "show asset policy-package {{ policy_package }}"
+    targets: "{{ install_targets }}"
+  when: install_targets | length > 0
+  listen: verify policy installation
+
+- name: Backup policy after changes
+  check_point.mgmt.cp_mgmt_run_script:
+    script_name: "Policy Backup"
+    script: |
+      backup_file="/var/log/backups/policy_backup_$(date +%Y%m%d_%H%M%S).tgz"
+      migrate export $backup_file
+      echo "Backup created: $backup_file"
+    targets: "{{ groups['checkpoint_mgmt'] | first }}"
+  listen: backup checkpoint policy

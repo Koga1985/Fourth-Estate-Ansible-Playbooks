@@ -1,12 +1,72 @@
 ---
-- name: Ensure artifacts
-  ansible.builtin.file: { path: "{{ artifacts_dir }}", state: directory }
-- name: Plan guest portal
-  ansible.builtin.copy:
-    dest: "{{ artifacts_dir }}/guest_portal_plan.json"
-    content: "{{ guest_portal | to_nice_json }}"
-    mode: "0644"
-- name: Configure Guest portal (guarded placeholder)
+# tasks file for ise_guest__guest_portal
+# Cisco ISE Guest Portal Configuration
+
+- name: Validate ISE connection parameters
+  ansible.builtin.assert:
+    that:
+      - ise_hostname is defined
+      - ise_username is defined
+      - ise_password is defined
+    fail_msg: "Required ISE connection parameters not defined"
+  tags: [validation, prerequisites]
+
+- name: Ensure artifacts directory
+  ansible.builtin.file:
+    path: "{{ ise_artifacts_dir }}"
+    state: directory
+    mode: "0750"
+  tags: [always]
+
+- name: Configure guest portal
+  cisco.ise.guest_portal:
+    ise_hostname: "{{ ise_hostname }}"
+    ise_username: "{{ ise_username }}"
+    ise_password: "{{ ise_password }}"
+    ise_verify: "{{ ise_verify_ssl }}"
+    state: present
+    name: "{{ guest_portal_name }}"
+    portalType: "GUEST"
+    settings:
+      portalSettings:
+        certificateGroupTag: "{{ guest_portal_cert_group }}"
+        endpointIdentityGroup: "{{ guest_endpoint_group }}"
+        displayLang: "{{ guest_portal_language | default('ENGLISH') }}"
+      guestChangePasswordSettings:
+        allowChangePasswdAtFirstLogin: "{{ guest_allow_password_change }}"
+      guestDeviceRegistrationSettings:
+        allowGuestToRegisterDevices: "{{ guest_allow_device_registration }}"
+      aupSettings:
+        includeAup: "{{ guest_require_aup }}"
+        requireAupAcceptance: "{{ guest_require_aup }}"
   when: apply_changes | bool
-  ansible.builtin.debug:
-    msg: "Configure Guest Portal {{ guest_portal.name }} (methods={{ guest_portal.auth_methods }})"
+  tags: [guest, portal]
+
+- name: Customize portal branding
+  ansible.builtin.uri:
+    url: "https://{{ ise_hostname }}/ers/config/portal/{{ guest_portal_id }}/customization"
+    method: PUT
+    user: "{{ ise_username }}"
+    password: "{{ ise_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ ise_verify_ssl }}"
+    headers:
+      Content-Type: "application/json"
+      Accept: "application/json"
+    body_format: json
+    body:
+      portalCustomization:
+        bannerTitle: "{{ guest_portal_banner_title }}"
+        bannerImage: "{{ guest_portal_banner_image | default(omit) }}"
+        backgroundColor: "{{ guest_portal_bg_color }}"
+  when:
+    - apply_changes | bool
+    - guest_portal_customization_enabled | bool
+  tags: [guest, portal, branding]
+
+- name: Generate guest portal report
+  ansible.builtin.template:
+    src: ise_guest__guest_portal_report.json.j2
+    dest: "{{ ise_artifacts_dir }}/guest_portal_{{ ansible_date_time.epoch }}.json"
+    mode: "0640"
+  tags: [reporting]

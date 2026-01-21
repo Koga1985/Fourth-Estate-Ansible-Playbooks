@@ -1,0 +1,57 @@
+---
+# Additional tasks for ucs_prod_monitoring
+# Cisco UCS Monitoring and Health Checks - Comprehensive monitoring and alerting
+
+# Additional monitoring tasks for UCS
+
+- name: Get current fault summary
+  cisco.ucs.ucs_query:
+    hostname: "{{ ucs_hostname }}"
+    username: "{{ ucs_username }}"
+    password: "{{ ucs_password }}"
+    class_ids: faultInst
+  register: ucs_faults
+  tags: [monitoring, faults]
+
+- name: Analyze fault severity
+  ansible.builtin.set_fact:
+    fault_summary:
+      critical: "{{ ucs_faults.objects | selectattr('severity', 'equalto', 'critical') | list | length }}"
+      major: "{{ ucs_faults.objects | selectattr('severity', 'equalto', 'major') | list | length }}"
+      minor: "{{ ucs_faults.objects | selectattr('severity', 'equalto', 'minor') | list | length }}"
+      warning: "{{ ucs_faults.objects | selectattr('severity', 'equalto', 'warning') | list | length }}"
+  when: ucs_faults.objects is defined
+  tags: [monitoring, analysis]
+
+- name: Alert on critical faults
+  ansible.builtin.debug:
+    msg: "CRITICAL: {{ fault_summary.critical }} critical faults detected in UCS"
+  when:
+    - fault_summary is defined
+    - fault_summary.critical | int > 0
+  tags: [monitoring, alerting]
+
+- name: Export monitoring data to SIEM
+  ansible.builtin.uri:
+    url: "{{ siem_endpoint }}/api/events"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ siem_api_token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      source: "ucs_monitoring"
+      hostname: "{{ ucs_hostname }}"
+      faults: "{{ ucs_faults.objects | default([]) }}"
+  when:
+    - ucs_siem_integration_enabled | bool
+    - siem_endpoint is defined
+  ignore_errors: true
+  tags: [siem, integration]
+
+- name: Generate monitoring report
+  ansible.builtin.template:
+    src: monitoring_report.json.j2
+    dest: "{{ ucs_artifacts_dir }}/ucs_monitoring_{{ ansible_date_time.epoch }}.json"
+    mode: "0640"
+  tags: [reporting]

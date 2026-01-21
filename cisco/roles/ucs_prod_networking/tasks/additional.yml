@@ -1,0 +1,57 @@
+---
+# Additional tasks for ucs_prod_networking
+# Cisco UCS Networking Configuration - VLAN, VSAN, and QoS configuration
+
+# Additional networking tasks for UCS
+
+- name: Verify VLAN configuration
+  cisco.ucs.ucs_vlans:
+    hostname: "{{ ucs_hostname }}"
+    username: "{{ ucs_username }}"
+    password: "{{ ucs_password }}"
+    state: present
+    name: "{{ item.name }}"
+    id: "{{ item.id }}"
+    native: "{{ item.native | default('no') }}"
+  loop: "{{ ucs_vlans }}"
+  when: apply_changes | bool
+  tags: [networking, vlans]
+
+- name: Configure VSAN for SAN connectivity
+  cisco.ucs.ucs_vsans:
+    hostname: "{{ ucs_hostname }}"
+    username: "{{ ucs_username }}"
+    password: "{{ ucs_password }}"
+    state: present
+    name: "{{ item.name }}"
+    vsan_id: "{{ item.id }}"
+    fabric: "{{ item.fabric }}"
+  loop: "{{ ucs_vsans }}"
+  when:
+    - apply_changes | bool
+    - ucs_enable_san | bool
+  tags: [networking, san, vsans]
+
+- name: Configure QoS policies
+  cisco.ucs.ucs_managed_objects:
+    hostname: "{{ ucs_hostname }}"
+    username: "{{ ucs_username }}"
+    password: "{{ ucs_password }}"
+    objects:
+      - module: ucsmsdk.mometa.epqos.EpqosDefinition
+        class: EpqosDefinition
+        properties:
+          parent_mo_or_dn: "fabric/lan/classes"
+          name: "{{ item.name }}"
+          descr: "{{ item.description | default(omit) }}"
+          priority: "{{ item.priority }}"
+  loop: "{{ ucs_qos_policies }}"
+  when: apply_changes | bool
+  tags: [networking, qos]
+
+- name: Generate networking configuration report
+  ansible.builtin.template:
+    src: networking_report.json.j2
+    dest: "{{ ucs_artifacts_dir }}/ucs_networking_{{ ansible_date_time.epoch }}.json"
+    mode: "0640"
+  tags: [reporting]

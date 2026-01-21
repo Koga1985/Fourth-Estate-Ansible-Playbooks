@@ -1,24 +1,34 @@
 ---
-- name: Ensure artifacts dir
-  ansible.builtin.file:
-    path: "{{ artifacts_dir }}"
-    state: directory
+# tasks file for ise_posture__client_provisioning
+# Cisco ISE Posture Client Provisioning
 
-- name: Emit client provisioning plan
-  ansible.builtin.copy:
-    dest: "{{ artifacts_dir }}/posture_client_provision_plan.json"
-    mode: "0644"
-    content: "{{ {'anyconnect': anyconnect, 'web_resources': web_resources} | to_nice_json }}"
+- name: Validate ISE connection parameters
+  ansible.builtin.assert:
+    that: [ise_hostname is defined, ise_username is defined, ise_password is defined]
+    fail_msg: "Required ISE connection parameters not defined"
+  tags: [validation]
 
-- name: Upload AnyConnect packages/modules (guarded placeholder)
-  when: apply_changes | bool and (anyconnect.packages | length) > 0
-  ansible.builtin.debug:
-    msg: "Upload AnyConnect packages"
+- name: Ensure artifacts directory
+  ansible.builtin.file: {path: "{{ ise_artifacts_dir }}", state: directory, mode: "0750"}
+  tags: [always]
 
-- name: Ensure web resources (guarded placeholder)
-  when: apply_changes | bool and (web_resources | length) > 0
-  loop: "{{ web_resources }}"
-  loop_control:
-    label: "{{ item.name }}"
-  ansible.builtin.debug:
-    msg: "Ensure web resource {{ item.name }}"
+- name: Configure client provisioning portal
+  cisco.ise.native_supplicant_profile:
+    ise_hostname: "{{ ise_hostname }}"
+    ise_username: "{{ ise_username }}"
+    ise_password: "{{ ise_password }}"
+    ise_verify: "{{ ise_verify_ssl }}"
+    state: present
+    name: "{{ item.name }}"
+    description: "{{ item.description | default(omit) }}"
+    wirelessProfiles: "{{ item.wireless_profiles | default([]) }}"
+  loop: "{{ client_provisioning_profiles }}"
+  when: apply_changes | bool
+  tags: [posture, provisioning]
+
+- name: Generate client provisioning report
+  ansible.builtin.template:
+    src: ise_posture__client_provisioning_report.json.j2
+    dest: "{{ ise_artifacts_dir }}/client_provisioning_{{ ansible_date_time.epoch }}.json"
+    mode: "0640"
+  tags: [reporting]

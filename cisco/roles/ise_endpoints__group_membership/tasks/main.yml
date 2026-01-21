@@ -1,14 +1,62 @@
 ---
-- name: Ensure artifacts
-  ansible.builtin.file: { path: "{{ artifacts_dir }}", state: directory }
-- name: Plan endpoint moves
-  ansible.builtin.copy:
-    dest: "{{ artifacts_dir }}/endpoints_move_plan.json"
-    content: "{{ moves | to_nice_json }}"
-    mode: "0644"
-- name: Move endpoints between groups (guarded placeholder)
+# tasks file for ise_endpoints__group_membership
+# Cisco ISE Endpoint Group Membership Management
+
+- name: Validate ISE connection parameters
+  ansible.builtin.assert:
+    that:
+      - ise_hostname is defined
+      - ise_username is defined
+      - ise_password is defined
+    fail_msg: "Required ISE connection parameters not defined"
+  tags: [validation, prerequisites]
+
+- name: Ensure artifacts directory
+  ansible.builtin.file:
+    path: "{{ ise_artifacts_dir }}"
+    state: directory
+    mode: "0750"
+  tags: [always]
+
+- name: Get existing endpoint identity groups
+  cisco.ise.endpoint_group_info:
+    ise_hostname: "{{ ise_hostname }}"
+    ise_username: "{{ ise_username }}"
+    ise_password: "{{ ise_password }}"
+    ise_verify: "{{ ise_verify_ssl }}"
+  register: existing_endpoint_groups
+  tags: [discovery, endpoints]
+
+- name: Create endpoint identity groups
+  cisco.ise.endpoint_group:
+    ise_hostname: "{{ ise_hostname }}"
+    ise_username: "{{ ise_username }}"
+    ise_password: "{{ ise_password }}"
+    ise_verify: "{{ ise_verify_ssl }}"
+    state: present
+    name: "{{ item.name }}"
+    description: "{{ item.description | default(omit) }}"
+  loop: "{{ endpoint_groups }}"
   when: apply_changes | bool
-  loop: "{{ moves }}"
-  loop_control: { label: "{{ item.mac }}" }
-  ansible.builtin.debug:
-    msg: "Move {{ item.mac }} to {{ item.to_group }}"
+  tags: [endpoints, groups]
+
+- name: Assign endpoints to groups
+  cisco.ise.endpoint:
+    ise_hostname: "{{ ise_hostname }}"
+    ise_username: "{{ ise_username }}"
+    ise_password: "{{ ise_password }}"
+    ise_verify: "{{ ise_verify_ssl }}"
+    state: present
+    mac: "{{ item.mac_address }}"
+    groupId: "{{ item.group_id }}"
+    staticGroupAssignment: true
+  loop: "{{ endpoint_group_assignments }}"
+  when: apply_changes | bool
+  tags: [endpoints, assignment]
+
+- name: Generate endpoint group membership report
+  ansible.builtin.template:
+    src: ise_endpoints__group_membership_report.json.j2
+    dest: "{{ ise_artifacts_dir }}/endpoint_groups_{{ ansible_date_time.epoch }}.json"
+    mode: "0640"
+  tags: [reporting]

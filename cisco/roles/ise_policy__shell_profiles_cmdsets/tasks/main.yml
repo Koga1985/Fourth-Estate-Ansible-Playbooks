@@ -1,27 +1,50 @@
 ---
-- name: Ensure artifacts dir
-  ansible.builtin.file:
-    path: "{{ artifacts_dir }}"
-    state: directory
+# tasks file for ise_policy__shell_profiles_cmdsets
+# Cisco ISE TACACS+ Shell Profiles and Command Sets
 
-- name: Plan TACACS shell profiles & command sets
-  ansible.builtin.copy:
-    dest: "{{ artifacts_dir }}/tacacs_shell_cmdsets_plan.json"
-    mode: "0644"
-    content: "{{ {'shell_profiles': shell_profiles, 'command_sets': command_sets} | to_nice_json }}"
+- name: Validate ISE connection parameters
+  ansible.builtin.assert:
+    that: [ise_hostname is defined, ise_username is defined, ise_password is defined]
+    fail_msg: "Required ISE connection parameters not defined"
+  tags: [validation]
 
-- name: Ensure Shell Profiles (guarded placeholder)
+- name: Ensure artifacts directory
+  ansible.builtin.file: {path: "{{ ise_artifacts_dir }}", state: directory, mode: "0750"}
+  tags: [always]
+
+- name: Create TACACS command sets
+  cisco.ise.tacacs_command_sets:
+    ise_hostname: "{{ ise_hostname }}"
+    ise_username: "{{ ise_username }}"
+    ise_password: "{{ ise_password }}"
+    ise_verify: "{{ ise_verify_ssl }}"
+    state: present
+    name: "{{ item.name }}"
+    description: "{{ item.description | default(omit) }}"
+    permitUnmatched: "{{ item.permit_unmatched | default(false) }}"
+    commands: "{{ item.commands }}"
+  loop: "{{ tacacs_command_sets }}"
   when: apply_changes | bool
-  loop: "{{ shell_profiles }}"
-  loop_control:
-    label: "{{ item.name }}"
-  ansible.builtin.debug:
-    msg: "Ensure Shell Profile {{ item.name }}"
+  tags: [tacacs, commands]
 
-- name: Ensure Command Sets (guarded placeholder)
+- name: Create TACACS profile
+  cisco.ise.tacacs_profile:
+    ise_hostname: "{{ ise_hostname }}"
+    ise_username: "{{ ise_username }}"
+    ise_password: "{{ ise_password }}"
+    ise_verify: "{{ ise_verify_ssl }}"
+    state: present
+    name: "{{ item.name }}"
+    description: "{{ item.description | default(omit) }}"
+    sessionAttributes:
+      privilege: "{{ item.privilege_level | default(15) }}"
+  loop: "{{ tacacs_profiles }}"
   when: apply_changes | bool
-  loop: "{{ command_sets }}"
-  loop_control:
-    label: "{{ item.name }}"
-  ansible.builtin.debug:
-    msg: "Ensure Command Set {{ item.name }}"
+  tags: [tacacs, profiles]
+
+- name: Generate TACACS configuration report
+  ansible.builtin.template:
+    src: ise_policy__shell_profiles_cmdsets_report.json.j2
+    dest: "{{ ise_artifacts_dir }}/tacacs_{{ ansible_date_time.epoch }}.json"
+    mode: "0640"
+  tags: [reporting]
