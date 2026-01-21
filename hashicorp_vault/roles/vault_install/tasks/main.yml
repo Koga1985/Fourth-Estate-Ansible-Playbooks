@@ -1,1 +1,403 @@
 ---
+# HashiCorp Vault Installation Tasks
+# Fourth Estate Production Configuration
+
+- name: Validate required variables
+  ansible.builtin.assert:
+    that:
+      - vault_version is defined
+      - vault_seal_type in ['awskms', 'azurekeyvault', 'gcpckms', 'shamir']
+      - vault_storage_type in ['raft', 'consul', 'file']
+    fail_msg: "Required variables are not properly defined"
+    quiet: true
+  tags: [vault, install, validate]
+
+- name: Include OS-specific variables
+  ansible.builtin.include_vars: "{{ ansible_os_family }}.yml"
+  tags: [vault, install]
+
+- name: Create Vault system group
+  ansible.builtin.group:
+    name: "{{ vault_group }}"
+    gid: "{{ vault_gid }}"
+    state: present
+    system: true
+  tags: [vault, install, user]
+
+- name: Create Vault system user
+  ansible.builtin.user:
+    name: "{{ vault_user }}"
+    uid: "{{ vault_uid }}"
+    group: "{{ vault_group }}"
+    shell: /bin/false
+    home: "{{ vault_data_path }}"
+    system: true
+    create_home: false
+    comment: "HashiCorp Vault service account"
+  tags: [vault, install, user]
+
+- name: Create Vault directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ vault_user }}"
+    group: "{{ vault_group }}"
+    mode: '0750'
+  loop:
+    - "{{ vault_config_path }}"
+    - "{{ vault_data_path }}"
+    - "{{ vault_tls_path }}"
+    - "{{ vault_plugin_path }}"
+    - "{{ vault_log_path }}"
+    - "{{ vault_raft_path }}"
+  tags: [vault, install, directories]
+
+- name: Create backup directory
+  ansible.builtin.file:
+    path: "{{ vault_backup_path }}"
+    state: directory
+    owner: "{{ vault_user }}"
+    group: "{{ vault_group }}"
+    mode: '0700'
+  when: vault_enable_backup | bool
+  tags: [vault, install, backup]
+
+- name: Install required system packages
+  ansible.builtin.package:
+    name: "{{ vault_system_packages }}"
+    state: present
+  tags: [vault, install, packages]
+
+- name: Download Vault binary (internet-connected)
+  when: not vault_air_gapped | bool
+  block:
+    - name: Download Vault binary
+      ansible.builtin.get_url:
+        url: "https://releases.hashicorp.com/vault/{{ vault_version }}{% if vault_enterprise %}+ent{% endif %}/vault_{{ vault_version }}{% if vault_enterprise %}+ent{% endif %}_linux_amd64.zip"
+        dest: "/tmp/vault_{{ vault_version }}.zip"
+        mode: '0644'
+        timeout: 300
+      environment:
+        http_proxy: "{{ vault_http_proxy }}"
+        https_proxy: "{{ vault_https_proxy }}"
+        no_proxy: "{{ vault_no_proxy }}"
+      register: vault_download
+      retries: 3
+      delay: 10
+
+    - name: Download Vault SHA256 checksums
+      ansible.builtin.get_url:
+        url: "https://releases.hashicorp.com/vault/{{ vault_version }}{% if vault_enterprise %}+ent{% endif %}/vault_{{ vault_version }}{% if vault_enterprise %}+ent{% endif %}_SHA256SUMS"
+        dest: "/tmp/vault_{{ vault_version }}_SHA256SUMS"
+        mode: '0644'
+      environment:
+        http_proxy: "{{ vault_http_proxy }}"
+        https_proxy: "{{ vault_https_proxy }}"
+        no_proxy: "{{ vault_no_proxy }}"
+
+    - name: Verify Vault binary checksum
+      ansible.builtin.shell: |
+        cd /tmp
+        grep "vault_{{ vault_version }}{% if vault_enterprise %}+ent{% endif %}_linux_amd64.zip" vault_{{ vault_version }}_SHA256SUMS | sha256sum -c -
+      changed_when: false
+      register: checksum_result
+      failed_when: checksum_result.rc != 0
+
+  tags: [vault, install, download]
+
+- name: Copy Vault binary from local path (air-gapped)
+  ansible.builtin.copy:
+    src: "{{ vault_local_binary_path }}"
+    dest: "/tmp/vault_{{ vault_version }}.zip"
+    mode: '0644'
+  when: vault_air_gapped | bool
+  tags: [vault, install, airgap]
+
+- name: Unzip Vault binary
+  ansible.builtin.unarchive:
+    src: "/tmp/vault_{{ vault_version }}.zip"
+    dest: "{{ vault_bin_path }}"
+    remote_src: true
+    owner: root
+    group: root
+    mode: '0755'
+  notify: restart vault
+  tags: [vault, install, binary]
+
+- name: Set Vault binary capabilities
+  community.general.capabilities:
+    path: "{{ vault_bin_path }}/vault"
+    capability: cap_ipc_lock=+ep
+    state: present
+  when: not vault_disable_mlock | bool
+  tags: [vault, install, capabilities]
+
+- name: Install Vault plugins
+  when: vault_install_plugins | length > 0
+  block:
+    - name: Download and install plugins
+      ansible.builtin.get_url:
+        url: "{{ item.url }}"
+        dest: "{{ vault_plugin_path }}/{{ item.name }}"
+        checksum: "sha256:{{ item.sha256 }}"
+        owner: "{{ vault_user }}"
+        group: "{{ vault_group }}"
+        mode: '0750'
+      loop: "{{ vault_install_plugins }}"
+      notify: restart vault
+
+  tags: [vault, install, plugins]
+
+- name: Generate Vault configuration
+  ansible.builtin.template:
+    src: vault.hcl.j2
+    dest: "{{ vault_config_path }}/vault.hcl"
+    owner: "{{ vault_user }}"
+    group: "{{ vault_group }}"
+    mode: '0640'
+    validate: "{{ vault_bin_path }}/vault server -config=%s -test"
+  notify: reload vault
+  tags: [vault, install, config]
+
+- name: Create environment file for Vault
+  ansible.builtin.template:
+    src: vault.env.j2
+    dest: "{{ vault_config_path }}/vault.env"
+    owner: "{{ vault_user }}"
+    group: "{{ vault_group }}"
+    mode: '0640'
+  notify: restart vault
+  tags: [vault, install, config]
+
+- name: Create systemd service file
+  ansible.builtin.template:
+    src: vault.service.j2
+    dest: /etc/systemd/system/vault.service
+    owner: root
+    group: root
+    mode: '0644'
+  notify:
+    - systemd daemon reload
+    - restart vault
+  tags: [vault, install, systemd]
+
+- name: Create systemd service override directory
+  ansible.builtin.file:
+    path: /etc/systemd/system/vault.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+  tags: [vault, install, systemd]
+
+- name: Configure system limits for Vault
+  ansible.builtin.template:
+    src: limits.conf.j2
+    dest: /etc/systemd/system/vault.service.d/limits.conf
+    owner: root
+    group: root
+    mode: '0644'
+  notify:
+    - systemd daemon reload
+    - restart vault
+  tags: [vault, install, limits]
+
+- name: Configure sysctl for Vault
+  ansible.posix.sysctl:
+    name: "{{ item.name }}"
+    value: "{{ item.value }}"
+    state: present
+    reload: true
+    sysctl_file: /etc/sysctl.d/99-vault.conf
+  loop:
+    - { name: 'vm.swappiness', value: '0' }
+    - { name: 'vm.max_map_count', value: '262144' }
+    - { name: 'net.core.somaxconn', value: '32768' }
+    - { name: 'net.ipv4.tcp_max_syn_backlog', value: '8192' }
+  tags: [vault, install, sysctl]
+
+- name: Configure SELinux for Vault
+  when:
+    - ansible_selinux.status is defined
+    - ansible_selinux.status == "enabled"
+    - vault_selinux_enabled | bool
+  block:
+    - name: Install SELinux packages
+      ansible.builtin.package:
+        name:
+          - policycoreutils-python-utils
+        state: present
+
+    - name: Set SELinux context for Vault directories
+      community.general.sefcontext:
+        target: "{{ item }}(/.*)?"
+        setype: vault_data_t
+        state: present
+      loop:
+        - "{{ vault_config_path }}"
+        - "{{ vault_data_path }}"
+        - "{{ vault_log_path }}"
+      notify: restorecon vault directories
+
+    - name: Allow Vault to bind to network ports
+      ansible.posix.seport:
+        ports: "{{ vault_port }},{{ vault_cluster_port }}"
+        proto: tcp
+        setype: vault_port_t
+        state: present
+
+  tags: [vault, install, selinux]
+
+- name: Configure firewall rules
+  when: vault_configure_firewall | bool
+  block:
+    - name: Allow Vault API port
+      ansible.posix.firewalld:
+        port: "{{ vault_port }}/tcp"
+        permanent: true
+        state: enabled
+        immediate: true
+
+    - name: Allow Vault cluster port
+      ansible.posix.firewalld:
+        port: "{{ vault_cluster_port }}/tcp"
+        permanent: true
+        state: enabled
+        immediate: true
+        source: "{{ item }}"
+      loop: "{{ vault_firewall_allowed_ips }}"
+      when: vault_firewall_allowed_ips | length > 0
+
+  tags: [vault, install, firewall]
+
+- name: Install Vault license (Enterprise)
+  when:
+    - vault_enterprise | bool
+    - vault_install_license | bool
+    - vault_license_content | length > 0
+  block:
+    - name: Copy Vault license file
+      ansible.builtin.copy:
+        content: "{{ vault_license_content }}"
+        dest: "{{ vault_config_path }}/vault.hclic"
+        owner: "{{ vault_user }}"
+        group: "{{ vault_group }}"
+        mode: '0640'
+      notify: restart vault
+
+  tags: [vault, install, license]
+
+- name: Create logrotate configuration
+  ansible.builtin.template:
+    src: logrotate.j2
+    dest: /etc/logrotate.d/vault
+    owner: root
+    group: root
+    mode: '0644'
+  tags: [vault, install, logging]
+
+- name: Configure rsyslog for Vault
+  when: vault_enable_syslog | bool
+  block:
+    - name: Create rsyslog configuration for Vault
+      ansible.builtin.template:
+        src: rsyslog.conf.j2
+        dest: /etc/rsyslog.d/30-vault.conf
+        owner: root
+        group: root
+        mode: '0644'
+      notify: restart rsyslog
+
+  tags: [vault, install, syslog]
+
+- name: Create Vault CLI configuration directory
+  ansible.builtin.file:
+    path: /root/.vault.d
+    state: directory
+    owner: root
+    group: root
+    mode: '0700'
+  tags: [vault, install, cli]
+
+- name: Create Vault CLI configuration
+  ansible.builtin.template:
+    src: vault-cli.hcl.j2
+    dest: /root/.vault.d/config.hcl
+    owner: root
+    group: root
+    mode: '0600'
+  tags: [vault, install, cli]
+
+- name: Add Vault environment variables to profile
+  ansible.builtin.lineinfile:
+    path: /etc/profile.d/vault.sh
+    line: "{{ item }}"
+    create: true
+    owner: root
+    group: root
+    mode: '0644'
+  loop:
+    - "export VAULT_ADDR={{ vault_api_addr }}"
+    - "export VAULT_CACERT={{ vault_tls_ca_file }}"
+    - "export VAULT_SKIP_VERIFY=false"
+  tags: [vault, install, environment]
+
+- name: Enable and start Vault service
+  ansible.builtin.systemd:
+    name: vault
+    enabled: "{{ vault_service_enabled }}"
+    state: "{{ vault_service_state }}"
+    daemon_reload: true
+  tags: [vault, install, service]
+
+- name: Wait for Vault to be responsive
+  ansible.builtin.uri:
+    url: "{{ vault_api_addr }}/v1/sys/health"
+    validate_certs: false
+    status_code: [200, 429, 472, 473, 501, 503]
+  register: vault_health
+  retries: 12
+  delay: 5
+  until: vault_health.status in [200, 429, 472, 473, 501, 503]
+  tags: [vault, install, health]
+
+- name: Create Vault snapshot script
+  when: vault_enable_backup | bool
+  ansible.builtin.template:
+    src: vault-snapshot.sh.j2
+    dest: /usr/local/bin/vault-snapshot.sh
+    owner: root
+    group: root
+    mode: '0750'
+  tags: [vault, install, backup]
+
+- name: Configure cron for Vault snapshots
+  when: vault_enable_backup | bool
+  ansible.builtin.cron:
+    name: "Vault snapshot backup"
+    minute: "0"
+    hour: "*/1"
+    job: "/usr/local/bin/vault-snapshot.sh >> {{ vault_log_path }}/snapshot.log 2>&1"
+    user: root
+  tags: [vault, install, backup]
+
+- name: Display installation summary
+  ansible.builtin.debug:
+    msg:
+      - "Vault {{ vault_version }} installation completed"
+      - "API Address: {{ vault_api_addr }}"
+      - "Cluster Address: {{ vault_cluster_addr }}"
+      - "Configuration: {{ vault_config_path }}/vault.hcl"
+      - "Data Path: {{ vault_data_path }}"
+      - "Log Path: {{ vault_log_path }}"
+      - "Next Steps: Initialize and unseal Vault"
+  tags: [vault, install]
+
+- name: Cleanup temporary files
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - "/tmp/vault_{{ vault_version }}.zip"
+    - "/tmp/vault_{{ vault_version }}_SHA256SUMS"
+  tags: [vault, install, cleanup]

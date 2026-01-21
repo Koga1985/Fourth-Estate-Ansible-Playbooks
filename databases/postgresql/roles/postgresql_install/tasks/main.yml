@@ -1,2 +1,290 @@
 ---
 # tasks file for postgresql_install
+# Production-ready PostgreSQL 15+ installation for Fourth Estate agencies
+# Supports RHEL/CentOS 8/9, Ubuntu 20.04/22.04
+
+- name: Set OS-specific variables
+  include_vars: "{{ ansible_os_family }}.yml"
+  when: ansible_os_family in ['RedHat', 'Debian']
+
+- name: Install PostgreSQL repository (RedHat)
+  when: ansible_os_family == 'RedHat'
+  block:
+    - name: Install PostgreSQL repository RPM
+      ansible.builtin.yum:
+        name: "https://download.postgresql.org/pub/repos/yum/reporpms/EL-{{ ansible_distribution_major_version }}-x86_64/pgdg-redhat-repo-latest.noarch.rpm"
+        state: present
+        disable_gpg_check: false
+      register: repo_install
+      until: repo_install is succeeded
+      retries: 3
+      delay: 5
+
+    - name: Disable default PostgreSQL module (RHEL 8+)
+      ansible.builtin.command: dnf -qy module disable postgresql
+      when: ansible_distribution_major_version | int >= 8
+      changed_when: false
+      failed_when: false
+
+- name: Install PostgreSQL repository (Debian)
+  when: ansible_os_family == 'Debian'
+  block:
+    - name: Install required packages
+      ansible.builtin.apt:
+        name:
+          - gnupg
+          - ca-certificates
+          - wget
+        state: present
+        update_cache: true
+
+    - name: Add PostgreSQL GPG key
+      ansible.builtin.apt_key:
+        url: https://www.postgresql.org/media/keys/ACCC4CF8.asc
+        state: present
+
+    - name: Add PostgreSQL repository
+      ansible.builtin.apt_repository:
+        repo: "deb http://apt.postgresql.org/pub/repos/apt {{ ansible_distribution_release }}-pgdg main"
+        state: present
+        filename: pgdg
+
+    - name: Update apt cache
+      ansible.builtin.apt:
+        update_cache: true
+
+- name: Install PostgreSQL packages
+  ansible.builtin.package:
+    name: "{{ postgresql_packages }}"
+    state: present
+  register: pg_install
+  until: pg_install is succeeded
+  retries: 3
+  delay: 5
+
+- name: Install PostgreSQL contrib packages
+  ansible.builtin.package:
+    name: "{{ postgresql_contrib_packages }}"
+    state: present
+
+- name: Install pgAudit extension for compliance
+  ansible.builtin.package:
+    name: "{{ postgresql_pgaudit_package }}"
+    state: present
+
+- name: Install Python PostgreSQL library
+  ansible.builtin.package:
+    name: "{{ postgresql_python_package }}"
+    state: present
+
+- name: Create PostgreSQL system group
+  ansible.builtin.group:
+    name: postgres
+    state: present
+    system: true
+
+- name: Create PostgreSQL system user
+  ansible.builtin.user:
+    name: postgres
+    group: postgres
+    system: true
+    shell: /bin/bash
+    home: "{{ postgresql_home_directory }}"
+    create_home: true
+    comment: "PostgreSQL Server"
+
+- name: Create PostgreSQL data directory
+  ansible.builtin.file:
+    path: "{{ postgresql_data_directory }}"
+    state: directory
+    owner: postgres
+    group: postgres
+    mode: '0700'
+
+- name: Create PostgreSQL log directory
+  ansible.builtin.file:
+    path: "{{ postgresql_log_directory }}"
+    state: directory
+    owner: postgres
+    group: postgres
+    mode: '0755'
+
+- name: Create PostgreSQL backup directory
+  ansible.builtin.file:
+    path: "{{ postgresql_backup_directory }}"
+    state: directory
+    owner: postgres
+    group: postgres
+    mode: '0700'
+
+- name: Create PostgreSQL WAL archive directory
+  ansible.builtin.file:
+    path: "{{ postgresql_wal_archive_directory }}"
+    state: directory
+    owner: postgres
+    group: postgres
+    mode: '0700'
+
+- name: Create PostgreSQL tablespace directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: postgres
+    group: postgres
+    mode: '0700'
+  loop: "{{ postgresql_tablespace_directories }}"
+  when: postgresql_tablespace_directories is defined
+
+- name: Check if PostgreSQL database is initialized
+  ansible.builtin.stat:
+    path: "{{ postgresql_data_directory }}/PG_VERSION"
+  register: pg_initialized
+
+- name: Initialize PostgreSQL database cluster
+  ansible.builtin.command: >
+    {{ postgresql_bin_path }}/initdb
+    -D {{ postgresql_data_directory }}
+    --encoding={{ postgresql_encoding }}
+    --locale={{ postgresql_locale }}
+    --auth-local=peer
+    --auth-host=scram-sha-256
+    --data-checksums
+    --pwfile=/dev/stdin
+  args:
+    creates: "{{ postgresql_data_directory }}/PG_VERSION"
+  become: true
+  become_user: postgres
+  when: not pg_initialized.stat.exists
+  register: pg_initdb
+  no_log: true
+  vars:
+    ansible_stdin: "{{ postgresql_initial_password }}"
+
+- name: Set PostgreSQL systemd service file
+  ansible.builtin.template:
+    src: postgresql.service.j2
+    dest: "/etc/systemd/system/postgresql-{{ postgresql_version }}.service"
+    owner: root
+    group: root
+    mode: '0644'
+  notify: reload systemd
+  when: ansible_service_mgr == 'systemd'
+
+- name: Create PostgreSQL environment file
+  ansible.builtin.template:
+    src: postgresql_env.j2
+    dest: "{{ postgresql_home_directory }}/.pgsql_profile"
+    owner: postgres
+    group: postgres
+    mode: '0644'
+
+- name: Configure kernel parameters for PostgreSQL
+  ansible.posix.sysctl:
+    name: "{{ item.name }}"
+    value: "{{ item.value }}"
+    state: present
+    sysctl_file: /etc/sysctl.d/99-postgresql.conf
+    reload: true
+  loop:
+    - { name: 'vm.swappiness', value: '1' }
+    - { name: 'vm.overcommit_memory', value: '2' }
+    - { name: 'vm.dirty_ratio', value: '10' }
+    - { name: 'vm.dirty_background_ratio', value: '5' }
+    - { name: 'kernel.shmmax', value: "{{ (ansible_memtotal_mb * 1024 * 1024 * 0.5) | int }}" }
+    - { name: 'kernel.shmall', value: "{{ ((ansible_memtotal_mb * 1024 * 1024 * 0.5) / 4096) | int }}" }
+  when: postgresql_configure_kernel_parameters
+
+- name: Configure resource limits for postgres user
+  community.general.pam_limits:
+    domain: postgres
+    limit_type: "{{ item.type }}"
+    limit_item: "{{ item.item }}"
+    value: "{{ item.value }}"
+  loop:
+    - { type: 'soft', item: 'nofile', value: '65536' }
+    - { type: 'hard', item: 'nofile', value: '65536' }
+    - { type: 'soft', item: 'nproc', value: '16384' }
+    - { type: 'hard', item: 'nproc', value: '16384' }
+    - { type: 'soft', item: 'memlock', value: 'unlimited' }
+    - { type: 'hard', item: 'memlock', value: 'unlimited' }
+
+- name: Enable and start PostgreSQL service
+  ansible.builtin.service:
+    name: "postgresql-{{ postgresql_version }}"
+    state: started
+    enabled: true
+  when: postgresql_service_enabled
+
+- name: Wait for PostgreSQL to be ready
+  ansible.builtin.wait_for:
+    port: "{{ postgresql_port }}"
+    host: "{{ postgresql_listen_addresses | default('localhost') }}"
+    timeout: 60
+    delay: 5
+  when: postgresql_service_enabled
+
+- name: Create PostgreSQL service health check script
+  ansible.builtin.template:
+    src: pg_healthcheck.sh.j2
+    dest: /usr/local/bin/pg_healthcheck.sh
+    owner: postgres
+    group: postgres
+    mode: '0755'
+
+- name: Configure SELinux for PostgreSQL (if enabled)
+  when:
+    - ansible_selinux.status == 'enabled'
+    - ansible_os_family == 'RedHat'
+  block:
+    - name: Install policycoreutils-python
+      ansible.builtin.package:
+        name: "{{ 'policycoreutils-python-utils' if ansible_distribution_major_version | int >= 8 else 'policycoreutils-python' }}"
+        state: present
+
+    - name: Set SELinux context for PostgreSQL data directory
+      community.general.sefcontext:
+        target: "{{ postgresql_data_directory }}(/.*)?"
+        setype: postgresql_db_t
+        state: present
+
+    - name: Apply SELinux file context
+      ansible.builtin.command: "restorecon -Rv {{ postgresql_data_directory }}"
+      changed_when: false
+
+    - name: Allow PostgreSQL to use custom port
+      community.general.seport:
+        ports: "{{ postgresql_port }}"
+        proto: tcp
+        setype: postgresql_port_t
+        state: present
+      when: postgresql_port != 5432
+
+- name: Configure firewall for PostgreSQL
+  ansible.posix.firewalld:
+    port: "{{ postgresql_port }}/tcp"
+    permanent: true
+    state: enabled
+    immediate: true
+  when:
+    - postgresql_configure_firewall
+    - ansible_os_family == 'RedHat'
+  failed_when: false
+
+- name: Create PostgreSQL log rotation configuration
+  ansible.builtin.template:
+    src: postgresql_logrotate.j2
+    dest: /etc/logrotate.d/postgresql
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Display PostgreSQL installation summary
+  ansible.builtin.debug:
+    msg:
+      - "PostgreSQL {{ postgresql_version }} installation completed"
+      - "Data Directory: {{ postgresql_data_directory }}"
+      - "Port: {{ postgresql_port }}"
+      - "Log Directory: {{ postgresql_log_directory }}"
+      - "Backup Directory: {{ postgresql_backup_directory }}"
+      - "SCRAM-SHA-256 authentication enabled"
+      - "Data checksums enabled"
