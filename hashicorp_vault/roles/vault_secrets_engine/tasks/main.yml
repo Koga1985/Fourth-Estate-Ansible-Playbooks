@@ -1,1 +1,116 @@
 ---
+# HashiCorp Vault Secrets Engine Tasks
+# Fourth Estate Production Configuration
+
+- name: Enable KV v2 secrets engines
+  community.hashi_vault.vault_write:
+    url: "{{ vault_api_addr }}"
+    ca_cert: "{{ vault_tls_ca_file }}"
+    token: "{{ vault_root_token }}"
+    path: "sys/mounts/{{ item.path }}"
+    data:
+      type: kv-v2
+      description: "{{ item.description }}"
+      config:
+        max_versions: "{{ item.max_versions }}"
+        cas_required: "{{ item.cas_required }}"
+        delete_version_after: "{{ item.delete_version_after }}"
+  loop: "{{ vault_kv_engines }}"
+  when: vault_root_token is defined
+  tags: [vault, secrets, kv]
+
+- name: Enable SSH secrets engines
+  community.hashi_vault.vault_write:
+    url: "{{ vault_api_addr }}"
+    ca_cert: "{{ vault_tls_ca_file }}"
+    token: "{{ vault_root_token }}"
+    path: "sys/mounts/{{ item.path }}"
+    data:
+      type: ssh
+      description: "{{ item.description }}"
+  loop: "{{ vault_ssh_engines }}"
+  when: vault_root_token is defined
+  tags: [vault, secrets, ssh]
+
+- name: Generate SSH CA key
+  when:
+    - vault_ssh_ca_generate | bool
+    - vault_root_token is defined
+  block:
+    - name: Generate SSH CA for each engine
+      community.hashi_vault.vault_write:
+        url: "{{ vault_api_addr }}"
+        ca_cert: "{{ vault_tls_ca_file }}"
+        token: "{{ vault_root_token }}"
+        path: "{{ item.path }}/config/ca"
+        data:
+          generate_signing_key: true
+          key_type: "{{ vault_ssh_ca_key_type }}"
+          key_bits: "{{ vault_ssh_ca_key_bits }}"
+      loop: "{{ vault_ssh_engines }}"
+
+    - name: Configure SSH CA roles
+      community.hashi_vault.vault_write:
+        url: "{{ vault_api_addr }}"
+        ca_cert: "{{ vault_tls_ca_file }}"
+        token: "{{ vault_root_token }}"
+        path: "{{ item.0.path }}/roles/{{ item.1.name }}"
+        data:
+          key_type: "ca"
+          ttl: "{{ item.1.ttl | default(item.0.ttl) }}"
+          max_ttl: "{{ item.1.max_ttl | default(item.0.max_ttl) }}"
+          allowed_users: "{{ item.1.allowed_users | default(item.0.allowed_users) }}"
+          default_user: "{{ item.1.default_user | default(item.0.default_user) }}"
+          allow_user_certificates: true
+      loop: "{{ vault_ssh_engines | subelements('roles', skip_missing=True) }}"
+
+  tags: [vault, secrets, ssh, ca]
+
+- name: Enable TOTP secrets engines
+  community.hashi_vault.vault_write:
+    url: "{{ vault_api_addr }}"
+    ca_cert: "{{ vault_tls_ca_file }}"
+    token: "{{ vault_root_token }}"
+    path: "sys/mounts/{{ item.path }}"
+    data:
+      type: totp
+      description: "{{ item.description }}"
+  loop: "{{ vault_totp_engines }}"
+  when: vault_root_token is defined
+  tags: [vault, secrets, totp]
+
+- name: Create namespaces (Enterprise)
+  when:
+    - vault_enterprise | default(false) | bool
+    - vault_secrets_namespaces | length > 0
+    - vault_root_token is defined
+  block:
+    - name: Create namespace
+      ansible.builtin.uri:
+        url: "{{ vault_api_addr }}/v1/sys/namespaces/{{ item.name }}"
+        method: POST
+        headers:
+          X-Vault-Token: "{{ vault_root_token }}"
+        validate_certs: false
+        status_code: [200, 204]
+      loop: "{{ vault_secrets_namespaces }}"
+
+  tags: [vault, secrets, namespaces]
+
+- name: List enabled secrets engines
+  community.hashi_vault.vault_read:
+    url: "{{ vault_api_addr }}"
+    ca_cert: "{{ vault_tls_ca_file }}"
+    token: "{{ vault_root_token }}"
+    path: "sys/mounts"
+  register: vault_mounts
+  when: vault_root_token is defined
+  tags: [vault, secrets, list]
+
+- name: Display enabled secrets engines
+  ansible.builtin.debug:
+    msg: "Enabled secrets engines: {{ vault_mounts.data.keys() | list }}"
+  when:
+    - vault_mounts is defined
+    - vault_mounts.data is defined
+  tags: [vault, secrets, list]

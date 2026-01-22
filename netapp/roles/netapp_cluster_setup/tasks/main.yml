@@ -1,0 +1,334 @@
+---
+# tasks file for netapp_cluster_setup
+# NetApp ONTAP Cluster Setup and Configuration
+# Fourth Estate Production-Ready Implementation
+
+- name: Install NetApp ONTAP collection
+  ansible.builtin.command:
+    cmd: ansible-galaxy collection install netapp.ontap --force
+  delegate_to: localhost
+  run_once: true
+  changed_when: false
+  when: netapp_cluster_install_collection | bool
+
+- name: Verify cluster accessibility
+  netapp.ontap.na_ontap_info:
+    hostname: "{{ netapp_cluster_hostname }}"
+    username: "{{ netapp_cluster_username }}"
+    password: "{{ netapp_cluster_password }}"
+    https: true
+    validate_certs: "{{ netapp_cluster_validate_certs }}"
+    gather_subset:
+      - cluster_identity_info
+  register: cluster_info
+  delegate_to: localhost
+
+- name: Display cluster information
+  ansible.builtin.debug:
+    msg: "Cluster Name: {{ cluster_info.ontap_info.cluster_identity_info.cluster_name }}, Version: {{ cluster_info.ontap_info.cluster_identity_info.version }}"
+  when: netapp_cluster_debug | bool
+
+- name: Configure cluster name
+  netapp.ontap.na_ontap_cluster:
+    hostname: "{{ netapp_cluster_hostname }}"
+    username: "{{ netapp_cluster_username }}"
+    password: "{{ netapp_cluster_password }}"
+    https: true
+    validate_certs: "{{ netapp_cluster_validate_certs }}"
+    state: present
+    cluster_name: "{{ netapp_cluster_name }}"
+  delegate_to: localhost
+  when: netapp_cluster_name is defined
+
+- name: Configure cluster contact information
+  netapp.ontap.na_ontap_cluster:
+    hostname: "{{ netapp_cluster_hostname }}"
+    username: "{{ netapp_cluster_username }}"
+    password: "{{ netapp_cluster_password }}"
+    https: true
+    validate_certs: "{{ netapp_cluster_validate_certs }}"
+    state: present
+    cluster_contact: "{{ netapp_cluster_contact }}"
+    cluster_location: "{{ netapp_cluster_location }}"
+  delegate_to: localhost
+  when:
+    - netapp_cluster_contact is defined
+    - netapp_cluster_location is defined
+
+- name: Configure DNS settings
+  netapp.ontap.na_ontap_dns:
+    hostname: "{{ netapp_cluster_hostname }}"
+    username: "{{ netapp_cluster_username }}"
+    password: "{{ netapp_cluster_password }}"
+    https: true
+    validate_certs: "{{ netapp_cluster_validate_certs }}"
+    state: present
+    vserver: "{{ netapp_cluster_name }}"
+    domains: "{{ netapp_cluster_dns_domains }}"
+    nameservers: "{{ netapp_cluster_dns_nameservers }}"
+  delegate_to: localhost
+  when: netapp_cluster_configure_dns | bool
+
+- name: Configure NTP servers
+  netapp.ontap.na_ontap_ntp:
+    hostname: "{{ netapp_cluster_hostname }}"
+    username: "{{ netapp_cluster_username }}"
+    password: "{{ netapp_cluster_password }}"
+    https: true
+    validate_certs: "{{ netapp_cluster_validate_certs }}"
+    state: present
+    server_name: "{{ item }}"
+  delegate_to: localhost
+  loop: "{{ netapp_cluster_ntp_servers }}"
+  when: netapp_cluster_configure_ntp | bool
+
+- name: Configure timezone
+  netapp.ontap.na_ontap_command:
+    hostname: "{{ netapp_cluster_hostname }}"
+    username: "{{ netapp_cluster_username }}"
+    password: "{{ netapp_cluster_password }}"
+    https: true
+    validate_certs: "{{ netapp_cluster_validate_certs }}"
+    command: ['cluster', 'date', 'modify', '-timezone', '{{ netapp_cluster_timezone }}']
+  delegate_to: localhost
+  when: netapp_cluster_timezone is defined
+  changed_when: true
+
+- name: Create aggregates
+  netapp.ontap.na_ontap_aggregate:
+    hostname: "{{ netapp_cluster_hostname }}"
+    username: "{{ netapp_cluster_username }}"
+    password: "{{ netapp_cluster_password }}"
+    https: true
+    validate_certs: "{{ netapp_cluster_validate_certs }}"
+    state: present
+    name: "{{ item.name }}"
+    nodes: "{{ item.nodes }}"
+    disk_count: "{{ item.disk_count }}"
+    raid_type: "{{ item.raid_type | default('raid_dp') }}"
+    raid_size: "{{ item.raid_size | default(omit) }}"
+    is_mirrored: "{{ item.is_mirrored | default(false) }}"
+    snaplock_type: "{{ item.snaplock_type | default(omit) }}"
+    encryption: "{{ item.encryption | default(netapp_cluster_aggregate_encryption) }}"
+  delegate_to: localhost
+  loop: "{{ netapp_cluster_aggregates }}"
+  when: netapp_cluster_create_aggregates | bool
+  notify: validate aggregate status
+
+- name: Configure AutoSupport
+  netapp.ontap.na_ontap_autosupport:
+    hostname: "{{ netapp_cluster_hostname }}"
+    username: "{{ netapp_cluster_username }}"
+    password: "{{ netapp_cluster_password }}"
+    https: true
+    validate_certs: "{{ netapp_cluster_validate_certs }}"
+    node_name: "{{ item }}"
+    state: present
+    mail_hosts: "{{ netapp_cluster_autosupport_mail_hosts }}"
+    noteto: "{{ netapp_cluster_autosupport_noteto }}"
+    from_address: "{{ netapp_cluster_autosupport_from }}"
+    support: "{{ netapp_cluster_autosupport_support }}"
+    transport: "{{ netapp_cluster_autosupport_transport }}"
+    is_enabled: true
+  delegate_to: localhost
+  loop: "{{ netapp_cluster_nodes }}"
+  when: netapp_cluster_configure_autosupport | bool
+
+- name: Configure SNMP
+  netapp.ontap.na_ontap_snmp:
+    hostname: "{{ netapp_cluster_hostname }}"
+    username: "{{ netapp_cluster_username }}"
+    password: "{{ netapp_cluster_password }}"
+    https: true
+    validate_certs: "{{ netapp_cluster_validate_certs }}"
+    state: present
+    community_name: "{{ netapp_cluster_snmp_community }}"
+    access_control: "{{ netapp_cluster_snmp_access_control }}"
+  delegate_to: localhost
+  when: netapp_cluster_configure_snmp | bool
+
+- name: Configure SNMP traphost
+  netapp.ontap.na_ontap_snmp_traphosts:
+    hostname: "{{ netapp_cluster_hostname }}"
+    username: "{{ netapp_cluster_username }}"
+    password: "{{ netapp_cluster_password }}"
+    https: true
+    validate_certs: "{{ netapp_cluster_validate_certs }}"
+    state: present
+    ip_address: "{{ item }}"
+  delegate_to: localhost
+  loop: "{{ netapp_cluster_snmp_traphosts }}"
+  when:
+    - netapp_cluster_configure_snmp | bool
+    - netapp_cluster_snmp_traphosts | length > 0
+
+- name: Configure cluster peer relationships
+  netapp.ontap.na_ontap_cluster_peer:
+    hostname: "{{ netapp_cluster_hostname }}"
+    username: "{{ netapp_cluster_username }}"
+    password: "{{ netapp_cluster_password }}"
+    https: true
+    validate_certs: "{{ netapp_cluster_validate_certs }}"
+    state: present
+    source_intercluster_lifs: "{{ item.source_intercluster_lifs }}"
+    dest_intercluster_lifs: "{{ item.dest_intercluster_lifs }}"
+    passphrase: "{{ item.passphrase }}"
+    dest_hostname: "{{ item.dest_hostname }}"
+    dest_username: "{{ item.dest_username | default(netapp_cluster_username) }}"
+    dest_password: "{{ item.dest_password | default(netapp_cluster_password) }}"
+    encryption_protocol_proposed: "{{ item.encryption_protocol | default('tls_psk') }}"
+  delegate_to: localhost
+  loop: "{{ netapp_cluster_peer_relationships }}"
+  when: netapp_cluster_configure_peer | bool
+  no_log: true
+
+- name: Create broadcast domains
+  netapp.ontap.na_ontap_broadcast_domain:
+    hostname: "{{ netapp_cluster_hostname }}"
+    username: "{{ netapp_cluster_username }}"
+    password: "{{ netapp_cluster_password }}"
+    https: true
+    validate_certs: "{{ netapp_cluster_validate_certs }}"
+    state: present
+    name: "{{ item.name }}"
+    mtu: "{{ item.mtu | default(1500) }}"
+    ipspace: "{{ item.ipspace | default('Default') }}"
+    ports: "{{ item.ports }}"
+  delegate_to: localhost
+  loop: "{{ netapp_cluster_broadcast_domains }}"
+  when: netapp_cluster_create_broadcast_domains | bool
+
+- name: Configure cluster management interface
+  netapp.ontap.na_ontap_interface:
+    hostname: "{{ netapp_cluster_hostname }}"
+    username: "{{ netapp_cluster_username }}"
+    password: "{{ netapp_cluster_password }}"
+    https: true
+    validate_certs: "{{ netapp_cluster_validate_certs }}"
+    state: present
+    interface_name: "{{ netapp_cluster_mgmt_lif_name }}"
+    home_port: "{{ netapp_cluster_mgmt_home_port }}"
+    home_node: "{{ netapp_cluster_mgmt_home_node }}"
+    address: "{{ netapp_cluster_mgmt_ip }}"
+    netmask: "{{ netapp_cluster_mgmt_netmask }}"
+    role: cluster_mgmt
+    vserver: "{{ netapp_cluster_name }}"
+    firewall_policy: mgmt
+    is_auto_revert: true
+  delegate_to: localhost
+  when: netapp_cluster_configure_mgmt_lif | bool
+
+- name: Create intercluster LIFs
+  netapp.ontap.na_ontap_interface:
+    hostname: "{{ netapp_cluster_hostname }}"
+    username: "{{ netapp_cluster_username }}"
+    password: "{{ netapp_cluster_password }}"
+    https: true
+    validate_certs: "{{ netapp_cluster_validate_certs }}"
+    state: present
+    interface_name: "{{ item.name }}"
+    home_port: "{{ item.home_port }}"
+    home_node: "{{ item.home_node }}"
+    address: "{{ item.address }}"
+    netmask: "{{ item.netmask }}"
+    role: intercluster
+    vserver: "{{ netapp_cluster_name }}"
+    firewall_policy: intercluster
+    is_auto_revert: true
+  delegate_to: localhost
+  loop: "{{ netapp_cluster_intercluster_lifs }}"
+  when: netapp_cluster_create_intercluster_lifs | bool
+
+- name: Configure disk assignment policy
+  netapp.ontap.na_ontap_command:
+    hostname: "{{ netapp_cluster_hostname }}"
+    username: "{{ netapp_cluster_username }}"
+    password: "{{ netapp_cluster_password }}"
+    https: true
+    validate_certs: "{{ netapp_cluster_validate_certs }}"
+    command: ['storage', 'disk', 'option', 'modify', '-node', '{{ item }}', '-autoassign', '{{ netapp_cluster_disk_autoassign }}']
+  delegate_to: localhost
+  loop: "{{ netapp_cluster_nodes }}"
+  when: netapp_cluster_configure_disk_assignment | bool
+  changed_when: true
+
+- name: Enable cluster HA
+  netapp.ontap.na_ontap_command:
+    hostname: "{{ netapp_cluster_hostname }}"
+    username: "{{ netapp_cluster_username }}"
+    password: "{{ netapp_cluster_password }}"
+    https: true
+    validate_certs: "{{ netapp_cluster_validate_certs }}"
+    command: ['cluster', 'ha', 'modify', '-configured', 'true']
+  delegate_to: localhost
+  when: netapp_cluster_enable_ha | bool
+  changed_when: true
+
+- name: Configure service processor network
+  netapp.ontap.na_ontap_service_processor_network:
+    hostname: "{{ netapp_cluster_hostname }}"
+    username: "{{ netapp_cluster_username }}"
+    password: "{{ netapp_cluster_password }}"
+    https: true
+    validate_certs: "{{ netapp_cluster_validate_certs }}"
+    state: present
+    node: "{{ item.node }}"
+    address_type: ipv4
+    is_enabled: true
+    dhcp: "{{ item.dhcp | default('none') }}"
+    ip_address: "{{ item.ip_address }}"
+    netmask: "{{ item.netmask }}"
+    gateway_ip_address: "{{ item.gateway }}"
+  delegate_to: localhost
+  loop: "{{ netapp_cluster_sp_network }}"
+  when: netapp_cluster_configure_sp | bool
+
+- name: Configure licenses
+  netapp.ontap.na_ontap_license:
+    hostname: "{{ netapp_cluster_hostname }}"
+    username: "{{ netapp_cluster_username }}"
+    password: "{{ netapp_cluster_password }}"
+    https: true
+    validate_certs: "{{ netapp_cluster_validate_certs }}"
+    state: present
+    license_codes: "{{ netapp_cluster_licenses }}"
+  delegate_to: localhost
+  when:
+    - netapp_cluster_configure_licenses | bool
+    - netapp_cluster_licenses | length > 0
+  no_log: true
+
+- name: Configure system node settings
+  netapp.ontap.na_ontap_command:
+    hostname: "{{ netapp_cluster_hostname }}"
+    username: "{{ netapp_cluster_username }}"
+    password: "{{ netapp_cluster_password }}"
+    https: true
+    validate_certs: "{{ netapp_cluster_validate_certs }}"
+    command: ['system', 'node', 'modify', '-node', '{{ item.node }}', '-location', '{{ item.location }}', '-asset-tag', '{{ item.asset_tag | default(omit) }}']
+  delegate_to: localhost
+  loop: "{{ netapp_cluster_node_settings }}"
+  when: netapp_cluster_configure_node_settings | bool
+  changed_when: true
+
+- name: Verify cluster health
+  netapp.ontap.na_ontap_info:
+    hostname: "{{ netapp_cluster_hostname }}"
+    username: "{{ netapp_cluster_username }}"
+    password: "{{ netapp_cluster_password }}"
+    https: true
+    validate_certs: "{{ netapp_cluster_validate_certs }}"
+    gather_subset:
+      - cluster_node_info
+      - aggregate_info
+      - net_interface_info
+  register: cluster_health_check
+  delegate_to: localhost
+  when: netapp_cluster_verify_health | bool
+
+- name: Display cluster health status
+  ansible.builtin.debug:
+    msg: "Cluster setup completed. Nodes: {{ cluster_health_check.ontap_info.cluster_node_info | length }}, Aggregates: {{ cluster_health_check.ontap_info.aggregate_info | length }}"
+  when:
+    - netapp_cluster_verify_health | bool
+    - netapp_cluster_debug | bool

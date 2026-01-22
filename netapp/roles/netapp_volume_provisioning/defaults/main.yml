@@ -1,0 +1,146 @@
+---
+# defaults file for netapp_volume_provisioning
+# NetApp ONTAP Volume Provisioning Configuration
+# Fourth Estate Production Environment
+
+# Connection settings
+netapp_volume_hostname: "{{ vault_netapp_cluster_hostname | default('netapp-cluster.example.com') }}"
+netapp_volume_username: "{{ vault_netapp_cluster_username | default('admin') }}"
+netapp_volume_password: "{{ vault_netapp_cluster_password }}"
+netapp_volume_validate_certs: true
+
+# SVM configuration
+netapp_volume_svm: "svm_prod"
+
+# Default volume settings
+netapp_volume_default_aggregate: "aggr1_netapp01_SAS"
+netapp_volume_security_style: "unix"
+netapp_volume_space_guarantee: "none"  # Thin provisioning
+netapp_volume_snapshot_reserve: 5  # Percentage
+netapp_volume_snapshot_policy: "default"
+netapp_volume_tiering_policy: "none"  # Options: none, snapshot-only, auto, all
+netapp_volume_encryption: true  # Enable NVE
+
+# FlexVol provisioning
+netapp_volume_create_flexvols: true
+netapp_volume_flexvols:
+  - name: "vol_nfs_prod01"
+    aggregate: "aggr1_netapp01_SAS"
+    size: 500
+    size_unit: "gb"
+    type: "RW"
+    security_style: "unix"
+    export_policy: "nfs_production"
+    junction_path: "/nfs_prod01"
+    space_guarantee: "none"
+    percent_snapshot_space: 5
+    snapshot_policy: "default"
+    encrypt: true
+    unix_permissions: "0755"
+    comment: "Production NFS volume"
+    qos_policy_group: "pg_standard"
+    enable_efficiency: true
+    enable_autosize: true
+    enable_anti_ransomware: true
+  - name: "vol_cifs_home01"
+    aggregate: "aggr1_netapp02_SAS"
+    size: 1
+    size_unit: "tb"
+    type: "RW"
+    security_style: "ntfs"
+    junction_path: "/cifs_home01"
+    space_guarantee: "none"
+    percent_snapshot_space: 10
+    snapshot_policy: "daily"
+    encrypt: true
+    comment: "CIFS home directories"
+    qos_policy_group: "pg_standard"
+    enable_efficiency: true
+    enable_autosize: true
+
+# FlexGroup provisioning (for scale-out workloads)
+netapp_volume_create_flexgroups: false
+netapp_volume_flexgroups:
+  - name: "fg_analytics01"
+    aggr_list:
+      - "aggr1_netapp01_SAS"
+      - "aggr1_netapp02_SAS"
+    aggr_list_multiplier: 8
+    size: 10
+    size_unit: "tb"
+    security_style: "unix"
+    export_policy: "nfs_production"
+    junction_path: "/analytics01"
+    snapshot_policy: "default"
+    encrypt: true
+    unix_permissions: "0755"
+    comment: "FlexGroup for big data analytics"
+
+# QoS policies
+netapp_volume_create_qos_policies: true
+netapp_volume_qos_policies:
+  - name: "pg_standard"
+    max_throughput: "10000iops"
+  - name: "pg_high_performance"
+    max_throughput: "50000iops"
+    min_throughput: "10000iops"
+  - name: "pg_database"
+    max_throughput: "100000iops"
+    min_throughput: "20000iops"
+  - name: "pg_backup"
+    max_throughput: "5000iops"
+
+# Volume efficiency (deduplication and compression)
+netapp_volume_enable_efficiency: true
+netapp_volume_efficiency_schedule: "daily@0"
+netapp_volume_efficiency_policy: "default"
+netapp_volume_enable_compression: true
+netapp_volume_enable_inline_compression: true
+netapp_volume_enable_inline_dedupe: true
+netapp_volume_enable_data_compaction: true
+
+# Volume autosize configuration
+netapp_volume_enable_autosize: true
+netapp_volume_autosize_mode: "grow_shrink"
+netapp_volume_autosize_grow_threshold: 85
+netapp_volume_autosize_shrink_threshold: 50
+
+# Volume cloning
+netapp_volume_create_clones: false
+netapp_volume_clones: []
+#  - name: "vol_clone_dev01"
+#    parent_volume: "vol_nfs_prod01"
+#    parent_snapshot: "daily.2024-01-01_0010"
+#    junction_path: "/clone_dev01"
+#    space_reserve: "none"
+
+# SnapLock configuration (compliance/governance)
+netapp_volume_enable_snaplock: false
+netapp_volume_snaplock_volumes: []
+#  - name: "vol_compliance01"
+#    retention_period: "30y"  # 30 years
+
+# Anti-ransomware protection (Autonomous Ransomware Protection)
+netapp_volume_enable_anti_ransomware: true
+
+# Volume analytics
+netapp_volume_enable_analytics: false
+
+# Quotas
+netapp_volume_enable_quotas: false
+netapp_volume_quotas: []
+#  - volume: "vol_cifs_home01"
+#    quota_target: "/vol/vol_cifs_home01"
+#    type: "tree"
+#    disk_limit: "100GB"
+#    file_limit: "100000"
+#    soft_disk_limit: "90GB"
+
+# Volume options
+netapp_volume_set_options: true
+
+# Verification
+netapp_volume_verify_provisioning: true
+
+# Debug mode
+netapp_volume_debug: false

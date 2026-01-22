@@ -1,0 +1,462 @@
+---
+# defaults file for fortigate_system_config
+
+# FortiGate connection parameters
+fortigate_host: "{{ ansible_host }}"
+fortigate_username: "{{ vault_fortigate_username | default('admin') }}"
+fortigate_password: "{{ vault_fortigate_password }}"
+fortigate_api_token: "{{ vault_fortigate_api_token | default('') }}"
+fortigate_vdom: "root"
+fortigate_https: true
+fortigate_validate_certs: true
+
+# System hostname and domain
+fortigate_hostname: "{{ inventory_hostname_short }}"
+fortigate_domain: "{{ domain_name | default('gov.local') }}"
+
+# Timezone configuration
+fortigate_timezone: "85"  # US/Eastern (see FortiGate timezone codes)
+
+# DNS servers (Fourth Estate compliance)
+fortigate_dns_primary: "{{ dns_primary | default('10.0.0.10') }}"
+fortigate_dns_secondary: "{{ dns_secondary | default('10.0.0.11') }}"
+
+# NTP servers (DoD/DISA approved)
+fortigate_ntp_servers:
+  - server: "{{ ntp_primary | default('time.nist.gov') }}"
+    ntpv3: "enable"
+    authentication: "disable"
+  - server: "{{ ntp_secondary | default('tick.usno.navy.mil') }}"
+    ntpv3: "enable"
+    authentication: "disable"
+fortigate_ntp_sync_interval: 60
+
+# Admin accounts with RBAC
+fortigate_admin_accounts:
+  - name: "{{ vault_admin_username | default('sysadmin') }}"
+    password: "{{ vault_admin_password }}"
+    trusthost1: "10.0.0.0/8"
+    trusthost2: "172.16.0.0/12"
+    trusthost3: "192.168.0.0/16"
+    accprofile: "super_admin"
+    vdom: "root"
+    comments: "Primary system administrator"
+    force_password_change: "disable"
+
+  - name: "{{ vault_security_username | default('secops') }}"
+    password: "{{ vault_security_password }}"
+    trusthost1: "{{ trusted_mgmt_network | default('10.100.0.0/24') }}"
+    accprofile: "prof_admin"
+    vdom: "root"
+    comments: "Security operations team"
+    force_password_change: "disable"
+
+  - name: "{{ vault_readonly_username | default('monitor') }}"
+    password: "{{ vault_readonly_password }}"
+    trusthost1: "{{ monitoring_network | default('10.200.0.0/24') }}"
+    accprofile: "read_only"
+    vdom: "root"
+    comments: "Read-only monitoring account"
+    force_password_change: "disable"
+
+# SNMP v3 configuration (DISA STIG compliant)
+fortigate_snmp_enabled: true
+fortigate_snmp_v3_users:
+  - name: "{{ vault_snmp_user | default('snmpv3user') }}"
+    security_level: "auth_priv"
+    auth_proto: "sha256"
+    auth_pwd: "{{ vault_snmp_auth_password }}"
+    priv_proto: "aes256"
+    priv_pwd: "{{ vault_snmp_priv_password }}"
+    queries: "enable"
+    query_v1_status: "disable"
+    query_v2c_status: "disable"
+    events: "cpu_high mem_low log_full intf_ip vpn_tun_up vpn_tun_down ha_switch ha_hb_failure"
+
+fortigate_snmp_community:
+  - id: 1
+    name: "{{ vault_snmp_community | default('public') }}"
+    status: "disable"  # Disabled for security - use SNMPv3
+    hosts:
+      - id: 1
+        ip: "{{ snmp_server | default('10.200.0.100/32') }}"
+
+# Global system settings
+fortigate_global_settings:
+  admin_concurrent: "enable"
+  admin_console_timeout: 300
+  admin_https_pki_required: "enable"
+  admin_https_redirect: "enable"
+  admin_lockout_duration: 300
+  admin_lockout_threshold: 5
+  admin_login_max: 100
+  admin_maintainer: "enable"
+  admin_port: 443
+  admin_restrict_local: "disable"
+  admin_scp: "enable"
+  admin_server_cert: "Fortinet_Factory"
+  admin_sport: 22
+  admin_ssh_grace_time: 120
+  admin_ssh_password: "enable"
+  admin_ssh_port: 22
+  admin_ssh_v1: "disable"
+  admin_telnet: "disable"
+  admin_telnet_port: 23
+  admintimeout: 300
+  alias: "{{ fortigate_hostname }}"
+  allow_traffic_redirect: "disable"
+  anti_replay: "strict"
+  arp_max_entry: 131072
+  asymroute: "disable"
+  auth_cert: "Fortinet_Factory"
+  auth_http_port: 1000
+  auth_https_port: 1003
+  auth_keepalive: "disable"
+  auth_session_limit: "block_new"
+  auto_auth_extension_device: "disable"
+  autorun_log_fsck: "enable"
+  av_affinity: "0"
+  av_failopen: "pass"
+  av_failopen_session: "disable"
+  batch_cmdb: "enable"
+  block_session_timer: 30
+  br_fdb_max_entry: 8192
+  cert_chain_max: 8
+  cfg_revert_timeout: 600
+  cfg_save: "automatic"
+  check_protocol_header: "loose"
+  check_reset_range: "strict"
+  cli_audit_log: "enable"
+  cloud_communication: "disable"
+  clt_cert_req: "disable"
+  cmdbsvr_affinity: "0"
+  cpu_use_threshold: 90
+  csr_ca_attribute: "enable"
+  daily_restart: "disable"
+  default_service_source_port: "1-65535"
+  device_identification_active_scan_delay: 90
+  device_idle_timeout: 300
+  dh_params: 2048
+  dnsproxy_worker_count: 4
+  dst: "enable"
+  endpoint_control_fds_access: "enable"
+  endpoint_control_portal_port: 8013
+  extender_controller_reserved_network: "192.168.222.0/24"
+  failtime: 5
+  faz_disk_buffer_size: 0
+  fds_statistics: "enable"
+  fds_statistics_period: 60
+  fec_port: 49152
+  fgd_alert_subscription: "advisory latest_threat"
+  fortiextender: "disable"
+  fortiextender_data_port: 25246
+  fortiextender_vlan_mode: "disable"
+  fortiservice_port: 8013
+  fortitoken_cloud: "disable"
+  gui_allow_default_hostname: "disable"
+  gui_certificates: "enable"
+  gui_custom_language: "disable"
+  gui_date_format: "MM/DD/YYYY"
+  gui_date_time_source: "system"
+  gui_device_latitude: ""
+  gui_device_longitude: ""
+  gui_display_hostname: "enable"
+  gui_firmware_upgrade_warning: "enable"
+  gui_forticare_registration_setup_warning: "enable"
+  gui_fortigate_cloud_sandbox: "disable"
+  gui_fortisandbox_cloud: "disable"
+  gui_ipv6: "enable"
+  gui_lines_per_page: 1000
+  gui_theme: "blue"
+  gui_wireless_opensecurity: "disable"
+  honor_df: "enable"
+  hostname: "{{ fortigate_hostname }}"
+  igmp_state_limit: 96
+  ike_embryonic_limit: 10000
+  ike_quick_crash_detect: "enable"
+  ike_session_resume: "enable"
+  implicit_allow_dns: "enable"
+  internet_service_database: "mini"
+  interval: 5
+  ip_src_port_range: "1024-65535"
+  ips_affinity: "0"
+  ipsec_asic_offload: "enable"
+  ipsec_hmac_offload: "enable"
+  ipsec_soft_dec_async: "enable"
+  ipv6_accept_dad: 1
+  ipv6_allow_anycast_probe: "disable"
+  language: "english"
+  ldapconntimeout: 2000
+  lldp_reception: "enable"
+  lldp_transmission: "enable"
+  log_ssl_connection: "enable"
+  log_uuid_address: "enable"
+  log_uuid_policy: "enable"
+  login_timestamp: "enable"
+  long_vdom_name: "disable"
+  management_vdom: "root"
+  max_dlpstat_memory: 8192
+  max_route_cache_size: 0
+  memory_use_threshold_extreme: 95
+  memory_use_threshold_green: 82
+  memory_use_threshold_red: 88
+  miglog_affinity: "0"
+  miglogd_children: 4
+  multi_factor_authentication: "optional"
+  multicast_forward: "disable"
+  ndp_max_entry: 65536
+  per_user_bwl: "disable"
+  policy_auth_concurrent: 0
+  post_login_banner: "disable"
+  pre_login_banner: "enable"
+  private_data_encryption: "enable"
+  proxy_auth_lifetime: "enable"
+  proxy_auth_lifetime_timeout: 480
+  proxy_auth_timeout: 10
+  proxy_cipher_hardware_acceleration: "disable"
+  proxy_kxp_hardware_acceleration: "disable"
+  proxy_re_authentication_mode: "session"
+  proxy_worker_count: 4
+  radius_port: 1812
+  reboot_upon_config_restore: "disable"
+  refresh: 0
+  remoteauthtimeout: 5
+  reset_sessionless_tcp: "disable"
+  restart_time: "00:00"
+  revision_backup_on_logout: "disable"
+  revision_image_auto_backup: "disable"
+  scanunit_count: 4
+  security_rating_result_submission: "disable"
+  security_rating_run_on_schedule: "disable"
+  send_pmtu_icmp: "enable"
+  snat_route_change: "disable"
+  special_file_23_support: "disable"
+  speedtest_server: "disable"
+  ssd_trim_date: 0
+  ssd_trim_freq: "never"
+  ssd_trim_hour: 1
+  ssd_trim_min: 0
+  ssd_trim_weekday: "sunday"
+  ssh_cbc_cipher: "disable"
+  ssh_hmac_md5: "disable"
+  ssh_kex_sha1: "disable"
+  ssh_mac_weak: "disable"
+  ssl_min_proto_version: "TLSv1-2"
+  ssl_static_key_ciphers: "disable"
+  sslvpn_cipher_hardware_acceleration: "enable"
+  sslvpn_kxp_hardware_acceleration: "enable"
+  sslvpn_max_worker_count: 4
+  sslvpn_plugin_version_check: "enable"
+  strict_dirty_session_check: "enable"
+  strong_crypto: "enable"
+  switch_controller: "disable"
+  sync_session_ttl: "enable"
+  tcp_halfclose_timer: 120
+  tcp_halfopen_timer: 10
+  tcp_option: "enable"
+  tcp_timewait_timer: 1
+  tftp: "disable"
+  timezone: "{{ fortigate_timezone }}"
+  traffic_priority: "tos"
+  traffic_priority_level: "medium"
+  two_factor_email_expiry: 60
+  two_factor_fac_expiry: 60
+  two_factor_ftk_expiry: 60
+  two_factor_ftm_expiry: 72
+  two_factor_sms_expiry: 2
+  udp_idle_timer: 60
+  user_device_store_max_devices: 256
+  user_server_cert: "Fortinet_Factory"
+  vdom_admin: "enable"
+  vip_arp_range: "unlimited"
+  wad_affinity: "0"
+  wad_csvc_cs_count: 1
+  wad_csvc_db_count: 1
+  wad_source_affinity: "disable"
+  wad_worker_count: 4
+  wifi_ca_certificate: "Fortinet_CA_SSL"
+  wifi_certificate: "Fortinet_Factory"
+  wimax_4g_usb: "disable"
+  wireless_controller: "disable"
+  wireless_controller_port: 5246
+
+# System performance tuning
+fortigate_performance_tuning:
+  kernel_devicequeue_maxlen: 2048
+  ips_packet_quota: 100
+  session_timeout:
+    default: 3600
+    tcp: 3600
+    udp: 180
+    icmp: 60
+    other: 60
+  session_helper:
+    - id: 1
+      name: "ftp"
+      protocol: 6
+      port: 21
+    - id: 13
+      name: "tftp"
+      protocol: 17
+      port: 69
+    - id: 14
+      name: "ras"
+      protocol: 17
+      port: 1645
+    - id: 19
+      name: "h323"
+      protocol: 17
+      port: 1719
+    - id: 20
+      name: "sip"
+      protocol: 17
+      port: 5060
+
+# Banner configuration (Fourth Estate requirements)
+fortigate_pre_login_banner: |
+  ******************************************************************************
+  *                                                                            *
+  *                   AUTHORIZED ACCESS ONLY                                   *
+  *                                                                            *
+  *  This system is for the use of authorized users only. Individuals using    *
+  *  this computer system without authority, or in excess of their authority,  *
+  *  are subject to having all of their activities on this system monitored    *
+  *  and recorded by system personnel.                                         *
+  *                                                                            *
+  *  In the course of monitoring individuals improperly using this system, or  *
+  *  in the course of system maintenance, the activities of authorized users   *
+  *  may also be monitored.                                                    *
+  *                                                                            *
+  *  Anyone using this system expressly consents to such monitoring and is     *
+  *  advised that if such monitoring reveals possible evidence of criminal     *
+  *  activity, system personnel may provide the evidence of such monitoring    *
+  *  to law enforcement officials.                                             *
+  *                                                                            *
+  ******************************************************************************
+
+fortigate_post_login_banner: ""
+
+# SSH configuration (DISA STIG compliant)
+fortigate_ssh_config:
+  admin_ssh_v1: "disable"
+  admin_scp: "enable"
+  admin_ssh_grace_time: 120
+  admin_ssh_password: "enable"
+  admin_ssh_port: 22
+  ssh_cbc_cipher: "disable"
+  ssh_hmac_md5: "disable"
+  ssh_kex_sha1: "disable"
+  ssh_mac_weak: "disable"
+
+# SSL/TLS configuration (DISA STIG compliant)
+fortigate_ssl_config:
+  admin_https_pki_required: "enable"
+  admin_https_redirect: "enable"
+  admin_server_cert: "Fortinet_Factory"
+  ssl_min_proto_version: "TLSv1-2"
+  ssl_static_key_ciphers: "disable"
+  strong_crypto: "enable"
+
+# Certificate management
+fortigate_certificates: []
+# Example:
+#  - name: "server-cert"
+#    type: "local"
+#    certificate: "{{ lookup('file', 'certs/server.crt') }}"
+#    private_key: "{{ lookup('file', 'certs/server.key') }}"
+#    password: "{{ vault_cert_password }}"
+
+# System interface for management
+fortigate_mgmt_interface: "port1"
+fortigate_mgmt_allowaccess: "https ping ssh snmp"
+
+# Password policy (Fourth Estate compliance)
+fortigate_password_policy:
+  status: "enable"
+  apply_to: "admin_password"
+  minimum_length: 15
+  min_lower_case_letter: 1
+  min_upper_case_letter: 1
+  min_non_alphanumeric: 1
+  min_number: 1
+  change_4_characters: "enable"
+  expire_status: "enable"
+  expire_day: 90
+  reuse_password: "disable"
+
+# Fortiguard settings
+fortigate_fortiguard:
+  protocol: "https"
+  port: 443
+  service_account_id: "{{ vault_fortiguard_account_id | default('') }}"
+  load_balance_servers: 1
+  auto_join_forticloud: "disable"
+  update_server_location: "usa"
+  sandbox_region: "usa"
+  antispam_force_off: "disable"
+  antispam_cache: "enable"
+  antispam_cache_ttl: 1800
+  antispam_cache_mpercent: 2
+  antispam_license: 1
+  antispam_expiration: 0
+  antispam_timeout: 7
+  outbreak_prevention_force_off: "disable"
+  outbreak_prevention_cache: "enable"
+  outbreak_prevention_cache_ttl: 300
+  outbreak_prevention_cache_mpercent: 2
+  outbreak_prevention_license: 1
+  outbreak_prevention_expiration: 0
+  outbreak_prevention_timeout: 7
+  webfilter_force_off: "disable"
+  webfilter_cache: "enable"
+  webfilter_cache_ttl: 3600
+  webfilter_license: 1
+  webfilter_expiration: 0
+  webfilter_timeout: 15
+  sdns_server_ip: "208.91.112.220"
+  sdns_server_port: 53
+  anycast_sdns_server_ip: "0.0.0.0"
+  anycast_sdns_server_port: 53
+  sdns_options: "include_question_section"
+  source_ip: "0.0.0.0"
+  source_ip6: "::"
+  auto_firmware_upgrade: "disable"
+  auto_firmware_upgrade_day: "sunday"
+  auto_firmware_upgrade_delay: 3
+  auto_firmware_upgrade_start_hour: 2
+  auto_firmware_upgrade_end_hour: 4
+
+# Email server for alerts
+fortigate_email_server:
+  server: "{{ smtp_server | default('smtp.gov.local') }}"
+  port: 25
+  source_ip: "0.0.0.0"
+  source_ip6: "::"
+  authenticate: "disable"
+  validate_server: "disable"
+  username: ""
+  password: ""
+  security: "none"
+  ssl_min_proto_version: "default"
+  reply_to: "{{ fortigate_hostname }}@{{ fortigate_domain }}"
+
+# Syslog settings (basic - detailed in logging role)
+fortigate_syslog_enabled: true
+fortigate_syslog_servers:
+  - server: "{{ syslog_server | default('10.200.0.50') }}"
+    port: 514
+    facility: "local7"
+    source_ip: ""
+    format: "rfc5424"
+    mode: "udp"
+    status: "enable"
+
+# Automation stitches for alerting
+fortigate_automation_enabled: true
+
+# Replacement messages
+fortigate_replacement_messages: []
+# Example:
+#  - msg_type: "auth-reject-page"
+#    buffer: "{{ lookup('file', 'templates/auth_reject.html') }}"
+#    format: "html"

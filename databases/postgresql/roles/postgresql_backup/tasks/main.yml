@@ -1,2 +1,187 @@
 ---
 # tasks file for postgresql_backup
+# PostgreSQL backup configuration with pg_dump, pg_basebackup, and automation
+
+- name: Include OS-specific variables
+  include_vars: "{{ ansible_os_family }}.yml"
+  when: ansible_os_family in ['RedHat', 'Debian']
+  failed_when: false
+
+- name: Create backup directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: postgres
+    group: postgres
+    mode: '0700'
+  loop:
+    - "{{ postgresql_backup_directory }}"
+    - "{{ postgresql_backup_directory }}/full"
+    - "{{ postgresql_backup_directory }}/dump"
+    - "{{ postgresql_backup_directory }}/wal"
+    - "{{ postgresql_backup_directory }}/logs"
+
+- name: Create backup retention directory structure
+  ansible.builtin.file:
+    path: "{{ postgresql_backup_directory }}/{{ item }}"
+    state: directory
+    owner: postgres
+    group: postgres
+    mode: '0700'
+  loop:
+    - daily
+    - weekly
+    - monthly
+
+- name: Deploy full backup script (pg_basebackup)
+  ansible.builtin.template:
+    src: pg_full_backup.sh.j2
+    dest: /usr/local/bin/pg_full_backup.sh
+    owner: postgres
+    group: postgres
+    mode: '0750'
+
+- name: Deploy logical backup script (pg_dump/pg_dumpall)
+  ansible.builtin.template:
+    src: pg_logical_backup.sh.j2
+    dest: /usr/local/bin/pg_logical_backup.sh
+    owner: postgres
+    group: postgres
+    mode: '0750'
+
+- name: Deploy backup cleanup script
+  ansible.builtin.template:
+    src: pg_backup_cleanup.sh.j2
+    dest: /usr/local/bin/pg_backup_cleanup.sh
+    owner: postgres
+    group: postgres
+    mode: '0750'
+
+- name: Deploy backup verification script
+  ansible.builtin.template:
+    src: pg_backup_verify.sh.j2
+    dest: /usr/local/bin/pg_backup_verify.sh
+    owner: postgres
+    group: postgres
+    mode: '0750'
+
+- name: Configure WAL archiving for PITR
+  ansible.builtin.lineinfile:
+    path: "{{ postgresql_config_directory }}/postgresql.conf"
+    regexp: "{{ item.regexp }}"
+    line: "{{ item.line }}"
+    state: present
+    owner: postgres
+    group: postgres
+    mode: '0600'
+  loop:
+    - regexp: '^archive_mode = '
+      line: "archive_mode = on"
+    - regexp: '^archive_command = '
+      line: "archive_command = 'test ! -f {{ postgresql_backup_directory }}/wal/%f && cp %p {{ postgresql_backup_directory }}/wal/%f'"
+    - regexp: '^archive_timeout = '
+      line: "archive_timeout = {{ postgresql_archive_timeout | default('300') }}"
+  notify: reload postgresql
+  when: postgresql_enable_wal_archiving | default(true)
+
+- name: Setup automated daily full backups
+  ansible.builtin.cron:
+    name: "PostgreSQL daily full backup"
+    minute: "{{ postgresql_backup_daily_minute | default('0') }}"
+    hour: "{{ postgresql_backup_daily_hour | default('2') }}"
+    user: postgres
+    job: "/usr/local/bin/pg_full_backup.sh daily >> {{ postgresql_backup_directory }}/logs/full_backup.log 2>&1"
+    state: "{{ 'present' if postgresql_enable_daily_backup | default(true) else 'absent' }}"
+
+- name: Setup automated daily logical backups
+  ansible.builtin.cron:
+    name: "PostgreSQL daily logical backup"
+    minute: "{{ postgresql_backup_logical_minute | default('30') }}"
+    hour: "{{ postgresql_backup_logical_hour | default('1') }}"
+    user: postgres
+    job: "/usr/local/bin/pg_logical_backup.sh daily >> {{ postgresql_backup_directory }}/logs/logical_backup.log 2>&1"
+    state: "{{ 'present' if postgresql_enable_logical_backup | default(true) else 'absent' }}"
+
+- name: Setup weekly full backups
+  ansible.builtin.cron:
+    name: "PostgreSQL weekly full backup"
+    minute: "{{ postgresql_backup_weekly_minute | default('0') }}"
+    hour: "{{ postgresql_backup_weekly_hour | default('3') }}"
+    weekday: "{{ postgresql_backup_weekly_day | default('0') }}"
+    user: postgres
+    job: "/usr/local/bin/pg_full_backup.sh weekly >> {{ postgresql_backup_directory }}/logs/full_backup.log 2>&1"
+    state: "{{ 'present' if postgresql_enable_weekly_backup | default(true) else 'absent' }}"
+
+- name: Setup monthly full backups
+  ansible.builtin.cron:
+    name: "PostgreSQL monthly full backup"
+    minute: "{{ postgresql_backup_monthly_minute | default('0') }}"
+    hour: "{{ postgresql_backup_monthly_hour | default('4') }}"
+    day: "{{ postgresql_backup_monthly_day | default('1') }}"
+    user: postgres
+    job: "/usr/local/bin/pg_full_backup.sh monthly >> {{ postgresql_backup_directory }}/logs/full_backup.log 2>&1"
+    state: "{{ 'present' if postgresql_enable_monthly_backup | default(true) else 'absent' }}"
+
+- name: Setup backup cleanup job
+  ansible.builtin.cron:
+    name: "PostgreSQL backup cleanup"
+    minute: "0"
+    hour: "5"
+    user: postgres
+    job: "/usr/local/bin/pg_backup_cleanup.sh >> {{ postgresql_backup_directory }}/logs/cleanup.log 2>&1"
+    state: "{{ 'present' if postgresql_enable_backup_cleanup | default(true) else 'absent' }}"
+
+- name: Setup backup verification job
+  ansible.builtin.cron:
+    name: "PostgreSQL backup verification"
+    minute: "0"
+    hour: "6"
+    weekday: "1"
+    user: postgres
+    job: "/usr/local/bin/pg_backup_verify.sh >> {{ postgresql_backup_directory }}/logs/verification.log 2>&1"
+    state: "{{ 'present' if postgresql_enable_backup_verification | default(true) else 'absent' }}"
+
+- name: Create backup configuration file
+  ansible.builtin.template:
+    src: backup_config.conf.j2
+    dest: "{{ postgresql_backup_directory }}/backup.conf"
+    owner: postgres
+    group: postgres
+    mode: '0600'
+
+- name: Setup backup monitoring and alerting
+  ansible.builtin.template:
+    src: backup_monitor.sh.j2
+    dest: /usr/local/bin/pg_backup_monitor.sh
+    owner: postgres
+    group: postgres
+    mode: '0750'
+
+- name: Configure backup monitoring cron
+  ansible.builtin.cron:
+    name: "PostgreSQL backup monitoring"
+    minute: "*/30"
+    user: postgres
+    job: "/usr/local/bin/pg_backup_monitor.sh >> {{ postgresql_backup_directory }}/logs/monitor.log 2>&1"
+    state: "{{ 'present' if postgresql_enable_backup_monitoring | default(true) else 'absent' }}"
+
+- name: Create .pgpass file for automated backups
+  ansible.builtin.template:
+    src: pgpass.j2
+    dest: "{{ postgresql_home_directory }}/.pgpass"
+    owner: postgres
+    group: postgres
+    mode: '0600'
+  when: postgresql_backup_password is defined
+  no_log: true
+
+- name: Display backup configuration summary
+  ansible.builtin.debug:
+    msg:
+      - "PostgreSQL backup configuration completed"
+      - "Backup Directory: {{ postgresql_backup_directory }}"
+      - "Daily Backups: {{ postgresql_enable_daily_backup | default(true) }}"
+      - "Weekly Backups: {{ postgresql_enable_weekly_backup | default(true) }}"
+      - "Monthly Backups: {{ postgresql_enable_monthly_backup | default(true) }}"
+      - "WAL Archiving: {{ postgresql_enable_wal_archiving | default(true) }}"
+      - "Retention: Daily={{ postgresql_backup_retention_daily }}d, Weekly={{ postgresql_backup_retention_weekly }}w, Monthly={{ postgresql_backup_retention_monthly }}m"

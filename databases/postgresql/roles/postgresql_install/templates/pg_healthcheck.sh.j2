@@ -1,0 +1,43 @@
+#!/bin/bash
+# {{ ansible_managed }}
+# PostgreSQL health check script for monitoring integration
+
+PGDATA="{{ postgresql_data_directory }}"
+PGPORT="{{ postgresql_port }}"
+PGUSER="postgres"
+TIMEOUT=5
+
+# Check if PostgreSQL is running
+if ! pgrep -u postgres postgres > /dev/null 2>&1; then
+    echo "CRITICAL: PostgreSQL process not running"
+    exit 2
+fi
+
+# Check if PostgreSQL is accepting connections
+if ! {{ postgresql_bin_path }}/pg_isready -h localhost -p ${PGPORT} -U ${PGUSER} -t ${TIMEOUT} > /dev/null 2>&1; then
+    echo "CRITICAL: PostgreSQL not accepting connections"
+    exit 2
+fi
+
+# Check replication lag if this is a replica
+IS_REPLICA=$({{ postgresql_bin_path }}/psql -U ${PGUSER} -p ${PGPORT} -t -c "SELECT pg_is_in_recovery();" 2>/dev/null | tr -d '[:space:]')
+if [ "$IS_REPLICA" = "t" ]; then
+    LAG=$({{ postgresql_bin_path }}/psql -U ${PGUSER} -p ${PGPORT} -t -c "SELECT EXTRACT(EPOCH FROM (now() - pg_last_xact_replay_timestamp()));" 2>/dev/null | tr -d '[:space:]')
+    if [ -n "$LAG" ] && [ "$(echo "$LAG > 60" | bc)" -eq 1 ]; then
+        echo "WARNING: Replication lag is ${LAG} seconds"
+        exit 1
+    fi
+fi
+
+# Check disk space
+DISK_USAGE=$(df -h {{ postgresql_data_directory }} | awk 'NR==2 {print $(NF-1)}' | sed 's/%//')
+if [ "$DISK_USAGE" -gt 90 ]; then
+    echo "WARNING: Disk usage at ${DISK_USAGE}%"
+    exit 1
+elif [ "$DISK_USAGE" -gt 95 ]; then
+    echo "CRITICAL: Disk usage at ${DISK_USAGE}%"
+    exit 2
+fi
+
+echo "OK: PostgreSQL {{ postgresql_version }} is healthy"
+exit 0

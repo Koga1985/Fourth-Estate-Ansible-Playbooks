@@ -1,1 +1,148 @@
 ---
+# HashiCorp Vault HA Configuration Tasks
+# Fourth Estate Production Configuration
+
+- name: Validate HA configuration
+  ansible.builtin.assert:
+    that:
+      - vault_ha_enabled | bool
+      - vault_cluster_members | default([]) | length >= 3
+    fail_msg: "HA requires at least 3 cluster members"
+    quiet: true
+  tags: [vault, ha, validate]
+
+- name: Check HA status
+  ansible.builtin.uri:
+    url: "{{ vault_api_addr }}/v1/sys/ha-status"
+    method: GET
+    headers:
+      X-Vault-Token: "{{ vault_root_token }}"
+    validate_certs: false
+  register: ha_status
+  when: vault_root_token is defined
+  tags: [vault, ha, status]
+
+- name: Display HA status
+  ansible.builtin.debug:
+    msg:
+      - "HA Enabled: {{ ha_status.json.ha_enabled | default('N/A') }}"
+      - "Active Node: {{ ha_status.json.leader_address | default('N/A') }}"
+      - "Active Cluster: {{ ha_status.json.cluster_id | default('N/A') }}"
+  when: ha_status is defined and ha_status.json is defined
+  tags: [vault, ha, status]
+
+- name: Configure HAProxy load balancer
+  when:
+    - vault_loadbalancer_enabled | bool
+    - vault_loadbalancer_type == 'haproxy'
+    - inventory_hostname in groups['loadbalancers'] | default([])
+  block:
+    - name: Install HAProxy
+      ansible.builtin.package:
+        name: haproxy
+        state: present
+
+    - name: Configure HAProxy for Vault
+      ansible.builtin.template:
+        src: haproxy.cfg.j2
+        dest: /etc/haproxy/haproxy.cfg
+        owner: root
+        group: root
+        mode: '0644'
+        validate: 'haproxy -f %s -c'
+      notify: restart haproxy
+
+    - name: Enable and start HAProxy
+      ansible.builtin.systemd:
+        name: haproxy
+        enabled: true
+        state: started
+
+  tags: [vault, ha, loadbalancer]
+
+- name: Configure request forwarding
+  when: vault_request_forwarding_enabled | bool
+  ansible.builtin.uri:
+    url: "{{ vault_api_addr }}/v1/sys/config/state/sanitized"
+    method: GET
+    validate_certs: false
+  register: vault_config_state
+  tags: [vault, ha, forwarding]
+
+- name: Enable performance standbys (Enterprise)
+  when:
+    - vault_enterprise | default(false) | bool
+    - vault_performance_standby_enabled | bool
+  block:
+    - name: Configure performance standby
+      ansible.builtin.uri:
+        url: "{{ vault_api_addr }}/v1/sys/replication/performance/primary/enable"
+        method: POST
+        headers:
+          X-Vault-Token: "{{ vault_root_token }}"
+        validate_certs: false
+      when:
+        - vault_is_cluster_primary | default(false) | bool
+        - vault_root_token is defined
+
+  tags: [vault, ha, performance-standby]
+
+- name: Create HA monitoring script
+  when: vault_ha_monitoring_enabled | bool
+  ansible.builtin.template:
+    src: vault-ha-monitor.sh.j2
+    dest: /usr/local/bin/vault-ha-monitor.sh
+    owner: root
+    group: root
+    mode: '0750'
+  tags: [vault, ha, monitoring]
+
+- name: Configure HA monitoring cron
+  when: vault_ha_monitoring_enabled | bool
+  ansible.builtin.cron:
+    name: "Vault HA monitoring"
+    minute: "*/5"
+    job: "/usr/local/bin/vault-ha-monitor.sh >> {{ vault_log_path }}/ha-monitor.log 2>&1"
+    user: root
+  tags: [vault, ha, monitoring]
+
+- name: Create HA backup script
+  when: vault_ha_backup_enabled | bool
+  ansible.builtin.template:
+    src: vault-ha-backup.sh.j2
+    dest: /usr/local/bin/vault-ha-backup.sh
+    owner: root
+    group: root
+    mode: '0750'
+  tags: [vault, ha, backup]
+
+- name: Configure HA backup cron
+  when: vault_ha_backup_enabled | bool
+  ansible.builtin.cron:
+    name: "Vault HA backup"
+    minute: "{{ vault_ha_backup_schedule.split()[0] }}"
+    hour: "{{ vault_ha_backup_schedule.split()[1] }}"
+    job: "/usr/local/bin/vault-ha-backup.sh >> {{ vault_log_path }}/ha-backup.log 2>&1"
+    user: root
+  tags: [vault, ha, backup]
+
+- name: Validate cluster quorum
+  ansible.builtin.uri:
+    url: "{{ vault_api_addr }}/v1/sys/storage/raft/configuration"
+    method: GET
+    headers:
+      X-Vault-Token: "{{ vault_root_token }}"
+    validate_certs: false
+  register: raft_config
+  when:
+    - vault_root_token is defined
+    - vault_storage_type | default('raft') == 'raft'
+  tags: [vault, ha, quorum]
+
+- name: Display quorum status
+  ansible.builtin.debug:
+    msg: "Raft cluster has {{ raft_config.json.data.config.servers | length }} nodes"
+  when:
+    - raft_config is defined
+    - raft_config.json is defined
+  tags: [vault, ha, quorum]

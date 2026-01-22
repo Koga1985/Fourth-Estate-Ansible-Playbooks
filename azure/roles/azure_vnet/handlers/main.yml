@@ -1,0 +1,72 @@
+---
+# handlers file for azure_vnet
+
+- name: Log network changes
+  ansible.builtin.uri:
+    url: "{{ azure_webhook_url }}"
+    method: POST
+    body_format: json
+    body:
+      timestamp: "{{ ansible_date_time.iso8601 }}"
+      role: "azure_vnet"
+      cloud_environment: "{{ azure_cloud_environment }}"
+      resource_group: "{{ azure_resource_group }}"
+      action: "VNet configuration changed"
+      classification: "{{ azure_classification | default('SECRET') }}"
+      compliance: "FedRAMP-High"
+    status_code: [200, 201, 202]
+  when:
+    - azure_webhook_url is defined
+    - azure_enable_change_notifications | default(true)
+  ignore_errors: true
+
+- name: Update network inventory
+  ansible.builtin.template:
+    src: vnet_inventory.json.j2
+    dest: "{{ azure_vnet_inventory_path | default('/var/lib/ansible/azure_vnet_inventory.json') }}"
+    mode: '0600'
+  when: azure_vnet_maintain_inventory | default(true)
+  delegate_to: localhost
+
+- name: Trigger compliance scan
+  ansible.builtin.command:
+    cmd: "az policy state trigger-scan --resource-group {{ azure_resource_group }}"
+  environment:
+    AZURE_CLOUD_ENVIRONMENT: "{{ azure_cloud_environment }}"
+  when: azure_trigger_compliance_scan | default(false)
+  changed_when: false
+  ignore_errors: true
+
+- name: Test network connectivity
+  ansible.builtin.command:
+    cmd: "az network watcher test-connectivity --resource-group {{ azure_network_watcher_rg }} --source-resource {{ item }} --dest-address 8.8.8.8 --dest-port 443"
+  loop: "{{ azure_vnet_connectivity_test_resources | default([]) }}"
+  environment:
+    AZURE_CLOUD_ENVIRONMENT: "{{ azure_cloud_environment }}"
+  when:
+    - azure_vnet_test_connectivity | default(false)
+    - azure_vnet_connectivity_test_resources is defined
+  changed_when: false
+  ignore_errors: true
+
+- name: Send network notification
+  community.aws.sns:
+    topic: "{{ aws_sns_topic_arn }}"
+    subject: "Azure VNet Configuration Change"
+    msg: "Virtual Network configuration has been updated in {{ azure_cloud_environment }}"
+  when:
+    - aws_sns_topic_arn is defined
+    - azure_enable_sns_notifications | default(false)
+  delegate_to: localhost
+  ignore_errors: true
+
+- name: Refresh network topology
+  ansible.builtin.command:
+    cmd: "az network watcher show-topology --resource-group {{ azure_resource_group }} --output json"
+  environment:
+    AZURE_CLOUD_ENVIRONMENT: "{{ azure_cloud_environment }}"
+  register: network_topology
+  when: azure_vnet_refresh_topology | default(false)
+  changed_when: false
+  delegate_to: localhost
+  ignore_errors: true

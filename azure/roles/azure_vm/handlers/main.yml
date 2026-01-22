@@ -1,0 +1,58 @@
+---
+# handlers file for azure_vm
+
+- name: Log vm changes
+  ansible.builtin.uri:
+    url: "{{ azure_webhook_url }}"
+    method: POST
+    body_format: json
+    body:
+      timestamp: "{{ ansible_date_time.iso8601 }}"
+      role: "azure_vm"
+      cloud_environment: "{{ azure_cloud_environment }}"
+      resource_group: "{{ azure_resource_group }}"
+      action: "Virtual Machines configuration changed"
+      classification: "{{ azure_classification | default('SECRET') }}"
+      compliance: "FedRAMP-High"
+    status_code: [200, 201, 202]
+  when:
+    - azure_webhook_url is defined
+    - azure_enable_change_notifications | default(true)
+  ignore_errors: true
+
+- name: Update vm inventory
+  ansible.builtin.template:
+    src: inventory.json.j2
+    dest: "{{ azure_vm_inventory_path | default('/var/lib/ansible/azure_vm_inventory.json') }}"
+    mode: '0600'
+  when: azure_vm_maintain_inventory | default(true)
+  delegate_to: localhost
+
+- name: Trigger compliance scan
+  ansible.builtin.command:
+    cmd: "az policy state trigger-scan --resource-group {{ azure_resource_group }}"
+  environment:
+    AZURE_CLOUD_ENVIRONMENT: "{{ azure_cloud_environment }}"
+  when: azure_trigger_compliance_scan | default(false)
+  changed_when: false
+  ignore_errors: true
+
+- name: Send security notification
+  community.aws.sns:
+    topic: "{{ aws_sns_topic_arn }}"
+    subject: "Azure Virtual Machines Configuration Change"
+    msg: "Virtual Machines configuration has been updated in {{ azure_cloud_environment }}"
+  when:
+    - aws_sns_topic_arn is defined
+    - azure_enable_sns_notifications | default(false)
+  delegate_to: localhost
+  ignore_errors: true
+
+- name: Backup vm configuration
+  ansible.builtin.command:
+    cmd: "az backup protection backup-now --resource-group {{ azure_resource_group }} --vault-name {{ azure_backup_vault_name }} --item-name {{ item.name }}"
+  environment:
+    AZURE_CLOUD_ENVIRONMENT: "{{ azure_cloud_environment }}"
+  when: azure_vm_enable_backup | default(true)
+  changed_when: false
+  ignore_errors: true
