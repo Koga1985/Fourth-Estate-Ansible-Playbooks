@@ -1,0 +1,279 @@
+---
+# tasks file for netapp_volume_provisioning
+# NetApp ONTAP Volume Provisioning - FlexVol and FlexGroup
+# Fourth Estate Production-Ready Implementation
+
+- name: Verify SVM exists
+  netapp.ontap.na_ontap_info:
+    hostname: "{{ netapp_volume_hostname }}"
+    username: "{{ netapp_volume_username }}"
+    password: "{{ netapp_volume_password }}"
+    https: true
+    validate_certs: "{{ netapp_volume_validate_certs }}"
+    gather_subset:
+      - vserver_info
+  register: svm_check
+  delegate_to: localhost
+
+- name: Create QoS policy groups
+  netapp.ontap.na_ontap_qos_policy_group:
+    hostname: "{{ netapp_volume_hostname }}"
+    username: "{{ netapp_volume_username }}"
+    password: "{{ netapp_volume_password }}"
+    https: true
+    validate_certs: "{{ netapp_volume_validate_certs }}"
+    state: present
+    name: "{{ item.name }}"
+    vserver: "{{ netapp_volume_svm }}"
+    max_throughput: "{{ item.max_throughput | default(omit) }}"
+    min_throughput: "{{ item.min_throughput | default(omit) }}"
+  delegate_to: localhost
+  loop: "{{ netapp_volume_qos_policies }}"
+  when:
+    - netapp_volume_create_qos_policies | bool
+    - netapp_volume_qos_policies | length > 0
+
+- name: Create FlexVol volumes
+  netapp.ontap.na_ontap_volume:
+    hostname: "{{ netapp_volume_hostname }}"
+    username: "{{ netapp_volume_username }}"
+    password: "{{ netapp_volume_password }}"
+    https: true
+    validate_certs: "{{ netapp_volume_validate_certs }}"
+    state: present
+    name: "{{ item.name }}"
+    vserver: "{{ netapp_volume_svm }}"
+    aggregate_name: "{{ item.aggregate | default(netapp_volume_default_aggregate) }}"
+    size: "{{ item.size }}"
+    size_unit: "{{ item.size_unit | default('gb') }}"
+    type: "{{ item.type | default('RW') }}"
+    percent_snapshot_space: "{{ item.percent_snapshot_space | default(netapp_volume_snapshot_reserve) }}"
+    snapshot_policy: "{{ item.snapshot_policy | default(netapp_volume_snapshot_policy) }}"
+    export_policy: "{{ item.export_policy | default('default') }}"
+    junction_path: "{{ item.junction_path | default('/' + item.name) }}"
+    security_style: "{{ item.security_style | default(netapp_volume_security_style) }}"
+    space_guarantee: "{{ item.space_guarantee | default(netapp_volume_space_guarantee) }}"
+    tiering_policy: "{{ item.tiering_policy | default(netapp_volume_tiering_policy) }}"
+    encrypt: "{{ item.encrypt | default(netapp_volume_encryption) }}"
+    qos_policy_group: "{{ item.qos_policy_group | default(omit) }}"
+    qos_adaptive_policy_group: "{{ item.qos_adaptive_policy_group | default(omit) }}"
+    unix_permissions: "{{ item.unix_permissions | default('0755') }}"
+    comment: "{{ item.comment | default('Managed by Ansible') }}"
+    language: "{{ item.language | default('c.UTF-8') }}"
+    is_online: "{{ item.is_online | default(true) }}"
+  delegate_to: localhost
+  loop: "{{ netapp_volume_flexvols }}"
+  when: netapp_volume_create_flexvols | bool
+  notify: verify volume creation
+
+- name: Enable volume efficiency (deduplication and compression)
+  netapp.ontap.na_ontap_volume_efficiency:
+    hostname: "{{ netapp_volume_hostname }}"
+    username: "{{ netapp_volume_username }}"
+    password: "{{ netapp_volume_password }}"
+    https: true
+    validate_certs: "{{ netapp_volume_validate_certs }}"
+    state: present
+    vserver: "{{ netapp_volume_svm }}"
+    path: "/vol/{{ item.name }}"
+    schedule: "{{ item.efficiency_schedule | default(netapp_volume_efficiency_schedule) }}"
+    enable_compression: "{{ item.enable_compression | default(netapp_volume_enable_compression) }}"
+    enable_inline_compression: "{{ item.enable_inline_compression | default(netapp_volume_enable_inline_compression) }}"
+    enable_inline_dedupe: "{{ item.enable_inline_dedupe | default(netapp_volume_enable_inline_dedupe) }}"
+    enable_data_compaction: "{{ item.enable_data_compaction | default(netapp_volume_enable_data_compaction) }}"
+    enable_cross_volume_inline_dedupe: "{{ item.enable_cross_volume_inline_dedupe | default(false) }}"
+    enable_cross_volume_background_dedupe: "{{ item.enable_cross_volume_background_dedupe | default(false) }}"
+    policy: "{{ item.efficiency_policy | default(netapp_volume_efficiency_policy) }}"
+  delegate_to: localhost
+  loop: "{{ netapp_volume_flexvols }}"
+  when:
+    - netapp_volume_create_flexvols | bool
+    - netapp_volume_enable_efficiency | bool
+    - item.enable_efficiency | default(true)
+
+- name: Create FlexGroup volumes
+  netapp.ontap.na_ontap_volume:
+    hostname: "{{ netapp_volume_hostname }}"
+    username: "{{ netapp_volume_username }}"
+    password: "{{ netapp_volume_password }}"
+    https: true
+    validate_certs: "{{ netapp_volume_validate_certs }}"
+    state: present
+    name: "{{ item.name }}"
+    vserver: "{{ netapp_volume_svm }}"
+    aggr_list: "{{ item.aggr_list }}"
+    aggr_list_multiplier: "{{ item.aggr_list_multiplier | default(4) }}"
+    size: "{{ item.size }}"
+    size_unit: "{{ item.size_unit | default('tb') }}"
+    snapshot_policy: "{{ item.snapshot_policy | default(netapp_volume_snapshot_policy) }}"
+    export_policy: "{{ item.export_policy | default('default') }}"
+    junction_path: "{{ item.junction_path | default('/' + item.name) }}"
+    security_style: "{{ item.security_style | default(netapp_volume_security_style) }}"
+    space_guarantee: "none"
+    tiering_policy: "{{ item.tiering_policy | default(netapp_volume_tiering_policy) }}"
+    encrypt: "{{ item.encrypt | default(netapp_volume_encryption) }}"
+    qos_policy_group: "{{ item.qos_policy_group | default(omit) }}"
+    unix_permissions: "{{ item.unix_permissions | default('0755') }}"
+    comment: "{{ item.comment | default('FlexGroup - Managed by Ansible') }}"
+    is_online: true
+  delegate_to: localhost
+  loop: "{{ netapp_volume_flexgroups }}"
+  when: netapp_volume_create_flexgroups | bool
+
+- name: Configure volume autosize
+  netapp.ontap.na_ontap_volume_autosize:
+    hostname: "{{ netapp_volume_hostname }}"
+    username: "{{ netapp_volume_username }}"
+    password: "{{ netapp_volume_password }}"
+    https: true
+    validate_certs: "{{ netapp_volume_validate_certs }}"
+    vserver: "{{ netapp_volume_svm }}"
+    volume: "{{ item.name }}"
+    mode: "{{ item.autosize_mode | default(netapp_volume_autosize_mode) }}"
+    grow_threshold_percent: "{{ item.autosize_grow_threshold | default(netapp_volume_autosize_grow_threshold) }}"
+    shrink_threshold_percent: "{{ item.autosize_shrink_threshold | default(netapp_volume_autosize_shrink_threshold) }}"
+    maximum_size: "{{ item.autosize_maximum | default(omit) }}"
+    minimum_size: "{{ item.autosize_minimum | default(omit) }}"
+  delegate_to: localhost
+  loop: "{{ netapp_volume_flexvols }}"
+  when:
+    - netapp_volume_create_flexvols | bool
+    - netapp_volume_enable_autosize | bool
+    - item.enable_autosize | default(true)
+
+- name: Create volume clones
+  netapp.ontap.na_ontap_volume_clone:
+    hostname: "{{ netapp_volume_hostname }}"
+    username: "{{ netapp_volume_username }}"
+    password: "{{ netapp_volume_password }}"
+    https: true
+    validate_certs: "{{ netapp_volume_validate_certs }}"
+    state: present
+    vserver: "{{ netapp_volume_svm }}"
+    parent_volume: "{{ item.parent_volume }}"
+    name: "{{ item.name }}"
+    parent_snapshot: "{{ item.parent_snapshot | default(omit) }}"
+    junction_path: "{{ item.junction_path | default('/' + item.name) }}"
+    space_reserve: "{{ item.space_reserve | default('none') }}"
+    qos_policy_group: "{{ item.qos_policy_group | default(omit) }}"
+  delegate_to: localhost
+  loop: "{{ netapp_volume_clones }}"
+  when: netapp_volume_create_clones | bool
+
+- name: Configure volume snaplock (compliance/enterprise)
+  netapp.ontap.na_ontap_command:
+    hostname: "{{ netapp_volume_hostname }}"
+    username: "{{ netapp_volume_username }}"
+    password: "{{ netapp_volume_password }}"
+    https: true
+    validate_certs: "{{ netapp_volume_validate_certs }}"
+    command: ['volume', 'snaplock', 'modify', '-vserver', '{{ netapp_volume_svm }}', '-volume', '{{ item.name }}', '-retention-period', '{{ item.retention_period }}']
+  delegate_to: localhost
+  loop: "{{ netapp_volume_snaplock_volumes }}"
+  when: netapp_volume_enable_snaplock | bool
+  changed_when: true
+
+- name: Configure anti-ransomware protection
+  netapp.ontap.na_ontap_command:
+    hostname: "{{ netapp_volume_hostname }}"
+    username: "{{ netapp_volume_username }}"
+    password: "{{ netapp_volume_password }}"
+    https: true
+    validate_certs: "{{ netapp_volume_validate_certs }}"
+    command: ['volume', 'modify', '-vserver', '{{ netapp_volume_svm }}', '-volume', '{{ item.name }}', '-anti-ransomware-state', '{{ item.anti_ransomware_state | default("enabled") }}']
+  delegate_to: localhost
+  loop: "{{ netapp_volume_flexvols }}"
+  when:
+    - netapp_volume_enable_anti_ransomware | bool
+    - item.enable_anti_ransomware | default(true)
+  changed_when: true
+
+- name: Set volume options
+  netapp.ontap.na_ontap_volume:
+    hostname: "{{ netapp_volume_hostname }}"
+    username: "{{ netapp_volume_username }}"
+    password: "{{ netapp_volume_password }}"
+    https: true
+    validate_certs: "{{ netapp_volume_validate_certs }}"
+    state: present
+    name: "{{ item.name }}"
+    vserver: "{{ netapp_volume_svm }}"
+    volume_security_style: "{{ item.security_style | default(netapp_volume_security_style) }}"
+    cutover_action: "{{ item.cutover_action | default(omit) }}"
+  delegate_to: localhost
+  loop: "{{ netapp_volume_flexvols }}"
+  when:
+    - netapp_volume_create_flexvols | bool
+    - netapp_volume_set_options | bool
+
+- name: Configure volume analytics
+  netapp.ontap.na_ontap_command:
+    hostname: "{{ netapp_volume_hostname }}"
+    username: "{{ netapp_volume_username }}"
+    password: "{{ netapp_volume_password }}"
+    https: true
+    validate_certs: "{{ netapp_volume_validate_certs }}"
+    command: ['volume', 'analytics', 'on', '-vserver', '{{ netapp_volume_svm }}', '-volume', '{{ item.name }}']
+  delegate_to: localhost
+  loop: "{{ netapp_volume_flexvols }}"
+  when:
+    - netapp_volume_enable_analytics | bool
+    - item.enable_analytics | default(false)
+  changed_when: true
+  failed_when: false
+
+- name: Create volume quotas
+  netapp.ontap.na_ontap_quotas:
+    hostname: "{{ netapp_volume_hostname }}"
+    username: "{{ netapp_volume_username }}"
+    password: "{{ netapp_volume_password }}"
+    https: true
+    validate_certs: "{{ netapp_volume_validate_certs }}"
+    state: present
+    vserver: "{{ netapp_volume_svm }}"
+    volume: "{{ item.volume }}"
+    quota_target: "{{ item.quota_target }}"
+    type: "{{ item.type }}"
+    policy: "{{ item.policy | default('default') }}"
+    disk_limit: "{{ item.disk_limit | default('-') }}"
+    file_limit: "{{ item.file_limit | default('-') }}"
+    soft_disk_limit: "{{ item.soft_disk_limit | default('-') }}"
+    soft_file_limit: "{{ item.soft_file_limit | default('-') }}"
+  delegate_to: localhost
+  loop: "{{ netapp_volume_quotas }}"
+  when: netapp_volume_enable_quotas | bool
+
+- name: Enable quota reporting
+  netapp.ontap.na_ontap_command:
+    hostname: "{{ netapp_volume_hostname }}"
+    username: "{{ netapp_volume_username }}"
+    password: "{{ netapp_volume_password }}"
+    https: true
+    validate_certs: "{{ netapp_volume_validate_certs }}"
+    command: ['volume', 'quota', 'on', '-vserver', '{{ netapp_volume_svm }}', '-volume', '{{ item.name }}']
+  delegate_to: localhost
+  loop: "{{ netapp_volume_flexvols }}"
+  when:
+    - netapp_volume_enable_quotas | bool
+    - item.enable_quotas | default(false)
+  changed_when: true
+
+- name: Verify volume provisioning
+  netapp.ontap.na_ontap_info:
+    hostname: "{{ netapp_volume_hostname }}"
+    username: "{{ netapp_volume_username }}"
+    password: "{{ netapp_volume_password }}"
+    https: true
+    validate_certs: "{{ netapp_volume_validate_certs }}"
+    gather_subset:
+      - volume_info
+  register: volume_verification
+  delegate_to: localhost
+  when: netapp_volume_verify_provisioning | bool
+
+- name: Display volume provisioning status
+  ansible.builtin.debug:
+    msg: "Volume provisioning completed. Total volumes: {{ volume_verification.ontap_info.volume_info | length }}"
+  when:
+    - netapp_volume_verify_provisioning | bool
+    - netapp_volume_debug | bool

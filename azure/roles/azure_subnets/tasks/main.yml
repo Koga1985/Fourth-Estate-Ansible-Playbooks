@@ -1,2 +1,120 @@
 ---
-# tasks file for azure_subnets
+# tasks file for azure_subnets - Azure Subnets
+# Fourth Estate Azure Government Cloud - FedRAMP High
+
+- name: Validate subnet configuration
+  ansible.builtin.assert:
+    that:
+      - azure_resource_group is defined
+      - azure_vnet_name is defined
+      - azure_subnets is defined
+    fail_msg: "Subnet configuration required"
+
+- name: Create Azure Subnets
+  azure.azcollection.azure_rm_subnet:
+    resource_group: "{{ azure_resource_group }}"
+    virtual_network_name: "{{ azure_vnet_name }}"
+    name: "{{ item.name }}"
+    address_prefix_cidr: "{{ item.address_prefix }}"
+    service_endpoints: "{{ item.service_endpoints | default(azure_subnet_default_service_endpoints) }}"
+    private_endpoint_network_policies: "{{ item.private_endpoint_network_policies | default(azure_subnet_private_endpoint_network_policies) }}"
+    private_link_service_network_policies: "{{ item.private_link_service_network_policies | default('Disabled') }}"
+    route_table: "{{ item.route_table | default(omit) }}"
+    security_group: "{{ item.security_group | default(omit) }}"
+    state: "{{ item.state | default('present') }}"
+    cloud_environment: "{{ azure_cloud_environment }}"
+  loop: "{{ azure_subnets }}"
+  register: subnet_result
+  notify: Log subnet changes
+
+- name: Configure subnet delegations
+  azure.azcollection.azure_rm_resource:
+    resource_group: "{{ azure_resource_group }}"
+    provider: Microsoft.Network
+    resource_type: virtualNetworks/subnets
+    resource_name: "{{ azure_vnet_name }}/{{ item.0.name }}"
+    api_version: "2023-05-01"
+    body:
+      properties:
+        addressPrefix: "{{ item.0.address_prefix }}"
+        delegations:
+          - name: "{{ item.1.name }}"
+            properties:
+              serviceName: "{{ item.1.service_name }}"
+    state: present
+    cloud_environment: "{{ azure_cloud_environment }}"
+  loop: "{{ azure_subnets | subelements('delegations', skip_missing=True) }}"
+  when: item.0.delegations is defined
+  register: delegation_result
+  notify: Log subnet changes
+
+- name: Configure NAT Gateway for subnets
+  azure.azcollection.azure_rm_resource:
+    resource_group: "{{ azure_resource_group }}"
+    provider: Microsoft.Network
+    resource_type: natGateways
+    resource_name: "{{ item.nat_gateway_name }}"
+    api_version: "2023-05-01"
+    body:
+      location: "{{ azure_region }}"
+      sku:
+        name: Standard
+      properties:
+        idleTimeoutInMinutes: "{{ item.nat_gateway_idle_timeout | default(10) }}"
+      tags: "{{ azure_resource_tags }}"
+    state: present
+    cloud_environment: "{{ azure_cloud_environment }}"
+  loop: "{{ azure_subnets }}"
+  when:
+    - item.enable_nat_gateway | default(false)
+    - item.nat_gateway_name is defined
+  register: nat_gateway_result
+  notify: Log subnet changes
+
+- name: Associate NAT Gateway with subnets
+  azure.azcollection.azure_rm_resource:
+    resource_group: "{{ azure_resource_group }}"
+    provider: Microsoft.Network
+    resource_type: virtualNetworks/subnets
+    resource_name: "{{ azure_vnet_name }}/{{ item.name }}"
+    api_version: "2023-05-01"
+    body:
+      properties:
+        addressPrefix: "{{ item.address_prefix }}"
+        natGateway:
+          id: "/subscriptions/{{ azure_subscription_id }}/resourceGroups/{{ azure_resource_group }}/providers/Microsoft.Network/natGateways/{{ item.nat_gateway_name }}"
+    state: present
+    cloud_environment: "{{ azure_cloud_environment }}"
+  loop: "{{ azure_subnets }}"
+  when:
+    - item.enable_nat_gateway | default(false)
+    - nat_gateway_result is defined
+  register: nat_assoc_result
+  notify: Log subnet changes
+
+- name: Configure subnet diagnostic settings
+  azure.azcollection.azure_rm_monitordiagnosticsetting:
+    name: "{{ item.name }}-diagnostics"
+    resource_uri: "/subscriptions/{{ azure_subscription_id }}/resourceGroups/{{ azure_resource_group }}/providers/Microsoft.Network/virtualNetworks/{{ azure_vnet_name }}/subnets/{{ item.name }}"
+    workspace_id: "{{ azure_log_analytics_workspace_id }}"
+    metrics:
+      - category: AllMetrics
+        enabled: true
+        retention_policy:
+          enabled: true
+          days: 365
+    state: present
+    cloud_environment: "{{ azure_cloud_environment }}"
+  loop: "{{ azure_subnets }}"
+  when: azure_subnet_enable_diagnostics | default(true)
+  register: subnet_diagnostics_result
+  notify: Log subnet changes
+
+- name: Display subnet configuration summary
+  ansible.builtin.debug:
+    msg:
+      - "Subnet Configuration Complete"
+      - "Subnets created: {{ (subnet_result.results | default([]) | selectattr('changed', 'equalto', true) | list | length) }}"
+      - "Service endpoints enabled: {{ azure_subnet_default_service_endpoints | join(', ') }}"
+      - "Private endpoints enabled: {{ azure_subnet_enable_private_endpoints }}"
+  when: azure_subnet_display_summary | default(true)

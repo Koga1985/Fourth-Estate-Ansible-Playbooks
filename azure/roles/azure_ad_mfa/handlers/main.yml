@@ -1,0 +1,75 @@
+---
+# handlers file for azure_ad_mfa
+
+- name: Log MFA changes
+  ansible.builtin.uri:
+    url: "{{ azure_webhook_url }}"
+    method: POST
+    body_format: json
+    body:
+      timestamp: "{{ ansible_date_time.iso8601 }}"
+      role: "azure_ad_mfa"
+      cloud_environment: "{{ azure_cloud_environment }}"
+      resource_group: "{{ azure_resource_group }}"
+      action: "MFA configuration changed"
+      classification: "{{ azure_classification | default('SECRET') }}"
+      compliance: "FedRAMP-High"
+    status_code: [200, 201, 202]
+  when:
+    - azure_webhook_url is defined
+    - azure_enable_change_notifications | default(true)
+  ignore_errors: true
+
+- name: Update MFA inventory
+  ansible.builtin.template:
+    src: mfa_inventory.json.j2
+    dest: "{{ azure_mfa_inventory_path | default('/var/lib/ansible/azure_mfa_inventory.json') }}"
+    mode: '0600'
+  when: azure_mfa_maintain_inventory | default(true)
+  delegate_to: localhost
+
+- name: Trigger compliance scan
+  ansible.builtin.command:
+    cmd: "az policy state trigger-scan --resource-group {{ azure_resource_group }}"
+  environment:
+    AZURE_CLOUD_ENVIRONMENT: "{{ azure_cloud_environment }}"
+  when: azure_trigger_compliance_scan | default(false)
+  changed_when: false
+  ignore_errors: true
+
+- name: Send MFA security notification
+  community.aws.sns:
+    topic: "{{ aws_sns_topic_arn }}"
+    subject: "Azure MFA Configuration Change"
+    msg: "MFA configuration has been updated in {{ azure_cloud_environment }}"
+  when:
+    - aws_sns_topic_arn is defined
+    - azure_enable_sns_notifications | default(false)
+  delegate_to: localhost
+  ignore_errors: true
+
+- name: Notify users of MFA changes
+  ansible.builtin.uri:
+    url: "{{ azure_user_notification_webhook }}"
+    method: POST
+    body_format: json
+    body:
+      action: "mfa_configuration_change"
+      timestamp: "{{ ansible_date_time.iso8601 }}"
+      message: "Multi-factor authentication settings have been updated. Please ensure your MFA methods are registered."
+    status_code: [200, 201, 202]
+  when:
+    - azure_user_notification_webhook is defined
+    - azure_mfa_notify_users | default(true)
+  ignore_errors: true
+
+- name: Generate MFA compliance report
+  ansible.builtin.command:
+    cmd: "az rest --method GET --uri https://graph.microsoft.us/v1.0/reports/credentialUserRegistrationDetails --output json"
+  environment:
+    AZURE_CLOUD_ENVIRONMENT: "{{ azure_cloud_environment }}"
+  register: mfa_registration_report
+  when: azure_mfa_generate_report | default(true)
+  changed_when: false
+  delegate_to: localhost
+  ignore_errors: true

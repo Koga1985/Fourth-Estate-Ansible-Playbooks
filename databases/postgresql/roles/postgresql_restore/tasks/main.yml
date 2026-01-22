@@ -1,0 +1,248 @@
+---
+# tasks file for postgresql_restore
+# PostgreSQL restore and point-in-time recovery (PITR)
+
+- name: Include OS-specific variables
+  include_vars: "{{ ansible_os_family }}.yml"
+  when: ansible_os_family in ['RedHat', 'Debian']
+  failed_when: false
+
+- name: Validate restore parameters
+  ansible.builtin.assert:
+    that:
+      - postgresql_restore_type is defined
+      - postgresql_restore_type in ['full', 'logical', 'pitr', 'tablespace', 'database']
+    msg: "postgresql_restore_type must be defined and one of: full, logical, pitr, tablespace, database"
+
+- name: Stop PostgreSQL for full restore
+  ansible.builtin.service:
+    name: "postgresql-{{ postgresql_version }}"
+    state: stopped
+  when: postgresql_restore_type in ['full', 'pitr']
+
+- name: Full backup restore (pg_basebackup)
+  when: postgresql_restore_type == 'full'
+  block:
+    - name: Backup current data directory
+      ansible.builtin.command: >
+        mv {{ postgresql_data_directory }} {{ postgresql_data_directory }}.pre-restore.{{ ansible_date_time.epoch }}
+      args:
+        removes: "{{ postgresql_data_directory }}"
+
+    - name: Extract full backup
+      ansible.builtin.command: >
+        tar -xzf {{ postgresql_restore_backup_file }}
+        -C {{ postgresql_data_directory | dirname }}
+      when: postgresql_restore_backup_file.endswith('.tar.gz')
+
+    - name: Copy basebackup directory
+      ansible.builtin.command: >
+        cp -a {{ postgresql_restore_backup_path }} {{ postgresql_data_directory }}
+      when: postgresql_restore_backup_path is defined
+
+    - name: Set ownership of restored data
+      ansible.builtin.file:
+        path: "{{ postgresql_data_directory }}"
+        owner: postgres
+        group: postgres
+        recurse: true
+        mode: '0700'
+
+- name: Point-in-time recovery (PITR)
+  when: postgresql_restore_type == 'pitr'
+  block:
+    - name: Ensure WAL archive directory is accessible
+      ansible.builtin.stat:
+        path: "{{ postgresql_wal_archive_directory }}"
+      register: wal_archive_check
+      failed_when: not wal_archive_check.stat.exists
+
+    - name: Configure recovery settings (PostgreSQL 12+)
+      when: postgresql_version | int >= 12
+      block:
+        - name: Create recovery.signal for PITR
+          ansible.builtin.file:
+            path: "{{ postgresql_data_directory }}/recovery.signal"
+            state: touch
+            owner: postgres
+            group: postgres
+            mode: '0600'
+
+        - name: Configure recovery target time
+          ansible.builtin.lineinfile:
+            path: "{{ postgresql_data_directory }}/postgresql.auto.conf"
+            line: "recovery_target_time = '{{ postgresql_recovery_target_time }}'"
+            create: true
+            owner: postgres
+            group: postgres
+            mode: '0600'
+          when: postgresql_recovery_target_time is defined
+
+        - name: Configure recovery target transaction ID
+          ansible.builtin.lineinfile:
+            path: "{{ postgresql_data_directory }}/postgresql.auto.conf"
+            line: "recovery_target_xid = '{{ postgresql_recovery_target_xid }}'"
+            create: true
+            owner: postgres
+            group: postgres
+            mode: '0600'
+          when: postgresql_recovery_target_xid is defined
+
+        - name: Configure restore_command
+          ansible.builtin.lineinfile:
+            path: "{{ postgresql_data_directory }}/postgresql.auto.conf"
+            line: "restore_command = 'cp {{ postgresql_wal_archive_directory }}/%f %p'"
+            create: true
+            owner: postgres
+            group: postgres
+            mode: '0600'
+
+        - name: Configure recovery_target_action
+          ansible.builtin.lineinfile:
+            path: "{{ postgresql_data_directory }}/postgresql.auto.conf"
+            line: "recovery_target_action = '{{ postgresql_recovery_target_action | default('promote') }}'"
+            create: true
+            owner: postgres
+            group: postgres
+            mode: '0600'
+
+    - name: Configure recovery.conf (PostgreSQL < 12)
+      when: postgresql_version | int < 12
+      ansible.builtin.template:
+        src: recovery_pitr.conf.j2
+        dest: "{{ postgresql_data_directory }}/recovery.conf"
+        owner: postgres
+        group: postgres
+        mode: '0600'
+
+- name: Logical restore (pg_restore/psql)
+  when: postgresql_restore_type == 'logical'
+  block:
+    - name: Restore database from custom format dump
+      community.postgresql.postgresql_db:
+        name: "{{ postgresql_restore_database }}"
+        state: restore
+        target: "{{ postgresql_restore_dump_file }}"
+        login_host: localhost
+        login_user: postgres
+        port: "{{ postgresql_port }}"
+      become: true
+      become_user: postgres
+      when: postgresql_restore_dump_file.endswith('.dump') or postgresql_restore_dump_file.endswith('.custom')
+
+    - name: Restore from SQL file
+      community.postgresql.postgresql_query:
+        login_host: localhost
+        login_user: postgres
+        port: "{{ postgresql_port }}"
+        db: "{{ postgresql_restore_database }}"
+        path_to_script: "{{ postgresql_restore_sql_file }}"
+      become: true
+      become_user: postgres
+      when: postgresql_restore_sql_file is defined and postgresql_restore_sql_file.endswith('.sql')
+
+    - name: Restore globals (roles and tablespaces)
+      ansible.builtin.command: >
+        {{ postgresql_bin_path }}/psql
+        -h localhost
+        -p {{ postgresql_port }}
+        -U postgres
+        -f {{ postgresql_restore_globals_file }}
+      become: true
+      become_user: postgres
+      when: postgresql_restore_globals_file is defined
+
+- name: Restore specific tablespace
+  when: postgresql_restore_type == 'tablespace'
+  block:
+    - name: Extract tablespace backup
+      ansible.builtin.command: >
+        tar -xzf {{ postgresql_restore_tablespace_file }}
+        -C {{ postgresql_tablespace_restore_path }}
+      when: postgresql_restore_tablespace_file.endswith('.tar.gz')
+
+    - name: Set tablespace permissions
+      ansible.builtin.file:
+        path: "{{ postgresql_tablespace_restore_path }}"
+        owner: postgres
+        group: postgres
+        recurse: true
+        mode: '0700'
+
+- name: Start PostgreSQL after restore
+  ansible.builtin.service:
+    name: "postgresql-{{ postgresql_version }}"
+    state: started
+    enabled: true
+  when: postgresql_restore_type in ['full', 'pitr']
+
+- name: Wait for PostgreSQL to be ready
+  ansible.builtin.wait_for:
+    port: "{{ postgresql_port }}"
+    host: localhost
+    timeout: 300
+    delay: 10
+  when: postgresql_restore_type in ['full', 'pitr']
+
+- name: Verify database accessibility
+  community.postgresql.postgresql_query:
+    login_host: localhost
+    login_user: postgres
+    port: "{{ postgresql_port }}"
+    db: postgres
+    query: "SELECT version();"
+  become: true
+  become_user: postgres
+  register: pg_version_check
+  when: postgresql_restore_type in ['full', 'pitr', 'logical']
+
+- name: Run ANALYZE after restore
+  community.postgresql.postgresql_query:
+    login_host: localhost
+    login_user: postgres
+    port: "{{ postgresql_port }}"
+    db: "{{ item }}"
+    query: "ANALYZE;"
+  loop: "{{ postgresql_restore_analyze_databases | default(['postgres']) }}"
+  become: true
+  become_user: postgres
+  when: postgresql_restore_run_analyze | default(true)
+
+- name: Verify restored data integrity
+  ansible.builtin.command: >
+    {{ postgresql_bin_path }}/pg_checksums
+    -D {{ postgresql_data_directory }}
+    --check
+  become: true
+  become_user: postgres
+  register: checksum_verify
+  failed_when: false
+  when:
+    - postgresql_restore_type in ['full', 'pitr']
+    - postgresql_version | int >= 12
+
+- name: Create restore log
+  ansible.builtin.copy:
+    content: |
+      PostgreSQL Restore Completed
+      ============================
+      Timestamp: {{ ansible_date_time.iso8601 }}
+      Restore Type: {{ postgresql_restore_type }}
+      Backup File: {{ postgresql_restore_backup_file | default('N/A') }}
+      Database: {{ postgresql_restore_database | default('All') }}
+      Status: {{ 'Success' if pg_version_check.failed is defined and not pg_version_check.failed else 'Unknown' }}
+      
+      Version Check:
+      {{ pg_version_check.query_result | default('N/A') | to_nice_yaml }}
+    dest: "{{ postgresql_backup_directory }}/restore_{{ ansible_date_time.epoch }}.log"
+    owner: postgres
+    group: postgres
+    mode: '0600'
+
+- name: Display restore summary
+  ansible.builtin.debug:
+    msg:
+      - "PostgreSQL restore completed successfully"
+      - "Restore Type: {{ postgresql_restore_type }}"
+      - "Database: {{ postgresql_restore_database | default('All databases') }}"
+      - "PostgreSQL Version: {{ pg_version_check.query_result[0].version | default('N/A') }}"

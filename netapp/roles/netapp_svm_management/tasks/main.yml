@@ -1,0 +1,359 @@
+---
+# tasks file for netapp_svm_management
+# NetApp ONTAP Storage Virtual Machine (SVM) Management
+# Fourth Estate Production-Ready Implementation
+
+- name: Verify cluster connectivity
+  netapp.ontap.na_ontap_info:
+    hostname: "{{ netapp_svm_hostname }}"
+    username: "{{ netapp_svm_username }}"
+    password: "{{ netapp_svm_password }}"
+    https: true
+    validate_certs: "{{ netapp_svm_validate_certs }}"
+    gather_subset:
+      - vserver_info
+  register: svm_check
+  delegate_to: localhost
+
+- name: Create Storage Virtual Machine (SVM)
+  netapp.ontap.na_ontap_svm:
+    hostname: "{{ netapp_svm_hostname }}"
+    username: "{{ netapp_svm_username }}"
+    password: "{{ netapp_svm_password }}"
+    https: true
+    validate_certs: "{{ netapp_svm_validate_certs }}"
+    state: present
+    name: "{{ netapp_svm_name }}"
+    root_volume: "{{ netapp_svm_root_volume }}"
+    root_volume_aggregate: "{{ netapp_svm_root_aggregate }}"
+    root_volume_security_style: "{{ netapp_svm_root_security_style }}"
+    ipspace: "{{ netapp_svm_ipspace }}"
+    subtype: "{{ netapp_svm_subtype }}"
+    comment: "{{ netapp_svm_comment }}"
+    language: "{{ netapp_svm_language }}"
+    snapshot_policy: "{{ netapp_svm_snapshot_policy }}"
+    allowed_protocols: "{{ netapp_svm_allowed_protocols }}"
+  delegate_to: localhost
+  notify: verify svm creation
+
+- name: Configure SVM aggregates
+  netapp.ontap.na_ontap_svm:
+    hostname: "{{ netapp_svm_hostname }}"
+    username: "{{ netapp_svm_username }}"
+    password: "{{ netapp_svm_password }}"
+    https: true
+    validate_certs: "{{ netapp_svm_validate_certs }}"
+    state: present
+    name: "{{ netapp_svm_name }}"
+    aggr_list: "{{ netapp_svm_aggr_list }}"
+  delegate_to: localhost
+  when: netapp_svm_aggr_list | length > 0
+
+- name: Create management LIF for SVM
+  netapp.ontap.na_ontap_interface:
+    hostname: "{{ netapp_svm_hostname }}"
+    username: "{{ netapp_svm_username }}"
+    password: "{{ netapp_svm_password }}"
+    https: true
+    validate_certs: "{{ netapp_svm_validate_certs }}"
+    state: present
+    interface_name: "{{ netapp_svm_mgmt_lif_name }}"
+    home_port: "{{ netapp_svm_mgmt_lif_home_port }}"
+    home_node: "{{ netapp_svm_mgmt_lif_home_node }}"
+    address: "{{ netapp_svm_mgmt_lif_address }}"
+    netmask: "{{ netapp_svm_mgmt_lif_netmask }}"
+    vserver: "{{ netapp_svm_name }}"
+    role: data
+    protocols: "{{ netapp_svm_mgmt_lif_protocols }}"
+    firewall_policy: "{{ netapp_svm_mgmt_lif_firewall_policy }}"
+    is_auto_revert: "{{ netapp_svm_mgmt_lif_auto_revert }}"
+    admin_status: up
+  delegate_to: localhost
+  when: netapp_svm_create_mgmt_lif | bool
+
+- name: Create data LIFs for SVM
+  netapp.ontap.na_ontap_interface:
+    hostname: "{{ netapp_svm_hostname }}"
+    username: "{{ netapp_svm_username }}"
+    password: "{{ netapp_svm_password }}"
+    https: true
+    validate_certs: "{{ netapp_svm_validate_certs }}"
+    state: present
+    interface_name: "{{ item.name }}"
+    home_port: "{{ item.home_port }}"
+    home_node: "{{ item.home_node }}"
+    address: "{{ item.address }}"
+    netmask: "{{ item.netmask }}"
+    vserver: "{{ netapp_svm_name }}"
+    role: data
+    protocols: "{{ item.protocols }}"
+    firewall_policy: "{{ item.firewall_policy | default('data') }}"
+    is_auto_revert: "{{ item.is_auto_revert | default(true) }}"
+    admin_status: "{{ item.admin_status | default('up') }}"
+    failover_policy: "{{ item.failover_policy | default('system-defined') }}"
+  delegate_to: localhost
+  loop: "{{ netapp_svm_data_lifs }}"
+  when: netapp_svm_create_data_lifs | bool
+
+- name: Configure SVM DNS
+  netapp.ontap.na_ontap_dns:
+    hostname: "{{ netapp_svm_hostname }}"
+    username: "{{ netapp_svm_username }}"
+    password: "{{ netapp_svm_password }}"
+    https: true
+    validate_certs: "{{ netapp_svm_validate_certs }}"
+    state: present
+    vserver: "{{ netapp_svm_name }}"
+    domains: "{{ netapp_svm_dns_domains }}"
+    nameservers: "{{ netapp_svm_dns_nameservers }}"
+  delegate_to: localhost
+  when: netapp_svm_configure_dns | bool
+
+- name: Configure SVM NFS service
+  netapp.ontap.na_ontap_nfs:
+    hostname: "{{ netapp_svm_hostname }}"
+    username: "{{ netapp_svm_username }}"
+    password: "{{ netapp_svm_password }}"
+    https: true
+    validate_certs: "{{ netapp_svm_validate_certs }}"
+    state: present
+    vserver: "{{ netapp_svm_name }}"
+    service_state: started
+    nfsv3: "{{ netapp_svm_nfs_v3_enabled }}"
+    nfsv4: "{{ netapp_svm_nfs_v4_enabled }}"
+    nfsv41: "{{ netapp_svm_nfs_v41_enabled }}"
+    vstorage_state: "{{ netapp_svm_nfs_vstorage_state }}"
+    tcp: enabled
+    udp: "{{ netapp_svm_nfs_udp }}"
+    showmount: enabled
+  delegate_to: localhost
+  when:
+    - netapp_svm_enable_nfs | bool
+    - "'nfs' in netapp_svm_allowed_protocols"
+
+- name: Configure SVM CIFS/SMB server
+  netapp.ontap.na_ontap_cifs_server:
+    hostname: "{{ netapp_svm_hostname }}"
+    username: "{{ netapp_svm_username }}"
+    password: "{{ netapp_svm_password }}"
+    https: true
+    validate_certs: "{{ netapp_svm_validate_certs }}"
+    state: present
+    vserver: "{{ netapp_svm_name }}"
+    name: "{{ netapp_svm_cifs_server_name }}"
+    domain: "{{ netapp_svm_cifs_domain }}"
+    admin_user_name: "{{ netapp_svm_cifs_admin_user }}"
+    admin_password: "{{ netapp_svm_cifs_admin_password }}"
+    ou: "{{ netapp_svm_cifs_ou | default(omit) }}"
+    service_state: started
+    workgroup: "{{ netapp_svm_cifs_workgroup | default(omit) }}"
+  delegate_to: localhost
+  when:
+    - netapp_svm_enable_cifs | bool
+    - "'cifs' in netapp_svm_allowed_protocols"
+  no_log: true
+
+- name: Configure CIFS security settings
+  netapp.ontap.na_ontap_command:
+    hostname: "{{ netapp_svm_hostname }}"
+    username: "{{ netapp_svm_username }}"
+    password: "{{ netapp_svm_password }}"
+    https: true
+    validate_certs: "{{ netapp_svm_validate_certs }}"
+    command: "{{ item }}"
+  delegate_to: localhost
+  loop:
+    - ['vserver', 'cifs', 'security', 'modify', '-vserver', '{{ netapp_svm_name }}', '-is-signing-required', '{{ netapp_svm_cifs_signing_required }}']
+    - ['vserver', 'cifs', 'security', 'modify', '-vserver', '{{ netapp_svm_name }}', '-smb2-enabled', '{{ netapp_svm_cifs_smb2_enabled }}']
+    - ['vserver', 'cifs', 'security', 'modify', '-vserver', '{{ netapp_svm_name }}', '-smb3-enabled', '{{ netapp_svm_cifs_smb3_enabled }}']
+  when:
+    - netapp_svm_enable_cifs | bool
+    - netapp_svm_configure_cifs_security | bool
+  changed_when: true
+
+- name: Configure SVM iSCSI service
+  netapp.ontap.na_ontap_iscsi:
+    hostname: "{{ netapp_svm_hostname }}"
+    username: "{{ netapp_svm_username }}"
+    password: "{{ netapp_svm_password }}"
+    https: true
+    validate_certs: "{{ netapp_svm_validate_certs }}"
+    state: present
+    vserver: "{{ netapp_svm_name }}"
+    service_state: started
+  delegate_to: localhost
+  when:
+    - netapp_svm_enable_iscsi | bool
+    - "'iscsi' in netapp_svm_allowed_protocols"
+
+- name: Configure SVM FCP service
+  netapp.ontap.na_ontap_fcp:
+    hostname: "{{ netapp_svm_hostname }}"
+    username: "{{ netapp_svm_username }}"
+    password: "{{ netapp_svm_password }}"
+    https: true
+    validate_certs: "{{ netapp_svm_validate_certs }}"
+    state: present
+    vserver: "{{ netapp_svm_name }}"
+    service_state: started
+  delegate_to: localhost
+  when:
+    - netapp_svm_enable_fcp | bool
+    - "'fcp' in netapp_svm_allowed_protocols"
+
+- name: Configure SVM NVMe service
+  netapp.ontap.na_ontap_nvme:
+    hostname: "{{ netapp_svm_hostname }}"
+    username: "{{ netapp_svm_username }}"
+    password: "{{ netapp_svm_password }}"
+    https: true
+    validate_certs: "{{ netapp_svm_validate_certs }}"
+    state: present
+    vserver: "{{ netapp_svm_name }}"
+    status_admin: true
+  delegate_to: localhost
+  when:
+    - netapp_svm_enable_nvme | bool
+    - "'nvme' in netapp_svm_allowed_protocols"
+
+- name: Create default export policy
+  netapp.ontap.na_ontap_export_policy:
+    hostname: "{{ netapp_svm_hostname }}"
+    username: "{{ netapp_svm_username }}"
+    password: "{{ netapp_svm_password }}"
+    https: true
+    validate_certs: "{{ netapp_svm_validate_certs }}"
+    state: present
+    name: "{{ item.name }}"
+    vserver: "{{ netapp_svm_name }}"
+  delegate_to: localhost
+  loop: "{{ netapp_svm_export_policies }}"
+  when:
+    - netapp_svm_create_export_policies | bool
+    - "'nfs' in netapp_svm_allowed_protocols"
+
+- name: Configure SVM LDAP client
+  netapp.ontap.na_ontap_ldap_client:
+    hostname: "{{ netapp_svm_hostname }}"
+    username: "{{ netapp_svm_username }}"
+    password: "{{ netapp_svm_password }}"
+    https: true
+    validate_certs: "{{ netapp_svm_validate_certs }}"
+    state: present
+    vserver: "{{ netapp_svm_name }}"
+    name: "{{ netapp_svm_ldap_client_name }}"
+    ldap_servers: "{{ netapp_svm_ldap_servers }}"
+    base_dn: "{{ netapp_svm_ldap_base_dn }}"
+    base_scope: "{{ netapp_svm_ldap_base_scope }}"
+    bind_dn: "{{ netapp_svm_ldap_bind_dn }}"
+    bind_password: "{{ netapp_svm_ldap_bind_password }}"
+    schema: "{{ netapp_svm_ldap_schema }}"
+    use_start_tls: "{{ netapp_svm_ldap_use_start_tls }}"
+    session_security: "{{ netapp_svm_ldap_session_security }}"
+  delegate_to: localhost
+  when: netapp_svm_configure_ldap | bool
+  no_log: true
+
+- name: Configure SVM LDAP
+  netapp.ontap.na_ontap_ldap:
+    hostname: "{{ netapp_svm_hostname }}"
+    username: "{{ netapp_svm_username }}"
+    password: "{{ netapp_svm_password }}"
+    https: true
+    validate_certs: "{{ netapp_svm_validate_certs }}"
+    state: present
+    vserver: "{{ netapp_svm_name }}"
+    client_config: "{{ netapp_svm_ldap_client_name }}"
+  delegate_to: localhost
+  when: netapp_svm_configure_ldap | bool
+
+- name: Configure name service switch
+  netapp.ontap.na_ontap_name_service_switch:
+    hostname: "{{ netapp_svm_hostname }}"
+    username: "{{ netapp_svm_username }}"
+    password: "{{ netapp_svm_password }}"
+    https: true
+    validate_certs: "{{ netapp_svm_validate_certs }}"
+    state: present
+    vserver: "{{ netapp_svm_name }}"
+    database_type: "{{ item.database_type }}"
+    sources: "{{ item.sources }}"
+  delegate_to: localhost
+  loop: "{{ netapp_svm_name_service_switch }}"
+  when: netapp_svm_configure_name_service | bool
+
+- name: Configure SVM routing
+  netapp.ontap.na_ontap_net_routes:
+    hostname: "{{ netapp_svm_hostname }}"
+    username: "{{ netapp_svm_username }}"
+    password: "{{ netapp_svm_password }}"
+    https: true
+    validate_certs: "{{ netapp_svm_validate_certs }}"
+    state: present
+    vserver: "{{ netapp_svm_name }}"
+    destination: "{{ item.destination }}"
+    gateway: "{{ item.gateway }}"
+    metric: "{{ item.metric | default(20) }}"
+  delegate_to: localhost
+  loop: "{{ netapp_svm_routes }}"
+  when: netapp_svm_configure_routes | bool
+
+- name: Create SVM peer relationships
+  netapp.ontap.na_ontap_vserver_peer:
+    hostname: "{{ netapp_svm_hostname }}"
+    username: "{{ netapp_svm_username }}"
+    password: "{{ netapp_svm_password }}"
+    https: true
+    validate_certs: "{{ netapp_svm_validate_certs }}"
+    state: present
+    vserver: "{{ netapp_svm_name }}"
+    peer_vserver: "{{ item.peer_vserver }}"
+    peer_cluster: "{{ item.peer_cluster }}"
+    applications: "{{ item.applications }}"
+    dest_hostname: "{{ item.dest_hostname }}"
+    dest_username: "{{ item.dest_username | default(netapp_svm_username) }}"
+    dest_password: "{{ item.dest_password | default(netapp_svm_password) }}"
+  delegate_to: localhost
+  loop: "{{ netapp_svm_peer_relationships }}"
+  when: netapp_svm_create_peer_relationships | bool
+  no_log: true
+
+- name: Configure SVM vscan (anti-virus)
+  netapp.ontap.na_ontap_vscan_on_access_policy:
+    hostname: "{{ netapp_svm_hostname }}"
+    username: "{{ netapp_svm_username }}"
+    password: "{{ netapp_svm_password }}"
+    https: true
+    validate_certs: "{{ netapp_svm_validate_certs }}"
+    state: present
+    vserver: "{{ netapp_svm_name }}"
+    policy_name: "{{ netapp_svm_vscan_policy_name }}"
+    is_scan_mandatory: "{{ netapp_svm_vscan_scan_mandatory }}"
+    max_file_size: "{{ netapp_svm_vscan_max_file_size }}"
+    file_ext_to_include: "{{ netapp_svm_vscan_file_ext_include }}"
+    file_ext_to_exclude: "{{ netapp_svm_vscan_file_ext_exclude }}"
+  delegate_to: localhost
+  when:
+    - netapp_svm_enable_vscan | bool
+    - "'cifs' in netapp_svm_allowed_protocols"
+
+- name: Verify SVM configuration
+  netapp.ontap.na_ontap_info:
+    hostname: "{{ netapp_svm_hostname }}"
+    username: "{{ netapp_svm_username }}"
+    password: "{{ netapp_svm_password }}"
+    https: true
+    validate_certs: "{{ netapp_svm_validate_certs }}"
+    gather_subset:
+      - vserver_info
+      - net_interface_info
+  register: svm_verification
+  delegate_to: localhost
+  when: netapp_svm_verify_config | bool
+
+- name: Display SVM configuration status
+  ansible.builtin.debug:
+    msg: "SVM {{ netapp_svm_name }} configured successfully. Protocols: {{ netapp_svm_allowed_protocols }}, LIFs: {{ svm_verification.ontap_info.net_interface_info | length }}"
+  when:
+    - netapp_svm_verify_config | bool
+    - netapp_svm_debug | bool

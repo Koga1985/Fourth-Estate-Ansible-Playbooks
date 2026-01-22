@@ -1,0 +1,49 @@
+# {{ ansible_managed }}
+# PostgreSQL {{ postgresql_version }} systemd service file
+
+[Unit]
+Description=PostgreSQL {{ postgresql_version }} database server
+Documentation=https://www.postgresql.org/docs/{{ postgresql_version }}/
+After=syslog.target
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=notify
+User=postgres
+Group=postgres
+
+# Environment
+Environment=PGDATA={{ postgresql_data_directory }}
+Environment=PG_OOM_ADJUST_FILE=/proc/self/oom_score_adj
+Environment=PG_OOM_ADJUST_VALUE=0
+
+# Service management
+ExecStart={{ postgresql_bin_path }}/postgres -D {{ postgresql_data_directory }}
+ExecReload=/bin/kill -HUP $MAINPID
+KillMode=mixed
+KillSignal=SIGINT
+
+# Timeouts
+TimeoutSec=300
+
+# Security
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths={{ postgresql_data_directory }} {{ postgresql_log_directory }} {{ postgresql_backup_directory }} {{ postgresql_wal_archive_directory }}
+
+# Resource limits
+LimitNOFILE=65536
+LimitNPROC=16384
+
+# Restart policy
+Restart=on-failure
+RestartSec=5s
+
+# OOM handling
+OOMScoreAdjust=-900
+
+[Install]
+WantedBy=multi-user.target
