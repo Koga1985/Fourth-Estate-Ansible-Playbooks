@@ -1,1 +1,115 @@
 ---
+# F5 BIG-IP Node Management Tasks
+# Fourth Estate Production Standards
+
+- name: Create or Update IP-Based Nodes
+  f5networks.f5_modules.bigip_node:
+    provider: "{{ f5_bigip_provider }}"
+    name: "{{ item.name }}"
+    address: "{{ item.address | default(omit) }}"
+    description: "{{ item.description | default(omit) }}"
+    monitors: "{{ item.monitor | default(f5_bigip_node_monitor_default) }}"
+    partition: "{{ item.partition | default('Common') }}"
+    state: "{{ item.state | default('present') }}"
+    session: "{{ item.session | default(f5_bigip_node_session_default) }}"
+    connection_limit: "{{ item.connection_limit | default(f5_bigip_node_connection_limit) }}"
+    rate_limit: "{{ item.rate_limit | default(f5_bigip_node_rate_limit) }}"
+    ratio: "{{ item.ratio | default(f5_bigip_node_ratio_default) }}"
+  loop: "{{ f5_bigip_nodes }}"
+  when:
+    - f5_bigip_nodes is defined
+    - f5_bigip_nodes | length > 0
+    - item.address is defined
+  notify: Save F5 Configuration
+  tags:
+    - f5_nodes
+    - f5_backend
+
+- name: Create or Update FQDN-Based Nodes
+  f5networks.f5_modules.bigip_node:
+    provider: "{{ f5_bigip_provider }}"
+    name: "{{ item.name }}"
+    fqdn: "{{ item.fqdn }}"
+    fqdn_auto_populate: "{{ item.fqdn_auto_populate | default(true) }}"
+    fqdn_address_type: "{{ item.fqdn_address_type | default('ipv4') }}"
+    fqdn_down_interval: "{{ item.fqdn_down_interval | default(5) }}"
+    fqdn_up_interval: "{{ item.fqdn_up_interval | default(3600) }}"
+    description: "{{ item.description | default(omit) }}"
+    monitors: "{{ item.monitor | default(f5_bigip_node_monitor_default) }}"
+    partition: "{{ item.partition | default('Common') }}"
+    state: "{{ item.state | default('present') }}"
+  loop: "{{ f5_bigip_nodes }}"
+  when:
+    - f5_bigip_nodes is defined
+    - f5_bigip_nodes | length > 0
+    - item.fqdn is defined
+  notify: Save F5 Configuration
+  tags:
+    - f5_nodes
+    - f5_fqdn_nodes
+
+- name: Create FQDN Nodes from Dedicated List
+  f5networks.f5_modules.bigip_node:
+    provider: "{{ f5_bigip_provider }}"
+    name: "{{ item.name }}"
+    fqdn: "{{ item.fqdn }}"
+    fqdn_auto_populate: "{{ item.fqdn_auto_populate | default(true) }}"
+    fqdn_address_type: "{{ item.fqdn_address_type | default('ipv4') }}"
+    fqdn_down_interval: "{{ item.fqdn_down_interval | default(5) }}"
+    fqdn_up_interval: "{{ item.fqdn_up_interval | default(3600) }}"
+    description: "{{ item.description | default(omit) }}"
+    monitors: "{{ item.monitor | default(f5_bigip_node_monitor_default) }}"
+    partition: "{{ item.partition | default('Common') }}"
+    state: "{{ item.state | default('present') }}"
+  loop: "{{ f5_bigip_fqdn_nodes }}"
+  when: f5_bigip_fqdn_nodes is defined and f5_bigip_fqdn_nodes | length > 0
+  notify: Save F5 Configuration
+  tags:
+    - f5_nodes
+    - f5_fqdn_nodes
+
+- name: Set Node State (Enable/Disable/Force Offline)
+  f5networks.f5_modules.bigip_node:
+    provider: "{{ f5_bigip_provider }}"
+    name: "{{ item.name }}"
+    state: "{{ item.state | default('present') }}"
+    session: "{{ item.session | default(f5_bigip_node_session_default) }}"
+    monitor_state: "{{ item.monitor_state | default(f5_bigip_node_state_default) }}"
+    partition: "{{ item.partition | default('Common') }}"
+  loop: "{{ f5_bigip_nodes }}"
+  when:
+    - f5_bigip_nodes is defined
+    - f5_bigip_nodes | length > 0
+    - item.session is defined or item.monitor_state is defined
+  notify: Save F5 Configuration
+  tags:
+    - f5_nodes
+    - f5_node_state
+
+- name: Query Node Status
+  f5networks.f5_modules.bigip_command:
+    provider: "{{ f5_bigip_provider }}"
+    commands:
+      - "show ltm node"
+  register: f5_node_status
+  changed_when: false
+  tags:
+    - f5_nodes
+    - f5_verify
+
+- name: Display Node Status
+  ansible.builtin.debug:
+    var: f5_node_status.stdout_lines
+  when: f5_node_status is defined
+  tags:
+    - f5_nodes
+    - f5_verify
+
+- name: Ensure Configuration is Saved
+  f5networks.f5_modules.bigip_config:
+    provider: "{{ f5_bigip_provider }}"
+    save: true
+  when: f5_bigip_save_config | bool
+  tags:
+    - f5_nodes
+    - f5_save

@@ -1,0 +1,364 @@
+---
+# Prometheus Configuration Role - Default Variables
+# Fourth Estate Agency - Infrastructure Monitoring
+
+# Prometheus configuration directory
+prometheus_config_dir: "/etc/prometheus"
+prometheus_install_dir: "/opt/prometheus"
+
+# Global configuration
+prometheus_global_scrape_interval: "15s"
+prometheus_global_scrape_timeout: "10s"
+prometheus_global_evaluation_interval: "15s"
+
+# External labels
+prometheus_external_labels:
+  environment: "{{ environment | default('production') }}"
+  organization: "fourth_estate"
+  datacenter: "{{ datacenter | default('dc1') }}"
+  region: "{{ region | default('us-east-1') }}"
+
+# Alertmanager configuration
+prometheus_alertmanager_enabled: true
+prometheus_alertmanagers:
+  - scheme: http
+    static_configs:
+      - targets:
+          - "localhost:9093"
+    timeout: 10s
+
+# Scrape configurations
+prometheus_scrape_configs:
+  # Node Exporter - System metrics
+  - job_name: 'node_exporter'
+    static_configs:
+      - targets: []
+        # Populated by inventory or service discovery
+    file_sd_configs:
+      - files:
+          - '{{ prometheus_config_dir }}/file_sd/node_exporter.yml'
+        refresh_interval: 30s
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+      - source_labels: [__meta_consul_node]
+        target_label: node
+
+  # Blackbox Exporter - Endpoint monitoring
+  - job_name: 'blackbox_http'
+    metrics_path: /probe
+    params:
+      module: [http_2xx]
+    file_sd_configs:
+      - files:
+          - '{{ prometheus_config_dir }}/file_sd/blackbox_http.yml'
+        refresh_interval: 30s
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: localhost:9115
+
+  # PostgreSQL Exporter
+  - job_name: 'postgresql'
+    file_sd_configs:
+      - files:
+          - '{{ prometheus_config_dir }}/file_sd/postgresql.yml'
+        refresh_interval: 30s
+
+  # MySQL Exporter
+  - job_name: 'mysql'
+    file_sd_configs:
+      - files:
+          - '{{ prometheus_config_dir }}/file_sd/mysql.yml'
+        refresh_interval: 30s
+
+  # Redis Exporter
+  - job_name: 'redis'
+    file_sd_configs:
+      - files:
+          - '{{ prometheus_config_dir }}/file_sd/redis.yml'
+        refresh_interval: 30s
+
+  # NGINX Exporter
+  - job_name: 'nginx'
+    file_sd_configs:
+      - files:
+          - '{{ prometheus_config_dir }}/file_sd/nginx.yml'
+        refresh_interval: 30s
+
+  # HAProxy Exporter
+  - job_name: 'haproxy'
+    file_sd_configs:
+      - files:
+          - '{{ prometheus_config_dir }}/file_sd/haproxy.yml'
+        refresh_interval: 30s
+
+# Kubernetes/OpenShift service discovery
+prometheus_kubernetes_sd_enabled: false
+prometheus_kubernetes_api_server: "https://kubernetes.default.svc"
+prometheus_kubernetes_sd_role: "node"  # node, pod, service, endpoints
+
+# Consul service discovery
+prometheus_consul_sd_enabled: false
+prometheus_consul_server: "localhost:8500"
+prometheus_consul_datacenter: "dc1"
+
+# Recording rules
+prometheus_recording_rules_enabled: true
+prometheus_recording_rules_files:
+  - name: "cpu_rules"
+    rules:
+      - record: instance:node_cpu_utilization:rate5m
+        expr: 100 - (avg by (instance) (irate(node_cpu_seconds_total{mode="idle"}[5m])) * 100)
+
+      - record: instance:node_memory_utilization:ratio
+        expr: 1 - ((node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes))
+
+      - record: instance:node_disk_utilization:ratio
+        expr: 1 - ((node_filesystem_avail_bytes{fstype!~"tmpfs|fuse.lxcfs|squashfs|vfat"} / node_filesystem_size_bytes{fstype!~"tmpfs|fuse.lxcfs|squashfs|vfat"}))
+
+  - name: "http_rules"
+    rules:
+      - record: job:http_requests:rate5m
+        expr: sum by (job, status) (rate(http_requests_total[5m]))
+
+      - record: job:http_request_duration_seconds:p95
+        expr: histogram_quantile(0.95, sum by (job, le) (rate(http_request_duration_seconds_bucket[5m])))
+
+      - record: job:http_request_duration_seconds:p99
+        expr: histogram_quantile(0.99, sum by (job, le) (rate(http_request_duration_seconds_bucket[5m])))
+
+  - name: "database_rules"
+    rules:
+      - record: instance:postgres_connections:utilization
+        expr: pg_stat_database_numbackends / pg_settings_max_connections
+
+      - record: instance:mysql_connections:utilization
+        expr: mysql_global_status_threads_connected / mysql_global_variables_max_connections
+
+# Alert rules for Fourth Estate
+prometheus_alert_rules_enabled: true
+prometheus_alert_rules_files:
+  # Infrastructure alerts
+  - name: "infrastructure_alerts"
+    rules:
+      - alert: HighCPUUsage
+        expr: instance:node_cpu_utilization:rate5m > 80
+        for: 5m
+        labels:
+          severity: warning
+          component: infrastructure
+          organization: fourth_estate
+        annotations:
+          summary: "High CPU usage detected on {{ $labels.instance }}"
+          description: "CPU usage is {{ $value | humanizePercentage }} on {{ $labels.instance }} for more than 5 minutes."
+          runbook: "https://wiki.fourth-estate.local/runbooks/high-cpu"
+
+      - alert: CriticalCPUUsage
+        expr: instance:node_cpu_utilization:rate5m > 95
+        for: 2m
+        labels:
+          severity: critical
+          component: infrastructure
+          organization: fourth_estate
+        annotations:
+          summary: "Critical CPU usage on {{ $labels.instance }}"
+          description: "CPU usage is {{ $value | humanizePercentage }} on {{ $labels.instance }}."
+
+      - alert: HighMemoryUsage
+        expr: instance:node_memory_utilization:ratio > 0.90
+        for: 5m
+        labels:
+          severity: warning
+          component: infrastructure
+          organization: fourth_estate
+        annotations:
+          summary: "High memory usage on {{ $labels.instance }}"
+          description: "Memory usage is {{ $value | humanizePercentage }} on {{ $labels.instance }}."
+
+      - alert: CriticalDiskSpace
+        expr: instance:node_disk_utilization:ratio > 0.90
+        for: 5m
+        labels:
+          severity: critical
+          component: infrastructure
+          organization: fourth_estate
+        annotations:
+          summary: "Critical disk space on {{ $labels.instance }}"
+          description: "Disk usage is {{ $value | humanizePercentage }} on {{ $labels.instance }} {{ $labels.mountpoint }}."
+
+      - alert: ServiceDown
+        expr: up == 0
+        for: 2m
+        labels:
+          severity: critical
+          component: infrastructure
+          organization: fourth_estate
+        annotations:
+          summary: "Service {{ $labels.job }} is down"
+          description: "Service {{ $labels.job }} on {{ $labels.instance }} has been down for more than 2 minutes."
+
+      - alert: SSLCertificateExpiringSoon
+        expr: probe_ssl_earliest_cert_expiry - time() < 86400 * 30
+        for: 1h
+        labels:
+          severity: warning
+          component: security
+          organization: fourth_estate
+        annotations:
+          summary: "SSL certificate expiring soon for {{ $labels.instance }}"
+          description: "SSL certificate for {{ $labels.instance }} expires in {{ $value | humanizeDuration }}."
+
+      - alert: SSLCertificateExpired
+        expr: probe_ssl_earliest_cert_expiry - time() < 0
+        labels:
+          severity: critical
+          component: security
+          organization: fourth_estate
+        annotations:
+          summary: "SSL certificate expired for {{ $labels.instance }}"
+          description: "SSL certificate for {{ $labels.instance }} has expired."
+
+  # Database alerts
+  - name: "database_alerts"
+    rules:
+      - alert: PostgreSQLDown
+        expr: pg_up == 0
+        for: 1m
+        labels:
+          severity: critical
+          component: database
+          organization: fourth_estate
+        annotations:
+          summary: "PostgreSQL is down on {{ $labels.instance }}"
+          description: "PostgreSQL database on {{ $labels.instance }} is not responding."
+
+      - alert: PostgreSQLReplicationLag
+        expr: pg_replication_lag > 300
+        for: 5m
+        labels:
+          severity: warning
+          component: database
+          organization: fourth_estate
+        annotations:
+          summary: "PostgreSQL replication lag on {{ $labels.instance }}"
+          description: "Replication lag is {{ $value }} seconds on {{ $labels.instance }}."
+
+      - alert: PostgreSQLConnectionPoolExhausted
+        expr: instance:postgres_connections:utilization > 0.90
+        for: 2m
+        labels:
+          severity: warning
+          component: database
+          organization: fourth_estate
+        annotations:
+          summary: "PostgreSQL connection pool nearly exhausted on {{ $labels.instance }}"
+          description: "Connection pool is {{ $value | humanizePercentage }} utilized on {{ $labels.instance }}."
+
+      - alert: MySQLDown
+        expr: mysql_up == 0
+        for: 1m
+        labels:
+          severity: critical
+          component: database
+          organization: fourth_estate
+        annotations:
+          summary: "MySQL is down on {{ $labels.instance }}"
+          description: "MySQL database on {{ $labels.instance }} is not responding."
+
+      - alert: MySQLSlowQueries
+        expr: rate(mysql_global_status_slow_queries[5m]) > 10
+        for: 5m
+        labels:
+          severity: warning
+          component: database
+          organization: fourth_estate
+        annotations:
+          summary: "High number of slow queries on {{ $labels.instance }}"
+          description: "{{ $value }} slow queries per second on {{ $labels.instance }}."
+
+  # Security alerts
+  - name: "security_alerts"
+    rules:
+      - alert: FailedSSHLogins
+        expr: rate(node_auth_failed_total[5m]) > 5
+        for: 2m
+        labels:
+          severity: warning
+          component: security
+          organization: fourth_estate
+        annotations:
+          summary: "Multiple failed SSH login attempts on {{ $labels.instance }}"
+          description: "{{ $value }} failed SSH login attempts per second on {{ $labels.instance }}."
+
+      - alert: UnauthorizedAccessAttempt
+        expr: rate(http_requests_total{status="403"}[5m]) > 10
+        for: 5m
+        labels:
+          severity: warning
+          component: security
+          organization: fourth_estate
+        annotations:
+          summary: "High number of 403 errors on {{ $labels.instance }}"
+          description: "{{ $value }} 403 errors per second on {{ $labels.instance }}."
+
+  # Application alerts
+  - name: "application_alerts"
+    rules:
+      - alert: HighHTTP5xxErrorRate
+        expr: (sum by (job, instance) (rate(http_requests_total{status=~"5.."}[5m])) / sum by (job, instance) (rate(http_requests_total[5m]))) > 0.01
+        for: 5m
+        labels:
+          severity: warning
+          component: application
+          organization: fourth_estate
+        annotations:
+          summary: "High 5xx error rate on {{ $labels.instance }}"
+          description: "5xx error rate is {{ $value | humanizePercentage }} on {{ $labels.instance }}."
+
+      - alert: SlowResponseTime
+        expr: job:http_request_duration_seconds:p95 > 5
+        for: 10m
+        labels:
+          severity: warning
+          component: application
+          organization: fourth_estate
+        annotations:
+          summary: "Slow response time for {{ $labels.job }}"
+          description: "95th percentile response time is {{ $value }}s for {{ $labels.job }}."
+
+  # Backup alerts
+  - name: "backup_alerts"
+    rules:
+      - alert: BackupJobFailed
+        expr: backup_job_status == 0
+        for: 5m
+        labels:
+          severity: critical
+          component: backup
+          organization: fourth_estate
+        annotations:
+          summary: "Backup job failed on {{ $labels.instance }}"
+          description: "Backup job {{ $labels.job_name }} failed on {{ $labels.instance }}."
+
+      - alert: BackupTooOld
+        expr: time() - backup_last_success_timestamp > 86400 * 2
+        for: 1h
+        labels:
+          severity: warning
+          component: backup
+          organization: fourth_estate
+        annotations:
+          summary: "Backup is too old on {{ $labels.instance }}"
+          description: "Last successful backup was {{ $value | humanizeDuration }} ago on {{ $labels.instance }}."
+
+# Remote write configuration
+prometheus_remote_write_enabled: false
+prometheus_remote_write_configs: []
+
+# Remote read configuration
+prometheus_remote_read_enabled: false
+prometheus_remote_read_configs: []

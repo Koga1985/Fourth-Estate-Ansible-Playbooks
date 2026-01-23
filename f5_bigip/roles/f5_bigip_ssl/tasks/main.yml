@@ -1,1 +1,153 @@
 ---
+# F5 BIG-IP SSL Certificate Management Tasks
+# Fourth Estate Production Standards
+
+- name: Import SSL Certificates and Keys
+  f5networks.f5_modules.bigip_ssl_certificate:
+    provider: "{{ f5_bigip_provider }}"
+    name: "{{ item.name }}"
+    content: "{{ item.cert_content }}"
+    partition: "{{ item.partition | default('Common') }}"
+    state: present
+  loop: "{{ f5_bigip_ssl_certificates }}"
+  when: f5_bigip_ssl_certificates is defined and f5_bigip_ssl_certificates | length > 0
+  no_log: true
+  notify: Save F5 Configuration
+  tags:
+    - f5_ssl
+    - f5_certificates
+
+- name: Import SSL Private Keys
+  f5networks.f5_modules.bigip_ssl_key:
+    provider: "{{ f5_bigip_provider }}"
+    name: "{{ item.name }}"
+    content: "{{ item.key_content }}"
+    passphrase: "{{ item.passphrase | default(omit) }}"
+    partition: "{{ item.partition | default('Common') }}"
+    state: present
+  loop: "{{ f5_bigip_ssl_certificates }}"
+  when:
+    - f5_bigip_ssl_certificates is defined
+    - f5_bigip_ssl_certificates | length > 0
+    - item.key_content is defined
+  no_log: true
+  notify: Save F5 Configuration
+  tags:
+    - f5_ssl
+    - f5_keys
+
+- name: Import CA Certificate Bundles
+  f5networks.f5_modules.bigip_ssl_certificate:
+    provider: "{{ f5_bigip_provider }}"
+    name: "{{ item.name }}"
+    content: "{{ item.bundle_content }}"
+    partition: "{{ item.partition | default('Common') }}"
+    state: present
+  loop: "{{ f5_bigip_ssl_cert_bundles }}"
+  when: f5_bigip_ssl_cert_bundles is defined and f5_bigip_ssl_cert_bundles | length > 0
+  no_log: true
+  notify: Save F5 Configuration
+  tags:
+    - f5_ssl
+    - f5_ca_bundles
+
+- name: Create Client SSL Profiles
+  f5networks.f5_modules.bigip_profile_client_ssl:
+    provider: "{{ f5_bigip_provider }}"
+    name: "{{ item.name }}"
+    parent: "{{ item.parent | default('clientssl') }}"
+    cert_key_chain: "{{ item.cert_key_chain | default(omit) }}"
+    ciphers: "{{ item.ciphers | default(f5_bigip_ssl_default_ciphers) }}"
+    options: "{{ item.options | default(f5_bigip_ssl_protocols) }}"
+    secure_renegotiation: "{{ item.secure_renegotiation | default(f5_bigip_ssl_secure_renegotiation) }}"
+    sni_default: "{{ item.sni_default | default(false) }}"
+    sni_require: "{{ item.sni_require | default(f5_bigip_sni_require) }}"
+    partition: "{{ item.partition | default('Common') }}"
+    state: present
+  loop: "{{ f5_bigip_client_ssl_profiles }}"
+  when: f5_bigip_client_ssl_profiles is defined and f5_bigip_client_ssl_profiles | length > 0
+  notify: Save F5 Configuration
+  tags:
+    - f5_ssl
+    - f5_client_ssl_profiles
+
+- name: Create Server SSL Profiles
+  f5networks.f5_modules.bigip_profile_server_ssl:
+    provider: "{{ f5_bigip_provider }}"
+    name: "{{ item.name }}"
+    parent: "{{ item.parent | default('serverssl') }}"
+    ciphers: "{{ item.ciphers | default(f5_bigip_ssl_default_ciphers) }}"
+    options: "{{ item.options | default(f5_bigip_ssl_protocols) }}"
+    peer_cert_mode: "{{ item.peer_cert_mode | default('ignore') }}"
+    secure_renegotiation: "{{ item.secure_renegotiation | default(f5_bigip_ssl_secure_renegotiation) }}"
+    partition: "{{ item.partition | default('Common') }}"
+    state: present
+  loop: "{{ f5_bigip_server_ssl_profiles }}"
+  when: f5_bigip_server_ssl_profiles is defined and f5_bigip_server_ssl_profiles | length > 0
+  notify: Save F5 Configuration
+  tags:
+    - f5_ssl
+    - f5_server_ssl_profiles
+
+- name: Configure OCSP Stapling
+  f5networks.f5_modules.bigip_command:
+    provider: "{{ f5_bigip_provider }}"
+    commands:
+      - "modify ltm profile client-ssl {{ item.name }} ocsp-stapling enabled"
+  loop: "{{ f5_bigip_client_ssl_profiles }}"
+  when:
+    - f5_bigip_ocsp_enabled | bool
+    - f5_bigip_ocsp_stapling | bool
+    - f5_bigip_client_ssl_profiles is defined
+  notify: Save F5 Configuration
+  tags:
+    - f5_ssl
+    - f5_ocsp
+
+- name: Check SSL Certificate Expiration
+  f5networks.f5_modules.bigip_command:
+    provider: "{{ f5_bigip_provider }}"
+    commands:
+      - "run /sys crypto check-cert {{ item.name }}.crt"
+  loop: "{{ f5_bigip_ssl_certificates }}"
+  when: f5_bigip_ssl_certificates is defined and f5_bigip_ssl_certificates | length > 0
+  register: f5_cert_check
+  changed_when: false
+  failed_when: false
+  tags:
+    - f5_ssl
+    - f5_cert_check
+
+- name: Display Certificate Expiration Information
+  ansible.builtin.debug:
+    msg: "Certificate {{ item.item.name }}: {{ item.stdout_lines | default('Unable to check') }}"
+  loop: "{{ f5_cert_check.results }}"
+  when:
+    - f5_cert_check is defined
+    - f5_cert_check.results is defined
+  loop_control:
+    label: "{{ item.item.name }}"
+  tags:
+    - f5_ssl
+    - f5_cert_check
+
+- name: Verify SSL Profile Configuration
+  f5networks.f5_modules.bigip_command:
+    provider: "{{ f5_bigip_provider }}"
+    commands:
+      - "list ltm profile client-ssl"
+      - "list ltm profile server-ssl"
+  register: f5_ssl_profiles_output
+  changed_when: false
+  tags:
+    - f5_ssl
+    - f5_verify
+
+- name: Ensure Configuration is Saved
+  f5networks.f5_modules.bigip_config:
+    provider: "{{ f5_bigip_provider }}"
+    save: true
+  when: f5_bigip_save_config | bool
+  tags:
+    - f5_ssl
+    - f5_save

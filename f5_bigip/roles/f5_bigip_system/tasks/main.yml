@@ -1,1 +1,241 @@
 ---
+# F5 BIG-IP System Configuration Tasks
+# Fourth Estate Production Standards
+
+- name: Set System Hostname
+  f5networks.f5_modules.bigip_hostname:
+    provider: "{{ f5_bigip_provider }}"
+    hostname: "{{ f5_bigip_hostname }}"
+  notify: Save F5 Configuration
+  tags:
+    - f5_system
+    - f5_hostname
+
+- name: Configure DNS Settings
+  f5networks.f5_modules.bigip_device_dns:
+    provider: "{{ f5_bigip_provider }}"
+    name_servers: "{{ f5_bigip_dns_nameservers }}"
+    search: "{{ f5_bigip_dns_search_domains }}"
+  notify: Save F5 Configuration
+  tags:
+    - f5_system
+    - f5_dns
+
+- name: Configure NTP Servers
+  f5networks.f5_modules.bigip_device_ntp:
+    provider: "{{ f5_bigip_provider }}"
+    ntp_servers: "{{ f5_bigip_ntp_servers }}"
+    timezone: "{{ f5_bigip_timezone }}"
+  notify: Save F5 Configuration
+  tags:
+    - f5_system
+    - f5_ntp
+
+- name: Configure SNMP Contact and Location
+  f5networks.f5_modules.bigip_snmp:
+    provider: "{{ f5_bigip_provider }}"
+    contact: "{{ f5_bigip_snmp_contact }}"
+    location: "{{ f5_bigip_snmp_location }}"
+  when: f5_bigip_snmp_enabled | bool
+  notify: Save F5 Configuration
+  tags:
+    - f5_system
+    - f5_snmp
+
+- name: Configure SNMPv3 Users
+  f5networks.f5_modules.bigip_snmp_trap:
+    provider: "{{ f5_bigip_provider }}"
+    name: "{{ item.name }}"
+    snmp_version: "3"
+    community: "{{ item.name }}"
+    destination: "{{ item.destination | default(omit) }}"
+  loop: "{{ f5_bigip_snmp_v3_users }}"
+  when:
+    - f5_bigip_snmp_enabled | bool
+    - f5_bigip_snmp_v3_enabled | bool
+  notify: Save F5 Configuration
+  tags:
+    - f5_system
+    - f5_snmp
+
+- name: Configure SNMP Allowed Addresses
+  f5networks.f5_modules.bigip_command:
+    provider: "{{ f5_bigip_provider }}"
+    commands:
+      - "modify sys snmp allowed-addresses replace-all-with { {{ f5_bigip_snmp_allowed_addresses | join(' ') }} }"
+  when:
+    - f5_bigip_snmp_enabled | bool
+    - f5_bigip_snmp_allowed_addresses is defined
+  notify: Save F5 Configuration
+  tags:
+    - f5_system
+    - f5_snmp
+
+- name: Configure Syslog Remote Servers
+  f5networks.f5_modules.bigip_remote_syslog:
+    provider: "{{ f5_bigip_provider }}"
+    remote_host: "{{ item.host }}"
+    remote_port: "{{ item.port | default(514) }}"
+  loop: "{{ f5_bigip_syslog_servers }}"
+  when: f5_bigip_syslog_enabled | bool
+  notify: Save F5 Configuration
+  tags:
+    - f5_system
+    - f5_syslog
+
+- name: Configure SSH Access
+  f5networks.f5_modules.bigip_device_sshd:
+    provider: "{{ f5_bigip_provider }}"
+    banner: enabled
+    banner_text: "{{ f5_bigip_ssh_banner }}"
+    inactivity_timeout: "{{ f5_bigip_ssh_timeout }}"
+    allow: "{{ f5_bigip_ssh_access_addresses }}"
+  when: f5_bigip_ssh_enabled | bool
+  notify: Save F5 Configuration
+  tags:
+    - f5_system
+    - f5_ssh
+    - f5_hardening
+
+- name: Configure HTTPD (GUI) Settings
+  f5networks.f5_modules.bigip_device_httpd:
+    provider: "{{ f5_bigip_provider }}"
+    auth_pam_idle_timeout: 1200
+    ssl_port: "{{ f5_bigip_httpd_ssl_port }}"
+    ssl_protocols: "{{ f5_bigip_httpd_ssl_protocol }}"
+    ssl_cipher_suite: "{{ f5_bigip_httpd_ssl_ciphersuite }}"
+    redirect_http_to_https: "{{ f5_bigip_httpd_redirect_http_to_https | bool }}"
+  when: f5_bigip_httpd_enabled | bool
+  notify: Save F5 Configuration
+  tags:
+    - f5_system
+    - f5_httpd
+    - f5_hardening
+
+- name: Configure HTTPD Allowed Addresses
+  f5networks.f5_modules.bigip_command:
+    provider: "{{ f5_bigip_provider }}"
+    commands:
+      - "modify sys httpd allow replace-all-with { {{ f5_bigip_httpd_allow_addresses | join(' ') }} }"
+  when:
+    - f5_bigip_httpd_enabled | bool
+    - f5_bigip_httpd_allow_addresses is defined
+  notify: Save F5 Configuration
+  tags:
+    - f5_system
+    - f5_httpd
+    - f5_hardening
+
+- name: Configure System Database Variables
+  f5networks.f5_modules.bigip_sys_db:
+    provider: "{{ f5_bigip_provider }}"
+    key: "{{ item.name }}"
+    value: "{{ item.value }}"
+  loop: "{{ f5_bigip_db_variables }}"
+  when: f5_bigip_db_variables is defined
+  notify: Save F5 Configuration
+  tags:
+    - f5_system
+    - f5_performance
+
+- name: Configure Global Settings
+  f5networks.f5_modules.bigip_sys_global:
+    provider: "{{ f5_bigip_provider }}"
+    gui_setup: disabled
+    security_banner: "{{ f5_bigip_gui_security_banner | bool }}"
+    banner_text: "{{ f5_bigip_gui_security_banner_text }}"
+  notify: Save F5 Configuration
+  tags:
+    - f5_system
+    - f5_security
+
+- name: Configure Auto Phone Home (Disable)
+  f5networks.f5_modules.bigip_command:
+    provider: "{{ f5_bigip_provider }}"
+    commands:
+      - "modify sys software update auto-check disabled"
+      - "modify sys software update auto-phonehome disabled"
+  when: not f5_bigip_auto_check_updates | bool
+  notify: Save F5 Configuration
+  tags:
+    - f5_system
+    - f5_security
+
+- name: Create Additional Admin Users
+  f5networks.f5_modules.bigip_user:
+    provider: "{{ f5_bigip_provider }}"
+    username_credential: "{{ item.username }}"
+    password_credential: "{{ item.password }}"
+    partition_access: "{{ item.partition_access }}"
+    shell: "{{ item.shell | default('tmsh') }}"
+    update_password: on_create
+  loop: "{{ f5_bigip_admin_users }}"
+  when: f5_bigip_admin_users is defined and f5_bigip_admin_users | length > 0
+  no_log: true
+  notify: Save F5 Configuration
+  tags:
+    - f5_system
+    - f5_users
+
+- name: Configure Password Policy
+  f5networks.f5_modules.bigip_command:
+    provider: "{{ f5_bigip_provider }}"
+    commands:
+      - "modify auth password-policy minimum-length {{ f5_bigip_password_policy.min_length }}"
+      - "modify auth password-policy required-lowercase {{ f5_bigip_password_policy.required_lowercase }}"
+      - "modify auth password-policy required-uppercase {{ f5_bigip_password_policy.required_uppercase }}"
+      - "modify auth password-policy required-numeric {{ f5_bigip_password_policy.required_numeric }}"
+      - "modify auth password-policy required-special {{ f5_bigip_password_policy.required_special }}"
+      - "modify auth password-policy max-duration {{ f5_bigip_password_policy.max_age }}"
+      - "modify auth password-policy min-duration {{ f5_bigip_password_policy.min_age }}"
+      - "modify auth password-policy password-memory {{ f5_bigip_password_policy.history }}"
+      - "modify auth password-policy max-login-failures {{ f5_bigip_password_policy.max_login_failures }}"
+      - "modify auth password-policy lockout-duration {{ f5_bigip_password_policy.lockout_duration }}"
+  notify: Save F5 Configuration
+  tags:
+    - f5_system
+    - f5_security
+    - f5_password_policy
+
+- name: Apply F5 License
+  f5networks.f5_modules.bigip_device_license:
+    provider: "{{ f5_bigip_provider }}"
+    license_key: "{{ f5_bigip_license_key }}"
+  when:
+    - f5_bigip_license_key is defined
+    - f5_bigip_license_key != ""
+  tags:
+    - f5_system
+    - f5_license
+    - never
+
+- name: Verify License Status
+  f5networks.f5_modules.bigip_command:
+    provider: "{{ f5_bigip_provider }}"
+    commands:
+      - "show sys license"
+  register: f5_license_output
+  when: f5_bigip_license_check | bool
+  changed_when: false
+  tags:
+    - f5_system
+    - f5_license
+
+- name: Display License Information
+  ansible.builtin.debug:
+    var: f5_license_output.stdout_lines
+  when:
+    - f5_bigip_license_check | bool
+    - f5_license_output is defined
+  tags:
+    - f5_system
+    - f5_license
+
+- name: Ensure Configuration is Saved
+  f5networks.f5_modules.bigip_config:
+    provider: "{{ f5_bigip_provider }}"
+    save: true
+  when: f5_bigip_save_config | bool
+  tags:
+    - f5_system
+    - f5_save

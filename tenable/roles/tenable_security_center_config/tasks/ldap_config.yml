@@ -1,0 +1,81 @@
+---
+# tenable_security_center_config/tasks/ldap_config.yml
+# LDAP/Active Directory Configuration
+
+- name: Configure LDAP server connection
+  ansible.builtin.uri:
+    url: "https://{{ tsc_host }}:{{ tsc_port }}/rest/ldap"
+    method: POST
+    headers:
+      X-SecurityCenter: "{{ tsc_token }}"
+    body_format: json
+    body:
+      name: "{{ item.name }}"
+      description: "{{ item.description }}"
+      host: "{{ item.host }}"
+      port: "{{ item.port | default('389') }}"
+      encryption: "{{ item.encryption | default('tls') }}"
+      searchBase: "{{ item.search_base }}"
+      searchString: "{{ item.search_string | default('(&(objectClass=user)(sAMAccountName=%USERNAME%))') }}"
+      bindDN: "{{ item.bind_dn }}"
+      bindPassword: "{{ item.bind_password }}"
+      groupSearchBase: "{{ item.group_search_base | default(item.search_base) }}"
+      groupSearchString: "{{ item.group_search_string | default('(&(objectClass=group)(member=%USER_DN%))') }}"
+      userNameAttribute: "{{ item.username_attribute | default('sAMAccountName') }}"
+      emailAttribute: "{{ item.email_attribute | default('mail') }}"
+      firstNameAttribute: "{{ item.firstname_attribute | default('givenName') }}"
+      lastNameAttribute: "{{ item.lastname_attribute | default('sn') }}"
+      enabled: "{{ item.enabled | default('true') }}"
+      referral: "{{ item.referral | default('follow') }}"
+      timeout: "{{ item.timeout | default('30') }}"
+    validate_certs: "{{ tsc_validate_certs }}"
+    status_code: [200, 400]
+  loop: "{{ tsc_ldap_servers }}"
+  when: tsc_ldap_servers | length > 0
+  no_log: true
+
+- name: Map LDAP groups to Security Center roles
+  ansible.builtin.uri:
+    url: "https://{{ tsc_host }}:{{ tsc_port }}/rest/ldap/{{ item.0.id }}/groupMapping"
+    method: POST
+    headers:
+      X-SecurityCenter: "{{ tsc_token }}"
+    body_format: json
+    body:
+      groupDN: "{{ item.1.group_dn }}"
+      roleID: "{{ item.1.role_id }}"
+      organizationID: "{{ item.1.organization_id | default('0') }}"
+    validate_certs: "{{ tsc_validate_certs }}"
+    status_code: [200, 400]
+  with_subelements:
+    - "{{ tsc_ldap_servers }}"
+    - group_mappings
+    - skip_missing: true
+  when: tsc_ldap_servers | length > 0
+
+- name: Test LDAP connection
+  ansible.builtin.uri:
+    url: "https://{{ tsc_host }}:{{ tsc_port }}/rest/ldap/{{ item.id }}/test"
+    method: POST
+    headers:
+      X-SecurityCenter: "{{ tsc_token }}"
+    body_format: json
+    body:
+      username: "{{ tsc_ldap_test_user }}"
+      password: "{{ tsc_ldap_test_password }}"
+    validate_certs: "{{ tsc_validate_certs }}"
+    status_code: 200
+  loop: "{{ tsc_ldap_servers }}"
+  when:
+    - tsc_ldap_servers | length > 0
+    - tsc_ldap_test_user is defined
+  no_log: true
+  register: ldap_test_result
+
+- name: Display LDAP test results
+  ansible.builtin.debug:
+    msg: "LDAP server {{ item.item.name }}: {{ 'SUCCESS' if item.json.response.success else 'FAILED' }}"
+  loop: "{{ ldap_test_result.results }}"
+  when:
+    - ldap_test_result is defined
+    - not ldap_test_result.skipped | default(false)

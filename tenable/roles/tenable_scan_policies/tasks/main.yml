@@ -1,1 +1,131 @@
 ---
+# tenable_scan_policies/tasks/main.yml
+# Tenable Scan Policy Management for Fourth Estate Agencies
+
+- name: Get API token for Security Center
+  ansible.builtin.uri:
+    url: "https://{{ tsc_host }}:{{ tsc_port }}/rest/token"
+    method: POST
+    body_format: json
+    body:
+      username: "{{ tsc_username }}"
+      password: "{{ tsc_password }}"
+    validate_certs: "{{ tsc_validate_certs }}"
+    status_code: 200
+  register: token_response
+  no_log: true
+
+- name: Set API token fact
+  ansible.builtin.set_fact:
+    tsc_token: "{{ token_response.json.response.token }}"
+  no_log: true
+
+# Create Scan Policies from Templates
+- name: Create scan policies
+  ansible.builtin.uri:
+    url: "https://{{ tsc_host }}:{{ tsc_port }}/rest/policy"
+    method: POST
+    headers:
+      X-SecurityCenter: "{{ tsc_token }}"
+    body_format: json
+    body:
+      name: "{{ item.name }}"
+      description: "{{ item.description }}"
+      tags: "{{ item.tags | default('') }}"
+      context: "{{ item.context | default('') }}"
+      auditFiles: "{{ item.audit_files | default([]) }}"
+      policyTemplate:
+        id: "{{ item.template_id }}"
+      preferences: "{{ lookup('template', 'policies/' + item.template + '.json.j2') | from_json }}"
+    validate_certs: "{{ tsc_validate_certs }}"
+    status_code: [200, 400]
+  loop: "{{ tsc_scan_policies }}"
+  when: tsc_scan_policies | length > 0
+  register: policy_result
+
+- name: Store policy IDs for reference
+  ansible.builtin.set_fact:
+    tsc_policy_ids: "{{ tsc_policy_ids | default({}) | combine({item.item.name: item.json.response.id}) }}"
+  loop: "{{ policy_result.results }}"
+  when:
+    - not policy_result.skipped | default(false)
+    - item.json.response.id is defined
+
+# Create Custom Policies
+- name: Create custom scan policies
+  ansible.builtin.uri:
+    url: "https://{{ tsc_host }}:{{ tsc_port }}/rest/policy"
+    method: POST
+    headers:
+      X-SecurityCenter: "{{ tsc_token }}"
+    body_format: json
+    body: "{{ lookup('template', 'custom_policies/' + item.template + '.json.j2') | from_json }}"
+    validate_certs: "{{ tsc_validate_certs }}"
+    status_code: [200, 400]
+  loop: "{{ tsc_custom_policies }}"
+  when: tsc_custom_policies | length > 0
+  register: custom_policy_result
+
+# Configure Plugin Families for Policies
+- name: Enable/disable plugin families
+  ansible.builtin.uri:
+    url: "https://{{ tsc_host }}:{{ tsc_port }}/rest/policy/{{ tsc_policy_ids[item.0.name] }}/family"
+    method: PATCH
+    headers:
+      X-SecurityCenter: "{{ tsc_token }}"
+    body_format: json
+    body:
+      familyID: "{{ item.1.id }}"
+      enabled: "{{ item.1.enabled }}"
+    validate_certs: "{{ tsc_validate_certs }}"
+    status_code: 200
+  with_subelements:
+    - "{{ tsc_scan_policies }}"
+    - plugin_families
+    - skip_missing: true
+  when:
+    - tsc_scan_policies | length > 0
+    - tsc_policy_ids is defined
+
+# Configure Individual Plugins
+- name: Configure individual plugin settings
+  ansible.builtin.uri:
+    url: "https://{{ tsc_host }}:{{ tsc_port }}/rest/policy/{{ tsc_policy_ids[item.0.name] }}/plugin/{{ item.1.id }}"
+    method: PATCH
+    headers:
+      X-SecurityCenter: "{{ tsc_token }}"
+    body_format: json
+    body:
+      enabled: "{{ item.1.enabled }}"
+      action: "{{ item.1.action | default('default') }}"
+    validate_certs: "{{ tsc_validate_certs }}"
+    status_code: 200
+  with_subelements:
+    - "{{ tsc_scan_policies }}"
+    - plugins
+    - skip_missing: true
+  when:
+    - tsc_scan_policies | length > 0
+    - tsc_policy_ids is defined
+
+# Revoke API token
+- name: Revoke API token
+  ansible.builtin.uri:
+    url: "https://{{ tsc_host }}:{{ tsc_port }}/rest/token"
+    method: DELETE
+    headers:
+      X-SecurityCenter: "{{ tsc_token }}"
+    validate_certs: "{{ tsc_validate_certs }}"
+    status_code: 200
+  no_log: true
+
+- name: Display scan policy summary
+  ansible.builtin.debug:
+    msg: |
+      Tenable Scan Policy Configuration Complete
+      Standard Policies Created: {{ tsc_scan_policies | length }}
+      Custom Policies Created: {{ tsc_custom_policies | length }}
+      Policy Details:
+      {% for policy in tsc_scan_policies %}
+      - {{ policy.name }}: {{ policy.description }}
+      {% endfor %}

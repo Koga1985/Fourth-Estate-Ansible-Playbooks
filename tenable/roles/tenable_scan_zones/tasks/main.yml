@@ -1,1 +1,135 @@
 ---
+# tenable_scan_zones/tasks/main.yml
+# Tenable Scan Zone Management for Fourth Estate Agencies
+
+- name: Get API token for Security Center
+  ansible.builtin.uri:
+    url: "https://{{ tsc_host }}:{{ tsc_port }}/rest/token"
+    method: POST
+    body_format: json
+    body:
+      username: "{{ tsc_username }}"
+      password: "{{ tsc_password }}"
+    validate_certs: "{{ tsc_validate_certs }}"
+    status_code: 200
+  register: token_response
+  no_log: true
+
+- name: Set API token fact
+  ansible.builtin.set_fact:
+    tsc_token: "{{ token_response.json.response.token }}"
+  no_log: true
+
+# Create Scan Zones
+- name: Create scan zones
+  ansible.builtin.uri:
+    url: "https://{{ tsc_host }}:{{ tsc_port }}/rest/zone"
+    method: POST
+    headers:
+      X-SecurityCenter: "{{ tsc_token }}"
+    body_format: json
+    body:
+      name: "{{ item.name }}"
+      description: "{{ item.description }}"
+      ipList: "{{ item.ip_list }}"
+      activeScanners: "{{ item.active_scanners | default([]) }}"
+    validate_certs: "{{ tsc_validate_certs }}"
+    status_code: [200, 400]
+  loop: "{{ tsc_scan_zones }}"
+  when: tsc_scan_zones | length > 0
+  register: zone_result
+
+- name: Store zone IDs for reference
+  ansible.builtin.set_fact:
+    tsc_zone_ids: "{{ tsc_zone_ids | default({}) | combine({item.item.name: item.json.response.id}) }}"
+  loop: "{{ zone_result.results }}"
+  when:
+    - not zone_result.skipped | default(false)
+    - item.json.response.id is defined
+
+# Assign Scanners to Zones
+- name: Get list of all scanners
+  ansible.builtin.uri:
+    url: "https://{{ tsc_host }}:{{ tsc_port }}/rest/scanner"
+    method: GET
+    headers:
+      X-SecurityCenter: "{{ tsc_token }}"
+    validate_certs: "{{ tsc_validate_certs }}"
+    status_code: 200
+  register: scanner_list
+
+- name: Assign scanners to zones
+  ansible.builtin.uri:
+    url: "https://{{ tsc_host }}:{{ tsc_port }}/rest/scanner/{{ item.0.id }}"
+    method: PATCH
+    headers:
+      X-SecurityCenter: "{{ tsc_token }}"
+    body_format: json
+    body:
+      zones:
+        - id: "{{ tsc_zone_ids[item.1] }}"
+    validate_certs: "{{ tsc_validate_certs }}"
+    status_code: 200
+  with_subelements:
+    - "{{ scanner_list.json.response.usable }}"
+    - zones
+    - skip_missing: true
+  when:
+    - scanner_list.json.response.usable is defined
+    - tsc_zone_ids is defined
+
+# Configure Zone Permissions
+- name: Configure zone access for organizations
+  ansible.builtin.uri:
+    url: "https://{{ tsc_host }}:{{ tsc_port }}/rest/zone/{{ tsc_zone_ids[item.0.name] }}/organization"
+    method: POST
+    headers:
+      X-SecurityCenter: "{{ tsc_token }}"
+    body_format: json
+    body:
+      organizationID: "{{ item.1 }}"
+    validate_certs: "{{ tsc_validate_certs }}"
+    status_code: [200, 400]
+  with_subelements:
+    - "{{ tsc_scan_zones }}"
+    - organizations
+    - skip_missing: true
+  when:
+    - tsc_scan_zones | length > 0
+    - tsc_zone_ids is defined
+
+# Validate Zone Configuration
+- name: Validate scan zone configuration
+  ansible.builtin.uri:
+    url: "https://{{ tsc_host }}:{{ tsc_port }}/rest/zone/{{ tsc_zone_ids[item.name] }}"
+    method: GET
+    headers:
+      X-SecurityCenter: "{{ tsc_token }}"
+    validate_certs: "{{ tsc_validate_certs }}"
+    status_code: 200
+  loop: "{{ tsc_scan_zones }}"
+  when:
+    - tsc_scan_zones | length > 0
+    - tsc_zone_ids is defined
+  register: zone_validation
+
+# Revoke API token
+- name: Revoke API token
+  ansible.builtin.uri:
+    url: "https://{{ tsc_host }}:{{ tsc_port }}/rest/token"
+    method: DELETE
+    headers:
+      X-SecurityCenter: "{{ tsc_token }}"
+    validate_certs: "{{ tsc_validate_certs }}"
+    status_code: 200
+  no_log: true
+
+- name: Display scan zone summary
+  ansible.builtin.debug:
+    msg: |
+      Tenable Scan Zone Configuration Complete
+      Zones Created: {{ tsc_scan_zones | length }}
+      Zone Details:
+      {% for zone in tsc_scan_zones %}
+      - {{ zone.name }}: {{ zone.ip_list }}
+      {% endfor %}

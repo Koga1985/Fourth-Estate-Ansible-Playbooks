@@ -1,1 +1,35 @@
 ---
+# ServiceNow CI Discovery Role - Handlers
+
+- name: discovery completed
+  ansible.builtin.debug:
+    msg: "CI Discovery completed on {{ ansible_date_time.iso8601 }}"
+
+- name: send discovery notification
+  ansible.builtin.uri:
+    url: "{{ notification_webhook_url }}"
+    method: POST
+    body_format: json
+    body:
+      text: "ServiceNow CI Discovery completed - New CIs discovered"
+      timestamp: "{{ ansible_date_time.iso8601 }}"
+      instance: "{{ servicenow_instance }}"
+    status_code: [200, 201, 204]
+  when:
+    - notification_webhook_url is defined
+    - discovery_notifications.enabled | default(true)
+  delegate_to: localhost
+
+- name: trigger reconciliation
+  ansible.builtin.uri:
+    url: "https://{{ servicenow_instance }}.service-now.com/api/now/table/cmdb_reconciliation_job"
+    method: POST
+    user: "{{ servicenow_username }}"
+    password: "{{ servicenow_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ servicenow_validate_certs }}"
+    body_format: json
+    body:
+      type: "incremental_reconciliation"
+    status_code: [200, 201, 202]
+  when: discovery_results.auto_reconcile | default(true)

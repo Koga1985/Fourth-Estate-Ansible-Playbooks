@@ -1,0 +1,107 @@
+---
+# tenable_security_center_install/tasks/mysql.yml
+# MySQL Database Setup for Tenable Security Center
+
+- name: Install MySQL server (RedHat)
+  ansible.builtin.yum:
+    name:
+      - mysql-server
+      - mysql
+      - python3-PyMySQL
+    state: present
+  when: ansible_os_family == 'RedHat'
+
+- name: Install MySQL server (Debian)
+  ansible.builtin.apt:
+    name:
+      - mysql-server
+      - mysql-client
+      - python3-pymysql
+    state: present
+  when: ansible_os_family == 'Debian'
+
+- name: Ensure MySQL is started and enabled
+  ansible.builtin.service:
+    name: "{{ mysql_service_name }}"
+    state: started
+    enabled: yes
+
+- name: Set MySQL root password
+  community.mysql.mysql_user:
+    name: root
+    password: "{{ tsc_mysql_root_password }}"
+    login_unix_socket: /var/run/mysqld/mysqld.sock
+    login_user: root
+    login_password: ""
+    check_implicit_admin: yes
+    priv: '*.*:ALL,GRANT'
+    state: present
+  no_log: true
+  ignore_errors: yes
+
+- name: Create MySQL configuration file for root
+  ansible.builtin.template:
+    src: my.cnf.j2
+    dest: /root/.my.cnf
+    owner: root
+    group: root
+    mode: '0600'
+  no_log: true
+
+- name: Remove anonymous MySQL users
+  community.mysql.mysql_user:
+    name: ""
+    host_all: yes
+    state: absent
+    login_user: root
+    login_password: "{{ tsc_mysql_root_password }}"
+  no_log: true
+
+- name: Remove MySQL test database
+  community.mysql.mysql_db:
+    name: test
+    state: absent
+    login_user: root
+    login_password: "{{ tsc_mysql_root_password }}"
+
+- name: Create Security Center database
+  community.mysql.mysql_db:
+    name: "{{ tsc_db_name }}"
+    state: present
+    encoding: utf8mb4
+    collation: utf8mb4_unicode_ci
+    login_user: root
+    login_password: "{{ tsc_mysql_root_password }}"
+
+- name: Create Security Center database user
+  community.mysql.mysql_user:
+    name: "{{ tsc_db_user }}"
+    password: "{{ tsc_db_password }}"
+    priv: "{{ tsc_db_name }}.*:ALL"
+    host: localhost
+    state: present
+    login_user: root
+    login_password: "{{ tsc_mysql_root_password }}"
+  no_log: true
+
+- name: Configure MySQL performance settings
+  ansible.builtin.blockinfile:
+    path: "{{ mysql_config_file }}"
+    block: |
+      # Tenable Security Center Performance Settings
+      [mysqld]
+      max_connections = 200
+      innodb_buffer_pool_size = {{ tsc_mysql_buffer_pool_size }}
+      innodb_log_file_size = 256M
+      innodb_flush_log_at_trx_commit = 2
+      innodb_flush_method = O_DIRECT
+      query_cache_type = 1
+      query_cache_size = 64M
+      tmp_table_size = 64M
+      max_heap_table_size = 64M
+      key_buffer_size = 32M
+      thread_cache_size = 8
+      table_open_cache = 400
+      max_allowed_packet = 64M
+    marker: "# {mark} TENABLE SC SETTINGS"
+  notify: restart mysql

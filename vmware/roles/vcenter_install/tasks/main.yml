@@ -1,0 +1,146 @@
+---
+# tasks/main.yml - vCenter Server Appliance (VCSA) Deployment
+# Deploys VCSA using CLI installer or OVF deployment
+
+- name: Validate required variables
+  ansible.builtin.assert:
+    that:
+      - vcenter_hostname is defined
+      - vcenter_deployment_size is defined
+      - vcenter_sso_password is defined
+      - vcenter_root_password is defined
+      - esxi_deployment_host is defined
+      - esxi_deployment_username is defined
+      - esxi_deployment_password is defined
+    fail_msg: "Required vCenter deployment variables are missing"
+
+- name: Check if vCenter is already deployed
+  ansible.builtin.uri:
+    url: "https://{{ vcenter_hostname }}/ui"
+    method: GET
+    validate_certs: "{{ vcenter_validate_certs }}"
+    status_code: [200, 302, -1]
+  register: vcenter_check
+  ignore_errors: true
+  delegate_to: localhost
+
+- name: Set vCenter deployment status
+  ansible.builtin.set_fact:
+    vcenter_already_deployed: "{{ vcenter_check.status in [200, 302] }}"
+
+- name: Display vCenter status
+  ansible.builtin.debug:
+    msg: "vCenter at {{ vcenter_hostname }} is {{ 'already deployed' if vcenter_already_deployed else 'not deployed' }}"
+
+- name: Create temporary deployment directory
+  ansible.builtin.tempfile:
+    state: directory
+    suffix: vcenter_deploy
+  register: vcenter_deploy_temp
+  when: not vcenter_already_deployed
+  delegate_to: localhost
+
+- name: Generate VCSA deployment JSON configuration
+  ansible.builtin.template:
+    src: vcsa_deployment.json.j2
+    dest: "{{ vcenter_deploy_temp.path }}/vcsa_deployment.json"
+    mode: '0600'
+  when: not vcenter_already_deployed
+  delegate_to: localhost
+
+- name: Check for VCSA ISO mount or installer path
+  ansible.builtin.stat:
+    path: "{{ vcsa_installer_path }}/vcsa-deploy"
+  register: vcsa_installer
+  when: not vcenter_already_deployed
+  delegate_to: localhost
+
+- name: Fail if VCSA installer not found
+  ansible.builtin.fail:
+    msg: "VCSA installer not found at {{ vcsa_installer_path }}. Mount ISO or provide correct path."
+  when:
+    - not vcenter_already_deployed
+    - not vcsa_installer.stat.exists
+
+- name: Deploy vCenter Server Appliance (this may take 30-60 minutes)
+  ansible.builtin.command:
+    cmd: >
+      {{ vcsa_installer_path }}/vcsa-deploy install
+      --accept-eula
+      --no-ssl-certificate-verification
+      {{ '--acknowledge-ceip' if vcsa_ceip_enabled else '' }}
+      {{ vcenter_deploy_temp.path }}/vcsa_deployment.json
+    creates: /tmp/vcsa_deployed_{{ vcenter_hostname | replace('.', '_') }}
+  register: vcsa_deployment
+  when: not vcenter_already_deployed
+  delegate_to: localhost
+  async: 7200
+  poll: 30
+
+- name: Create deployment marker file
+  ansible.builtin.file:
+    path: /tmp/vcsa_deployed_{{ vcenter_hostname | replace('.', '_') }}
+    state: touch
+    mode: '0644'
+  when:
+    - not vcenter_already_deployed
+    - vcsa_deployment is success
+  delegate_to: localhost
+
+- name: Wait for vCenter services to be ready (5-10 minutes)
+  ansible.builtin.uri:
+    url: "https://{{ vcenter_hostname }}/ui"
+    method: GET
+    validate_certs: "{{ vcenter_validate_certs }}"
+    status_code: [200, 302]
+  register: vcenter_ready
+  until: vcenter_ready.status in [200, 302]
+  retries: 60
+  delay: 10
+  when: not vcenter_already_deployed
+  delegate_to: localhost
+
+- name: Verify vCenter API is accessible
+  community.vmware.vmware_about_info:
+    hostname: "{{ vcenter_hostname }}"
+    username: "{{ vcenter_username }}"
+    password: "{{ vcenter_password }}"
+    validate_certs: "{{ vcenter_validate_certs }}"
+  register: vcenter_info
+  delegate_to: localhost
+
+- name: Display vCenter version information
+  ansible.builtin.debug:
+    msg:
+      - "vCenter Server deployed successfully"
+      - "Version: {{ vcenter_info.about_info.version }}"
+      - "Build: {{ vcenter_info.about_info.build }}"
+      - "API Version: {{ vcenter_info.about_info.apiVersion }}"
+      - "Hostname: {{ vcenter_hostname }}"
+
+- name: Configure vCenter basic settings
+  community.vmware.vmware_vcenter_settings:
+    hostname: "{{ vcenter_hostname }}"
+    username: "{{ vcenter_username }}"
+    password: "{{ vcenter_password }}"
+    validate_certs: "{{ vcenter_validate_certs }}"
+    database:
+      max_connections: "{{ vcenter_db_max_connections }}"
+    runtime_settings:
+      unique_id: "{{ vcenter_unique_id | default(omit) }}"
+      managed_address: "{{ vcenter_hostname }}"
+      vcenter_server_name: "{{ vcenter_server_name | default(vcenter_hostname) }}"
+  delegate_to: localhost
+
+- name: Clean up temporary deployment files
+  ansible.builtin.file:
+    path: "{{ vcenter_deploy_temp.path }}"
+    state: absent
+  when:
+    - not vcenter_already_deployed
+    - vcenter_deploy_temp is defined
+  delegate_to: localhost
+
+- name: vCenter installation complete
+  ansible.builtin.debug:
+    msg: "vCenter Server installation and configuration completed successfully"

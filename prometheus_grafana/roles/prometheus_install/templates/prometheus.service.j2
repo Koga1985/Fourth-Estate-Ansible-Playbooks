@@ -1,0 +1,75 @@
+# Prometheus Monitoring System
+# Managed by Ansible - Fourth Estate Agency
+# {{ ansible_managed }}
+
+[Unit]
+Description=Prometheus Monitoring System
+Documentation=https://prometheus.io/docs/introduction/overview/
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User={{ prometheus_user }}
+Group={{ prometheus_group }}
+
+EnvironmentFile=/etc/default/prometheus
+
+ExecStart={{ prometheus_install_dir }}/prometheus \
+  --config.file={{ prometheus_config_dir }}/prometheus.yml \
+  --storage.tsdb.path={{ prometheus_storage_tsdb_path }} \
+  --storage.tsdb.retention.time={{ prometheus_storage_retention_time }} \
+  --storage.tsdb.retention.size={{ prometheus_storage_retention_size }} \
+  --storage.tsdb.wal-compression={{ prometheus_storage_wal_compression | lower }} \
+  --web.listen-address={{ prometheus_listen_address }} \
+  --web.external-url={{ prometheus_web_external_url }} \
+  --web.console.templates={{ prometheus_config_dir }}/consoles \
+  --web.console.libraries={{ prometheus_config_dir }}/console_libraries \
+{% if prometheus_enable_basic_auth or prometheus_enable_tls %}
+  --web.config.file={{ prometheus_config_dir }}/web-config.yml \
+{% endif %}
+{% if prometheus_enable_admin_api %}
+  --web.enable-admin-api \
+{% endif %}
+{% if prometheus_enable_lifecycle %}
+  --web.enable-lifecycle \
+{% endif %}
+  --query.timeout={{ prometheus_query_timeout }} \
+  --query.max-concurrency={{ prometheus_query_max_concurrency }} \
+  --log.level={{ prometheus_log_level }} \
+  --log.format={{ prometheus_log_format }} \
+{% for flag in prometheus_feature_flags %}
+  --enable-feature={{ flag }} \
+{% endfor %}
+{% for arg in prometheus_additional_args %}
+  {{ arg }} \
+{% endfor %}
+  $PROMETHEUS_OPTS
+
+ExecReload=/bin/kill -HUP $MAINPID
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=prometheus
+
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=30s
+
+# Security settings
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths={{ prometheus_data_dir }} {{ prometheus_log_dir }}
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+
+# Resource limits
+LimitNOFILE=65536
+LimitNPROC=4096
+LimitMEMLOCK=infinity
+
+[Install]
+WantedBy=multi-user.target

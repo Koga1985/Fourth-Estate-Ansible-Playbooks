@@ -1,1 +1,337 @@
 ---
+# ServiceNow CMDB Configuration Role - Main Tasks
+
+- name: Validate ServiceNow connection parameters
+  ansible.builtin.assert:
+    that:
+      - servicenow_instance is defined
+      - servicenow_instance | length > 0
+      - servicenow_username is defined or (servicenow_client_id is defined and servicenow_client_secret is defined)
+    fail_msg: "ServiceNow connection parameters must be defined"
+    success_msg: "ServiceNow connection parameters validated"
+
+- name: Test ServiceNow API connectivity
+  ansible.builtin.uri:
+    url: "https://{{ servicenow_instance }}.service-now.com/api/now/table/sys_user?sysparm_limit=1"
+    method: GET
+    user: "{{ servicenow_username }}"
+    password: "{{ servicenow_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ servicenow_validate_certs }}"
+    status_code: 200
+    timeout: "{{ servicenow_timeout }}"
+  register: sn_connectivity_test
+  when: servicenow_username is defined
+
+- name: Configure CI Classes
+  servicenow.servicenow.snow_record:
+    instance: "{{ servicenow_instance }}"
+    username: "{{ servicenow_username }}"
+    password: "{{ servicenow_password }}"
+    table: sys_db_object
+    state: present
+    lookup_field: name
+    data:
+      name: "{{ item.name }}"
+      label: "{{ item.label }}"
+      super_class: "{{ item.parent_class }}"
+      sys_class_name: sys_db_object
+  loop: "{{ cmdb_ci_classes }}"
+  when: cmdb_config_mode in ['configure']
+  notify: cmdb configuration changed
+
+- name: Configure CI Class Attributes
+  servicenow.servicenow.snow_record:
+    instance: "{{ servicenow_instance }}"
+    username: "{{ servicenow_username }}"
+    password: "{{ servicenow_password }}"
+    table: sys_dictionary
+    state: present
+    data:
+      name: "{{ item.0.name }}"
+      element: "{{ item.1.name }}"
+      internal_type: "{{ item.1.type }}"
+      mandatory: "{{ item.1.mandatory | default(false) }}"
+      reference: "{{ item.1.reference_table | default('') }}"
+  loop: "{{ cmdb_ci_classes | subelements('attributes') }}"
+  when: cmdb_config_mode in ['configure']
+  notify: cmdb configuration changed
+
+- name: Configure Relationship Types
+  ansible.builtin.uri:
+    url: "https://{{ servicenow_instance }}.service-now.com/api/now/table/cmdb_rel_type"
+    method: POST
+    user: "{{ servicenow_username }}"
+    password: "{{ servicenow_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ servicenow_validate_certs }}"
+    body_format: json
+    body:
+      name: "{{ item.name }}"
+      parent_descriptor: "{{ item.parent_descriptor }}"
+      child_descriptor: "{{ item.child_descriptor }}"
+    status_code: [200, 201]
+  loop: "{{ cmdb_relationship_types }}"
+  when: cmdb_config_mode in ['configure']
+  register: relationship_type_result
+  changed_when: relationship_type_result.status == 201
+  failed_when: false
+  notify: cmdb configuration changed
+
+- name: Configure Reconciliation Rules
+  ansible.builtin.uri:
+    url: "https://{{ servicenow_instance }}.service-now.com/api/now/table/cmdb_id_rule"
+    method: POST
+    user: "{{ servicenow_username }}"
+    password: "{{ servicenow_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ servicenow_validate_certs }}"
+    body_format: json
+    body:
+      name: "{{ item.name }}"
+      table: "{{ item.table }}"
+      priority: "{{ item.priority }}"
+      active: "{{ item.active }}"
+      identifiers: "{{ item.match_fields | join(',') }}"
+    status_code: [200, 201]
+  loop: "{{ cmdb_reconciliation_rules }}"
+  when:
+    - cmdb_config_mode in ['configure']
+    - item.active | default(true)
+  register: reconciliation_result
+  changed_when: reconciliation_result.status == 201
+  failed_when: false
+  notify: cmdb configuration changed
+
+- name: Configure Identification Rules
+  ansible.builtin.uri:
+    url: "https://{{ servicenow_instance }}.service-now.com/api/now/table/cmdb_identifier_rule"
+    method: POST
+    user: "{{ servicenow_username }}"
+    password: "{{ servicenow_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ servicenow_validate_certs }}"
+    body_format: json
+    body:
+      name: "{{ item.name }}"
+      table: "{{ item.table }}"
+      priority: "{{ item.priority }}"
+      data_source: "{{ item.data_source }}"
+    status_code: [200, 201]
+  loop: "{{ cmdb_identification_rules }}"
+  when: cmdb_config_mode in ['configure']
+  register: identification_result
+  changed_when: identification_result.status == 201
+  failed_when: false
+  notify: cmdb configuration changed
+
+- name: Configure Data Sources
+  ansible.builtin.uri:
+    url: "https://{{ servicenow_instance }}.service-now.com/api/now/table/discovery_source"
+    method: POST
+    user: "{{ servicenow_username }}"
+    password: "{{ servicenow_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ servicenow_validate_certs }}"
+    body_format: json
+    body:
+      name: "{{ item.name }}"
+      type: "{{ item.type }}"
+      active: "{{ item.enabled }}"
+      schedule: "{{ item.schedule | default('') }}"
+    status_code: [200, 201]
+  loop: "{{ cmdb_data_sources }}"
+  when:
+    - cmdb_config_mode in ['configure']
+    - item.enabled | default(true)
+  register: data_source_result
+  changed_when: data_source_result.status == 201
+  failed_when: false
+  notify: cmdb configuration changed
+
+- name: Configure CMDB Health Checks
+  ansible.builtin.template:
+    src: cmdb_health_check.xml.j2
+    dest: "/tmp/cmdb_health_{{ item.name | regex_replace(' ', '_') }}.xml"
+    mode: '0644'
+  loop: "{{ cmdb_health_checks }}"
+  when:
+    - cmdb_config_mode in ['configure']
+    - item.enabled | default(true)
+  register: health_check_templates
+
+- name: Import CMDB Health Check Configurations
+  ansible.builtin.uri:
+    url: "https://{{ servicenow_instance }}.service-now.com/api/now/import/sys_update_xml"
+    method: POST
+    user: "{{ servicenow_username }}"
+    password: "{{ servicenow_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ servicenow_validate_certs }}"
+    body: "{{ lookup('file', item.dest) }}"
+    body_format: raw
+    headers:
+      Content-Type: application/xml
+    status_code: [200, 201]
+  loop: "{{ health_check_templates.results }}"
+  when:
+    - health_check_templates is defined
+    - item is changed
+  notify: cmdb configuration changed
+
+- name: Configure Fourth Estate CI Classes
+  servicenow.servicenow.snow_record:
+    instance: "{{ servicenow_instance }}"
+    username: "{{ servicenow_username }}"
+    password: "{{ servicenow_password }}"
+    table: sys_db_object
+    state: present
+    lookup_field: name
+    data:
+      name: "{{ item.name }}"
+      label: "{{ item.label }}"
+      super_class: "{{ item.parent_class }}"
+  loop:
+    - name: cmdb_ci_journalist_workstation
+      label: "Journalist Workstation"
+      parent_class: cmdb_ci_computer
+    - name: cmdb_ci_publication_system
+      label: "Publication System"
+      parent_class: cmdb_ci_service
+    - name: cmdb_ci_content_management
+      label: "Content Management System"
+      parent_class: cmdb_ci_service
+    - name: cmdb_ci_web_property
+      label: "Web Property"
+      parent_class: cmdb_ci_service
+  when:
+    - cmdb_config_mode in ['configure']
+    - fourth_estate_config.enabled | default(false)
+  notify: cmdb configuration changed
+
+- name: Configure Source Protection Data Classification
+  ansible.builtin.uri:
+    url: "https://{{ servicenow_instance }}.service-now.com/api/now/table/sys_choice"
+    method: POST
+    user: "{{ servicenow_username }}"
+    password: "{{ servicenow_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ servicenow_validate_certs }}"
+    body_format: json
+    body:
+      name: cmdb_ci_server
+      element: source_protection_level
+      label: "{{ item }}"
+      value: "{{ item }}"
+      sequence: "{{ idx }}"
+    status_code: [200, 201]
+  loop: "{{ fourth_estate_config.source_protection.classification_levels }}"
+  loop_control:
+    index_var: idx
+  when:
+    - cmdb_config_mode in ['configure']
+    - fourth_estate_config.source_protection.enabled | default(false)
+  register: classification_result
+  changed_when: classification_result.status == 201
+  failed_when: false
+
+- name: Query CMDB Metrics
+  ansible.builtin.uri:
+    url: "https://{{ servicenow_instance }}.service-now.com/api/now/stats/{{ item.metric }}"
+    method: GET
+    user: "{{ servicenow_username }}"
+    password: "{{ servicenow_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ servicenow_validate_certs }}"
+    return_content: true
+  loop: "{{ cmdb_metrics_collection }}"
+  when:
+    - cmdb_config_mode in ['report', 'validate']
+    - cmdb_metrics_enabled | default(true)
+  register: cmdb_metrics_results
+
+- name: Display CMDB Metrics
+  ansible.builtin.debug:
+    msg: "Metric {{ item.item.metric }}: {{ item.json.result | default('N/A') }}"
+  loop: "{{ cmdb_metrics_results.results }}"
+  when:
+    - cmdb_metrics_results is defined
+    - cmdb_config_mode in ['report', 'validate']
+
+- name: Run CMDB Health Checks
+  ansible.builtin.uri:
+    url: "https://{{ servicenow_instance }}.service-now.com/api/now/table/cmdb_health_check_result"
+    method: GET
+    user: "{{ servicenow_username }}"
+    password: "{{ servicenow_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ servicenow_validate_certs }}"
+    return_content: true
+  when: cmdb_config_mode in ['report', 'validate']
+  register: health_check_results
+
+- name: Analyze CMDB Health Issues
+  ansible.builtin.set_fact:
+    cmdb_health_issues: "{{ health_check_results.json.result | selectattr('status', 'equalto', 'failed') | list }}"
+  when:
+    - health_check_results is defined
+    - health_check_results.json is defined
+    - cmdb_config_mode in ['report', 'validate']
+
+- name: Report CMDB Health Issues
+  ansible.builtin.debug:
+    msg: "CMDB Health Issue: {{ item.name }} - {{ item.description }}"
+  loop: "{{ cmdb_health_issues }}"
+  when:
+    - cmdb_health_issues is defined
+    - cmdb_health_issues | length > 0
+    - cmdb_config_mode in ['report', 'validate']
+
+- name: Enable CMDB Audit Logging
+  ansible.builtin.uri:
+    url: "https://{{ servicenow_instance }}.service-now.com/api/now/table/sys_audit"
+    method: POST
+    user: "{{ servicenow_username }}"
+    password: "{{ servicenow_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ servicenow_validate_certs }}"
+    body_format: json
+    body:
+      tablename: "{{ item }}"
+      active: true
+      audit_actions: "insert,update,delete"
+    status_code: [200, 201]
+  loop: "{{ cmdb_audit_tables }}"
+  when:
+    - cmdb_config_mode in ['configure']
+    - cmdb_audit_enabled | default(true)
+  register: audit_result
+  changed_when: audit_result.status == 201
+  failed_when: false
+
+- name: Create CMDB Dashboard
+  ansible.builtin.template:
+    src: cmdb_dashboard.xml.j2
+    dest: "/tmp/cmdb_dashboard.xml"
+    mode: '0644'
+  when: cmdb_config_mode in ['configure']
+  notify: cmdb configuration changed
+
+- name: Generate CMDB Configuration Report
+  ansible.builtin.template:
+    src: cmdb_config_report.md.j2
+    dest: "{{ playbook_dir }}/reports/cmdb_config_report_{{ ansible_date_time.iso8601_basic_short }}.md"
+    mode: '0644'
+  when: cmdb_config_mode in ['report']
+  delegate_to: localhost
+
+- name: Summary - CMDB Configuration
+  ansible.builtin.debug:
+    msg:
+      - "CMDB Configuration completed successfully"
+      - "Mode: {{ cmdb_config_mode }}"
+      - "CI Classes configured: {{ cmdb_ci_classes | length }}"
+      - "Reconciliation rules: {{ cmdb_reconciliation_rules | length }}"
+      - "Identification rules: {{ cmdb_identification_rules | length }}"
+      - "Data sources: {{ cmdb_data_sources | length }}"
+      - "Fourth Estate config: {{ fourth_estate_config.enabled | default(false) }}"

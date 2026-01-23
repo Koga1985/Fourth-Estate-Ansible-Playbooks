@@ -1,0 +1,210 @@
+---
+# tasks/main.yml - vCenter Server Post-Installation Configuration
+
+- name: Validate required variables
+  ansible.builtin.assert:
+    that:
+      - vcenter_hostname is defined
+      - vcenter_username is defined
+      - vcenter_password is defined
+    fail_msg: "Required vCenter connection variables are missing"
+
+- name: Verify vCenter connectivity
+  community.vmware.vmware_about_info:
+    hostname: "{{ vcenter_hostname }}"
+    username: "{{ vcenter_username }}"
+    password: "{{ vcenter_password }}"
+    validate_certs: "{{ vcenter_validate_certs }}"
+  register: vcenter_info
+  delegate_to: localhost
+
+- name: Display vCenter information
+  ansible.builtin.debug:
+    msg:
+      - "vCenter Version: {{ vcenter_info.about_info.version }}"
+      - "Build: {{ vcenter_info.about_info.build }}"
+      - "API Type: {{ vcenter_info.about_info.apiType }}"
+
+# Configure Advanced Settings
+- name: Configure vCenter advanced settings
+  community.vmware.vmware_vcenter_settings:
+    hostname: "{{ vcenter_hostname }}"
+    username: "{{ vcenter_username }}"
+    password: "{{ vcenter_password }}"
+    validate_certs: "{{ vcenter_validate_certs }}"
+    database:
+      max_connections: "{{ vcenter_db_max_connections }}"
+      task_retention: "{{ vcenter_task_retention_days }}"
+      event_retention: "{{ vcenter_event_retention_days }}"
+    runtime_settings:
+      unique_id: "{{ vcenter_instance_id | default(omit) }}"
+      managed_address: "{{ vcenter_hostname }}"
+      vcenter_server_name: "{{ vcenter_server_name }}"
+    timeout_settings:
+      normal_operations: "{{ vcenter_timeout_normal }}"
+      long_operations: "{{ vcenter_timeout_long }}"
+    logging:
+      log_level: "{{ vcenter_log_level }}"
+  delegate_to: localhost
+
+# Configure AD/LDAP Integration
+- name: Configure Active Directory identity source
+  community.vmware.vmware_identity_source:
+    hostname: "{{ vcenter_hostname }}"
+    username: "{{ vcenter_username }}"
+    password: "{{ vcenter_password }}"
+    validate_certs: "{{ vcenter_validate_certs }}"
+    state: present
+    domain_name: "{{ item.domain }}"
+    domain_alias: "{{ item.alias | default(omit) }}"
+    ldap_host: "{{ item.ldap_host }}"
+    ldap_port: "{{ item.ldap_port | default(389) }}"
+    ldap_base_dn: "{{ item.base_dn }}"
+    bind_user: "{{ item.bind_user }}"
+    bind_password: "{{ item.bind_password }}"
+    ssl_enabled: "{{ item.ssl_enabled | default(true) }}"
+  loop: "{{ vcenter_identity_sources }}"
+  when: vcenter_identity_sources | length > 0
+  delegate_to: localhost
+  no_log: true
+
+# Configure mail settings for alerts
+- name: Configure mail server settings
+  ansible.builtin.uri:
+    url: "https://{{ vcenter_hostname }}/api/appliance/email/config"
+    method: PUT
+    user: "{{ vcenter_username }}"
+    password: "{{ vcenter_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vcenter_validate_certs }}"
+    headers:
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      smtp_server: "{{ vcenter_smtp_server }}"
+      smtp_port: "{{ vcenter_smtp_port }}"
+      sender: "{{ vcenter_smtp_sender }}"
+      auth_enabled: "{{ vcenter_smtp_auth_enabled }}"
+      username: "{{ vcenter_smtp_username | default('') }}"
+      password: "{{ vcenter_smtp_password | default('') }}"
+      starttls_enabled: "{{ vcenter_smtp_starttls }}"
+  when: vcenter_smtp_server | length > 0
+  delegate_to: localhost
+
+# Configure NTP
+- name: Configure NTP servers
+  ansible.builtin.uri:
+    url: "https://{{ vcenter_hostname }}/api/appliance/ntp"
+    method: PUT
+    user: "{{ vcenter_username }}"
+    password: "{{ vcenter_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vcenter_validate_certs }}"
+    headers:
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      servers: "{{ vcenter_ntp_servers }}"
+  when: vcenter_ntp_servers | length > 0
+  delegate_to: localhost
+
+# Configure DNS
+- name: Configure DNS servers
+  ansible.builtin.uri:
+    url: "https://{{ vcenter_hostname }}/api/appliance/networking/dns/servers"
+    method: PUT
+    user: "{{ vcenter_username }}"
+    password: "{{ vcenter_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vcenter_validate_certs }}"
+    headers:
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      mode: "is_static"
+      servers: "{{ vcenter_dns_servers }}"
+  when: vcenter_dns_servers | length > 0
+  delegate_to: localhost
+
+# Configure syslog forwarding for Fourth Estate compliance
+- name: Configure remote syslog forwarding
+  ansible.builtin.uri:
+    url: "https://{{ vcenter_hostname }}/api/appliance/logging/forwarding"
+    method: POST
+    user: "{{ vcenter_username }}"
+    password: "{{ vcenter_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vcenter_validate_certs }}"
+    headers:
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      hostname: "{{ vcenter_syslog_server }}"
+      port: "{{ vcenter_syslog_port }}"
+      protocol: "{{ vcenter_syslog_protocol | upper }}"
+  when: vcenter_syslog_server | length > 0
+  delegate_to: localhost
+
+# Configure SNMP
+- name: Configure SNMP settings
+  ansible.builtin.uri:
+    url: "https://{{ vcenter_hostname }}/api/appliance/snmp"
+    method: PATCH
+    user: "{{ vcenter_username }}"
+    password: "{{ vcenter_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vcenter_validate_certs }}"
+    headers:
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      enable: "{{ vcenter_snmp_enabled }}"
+      SNMPv3:
+        users: "{{ vcenter_snmp_users }}"
+      communities: "{{ vcenter_snmp_communities }}"
+      syscontact: "{{ vcenter_snmp_syscontact }}"
+      syslocation: "{{ vcenter_snmp_syslocation }}"
+  when: vcenter_snmp_enabled | bool
+  delegate_to: localhost
+
+# Configure TLS/SSL settings for STIG compliance
+- name: Configure minimum TLS version (STIG requirement)
+  ansible.builtin.uri:
+    url: "https://{{ vcenter_hostname }}/api/appliance/networking/tls"
+    method: PUT
+    user: "{{ vcenter_username }}"
+    password: "{{ vcenter_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vcenter_validate_certs }}"
+    headers:
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      min_version: "{{ vcenter_tls_min_version }}"
+  when: vcenter_tls_enforcement | bool
+  delegate_to: localhost
+
+# Configure session timeout (STIG requirement)
+- name: Configure session timeout settings
+  ansible.builtin.uri:
+    url: "https://{{ vcenter_hostname }}/rest/com/vmware/vapi/session/timeout"
+    method: POST
+    user: "{{ vcenter_username }}"
+    password: "{{ vcenter_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vcenter_validate_certs }}"
+    headers:
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      timeout: "{{ vcenter_session_timeout }}"
+  delegate_to: localhost
+
+# Configure Fourth Estate specific settings
+- name: Apply Fourth Estate security baseline
+  ansible.builtin.include_tasks: fourth_estate_config.yml
+  when: fourth_estate_mode | bool
+
+- name: vCenter configuration complete
+  ansible.builtin.debug:
+    msg: "vCenter Server configuration completed successfully"

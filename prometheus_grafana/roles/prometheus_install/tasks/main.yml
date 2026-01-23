@@ -1,0 +1,396 @@
+---
+# Prometheus Installation Role - Main Tasks
+# Fourth Estate Agency - Infrastructure Monitoring
+
+- name: Include OS-specific variables
+  include_vars: "{{ ansible_os_family }}.yml"
+  failed_when: false
+  tags:
+    - prometheus
+    - prometheus_install
+
+- name: Install required packages
+  package:
+    name: "{{ prometheus_dependencies }}"
+    state: present
+  tags:
+    - prometheus
+    - prometheus_install
+    - packages
+
+- name: Create Prometheus system group
+  group:
+    name: "{{ prometheus_group }}"
+    gid: "{{ prometheus_gid }}"
+    system: true
+    state: present
+  tags:
+    - prometheus
+    - prometheus_install
+    - users
+
+- name: Create Prometheus system user
+  user:
+    name: "{{ prometheus_user }}"
+    uid: "{{ prometheus_uid }}"
+    group: "{{ prometheus_group }}"
+    system: true
+    shell: /sbin/nologin
+    home: "{{ prometheus_data_dir }}"
+    createhome: false
+    comment: "Prometheus Monitoring System"
+    state: present
+  tags:
+    - prometheus
+    - prometheus_install
+    - users
+
+- name: Create Prometheus directories
+  file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ prometheus_user }}"
+    group: "{{ prometheus_group }}"
+    mode: "0755"
+  loop:
+    - "{{ prometheus_install_dir }}"
+    - "{{ prometheus_config_dir }}"
+    - "{{ prometheus_config_dir }}/rules"
+    - "{{ prometheus_config_dir }}/file_sd"
+    - "{{ prometheus_config_dir }}/tls"
+    - "{{ prometheus_data_dir }}"
+    - "{{ prometheus_log_dir }}"
+  tags:
+    - prometheus
+    - prometheus_install
+    - directories
+
+- name: Check if Prometheus is already installed
+  stat:
+    path: "{{ prometheus_install_dir }}/prometheus"
+  register: prometheus_binary
+  tags:
+    - prometheus
+    - prometheus_install
+
+- name: Get installed Prometheus version
+  command: "{{ prometheus_install_dir }}/prometheus --version"
+  register: prometheus_installed_version
+  changed_when: false
+  failed_when: false
+  when: prometheus_binary.stat.exists
+  tags:
+    - prometheus
+    - prometheus_install
+
+- name: Download Prometheus
+  get_url:
+    url: "{{ prometheus_download_url }}"
+    dest: "/tmp/prometheus-{{ prometheus_version }}.tar.gz"
+    mode: "0644"
+    timeout: 300
+  when: >
+    not prometheus_binary.stat.exists or
+    prometheus_version not in prometheus_installed_version.stdout | default('')
+  tags:
+    - prometheus
+    - prometheus_install
+    - download
+
+- name: Extract Prometheus archive
+  unarchive:
+    src: "/tmp/prometheus-{{ prometheus_version }}.tar.gz"
+    dest: "/tmp"
+    remote_src: true
+    creates: "/tmp/prometheus-{{ prometheus_version }}.linux-amd64"
+  when: >
+    not prometheus_binary.stat.exists or
+    prometheus_version not in prometheus_installed_version.stdout | default('')
+  tags:
+    - prometheus
+    - prometheus_install
+
+- name: Stop Prometheus service for upgrade
+  systemd:
+    name: prometheus
+    state: stopped
+  when: >
+    prometheus_binary.stat.exists and
+    prometheus_version not in prometheus_installed_version.stdout | default('')
+  ignore_errors: true
+  tags:
+    - prometheus
+    - prometheus_install
+
+- name: Copy Prometheus binaries
+  copy:
+    src: "/tmp/prometheus-{{ prometheus_version }}.linux-amd64/{{ item }}"
+    dest: "{{ prometheus_install_dir }}/{{ item }}"
+    owner: "{{ prometheus_user }}"
+    group: "{{ prometheus_group }}"
+    mode: "0755"
+    remote_src: true
+  loop:
+    - prometheus
+    - promtool
+  when: >
+    not prometheus_binary.stat.exists or
+    prometheus_version not in prometheus_installed_version.stdout | default('')
+  notify: restart prometheus
+  tags:
+    - prometheus
+    - prometheus_install
+
+- name: Copy Prometheus console templates
+  copy:
+    src: "/tmp/prometheus-{{ prometheus_version }}.linux-amd64/{{ item }}"
+    dest: "{{ prometheus_config_dir }}/{{ item }}"
+    owner: "{{ prometheus_user }}"
+    group: "{{ prometheus_group }}"
+    mode: "0755"
+    remote_src: true
+  loop:
+    - consoles
+    - console_libraries
+  when: >
+    not prometheus_binary.stat.exists or
+    prometheus_version not in prometheus_installed_version.stdout | default('')
+  tags:
+    - prometheus
+    - prometheus_install
+
+- name: Clean up Prometheus download files
+  file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - "/tmp/prometheus-{{ prometheus_version }}.tar.gz"
+    - "/tmp/prometheus-{{ prometheus_version }}.linux-amd64"
+  when: >
+    not prometheus_binary.stat.exists or
+    prometheus_version not in prometheus_installed_version.stdout | default('')
+  tags:
+    - prometheus
+    - prometheus_install
+    - cleanup
+
+- name: Create basic Prometheus configuration
+  template:
+    src: prometheus.yml.j2
+    dest: "{{ prometheus_config_dir }}/prometheus.yml"
+    owner: "{{ prometheus_user }}"
+    group: "{{ prometheus_group }}"
+    mode: "0644"
+    validate: "{{ prometheus_install_dir }}/promtool check config %s"
+  notify: reload prometheus
+  tags:
+    - prometheus
+    - prometheus_install
+    - config
+
+- name: Create Prometheus web configuration for basic auth
+  template:
+    src: web-config.yml.j2
+    dest: "{{ prometheus_config_dir }}/web-config.yml"
+    owner: "{{ prometheus_user }}"
+    group: "{{ prometheus_group }}"
+    mode: "0600"
+  when: prometheus_enable_basic_auth or prometheus_enable_tls
+  notify: restart prometheus
+  tags:
+    - prometheus
+    - prometheus_install
+    - config
+    - security
+
+- name: Copy TLS certificates
+  copy:
+    src: "{{ item.src }}"
+    dest: "{{ item.dest }}"
+    owner: "{{ prometheus_user }}"
+    group: "{{ prometheus_group }}"
+    mode: "0600"
+  loop:
+    - src: "{{ prometheus_tls_cert_file }}"
+      dest: "{{ prometheus_config_dir }}/tls/prometheus.crt"
+    - src: "{{ prometheus_tls_key_file }}"
+      dest: "{{ prometheus_config_dir }}/tls/prometheus.key"
+  when: prometheus_enable_tls
+  notify: restart prometheus
+  tags:
+    - prometheus
+    - prometheus_install
+    - tls
+
+- name: Create Prometheus systemd service
+  template:
+    src: prometheus.service.j2
+    dest: /etc/systemd/system/prometheus.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart prometheus
+  tags:
+    - prometheus
+    - prometheus_install
+    - systemd
+
+- name: Create Prometheus environment file
+  template:
+    src: prometheus.environment.j2
+    dest: /etc/default/prometheus
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart prometheus
+  tags:
+    - prometheus
+    - prometheus_install
+    - systemd
+
+- name: Reload systemd daemon
+  systemd:
+    daemon_reload: true
+  tags:
+    - prometheus
+    - prometheus_install
+    - systemd
+
+- name: Configure firewall for Prometheus
+  firewalld:
+    port: "{{ item }}"
+    permanent: true
+    state: enabled
+    zone: "{{ prometheus_firewall_zone }}"
+    immediate: true
+  loop: "{{ prometheus_firewall_ports }}"
+  when: prometheus_firewall_enabled and ansible_os_family == "RedHat"
+  tags:
+    - prometheus
+    - prometheus_install
+    - firewall
+
+- name: Configure SELinux for Prometheus
+  seport:
+    ports: "{{ item.port }}"
+    proto: "{{ item.proto }}"
+    setype: "{{ item.setype }}"
+    state: present
+  loop: "{{ prometheus_selinux_ports }}"
+  when: prometheus_selinux_enabled and ansible_selinux.status == "enabled"
+  tags:
+    - prometheus
+    - prometheus_install
+    - selinux
+
+- name: Set SELinux context for Prometheus directories
+  sefcontext:
+    target: "{{ item }}(/.*)?"
+    setype: prometheus_var_lib_t
+    state: present
+  loop:
+    - "{{ prometheus_data_dir }}"
+    - "{{ prometheus_log_dir }}"
+  when: prometheus_selinux_enabled and ansible_selinux.status == "enabled"
+  tags:
+    - prometheus
+    - prometheus_install
+    - selinux
+
+- name: Apply SELinux context to Prometheus directories
+  command: "restorecon -Rv {{ item }}"
+  loop:
+    - "{{ prometheus_data_dir }}"
+    - "{{ prometheus_log_dir }}"
+  when: prometheus_selinux_enabled and ansible_selinux.status == "enabled"
+  changed_when: false
+  tags:
+    - prometheus
+    - prometheus_install
+    - selinux
+
+- name: Create Prometheus backup directory
+  file:
+    path: "{{ prometheus_backup_dir }}"
+    state: directory
+    owner: "{{ prometheus_user }}"
+    group: "{{ prometheus_group }}"
+    mode: "0755"
+  when: prometheus_backup_enabled
+  tags:
+    - prometheus
+    - prometheus_install
+    - backup
+
+- name: Create Prometheus backup script
+  template:
+    src: backup-prometheus.sh.j2
+    dest: /usr/local/bin/backup-prometheus.sh
+    owner: root
+    group: root
+    mode: "0755"
+  when: prometheus_backup_enabled
+  tags:
+    - prometheus
+    - prometheus_install
+    - backup
+
+- name: Configure Prometheus backup cron job
+  cron:
+    name: "Backup Prometheus data"
+    hour: "2"
+    minute: "0"
+    job: "/usr/local/bin/backup-prometheus.sh >> {{ prometheus_log_dir }}/backup.log 2>&1"
+    user: "{{ prometheus_user }}"
+    state: present
+  when: prometheus_backup_enabled
+  tags:
+    - prometheus
+    - prometheus_install
+    - backup
+
+- name: Enable and start Prometheus service
+  systemd:
+    name: prometheus
+    enabled: "{{ prometheus_service_enabled }}"
+    state: "{{ prometheus_service_state }}"
+  tags:
+    - prometheus
+    - prometheus_install
+    - service
+
+- name: Wait for Prometheus to start
+  wait_for:
+    port: 9090
+    host: "{{ ansible_default_ipv4.address }}"
+    timeout: 60
+  when: prometheus_service_state == "started"
+  tags:
+    - prometheus
+    - prometheus_install
+    - service
+
+- name: Verify Prometheus is responding
+  uri:
+    url: "http://localhost:9090/-/healthy"
+    status_code: 200
+    timeout: 30
+  retries: 5
+  delay: 10
+  when: prometheus_service_state == "started"
+  tags:
+    - prometheus
+    - prometheus_install
+    - verification
+
+- name: Display Prometheus installation information
+  debug:
+    msg:
+      - "Prometheus {{ prometheus_version }} has been successfully installed"
+      - "Web UI: http://{{ ansible_fqdn }}:9090"
+      - "Config: {{ prometheus_config_dir }}/prometheus.yml"
+      - "Data: {{ prometheus_data_dir }}"
+      - "Logs: {{ prometheus_log_dir }}"
+  tags:
+    - prometheus
+    - prometheus_install
