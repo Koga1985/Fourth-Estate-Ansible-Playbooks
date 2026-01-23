@@ -1,0 +1,317 @@
+---
+# tasks file for infoblox_dns_config
+# Infoblox DNS Service Configuration for Fourth Estate Agencies
+# Manages DNS forwarders, DNSSEC, RRL, caching, and logging
+
+- name: Ensure Infoblox connection variables are defined
+  ansible.builtin.assert:
+    that:
+      - infoblox_grid_master is defined
+      - infoblox_username is defined
+      - infoblox_password is defined
+    fail_msg: "Required Infoblox connection variables are not defined"
+
+- name: Configure global DNS properties
+  infoblox.nios_modules.nios_dns_view:
+    name: "default"
+    network_view: "default"
+    comment: "Default DNS view for Fourth Estate"
+    state: present
+    provider:
+      host: "{{ infoblox_grid_master }}"
+      username: "{{ infoblox_username }}"
+      password: "{{ infoblox_password }}"
+      wapi_version: "{{ infoblox_wapi_version }}"
+      validate_certs: "{{ infoblox_validate_certs }}"
+  tags:
+    - infoblox
+    - dns
+    - views
+
+- name: Configure DNS views for Split DNS
+  infoblox.nios_modules.nios_dns_view:
+    name: "{{ item.name }}"
+    network_view: "{{ item.network_view | default('default') }}"
+    comment: "{{ item.comment }}"
+    enable_blacklist: "{{ item.enable_blacklist | default(false) }}"
+    enable_fixed_rrset_order_fqdns: "{{ item.enable_fixed_rrset_order | default(false) }}"
+    state: "{{ item.state | default('present') }}"
+    provider:
+      host: "{{ infoblox_grid_master }}"
+      username: "{{ infoblox_username }}"
+      password: "{{ infoblox_password }}"
+      wapi_version: "{{ infoblox_wapi_version }}"
+      validate_certs: "{{ infoblox_validate_certs }}"
+  loop: "{{ infoblox_dns_views }}"
+  when: infoblox_dns_views is defined
+  tags:
+    - infoblox
+    - dns
+    - views
+    - splitdns
+
+- name: Configure DNS forwarders
+  infoblox.nios_modules.nios_nsgroup_forwardingmember:
+    name: "{{ infoblox_forwarder_group_name }}"
+    comment: "DNS forwarders for Fourth Estate"
+    forwarding_servers:
+      - address: "{{ item.address }}"
+        name: "{{ item.name }}"
+    state: present
+    provider:
+      host: "{{ infoblox_grid_master }}"
+      username: "{{ infoblox_username }}"
+      password: "{{ infoblox_password }}"
+      wapi_version: "{{ infoblox_wapi_version }}"
+      validate_certs: "{{ infoblox_validate_certs }}"
+  loop: "{{ infoblox_dns_forwarders }}"
+  when: infoblox_dns_forwarders is defined
+  tags:
+    - infoblox
+    - dns
+    - forwarders
+
+- name: Configure root hints
+  infoblox.nios_modules.nios_roothint:
+    root_server_ip: "{{ item.ip }}"
+    root_server_name: "{{ item.name }}"
+    state: "{{ item.state | default('present') }}"
+    provider:
+      host: "{{ infoblox_grid_master }}"
+      username: "{{ infoblox_username }}"
+      password: "{{ infoblox_password }}"
+      wapi_version: "{{ infoblox_wapi_version }}"
+      validate_certs: "{{ infoblox_validate_certs }}"
+  loop: "{{ infoblox_root_hints }}"
+  when:
+    - infoblox_configure_root_hints | bool
+    - infoblox_root_hints is defined
+  tags:
+    - infoblox
+    - dns
+    - roothints
+
+- name: Configure DNSSEC settings
+  infoblox.nios_modules.nios_grid_dns:
+    grid_dns_properties:
+      enable_dnssec: "{{ infoblox_enable_dnssec }}"
+      enable_dnssec_validation: "{{ infoblox_enable_dnssec_validation }}"
+      dnssec_validation_policy: "{{ infoblox_dnssec_validation_policy }}"
+      dnssec_key_algorithm: "{{ infoblox_dnssec_key_algorithm }}"
+      dnssec_ksk_size: "{{ infoblox_dnssec_ksk_size }}"
+      dnssec_zsk_size: "{{ infoblox_dnssec_zsk_size }}"
+      dnssec_ksk_rollover_mechanism: "{{ infoblox_dnssec_ksk_rollover }}"
+      dnssec_zsk_rollover_mechanism: "{{ infoblox_dnssec_zsk_rollover }}"
+    state: present
+    provider:
+      host: "{{ infoblox_grid_master }}"
+      username: "{{ infoblox_username }}"
+      password: "{{ infoblox_password }}"
+      wapi_version: "{{ infoblox_wapi_version }}"
+      validate_certs: "{{ infoblox_validate_certs }}"
+  when: infoblox_enable_dnssec | bool
+  tags:
+    - infoblox
+    - dns
+    - dnssec
+
+- name: Configure Response Rate Limiting (RRL) for DDoS protection
+  infoblox.nios_modules.nios_grid_dns:
+    grid_dns_properties:
+      enable_rrl: "{{ infoblox_enable_rrl }}"
+      rrl_ipv4_prefix_length: "{{ infoblox_rrl_ipv4_prefix }}"
+      rrl_ipv6_prefix_length: "{{ infoblox_rrl_ipv6_prefix }}"
+      rrl_responses_per_second: "{{ infoblox_rrl_responses_per_second }}"
+      rrl_errors_per_second: "{{ infoblox_rrl_errors_per_second }}"
+      rrl_nxdomains_per_second: "{{ infoblox_rrl_nxdomains_per_second }}"
+      rrl_slip_ratio: "{{ infoblox_rrl_slip_ratio }}"
+      rrl_window: "{{ infoblox_rrl_window }}"
+    state: present
+    provider:
+      host: "{{ infoblox_grid_master }}"
+      username: "{{ infoblox_username }}"
+      password: "{{ infoblox_password }}"
+      wapi_version: "{{ infoblox_wapi_version }}"
+      validate_certs: "{{ infoblox_validate_certs }}"
+  when: infoblox_enable_rrl | bool
+  tags:
+    - infoblox
+    - dns
+    - rrl
+    - security
+
+- name: Configure recursive queries settings
+  infoblox.nios_modules.nios_grid_dns:
+    grid_dns_properties:
+      allow_recursive_queries: "{{ infoblox_allow_recursive_queries }}"
+      recursive_query_list: "{{ infoblox_recursive_query_acl }}"
+    state: present
+    provider:
+      host: "{{ infoblox_grid_master }}"
+      username: "{{ infoblox_username }}"
+      password: "{{ infoblox_password }}"
+      wapi_version: "{{ infoblox_wapi_version }}"
+      validate_certs: "{{ infoblox_validate_certs }}"
+  tags:
+    - infoblox
+    - dns
+    - recursion
+
+- name: Configure DNS query source address
+  infoblox.nios_modules.nios_grid_dns:
+    grid_dns_properties:
+      query_source_address: "{{ infoblox_dns_query_source }}"
+      query_source_address_v6: "{{ infoblox_dns_query_source_v6 | default(omit) }}"
+    state: present
+    provider:
+      host: "{{ infoblox_grid_master }}"
+      username: "{{ infoblox_username }}"
+      password: "{{ infoblox_password }}"
+      wapi_version: "{{ infoblox_wapi_version }}"
+      validate_certs: "{{ infoblox_validate_certs }}"
+  when: infoblox_dns_query_source is defined
+  tags:
+    - infoblox
+    - dns
+    - query
+
+- name: Configure DNS cache settings
+  infoblox.nios_modules.nios_grid_dns:
+    grid_dns_properties:
+      max_cache_ttl: "{{ infoblox_max_cache_ttl }}"
+      max_ncache_ttl: "{{ infoblox_max_ncache_ttl }}"
+      max_cached_lifetime: "{{ infoblox_max_cached_lifetime }}"
+      lame_ttl: "{{ infoblox_lame_ttl }}"
+    state: present
+    provider:
+      host: "{{ infoblox_grid_master }}"
+      username: "{{ infoblox_username }}"
+      password: "{{ infoblox_password }}"
+      wapi_version: "{{ infoblox_wapi_version }}"
+      validate_certs: "{{ infoblox_validate_certs }}"
+  tags:
+    - infoblox
+    - dns
+    - cache
+
+- name: Configure DNS logging for security analysis
+  infoblox.nios_modules.nios_grid_dns:
+    grid_dns_properties:
+      enable_query_logging: "{{ infoblox_enable_query_logging }}"
+      log_queries: "{{ infoblox_log_queries }}"
+      log_rpz_actions: "{{ infoblox_log_rpz_actions }}"
+      enable_dns_stats: "{{ infoblox_enable_dns_stats }}"
+    state: present
+    provider:
+      host: "{{ infoblox_grid_master }}"
+      username: "{{ infoblox_username }}"
+      password: "{{ infoblox_password }}"
+      wapi_version: "{{ infoblox_wapi_version }}"
+      validate_certs: "{{ infoblox_validate_certs }}"
+  tags:
+    - infoblox
+    - dns
+    - logging
+
+- name: Configure DNS query ACLs
+  infoblox.nios_modules.nios_zone:
+    fqdn: "{{ item.fqdn }}"
+    view: "{{ item.view | default('default') }}"
+    zone_format: "FORWARD"
+    allow_query:
+      - "{{ item.allow_query }}"
+    state: present
+    provider:
+      host: "{{ infoblox_grid_master }}"
+      username: "{{ infoblox_username }}"
+      password: "{{ infoblox_password }}"
+      wapi_version: "{{ infoblox_wapi_version }}"
+      validate_certs: "{{ infoblox_validate_certs }}"
+  loop: "{{ infoblox_dns_query_acls }}"
+  when: infoblox_dns_query_acls is defined
+  tags:
+    - infoblox
+    - dns
+    - acl
+
+- name: Configure DNS blackhole ACL (query source restrictions)
+  infoblox.nios_modules.nios_grid_dns:
+    grid_dns_properties:
+      blackhole_list: "{{ infoblox_dns_blackhole_list }}"
+    state: present
+    provider:
+      host: "{{ infoblox_grid_master }}"
+      username: "{{ infoblox_username }}"
+      password: "{{ infoblox_password }}"
+      wapi_version: "{{ infoblox_wapi_version }}"
+      validate_certs: "{{ infoblox_validate_certs }}"
+  when: infoblox_dns_blackhole_list is defined
+  tags:
+    - infoblox
+    - dns
+    - security
+    - blackhole
+
+- name: Configure DNS64 for IPv6 transition (if needed)
+  infoblox.nios_modules.nios_grid_dns:
+    grid_dns_properties:
+      enable_dns64: "{{ infoblox_enable_dns64 }}"
+      dns64_prefix: "{{ infoblox_dns64_prefix | default(omit) }}"
+    state: present
+    provider:
+      host: "{{ infoblox_grid_master }}"
+      username: "{{ infoblox_username }}"
+      password: "{{ infoblox_password }}"
+      wapi_version: "{{ infoblox_wapi_version }}"
+      validate_certs: "{{ infoblox_validate_certs }}"
+  when: infoblox_enable_dns64 | bool
+  tags:
+    - infoblox
+    - dns
+    - ipv6
+
+- name: Configure DNS notification settings
+  infoblox.nios_modules.nios_grid_dns:
+    grid_dns_properties:
+      notify_delay: "{{ infoblox_notify_delay }}"
+      also_notify: "{{ infoblox_also_notify | default(omit) }}"
+    state: present
+    provider:
+      host: "{{ infoblox_grid_master }}"
+      username: "{{ infoblox_username }}"
+      password: "{{ infoblox_password }}"
+      wapi_version: "{{ infoblox_wapi_version }}"
+      validate_certs: "{{ infoblox_validate_certs }}"
+  tags:
+    - infoblox
+    - dns
+    - notify
+
+- name: Configure sortlist for query response ordering
+  infoblox.nios_modules.nios_grid_dns:
+    grid_dns_properties:
+      sortlist: "{{ infoblox_dns_sortlist }}"
+    state: present
+    provider:
+      host: "{{ infoblox_grid_master }}"
+      username: "{{ infoblox_username }}"
+      password: "{{ infoblox_password }}"
+      wapi_version: "{{ infoblox_wapi_version }}"
+      validate_certs: "{{ infoblox_validate_certs }}"
+  when: infoblox_dns_sortlist is defined
+  tags:
+    - infoblox
+    - dns
+    - sortlist
+
+- name: Display DNS configuration summary
+  ansible.builtin.debug:
+    msg:
+      - "DNS Views Configured: {{ infoblox_dns_views | length if infoblox_dns_views is defined else 1 }}"
+      - "DNSSEC Enabled: {{ infoblox_enable_dnssec }}"
+      - "Response Rate Limiting: {{ infoblox_enable_rrl }}"
+      - "Query Logging Enabled: {{ infoblox_enable_query_logging }}"
+      - "Recursive Queries: {{ infoblox_allow_recursive_queries }}"
+  tags:
+    - infoblox
+    - dns

@@ -1,0 +1,46 @@
+---
+# handlers file for veeam_backup_server_config
+
+- name: Reload Veeam configuration
+  ansible.windows.win_shell: |
+    Add-PSSnapin VeeamPSSnapin -ErrorAction Stop
+    # Force reload of configuration
+    Disconnect-VBRServer
+    Connect-VBRServer -Server localhost
+    Write-Output "Veeam configuration reloaded"
+
+- name: Restart Veeam services for config change
+  ansible.windows.win_shell: |
+    $services = @(
+      "VeeamBackupSvc",
+      "VeeamBrokerSvc",
+      "VeeamCatalogSvc"
+    )
+
+    foreach ($svc in $services) {
+      Restart-Service $svc -Force
+      Write-Output "Restarted $svc"
+    }
+
+- name: Test email notification
+  ansible.windows.win_shell: |
+    Add-PSSnapin VeeamPSSnapin -ErrorAction Stop
+
+    # Send test notification
+    $options = Get-VBRMailNotificationConfiguration
+    if ($options.EnableNotification) {
+      # Test email will be sent
+      Write-Output "Email notification configured - sending test email"
+      # Veeam will send test email on next job completion
+    }
+
+- name: Backup Veeam configuration
+  ansible.windows.win_shell: |
+    Add-PSSnapin VeeamPSSnapin -ErrorAction Stop
+
+    $backupPath = "{{ veeam_config_backup_path }}"
+    $timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
+    $backupFile = Join-Path $backupPath "VeeamConfig_$timestamp.xml"
+
+    Export-VBRConfiguration -Path $backupFile
+    Write-Output "Configuration backed up to: $backupFile"

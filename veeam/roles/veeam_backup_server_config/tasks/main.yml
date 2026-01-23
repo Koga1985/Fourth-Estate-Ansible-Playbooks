@@ -1,0 +1,396 @@
+---
+# tasks file for veeam_backup_server_config
+# Configures Veeam Backup & Replication server settings
+
+- name: Load Veeam PowerShell snapin
+  ansible.windows.win_shell: |
+    Add-PSSnapin VeeamPSSnapin -ErrorAction Stop
+    Write-Output "Veeam PSSnapin loaded successfully"
+  register: snapin_load
+  changed_when: false
+
+- name: Configure global backup settings
+  ansible.windows.win_shell: |
+    Add-PSSnapin VeeamPSSnapin -ErrorAction Stop
+
+    # Get current options
+    $options = Get-VBRJobOptions
+
+    # Configure general settings
+    Set-VBRJobOptions -Options $options `
+      -ViSourceOptions @{
+        UseChangeTracking = ${{ veeam_use_change_tracking | lower }}
+        EnableVmwareToolsQuiescence = ${{ veeam_vmware_tools_quiescence | lower }}
+        SetResultsToVmNotes = ${{ veeam_set_results_to_vm_notes | lower }}
+      }
+
+    Write-Output "Global backup settings configured"
+  register: global_settings
+
+- name: Configure email notification settings
+  ansible.windows.win_shell: |
+    Add-PSSnapin VeeamPSSnapin -ErrorAction Stop
+
+    $smtpServer = "{{ veeam_smtp_server }}"
+    $smtpPort = {{ veeam_smtp_port }}
+    $from = "{{ veeam_smtp_from }}"
+    $to = "{{ veeam_smtp_to }}"
+
+    # Configure email settings
+    $options = @{
+      EnableNotification = ${{ veeam_email_notifications | lower }}
+      SMTPServer = $smtpServer
+      SMTPPort = $smtpPort
+      From = $from
+      To = $to
+      Subject = "{{ veeam_email_subject }}"
+      NotifyOnSuccess = ${{ veeam_notify_on_success | lower }}
+      NotifyOnWarning = ${{ veeam_notify_on_warning | lower }}
+      NotifyOnError = ${{ veeam_notify_on_error | lower }}
+      NotifyOnLastRetry = ${{ veeam_notify_on_last_retry | lower }}
+    }
+
+{% if veeam_smtp_use_ssl %}
+    $options.UseSSL = $true
+{% endif %}
+
+{% if veeam_smtp_username != '' %}
+    $options.EnableAuthentication = $true
+    $options.Username = "{{ veeam_smtp_username }}"
+    $securePassword = ConvertTo-SecureString "{{ veeam_smtp_password }}" -AsPlainText -Force
+    $options.Password = $securePassword
+{% endif %}
+
+    Set-VBRMailNotificationConfiguration @options
+
+    Write-Output "Email notification settings configured"
+    Write-Output "SMTP Server: $smtpServer"
+    Write-Output "From: $from"
+    Write-Output "To: $to"
+  register: email_config
+  when: veeam_email_notifications | bool
+  no_log: true
+
+- name: Add credentials for VMware vCenter
+  ansible.windows.win_shell: |
+    Add-PSSnapin VeeamPSSnapin -ErrorAction Stop
+
+    $username = "{{ item.username }}"
+    $description = "{{ item.description | default('VMware Credentials') }}"
+    $securePassword = ConvertTo-SecureString "{{ item.password }}" -AsPlainText -Force
+
+    # Check if credential already exists
+    $existingCred = Get-VBRCredentials | Where-Object { $_.Name -eq $description }
+
+    if (-not $existingCred) {
+      Add-VBRCredentials -User $username -Password $securePassword -Description $description
+      Write-Output "Added credential: $description"
+    } else {
+      Write-Output "Credential already exists: $description"
+    }
+  loop: "{{ veeam_vmware_credentials }}"
+  when: veeam_vmware_credentials is defined and veeam_vmware_credentials | length > 0
+  no_log: true
+
+- name: Add credentials for Windows systems
+  ansible.windows.win_shell: |
+    Add-PSSnapin VeeamPSSnapin -ErrorAction Stop
+
+    $username = "{{ item.username }}"
+    $description = "{{ item.description | default('Windows Credentials') }}"
+    $securePassword = ConvertTo-SecureString "{{ item.password }}" -AsPlainText -Force
+
+    # Check if credential already exists
+    $existingCred = Get-VBRCredentials | Where-Object { $_.Name -eq $description }
+
+    if (-not $existingCred) {
+      Add-VBRCredentials -User $username -Password $securePassword -Description $description -Type Windows
+      Write-Output "Added Windows credential: $description"
+    } else {
+      Write-Output "Windows credential already exists: $description"
+    }
+  loop: "{{ veeam_windows_credentials }}"
+  when: veeam_windows_credentials is defined and veeam_windows_credentials | length > 0
+  no_log: true
+
+- name: Add credentials for Linux systems
+  ansible.windows.win_shell: |
+    Add-PSSnapin VeeamPSSnapin -ErrorAction Stop
+
+    $username = "{{ item.username }}"
+    $description = "{{ item.description | default('Linux Credentials') }}"
+    $securePassword = ConvertTo-SecureString "{{ item.password }}" -AsPlainText -Force
+
+    # Check if credential already exists
+    $existingCred = Get-VBRCredentials | Where-Object { $_.Name -eq $description }
+
+    if (-not $existingCred) {
+      Add-VBRCredentials -User $username -Password $securePassword -Description $description -Type Linux
+      Write-Output "Added Linux credential: $description"
+    } else {
+      Write-Output "Linux credential already exists: $description"
+    }
+  loop: "{{ veeam_linux_credentials }}"
+  when: veeam_linux_credentials is defined and veeam_linux_credentials | length > 0
+  no_log: true
+
+- name: Configure backup proxy servers
+  ansible.windows.win_shell: |
+    Add-PSSnapin VeeamPSSnapin -ErrorAction Stop
+
+    $proxyName = "{{ item.name }}"
+    $proxyHost = "{{ item.host }}"
+    $transportMode = "{{ item.transport_mode | default('Auto') }}"
+    $maxTasks = {{ item.max_tasks | default(4) }}
+
+    # Check if proxy already exists
+    $existingProxy = Get-VBRViProxy | Where-Object { $_.Name -eq $proxyName }
+
+    if (-not $existingProxy) {
+      # Get server
+      $server = Get-VBRServer -Name $proxyHost
+
+      if (-not $server) {
+        # Add server first
+        $credential = Get-VBRCredentials | Where-Object { $_.Description -eq "{{ item.credential }}" } | Select-Object -First 1
+        $server = Add-VBRWinServer -Name $proxyHost -Credentials $credential
+      }
+
+      # Add proxy
+      Add-VBRViProxy -Server $server `
+        -TransportMode $transportMode `
+        -MaxTasksCount $maxTasks `
+        -Description "{{ item.description | default('Backup Proxy') }}"
+
+      Write-Output "Added backup proxy: $proxyName"
+    } else {
+      Write-Output "Backup proxy already exists: $proxyName"
+    }
+  loop: "{{ veeam_backup_proxies }}"
+  when: veeam_backup_proxies is defined and veeam_backup_proxies | length > 0
+
+- name: Configure WAN accelerator
+  ansible.windows.win_shell: |
+    Add-PSSnapin VeeamPSSnapin -ErrorAction Stop
+
+    $waName = "{{ item.name }}"
+    $waHost = "{{ item.host }}"
+    $cachePath = "{{ item.cache_path }}"
+    $cacheSize = {{ item.cache_size_gb }}
+
+    # Check if WAN accelerator already exists
+    $existingWA = Get-VBRWANAccelerator | Where-Object { $_.Name -eq $waName }
+
+    if (-not $existingWA) {
+      # Get server
+      $server = Get-VBRServer -Name $waHost
+
+      if (-not $server) {
+        $credential = Get-VBRCredentials | Where-Object { $_.Description -eq "{{ item.credential }}" } | Select-Object -First 1
+        $server = Add-VBRWinServer -Name $waHost -Credentials $credential
+      }
+
+      # Add WAN accelerator
+      Add-VBRWANAccelerator -Server $server `
+        -CachePath $cachePath `
+        -MaxCacheSize $cacheSize
+
+      Write-Output "Added WAN accelerator: $waName"
+    } else {
+      Write-Output "WAN accelerator already exists: $waName"
+    }
+  loop: "{{ veeam_wan_accelerators }}"
+  when: veeam_wan_accelerators is defined and veeam_wan_accelerators | length > 0
+
+- name: Configure network traffic rules
+  ansible.windows.win_shell: |
+    Add-PSSnapin VeeamPSSnapin -ErrorAction Stop
+
+    $ruleName = "{{ item.name }}"
+    $sourceIp = "{{ item.source_ip }}"
+    $targetIp = "{{ item.target_ip }}"
+    $throttleValue = {{ item.throttle_mbps }}
+    $throttleUnit = "MbitPerSec"
+
+{% if item.enabled is defined %}
+    $enabled = ${{ item.enabled | lower }}
+{% else %}
+    $enabled = $true
+{% endif %}
+
+    # Check if rule already exists
+    $existingRule = Get-VBRNetworkTrafficRule | Where-Object { $_.Name -eq $ruleName }
+
+    if (-not $existingRule) {
+      # Create network traffic rule
+      Add-VBRNetworkTrafficRule -Name $ruleName `
+        -SourceIPStart $sourceIp `
+        -TargetIPStart $targetIp `
+        -ThrottlingValue $throttleValue `
+        -ThrottlingUnit $throttleUnit `
+        -Enabled:$enabled `
+        -Description "{{ item.description | default('Network traffic rule') }}"
+
+      Write-Output "Added network traffic rule: $ruleName"
+    } else {
+      Write-Output "Network traffic rule already exists: $ruleName"
+    }
+  loop: "{{ veeam_network_traffic_rules }}"
+  when: veeam_network_traffic_rules is defined and veeam_network_traffic_rules | length > 0
+
+- name: Configure encryption password (password storage)
+  ansible.windows.win_shell: |
+    Add-PSSnapin VeeamPSSnapin -ErrorAction Stop
+
+    $description = "{{ item.description }}"
+    $securePassword = ConvertTo-SecureString "{{ item.password }}" -AsPlainText -Force
+    $hint = "{{ item.hint | default('') }}"
+
+    # Check if password already exists
+    $existingPassword = Get-VBREncryptionPassword | Where-Object { $_.Description -eq $description }
+
+    if (-not $existingPassword) {
+      Add-VBREncryptionPassword -Password $securePassword -Description $description -Hint $hint
+      Write-Output "Added encryption password: $description"
+    } else {
+      Write-Output "Encryption password already exists: $description"
+    }
+  loop: "{{ veeam_encryption_passwords }}"
+  when: veeam_encryption_passwords is defined and veeam_encryption_passwords | length > 0
+  no_log: true
+
+- name: Configure backup infrastructure roles
+  ansible.windows.win_shell: |
+    Add-PSSnapin VeeamPSSnapin -ErrorAction Stop
+
+    # Configure mount server
+    $mountServer = Get-VBRServer -Name "{{ veeam_mount_server }}"
+    if ($mountServer) {
+      Set-VBRMountServer -Server $mountServer -Enabled $true
+      Write-Output "Configured mount server: {{ veeam_mount_server }}"
+    }
+
+    Write-Output "Backup infrastructure roles configured"
+  when: veeam_mount_server is defined
+
+- name: Configure global deduplication settings
+  ansible.windows.win_shell: |
+    Add-PSSnapin VeeamPSSnapin -ErrorAction Stop
+
+    # Enable storage-level corruption guard
+    Set-VBRConfiguration -EnableStorageLevelCorruptionGuard ${{ veeam_storage_corruption_guard | lower }}
+
+    # Configure backup chain settings
+    Set-VBRConfiguration -BackupChainLength {{ veeam_backup_chain_length }}
+
+    Write-Output "Global deduplication settings configured"
+  when: veeam_storage_corruption_guard is defined
+
+- name: Configure security and compliance settings
+  ansible.windows.win_shell: |
+    Add-PSSnapin VeeamPSSnapin -ErrorAction Stop
+
+    # Enable traffic encryption
+    Set-VBRConfiguration -EnableNetworkTrafficEncryption ${{ veeam_enable_traffic_encryption | lower }}
+
+{% if fourth_estate_mode %}
+    # Fourth Estate specific settings
+    # Enable audit logging
+    Set-VBRConfiguration -EnableAuditLog ${{ enable_audit_logging | lower }}
+
+    # Configure immutability for ransomware protection
+    # This is configured per-repository in veeam_backup_repository role
+
+    Write-Output "Fourth Estate security settings configured"
+{% endif %}
+
+    Write-Output "Security and compliance settings configured"
+
+- name: Configure tape server settings
+  ansible.windows.win_shell: |
+    Add-PSSnapin VeeamPSSnapin -ErrorAction Stop
+
+    # Set tape library scan schedule
+    $schedule = New-VBRDailyOptions -Type Everyday -Period @{Hour = {{ veeam_tape_scan_hour }}; Minute = 0}
+    Set-VBRTapeServerOptions -EnableAutoTapeScan ${{ veeam_enable_auto_tape_scan | lower }} -ScanSchedule $schedule
+
+    Write-Output "Tape server settings configured"
+  when: veeam_enable_auto_tape_scan is defined
+
+- name: Configure Cloud Connect settings
+  ansible.windows.win_shell: |
+    Add-PSSnapin VeeamPSSnapin -ErrorAction Stop
+
+    # Configure Cloud Connect service
+    Set-VBRCloudConnectConfiguration -EnableCloudConnect ${{ veeam_enable_cloud_connect | lower }}
+
+{% if veeam_enable_cloud_connect %}
+    Set-VBRCloudConnectConfiguration -Port {{ veeam_cloud_connect_port }}
+{% endif %}
+
+    Write-Output "Cloud Connect settings configured"
+  when: veeam_enable_cloud_connect is defined
+
+- name: Create configuration backup
+  ansible.windows.win_shell: |
+    Add-PSSnapin VeeamPSSnapin -ErrorAction Stop
+
+    $backupPath = "{{ veeam_config_backup_path }}"
+
+    # Create directory if it doesn't exist
+    if (-not (Test-Path $backupPath)) {
+      New-Item -ItemType Directory -Path $backupPath -Force | Out-Null
+    }
+
+    # Export configuration
+    $timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
+    $backupFile = Join-Path $backupPath "VeeamConfig_$timestamp.xml"
+
+    Export-VBRConfiguration -Path $backupFile -ErrorAction Stop
+
+    Write-Output "Configuration backed up to: $backupFile"
+
+    # Keep only last 10 backups
+    Get-ChildItem $backupPath -Filter "VeeamConfig_*.xml" |
+      Sort-Object LastWriteTime -Descending |
+      Select-Object -Skip 10 |
+      Remove-Item -Force
+
+    Write-Output "Cleaned up old configuration backups"
+  when: veeam_config_backup_path is defined
+
+- name: Display configuration summary
+  ansible.windows.win_shell: |
+    Add-PSSnapin VeeamPSSnapin -ErrorAction Stop
+
+    Write-Output "=== Veeam Configuration Summary ==="
+
+    # Credentials
+    $creds = Get-VBRCredentials
+    Write-Output "`nStored Credentials: $($creds.Count)"
+
+    # Proxies
+    $proxies = Get-VBRViProxy
+    Write-Output "Backup Proxies: $($proxies.Count)"
+    foreach ($proxy in $proxies) {
+      Write-Output "  - $($proxy.Name): $($proxy.Options.MaxTasksCount) tasks"
+    }
+
+    # WAN Accelerators
+    $was = Get-VBRWANAccelerator
+    Write-Output "`nWAN Accelerators: $($was.Count)"
+
+    # Network Traffic Rules
+    $rules = Get-VBRNetworkTrafficRule
+    Write-Output "Network Traffic Rules: $($rules.Count)"
+
+    # Repositories (will show after repository role is run)
+    $repos = Get-VBRBackupRepository
+    Write-Output "`nBackup Repositories: $($repos.Count)"
+
+    Write-Output "`n=== Configuration Complete ==="
+  register: config_summary
+
+- name: Show configuration summary
+  ansible.builtin.debug:
+    var: config_summary.stdout_lines

@@ -1,0 +1,89 @@
+---
+# Install Kubernetes packages (kubeadm, kubelet, kubectl)
+
+- name: Add Kubernetes GPG key (Debian)
+  ansible.builtin.apt_key:
+    url: https://pkgs.k8s.io/core:/stable:/v1.28/deb/Release.key
+    keyring: /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+    state: present
+  when: ansible_os_family == 'Debian'
+
+- name: Add Kubernetes repository (Debian)
+  ansible.builtin.apt_repository:
+    repo: "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.28/deb/ /"
+    state: present
+    filename: kubernetes
+  when: ansible_os_family == 'Debian'
+
+- name: Install Kubernetes packages (Debian)
+  ansible.builtin.apt:
+    name:
+      - "kubelet={{ k8s_version }}-*"
+      - "kubeadm={{ k8s_version }}-*"
+      - "kubectl={{ k8s_version }}-*"
+    state: present
+    update_cache: true
+    allow_change_held_packages: true
+  when: ansible_os_family == 'Debian'
+
+- name: Hold Kubernetes packages at current version (Debian)
+  ansible.builtin.dpkg_selections:
+    name: "{{ item }}"
+    selection: hold
+  loop:
+    - kubelet
+    - kubeadm
+    - kubectl
+  when: ansible_os_family == 'Debian'
+
+- name: Add Kubernetes repository (RedHat)
+  ansible.builtin.yum_repository:
+    name: kubernetes
+    description: Kubernetes Repository
+    baseurl: https://pkgs.k8s.io/core:/stable:/v1.28/rpm/
+    enabled: true
+    gpgcheck: true
+    gpgkey: https://pkgs.k8s.io/core:/stable:/v1.28/rpm/repodata/repomd.xml.key
+    exclude:
+      - kubelet
+      - kubeadm
+      - kubectl
+  when: ansible_os_family == 'RedHat'
+
+- name: Install Kubernetes packages (RedHat)
+  ansible.builtin.yum:
+    name:
+      - "kubelet-{{ k8s_version }}"
+      - "kubeadm-{{ k8s_version }}"
+      - "kubectl-{{ k8s_version }}"
+    state: present
+    disable_excludes: kubernetes
+  when: ansible_os_family == 'RedHat'
+
+- name: Create kubelet configuration directory
+  ansible.builtin.file:
+    path: /var/lib/kubelet
+    state: directory
+    mode: '0755'
+
+- name: Configure kubelet extra args
+  ansible.builtin.template:
+    src: kubelet-extra-args.j2
+    dest: /etc/default/kubelet
+    mode: '0644'
+  notify: Restart kubelet
+
+- name: Enable kubelet service (do not start yet)
+  ansible.builtin.systemd:
+    name: kubelet
+    enabled: true
+    daemon_reload: true
+
+- name: Verify kubeadm installation
+  ansible.builtin.command: kubeadm version
+  changed_when: false
+  register: kubeadm_version
+
+- name: Display kubeadm version
+  ansible.builtin.debug:
+    msg: "{{ kubeadm_version.stdout }}"

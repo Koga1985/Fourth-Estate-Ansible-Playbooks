@@ -1,0 +1,178 @@
+---
+# defaults file for panos_system_config
+# Fourth Estate hardened defaults
+
+# PAN-OS provider connection details
+panos_provider:
+  ip_address: "{{ ansible_host }}"
+  username: "{{ panos_username | default('admin') }}"
+  password: "{{ panos_password }}"
+  api_key: "{{ panos_api_key | default(omit) }}"
+
+# System identification
+panos_hostname: "fw01"
+panos_domain: "example.local"
+panos_timezone: "America/New_York"
+
+# DNS configuration
+panos_dns_primary: "8.8.8.8"
+panos_dns_secondary: "8.8.4.4"
+
+# NTP configuration (Fourth Estate should use internal NTP)
+panos_ntp_primary: "time.nist.gov"
+panos_ntp_secondary: "time.google.com"
+
+# Login banner (DISA STIG compliant)
+panos_login_banner: |
+  ***********************************************************************
+  *                           NOTICE                                   *
+  ***********************************************************************
+
+  You are accessing a U.S. Government information system, which includes:
+  (1) this computer, (2) this computer network, (3) all computers
+  connected to this network, and (4) all devices and storage media
+  attached to this network or to a computer on this network.
+
+  This information system is provided for U.S. Government-authorized
+  use only. Unauthorized or improper use of this system may result in
+  disciplinary action, as well as civil and criminal penalties.
+
+  By using this information system, you understand and consent to the
+  following:
+  - You have no reasonable expectation of privacy when you use this
+    information system; this includes any communications or data
+    transiting or stored on this information system.
+  - At any time, and for any lawful Government purpose, the Government
+    may monitor, intercept, search and seize any communication or data
+    transiting or stored on this information system.
+  - Any communications or data transiting or stored on this information
+    system may be disclosed or used for any lawful Government purpose.
+  ***********************************************************************
+
+# Session timeout (in minutes)
+panos_idle_timeout: 10
+panos_global_session_timeout: 15
+
+# Password complexity requirements (DISA STIG compliant)
+panos_password_min_length: 15
+panos_password_min_uppercase: 1
+panos_password_min_lowercase: 1
+panos_password_min_numeric: 1
+panos_password_min_special: 1
+panos_password_block_repeated: 3
+panos_password_history_count: 24
+panos_password_differs_by: 4
+panos_password_expiration_days: 90
+panos_password_expiration_warning_days: 14
+panos_password_post_expiration_logins: 0
+panos_password_post_expiration_grace_days: 0
+
+# Administrator accounts
+panos_administrators:
+  - username: "admin"
+    superuser: true
+    password_profile: "strict"
+  - username: "security_admin"
+    role: "securityadmin"
+    auth_profile: "MFA_RADIUS"
+  - username: "readonly_admin"
+    role: "readonly"
+    auth_profile: "MFA_RADIUS"
+
+# RADIUS authentication for MFA
+panos_radius_profiles:
+  - name: "MFA_RADIUS"
+    server_profile: "DUO_MFA"
+    fallback_local: "no"
+    lockout_attempts: 3
+    lockout_time: 30
+
+panos_radius_server_profiles:
+  - name: "DUO_MFA"
+    protocol: "PAP"
+    timeout: 5
+    retries: 3
+    servers:
+      - name: "DUO_Primary"
+        ip: "10.0.1.10"
+        secret: "{{ vault_duo_radius_secret }}"
+        port: 1812
+      - name: "DUO_Secondary"
+        ip: "10.0.1.11"
+        secret: "{{ vault_duo_radius_secret }}"
+        port: 1812
+
+# TACACS+ authentication (alternative to RADIUS)
+panos_tacacs_profiles: []
+panos_tacacs_server_profiles: []
+
+# SNMPv3 configuration (read-only monitoring)
+panos_enable_snmp: true
+panos_snmp_v3_servers:
+  - name: "monitoring_user"
+    engine_id: "0x8000000001020304"
+    auth_password: "{{ vault_snmp_auth_password }}"
+    priv_password: "{{ vault_snmp_priv_password }}"
+    auth_protocol: "SHA256"
+    priv_protocol: "AES256"
+    security_level: "authPriv"
+    manager: "10.0.2.10"
+
+# Certificate management
+panos_certificates:
+  - name: "mgmt_cert"
+    format: "pem"
+    filename: "/etc/pki/tls/certs/firewall.pem"
+    passphrase: "{{ vault_cert_passphrase | default(omit) }}"
+
+# SSL/TLS service profile for management
+panos_mgmt_ssl_profile: "mgmt_ssl"
+panos_mgmt_ssl_certificate: "mgmt_cert"
+panos_mgmt_ssl_min_version: "tls1-2"
+panos_mgmt_ssl_max_version: "tls1-3"
+
+# Syslog forwarding to SIEM (Splunk, ELK, etc.)
+panos_syslog_servers:
+  - name: "SIEM_Primary"
+    server: "10.0.3.10"
+    transport: "TCP"
+    port: 514
+    format: "BSD"
+    facility: "LOG_LOCAL0"
+  - name: "SIEM_Secondary"
+    server: "10.0.3.11"
+    transport: "TCP"
+    port: 514
+    format: "BSD"
+    facility: "LOG_LOCAL0"
+
+panos_syslog_profiles:
+  - name: "Forward_to_SIEM"
+    servers:
+      - name: "SIEM_Primary"
+        transport: "TCP"
+        port: 514
+        format: "BSD"
+        facility: "LOG_LOCAL0"
+      - name: "SIEM_Secondary"
+        transport: "TCP"
+        port: 514
+        format: "BSD"
+        facility: "LOG_LOCAL0"
+
+# Automatic content updates
+panos_threat_update_schedule: "daily"
+panos_threat_update_time: "02:00"
+panos_threat_update_threshold: 24
+
+panos_av_update_schedule: "daily"
+panos_av_update_time: "03:00"
+
+# Management access control
+panos_permitted_mgmt_ips:
+  - "10.0.0.0/8"      # Internal networks only
+  - "172.16.0.0/12"   # Private networks
+  - "192.168.0.0/16"  # Private networks
+
+# Audit and compliance
+panos_require_audit_comment: true

@@ -1,0 +1,56 @@
+---
+# Kubernetes Cluster Installation - Main Tasks
+# Fourth Estate production-ready Kubernetes deployment
+
+- name: Include pre-flight checks
+  ansible.builtin.include_tasks: preflight.yml
+  tags: [preflight, always]
+
+- name: Include container runtime setup
+  ansible.builtin.include_tasks: container_runtime.yml
+  tags: [container-runtime, cri]
+
+- name: Include Kubernetes packages installation
+  ansible.builtin.include_tasks: install_packages.yml
+  tags: [packages, install]
+
+- name: Include control plane initialization
+  ansible.builtin.include_tasks: init_control_plane.yml
+  when: inventory_hostname in groups['k8s_control_plane'][0]
+  tags: [control-plane, init]
+
+- name: Include additional control plane setup
+  ansible.builtin.include_tasks: join_control_plane.yml
+  when:
+    - inventory_hostname in groups['k8s_control_plane']
+    - inventory_hostname != groups['k8s_control_plane'][0]
+  tags: [control-plane, join]
+
+- name: Include worker node setup
+  ansible.builtin.include_tasks: join_workers.yml
+  when: inventory_hostname in groups['k8s_workers']
+  tags: [workers, join]
+
+- name: Include CNI plugin installation
+  ansible.builtin.include_tasks: cni_plugin.yml
+  when: inventory_hostname == groups['k8s_control_plane'][0]
+  tags: [cni, network]
+
+- name: Include metrics server installation
+  ansible.builtin.include_tasks: metrics_server.yml
+  when:
+    - k8s_enable_metrics_server | bool
+    - inventory_hostname == groups['k8s_control_plane'][0]
+  tags: [metrics-server, monitoring]
+
+- name: Include cluster validation
+  ansible.builtin.include_tasks: validate.yml
+  when: inventory_hostname == groups['k8s_control_plane'][0]
+  tags: [validate, verification]
+
+- name: Include Fourth Estate specific configuration
+  ansible.builtin.include_tasks: fourth_estate.yml
+  when:
+    - k8s_fourth_estate_enabled | bool
+    - inventory_hostname == groups['k8s_control_plane'][0]
+  tags: [fourth-estate, compliance]

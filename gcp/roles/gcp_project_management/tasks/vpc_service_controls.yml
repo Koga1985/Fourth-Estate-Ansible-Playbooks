@@ -1,0 +1,50 @@
+---
+# VPC Service Controls for data exfiltration prevention
+
+- name: Create VPC Service Controls access policy (if not exists)
+  ansible.builtin.command:
+    cmd: >
+      gcloud access-context-manager policies create
+      --organization={{ gcp_organization_id }}
+      --title="{{ gcp_project_id }}-access-policy"
+  register: policy_result
+  changed_when: "'Created access policy' in policy_result.stdout"
+  failed_when:
+    - policy_result.rc != 0
+    - "'already exists' not in policy_result.stderr"
+  when: gcp_organization_id is defined
+
+- name: Create access level for Fourth Estate personnel
+  ansible.builtin.command:
+    cmd: >
+      gcloud access-context-manager levels create {{ gcp_access_level_name }}
+      --policy={{ gcp_access_policy_name }}
+      --basic-level-spec=/tmp/access_level.yaml
+  args:
+    stdin: |
+      ---
+      conditions:
+        - ipSubnetworks: {{ gcp_allowed_ip_ranges | to_json }}
+        - members: {{ gcp_allowed_members | to_json }}
+        - regions: {{ gcp_allowed_regions | to_json }}
+      combiningFunction: AND
+  register: level_result
+  changed_when: "'Created access level' in level_result.stdout"
+  failed_when:
+    - level_result.rc != 0
+    - "'already exists' not in level_result.stderr"
+
+- name: Create VPC Service Controls perimeter
+  ansible.builtin.command:
+    cmd: >
+      gcloud access-context-manager perimeters create {{ gcp_perimeter_name }}
+      --policy={{ gcp_access_policy_name }}
+      --resources=projects/{{ gcp_project_number }}
+      --restricted-services={{ gcp_restricted_services | join(',') }}
+      --access-levels={{ gcp_access_level_name }}
+      --vpc-allowed-services={{ gcp_vpc_allowed_services | join(',') }}
+  register: perimeter_result
+  changed_when: "'Created perimeter' in perimeter_result.stdout"
+  failed_when:
+    - perimeter_result.rc != 0
+    - "'already exists' not in perimeter_result.stderr"

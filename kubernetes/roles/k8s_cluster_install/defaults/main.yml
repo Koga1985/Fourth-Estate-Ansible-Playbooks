@@ -1,0 +1,172 @@
+---
+# Kubernetes Cluster Installation - Defaults
+# Fourth Estate production-ready Kubernetes deployment
+
+# Cluster Configuration
+k8s_version: "1.28.5"
+k8s_cluster_name: "fourth-estate-k8s"
+k8s_pod_network_cidr: "10.244.0.0/16"
+k8s_service_cidr: "10.96.0.0/12"
+k8s_dns_domain: "cluster.local"
+
+# Control Plane Configuration
+k8s_control_plane_endpoint: "api.{{ k8s_cluster_name }}.local:6443"
+k8s_control_plane_ha: true
+k8s_control_plane_replicas: 3
+k8s_api_server_cert_sans:
+  - "{{ k8s_control_plane_endpoint }}"
+  - "localhost"
+  - "127.0.0.1"
+
+# etcd Configuration
+k8s_etcd_version: "3.5.10"
+k8s_etcd_data_dir: "/var/lib/etcd"
+k8s_etcd_backup_enabled: true
+k8s_etcd_backup_retention_days: 30
+k8s_etcd_encryption_enabled: true
+
+# Container Runtime (containerd)
+k8s_cri: "containerd"
+k8s_containerd_version: "1.7.11"
+k8s_containerd_config_dir: "/etc/containerd"
+k8s_containerd_socket: "/run/containerd/containerd.sock"
+k8s_containerd_insecure_registries: []
+k8s_containerd_registry_mirrors: {}
+
+# CNI Plugin Configuration
+k8s_cni_plugin: "calico"  # Options: calico, cilium, flannel
+k8s_calico_version: "v3.27.0"
+k8s_cilium_version: "1.14.5"
+k8s_cni_mtu: 1450
+
+# Network Configuration
+k8s_enable_ipv6: false
+k8s_proxy_mode: "ipvs"  # Options: iptables, ipvs
+k8s_network_plugin_config:
+  calico:
+    ipip_mode: "Always"  # Options: Always, CrossSubnet, Never
+    nat_outgoing: true
+    typha_enabled: true
+    felix_log_level: "info"
+  cilium:
+    tunnel_mode: "vxlan"  # Options: vxlan, geneve, disabled
+    enable_hubble: true
+    enable_l7_proxy: true
+    enable_bandwidth_manager: true
+
+# Kubelet Configuration
+k8s_kubelet_max_pods: 110
+k8s_kubelet_pod_pids_limit: 4096
+k8s_kubelet_system_reserved:
+  cpu: "200m"
+  memory: "1Gi"
+  ephemeral-storage: "10Gi"
+k8s_kubelet_kube_reserved:
+  cpu: "200m"
+  memory: "1Gi"
+  ephemeral-storage: "10Gi"
+k8s_kubelet_eviction_hard:
+  memory.available: "100Mi"
+  nodefs.available: "10%"
+  nodefs.inodesFree: "5%"
+  imagefs.available: "15%"
+
+# Certificate Management
+k8s_cert_validity_days: 365
+k8s_cert_auto_renew: true
+k8s_cert_key_size: 2048
+
+# Security Configuration
+k8s_enable_audit_logging: true
+k8s_audit_log_path: "/var/log/kubernetes/audit.log"
+k8s_audit_log_maxage: 365
+k8s_audit_log_maxbackup: 10
+k8s_audit_log_maxsize: 100
+k8s_enable_admission_plugins:
+  - NodeRestriction
+  - PodSecurity
+  - LimitRanger
+  - ServiceAccount
+  - DefaultStorageClass
+  - DefaultTolerationSeconds
+  - MutatingAdmissionWebhook
+  - ValidatingAdmissionWebhook
+  - ResourceQuota
+  - AlwaysPullImages
+  - EventRateLimit
+k8s_disable_admission_plugins: []
+
+# API Server Configuration
+k8s_api_server_extra_args:
+  anonymous-auth: "false"
+  enable-bootstrap-token-auth: "true"
+  authorization-mode: "Node,RBAC"
+  tls-min-version: "VersionTLS12"
+  tls-cipher-suites: "TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384"
+  profiling: "false"
+  kubelet-certificate-authority: "/etc/kubernetes/pki/ca.crt"
+  service-account-lookup: "true"
+  request-timeout: "60s"
+
+# Controller Manager Configuration
+k8s_controller_manager_extra_args:
+  bind-address: "0.0.0.0"
+  use-service-account-credentials: "true"
+  service-account-private-key-file: "/etc/kubernetes/pki/sa.key"
+  root-ca-file: "/etc/kubernetes/pki/ca.crt"
+  cluster-signing-cert-file: "/etc/kubernetes/pki/ca.crt"
+  cluster-signing-key-file: "/etc/kubernetes/pki/ca.key"
+  profiling: "false"
+
+# Scheduler Configuration
+k8s_scheduler_extra_args:
+  bind-address: "0.0.0.0"
+  profiling: "false"
+
+# kubeadm Configuration
+k8s_kubeadm_init_extra_args: ""
+k8s_kubeadm_join_extra_args: ""
+
+# Feature Gates
+k8s_feature_gates:
+  PodSecurity: true
+  SeccompDefault: true
+  KubeletTracing: false
+
+# Air-gapped Installation (Fourth Estate)
+k8s_airgap_mode: false
+k8s_airgap_registry: ""
+k8s_airgap_image_list: []
+
+# Fourth Estate Specific
+k8s_fourth_estate_enabled: true
+k8s_source_protection: true
+k8s_journalist_access_enabled: true
+k8s_publication_pipeline: true
+k8s_content_isolation: true
+
+# Node Labels
+k8s_control_plane_labels:
+  node-role.kubernetes.io/control-plane: ""
+  workload.fourth-estate.io/type: "control-plane"
+k8s_worker_labels:
+  workload.fourth-estate.io/type: "general"
+
+# Taints
+k8s_control_plane_taints:
+  - key: "node-role.kubernetes.io/control-plane"
+    effect: "NoSchedule"
+
+# Load Balancer Configuration (for HA)
+k8s_lb_enabled: true
+k8s_lb_type: "haproxy"  # Options: haproxy, nginx, cloud
+k8s_lb_vip: ""
+
+# Monitoring and Observability
+k8s_enable_metrics_server: true
+k8s_metrics_server_version: "v0.6.4"
+
+# Backup Configuration
+k8s_backup_enabled: true
+k8s_backup_schedule: "0 2 * * *"
+k8s_backup_retention_days: 30

@@ -1,0 +1,129 @@
+---
+# Organization policies for Fourth Estate compliance
+
+- name: Enforce domain restricted sharing
+  ansible.builtin.command:
+    cmd: >
+      gcloud resource-manager org-policies set-policy
+      /tmp/domain_restricted_sharing.yaml
+      --project={{ gcp_project_id }}
+  args:
+    stdin: |
+      constraint: iam.allowedPolicyMemberDomains
+      listPolicy:
+        allowedValues:
+          {% for domain in gcp_allowed_domains %}
+          - {{ domain }}
+          {% endfor %}
+  changed_when: true
+
+- name: Disable service account key creation
+  ansible.builtin.command:
+    cmd: >
+      gcloud resource-manager org-policies set-policy
+      /tmp/disable_sa_key_creation.yaml
+      --project={{ gcp_project_id }}
+  args:
+    stdin: |
+      constraint: iam.disableServiceAccountKeyCreation
+      booleanPolicy:
+        enforced: true
+  changed_when: true
+  when: gcp_disable_sa_key_creation | bool
+
+- name: Require OS Login
+  ansible.builtin.command:
+    cmd: >
+      gcloud resource-manager org-policies set-policy
+      /tmp/require_os_login.yaml
+      --project={{ gcp_project_id }}
+  args:
+    stdin: |
+      constraint: compute.requireOsLogin
+      booleanPolicy:
+        enforced: true
+  changed_when: true
+
+- name: Disable VM serial port access
+  ansible.builtin.command:
+    cmd: >
+      gcloud resource-manager org-policies set-policy
+      /tmp/disable_serial_port.yaml
+      --project={{ gcp_project_id }}
+  args:
+    stdin: |
+      constraint: compute.disableSerialPortAccess
+      booleanPolicy:
+        enforced: true
+  changed_when: true
+
+- name: Require Shielded VMs
+  ansible.builtin.command:
+    cmd: >
+      gcloud resource-manager org-policies set-policy
+      /tmp/require_shielded_vm.yaml
+      --project={{ gcp_project_id }}
+  args:
+    stdin: |
+      constraint: compute.requireShieldedVm
+      booleanPolicy:
+        enforced: true
+  changed_when: true
+
+- name: Skip default network creation
+  ansible.builtin.command:
+    cmd: >
+      gcloud resource-manager org-policies set-policy
+      /tmp/skip_default_network.yaml
+      --project={{ gcp_project_id }}
+  args:
+    stdin: |
+      constraint: compute.skipDefaultNetworkCreation
+      booleanPolicy:
+        enforced: true
+  changed_when: true
+
+- name: Restrict public IP assignment
+  ansible.builtin.command:
+    cmd: >
+      gcloud resource-manager org-policies set-policy
+      /tmp/restrict_public_ip.yaml
+      --project={{ gcp_project_id }}
+  args:
+    stdin: |
+      constraint: compute.vmExternalIpAccess
+      listPolicy:
+        deniedValues:
+          - "*"
+  changed_when: true
+  when: gcp_restrict_public_ips | bool
+
+- name: Enforce uniform bucket-level access
+  ansible.builtin.command:
+    cmd: >
+      gcloud resource-manager org-policies set-policy
+      /tmp/uniform_bucket_access.yaml
+      --project={{ gcp_project_id }}
+  args:
+    stdin: |
+      constraint: storage.uniformBucketLevelAccess
+      booleanPolicy:
+        enforced: true
+  changed_when: true
+
+- name: Restrict resource locations (data residency)
+  ansible.builtin.command:
+    cmd: >
+      gcloud resource-manager org-policies set-policy
+      /tmp/resource_locations.yaml
+      --project={{ gcp_project_id }}
+  args:
+    stdin: |
+      constraint: gcp.resourceLocations
+      listPolicy:
+        allowedValues:
+          {% for location in gcp_allowed_locations %}
+          - {{ location }}
+          {% endfor %}
+  changed_when: true
+  when: gcp_allowed_locations | length > 0

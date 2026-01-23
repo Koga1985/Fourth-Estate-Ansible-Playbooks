@@ -1,0 +1,330 @@
+---
+# tasks file for infoblox_grid_config
+# Infoblox Grid Configuration for Fourth Estate Agencies
+# Manages Grid Master/Member configuration, NTP, SNMP, certificates, and grid properties
+
+- name: Ensure Infoblox collection is available
+  ansible.builtin.assert:
+    that:
+      - infoblox_grid_master is defined
+      - infoblox_username is defined
+      - infoblox_password is defined
+    fail_msg: "Required Infoblox connection variables are not defined"
+
+- name: Configure Grid Master properties
+  infoblox.nios_modules.nios_grid:
+    name: "{{ infoblox_grid_name }}"
+    comment: "{{ infoblox_grid_comment }}"
+    state: present
+    provider:
+      host: "{{ infoblox_grid_master }}"
+      username: "{{ infoblox_username }}"
+      password: "{{ infoblox_password }}"
+      wapi_version: "{{ infoblox_wapi_version }}"
+      max_retries: "{{ infoblox_max_retries }}"
+      validate_certs: "{{ infoblox_validate_certs }}"
+  tags:
+    - infoblox
+    - grid
+    - config
+
+- name: Configure NTP settings on Grid
+  infoblox.nios_modules.nios_grid_dns:
+    grid_dns_properties:
+      ntp_servers: "{{ infoblox_ntp_servers }}"
+      time_zone: "{{ infoblox_time_zone }}"
+    state: present
+    provider:
+      host: "{{ infoblox_grid_master }}"
+      username: "{{ infoblox_username }}"
+      password: "{{ infoblox_password }}"
+      wapi_version: "{{ infoblox_wapi_version }}"
+      validate_certs: "{{ infoblox_validate_certs }}"
+  when: infoblox_configure_ntp | bool
+  tags:
+    - infoblox
+    - grid
+    - ntp
+
+- name: Configure SNMP settings
+  infoblox.nios_modules.nios_snmp:
+    snmp_community: "{{ infoblox_snmp_community }}"
+    snmp_contact: "{{ infoblox_snmp_contact }}"
+    snmp_location: "{{ infoblox_snmp_location }}"
+    snmp_version: "{{ infoblox_snmp_version }}"
+    snmp_engine_id: "{{ infoblox_snmp_engine_id | default(omit) }}"
+    enable_snmp: "{{ infoblox_enable_snmp }}"
+    state: present
+    provider:
+      host: "{{ infoblox_grid_master }}"
+      username: "{{ infoblox_username }}"
+      password: "{{ infoblox_password }}"
+      wapi_version: "{{ infoblox_wapi_version }}"
+      validate_certs: "{{ infoblox_validate_certs }}"
+  when: infoblox_enable_snmp | bool
+  no_log: true
+  tags:
+    - infoblox
+    - grid
+    - snmp
+
+- name: Configure SNMP trap destinations
+  infoblox.nios_modules.nios_snmp_trap:
+    trap_destination: "{{ item.destination }}"
+    trap_version: "{{ item.version | default('v2c') }}"
+    trap_community: "{{ item.community | default(infoblox_snmp_community) }}"
+    trap_port: "{{ item.port | default(162) }}"
+    state: "{{ item.state | default('present') }}"
+    provider:
+      host: "{{ infoblox_grid_master }}"
+      username: "{{ infoblox_username }}"
+      password: "{{ infoblox_password }}"
+      wapi_version: "{{ infoblox_wapi_version }}"
+      validate_certs: "{{ infoblox_validate_certs }}"
+  loop: "{{ infoblox_snmp_trap_destinations }}"
+  when:
+    - infoblox_enable_snmp | bool
+    - infoblox_snmp_trap_destinations is defined
+  no_log: true
+  tags:
+    - infoblox
+    - grid
+    - snmp
+
+- name: Configure Grid members
+  infoblox.nios_modules.nios_member:
+    host_name: "{{ item.hostname }}"
+    vip_setting:
+      address: "{{ item.vip_address }}"
+      subnet_mask: "{{ item.subnet_mask }}"
+      gateway: "{{ item.gateway }}"
+    ipv6_setting: "{{ item.ipv6_setting | default(omit) }}"
+    comment: "{{ item.comment | default('Grid member for Fourth Estate') }}"
+    enable_ha: "{{ item.enable_ha | default(false) }}"
+    node_info: "{{ item.node_info | default(omit) }}"
+    platform: "{{ item.platform | default('VNIOS') }}"
+    state: "{{ item.state | default('present') }}"
+    provider:
+      host: "{{ infoblox_grid_master }}"
+      username: "{{ infoblox_username }}"
+      password: "{{ infoblox_password }}"
+      wapi_version: "{{ infoblox_wapi_version }}"
+      validate_certs: "{{ infoblox_validate_certs }}"
+  loop: "{{ infoblox_grid_members }}"
+  when: infoblox_grid_members is defined
+  tags:
+    - infoblox
+    - grid
+    - members
+
+- name: Configure DNS service distribution on Grid members
+  infoblox.nios_modules.nios_member_dns:
+    host_name: "{{ item.hostname }}"
+    enable_dns: "{{ item.enable_dns | default(true) }}"
+    minimal_response: "{{ item.minimal_response | default(false) }}"
+    recursive_query_list: "{{ item.recursive_query_list | default(omit) }}"
+    recursion: "{{ item.recursion | default(true) }}"
+    state: present
+    provider:
+      host: "{{ infoblox_grid_master }}"
+      username: "{{ infoblox_username }}"
+      password: "{{ infoblox_password }}"
+      wapi_version: "{{ infoblox_wapi_version }}"
+      validate_certs: "{{ infoblox_validate_certs }}"
+  loop: "{{ infoblox_grid_members }}"
+  when:
+    - infoblox_grid_members is defined
+    - item.enable_dns | default(true)
+  tags:
+    - infoblox
+    - grid
+    - dns
+
+- name: Configure DHCP service distribution on Grid members
+  infoblox.nios_modules.nios_member_dhcp:
+    host_name: "{{ item.hostname }}"
+    enable_dhcp: "{{ item.enable_dhcp | default(true) }}"
+    enable_dhcp_thresholds: "{{ item.enable_dhcp_thresholds | default(true) }}"
+    state: present
+    provider:
+      host: "{{ infoblox_grid_master }}"
+      username: "{{ infoblox_username }}"
+      password: "{{ infoblox_password }}"
+      wapi_version: "{{ infoblox_wapi_version }}"
+      validate_certs: "{{ infoblox_validate_certs }}"
+  loop: "{{ infoblox_grid_members }}"
+  when:
+    - infoblox_grid_members is defined
+    - item.enable_dhcp | default(false)
+  tags:
+    - infoblox
+    - grid
+    - dhcp
+
+- name: Configure admin accounts
+  infoblox.nios_modules.nios_admin_user:
+    name: "{{ item.username }}"
+    password: "{{ item.password }}"
+    admin_groups: "{{ item.admin_groups | default(['super-users']) }}"
+    comment: "{{ item.comment | default('Fourth Estate admin user') }}"
+    disable: "{{ item.disable | default(false) }}"
+    email: "{{ item.email | default(omit) }}"
+    enable_2fa: "{{ item.enable_2fa | default(true) }}"
+    state: "{{ item.state | default('present') }}"
+    provider:
+      host: "{{ infoblox_grid_master }}"
+      username: "{{ infoblox_username }}"
+      password: "{{ infoblox_password }}"
+      wapi_version: "{{ infoblox_wapi_version }}"
+      validate_certs: "{{ infoblox_validate_certs }}"
+  loop: "{{ infoblox_admin_users }}"
+  when: infoblox_admin_users is defined
+  no_log: true
+  tags:
+    - infoblox
+    - grid
+    - users
+
+- name: Upload custom certificate
+  infoblox.nios_modules.nios_certificate:
+    certificate: "{{ lookup('file', infoblox_certificate_path) }}"
+    private_key: "{{ lookup('file', infoblox_private_key_path) }}"
+    certificate_usage: "{{ infoblox_certificate_usage }}"
+    state: present
+    provider:
+      host: "{{ infoblox_grid_master }}"
+      username: "{{ infoblox_username }}"
+      password: "{{ infoblox_password }}"
+      wapi_version: "{{ infoblox_wapi_version }}"
+      validate_certs: "{{ infoblox_validate_certs }}"
+  when:
+    - infoblox_upload_certificate | bool
+    - infoblox_certificate_path is defined
+    - infoblox_private_key_path is defined
+  no_log: true
+  tags:
+    - infoblox
+    - grid
+    - certificates
+
+- name: Configure syslog servers for audit logging
+  infoblox.nios_modules.nios_syslog_server:
+    address: "{{ item.address }}"
+    port: "{{ item.port | default(514) }}"
+    protocol: "{{ item.protocol | default('udp') }}"
+    facility: "{{ item.facility | default('local7') }}"
+    severity: "{{ item.severity | default('info') }}"
+    state: "{{ item.state | default('present') }}"
+    provider:
+      host: "{{ infoblox_grid_master }}"
+      username: "{{ infoblox_username }}"
+      password: "{{ infoblox_password }}"
+      wapi_version: "{{ infoblox_wapi_version }}"
+      validate_certs: "{{ infoblox_validate_certs }}"
+  loop: "{{ infoblox_syslog_servers }}"
+  when: infoblox_syslog_servers is defined
+  tags:
+    - infoblox
+    - grid
+    - syslog
+    - logging
+
+- name: Configure email notification settings
+  infoblox.nios_modules.nios_smtp:
+    smtp_server: "{{ infoblox_smtp_server }}"
+    smtp_port: "{{ infoblox_smtp_port }}"
+    smtp_auth_enable: "{{ infoblox_smtp_auth_enable }}"
+    smtp_username: "{{ infoblox_smtp_username | default(omit) }}"
+    smtp_password: "{{ infoblox_smtp_password | default(omit) }}"
+    smtp_from_address: "{{ infoblox_smtp_from_address }}"
+    state: present
+    provider:
+      host: "{{ infoblox_grid_master }}"
+      username: "{{ infoblox_username }}"
+      password: "{{ infoblox_password }}"
+      wapi_version: "{{ infoblox_wapi_version }}"
+      validate_certs: "{{ infoblox_validate_certs }}"
+  when: infoblox_configure_smtp | bool
+  no_log: true
+  tags:
+    - infoblox
+    - grid
+    - email
+
+- name: Configure Grid properties for Fourth Estate
+  infoblox.nios_modules.nios_grid_properties:
+    enable_gui_api_for_lan_vip: true
+    enable_recycle_bin: true
+    enable_rir_swip: false
+    audit_log_format: "{{ infoblox_audit_log_format }}"
+    enable_member_redirect: true
+    log_user_context: true
+    state: present
+    provider:
+      host: "{{ infoblox_grid_master }}"
+      username: "{{ infoblox_username }}"
+      password: "{{ infoblox_password }}"
+      wapi_version: "{{ infoblox_wapi_version }}"
+      validate_certs: "{{ infoblox_validate_certs }}"
+  tags:
+    - infoblox
+    - grid
+    - properties
+
+- name: Configure security settings
+  infoblox.nios_modules.nios_grid_security:
+    admin_lockout_threshold: "{{ infoblox_admin_lockout_threshold }}"
+    admin_lockout_duration: "{{ infoblox_admin_lockout_duration }}"
+    enable_password_policy: true
+    min_password_length: "{{ infoblox_min_password_length }}"
+    password_expiry_days: "{{ infoblox_password_expiry_days }}"
+    enable_tls: true
+    min_tls_version: "{{ infoblox_min_tls_version }}"
+    cipher_suites: "{{ infoblox_cipher_suites }}"
+    state: present
+    provider:
+      host: "{{ infoblox_grid_master }}"
+      username: "{{ infoblox_username }}"
+      password: "{{ infoblox_password }}"
+      wapi_version: "{{ infoblox_wapi_version }}"
+      validate_certs: "{{ infoblox_validate_certs }}"
+  tags:
+    - infoblox
+    - grid
+    - security
+
+- name: Configure backup settings
+  infoblox.nios_modules.nios_backup:
+    backup_server: "{{ infoblox_backup_server }}"
+    backup_protocol: "{{ infoblox_backup_protocol }}"
+    backup_path: "{{ infoblox_backup_path }}"
+    backup_username: "{{ infoblox_backup_username | default(omit) }}"
+    backup_password: "{{ infoblox_backup_password | default(omit) }}"
+    backup_schedule: "{{ infoblox_backup_schedule }}"
+    retention_days: "{{ infoblox_backup_retention_days }}"
+    state: present
+    provider:
+      host: "{{ infoblox_grid_master }}"
+      username: "{{ infoblox_username }}"
+      password: "{{ infoblox_password }}"
+      wapi_version: "{{ infoblox_wapi_version }}"
+      validate_certs: "{{ infoblox_validate_certs }}"
+  when: infoblox_configure_backup | bool
+  no_log: true
+  tags:
+    - infoblox
+    - grid
+    - backup
+
+- name: Display Grid configuration summary
+  ansible.builtin.debug:
+    msg:
+      - "Grid Name: {{ infoblox_grid_name }}"
+      - "Grid Master: {{ infoblox_grid_master }}"
+      - "Members Configured: {{ infoblox_grid_members | length if infoblox_grid_members is defined else 0 }}"
+      - "NTP Configured: {{ infoblox_configure_ntp }}"
+      - "SNMP Enabled: {{ infoblox_enable_snmp }}"
+      - "Backup Configured: {{ infoblox_configure_backup }}"
+  tags:
+    - infoblox
+    - grid

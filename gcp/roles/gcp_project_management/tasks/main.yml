@@ -1,0 +1,139 @@
+---
+# tasks file for gcp_project_management
+# Fourth Estate GCP Project Management
+# Manages GCP projects with enterprise governance and Fourth Estate security controls
+
+- name: Validate required variables
+  ansible.builtin.assert:
+    that:
+      - gcp_project_id is defined
+      - gcp_project_name is defined
+      - gcp_organization_id is defined or gcp_folder_id is defined
+    fail_msg: "Required variables missing: gcp_project_id, gcp_project_name, and either gcp_organization_id or gcp_folder_id"
+    quiet: true
+
+- name: Create GCP project
+  google.cloud.gcp_resourcemanager_project:
+    name: "{{ gcp_project_name }}"
+    project_id: "{{ gcp_project_id }}"
+    parent:
+      type: "{{ 'organization' if gcp_organization_id is defined else 'folder' }}"
+      id: "{{ gcp_organization_id | default(gcp_folder_id) }}"
+    labels: "{{ gcp_project_labels }}"
+    state: present
+    auth_kind: "{{ gcp_auth_kind }}"
+    service_account_file: "{{ gcp_service_account_file | default(omit) }}"
+  register: gcp_project
+
+- name: Link billing account to project
+  google.cloud.gcp_billing_project_info:
+    project_id: "{{ gcp_project_id }}"
+    auth_kind: "{{ gcp_auth_kind }}"
+    service_account_file: "{{ gcp_service_account_file | default(omit) }}"
+  register: billing_info
+  when: gcp_billing_account_id is defined
+
+- name: Associate billing account
+  ansible.builtin.command:
+    cmd: >
+      gcloud beta billing projects link {{ gcp_project_id }}
+      --billing-account={{ gcp_billing_account_id }}
+  when:
+    - gcp_billing_account_id is defined
+    - billing_info.resources[0].billingAccountName | default('') != gcp_billing_account_id
+  changed_when: true
+
+- name: Enable required APIs
+  google.cloud.gcp_serviceusage_service:
+    name: "{{ item }}"
+    project: "{{ gcp_project_id }}"
+    state: present
+    auth_kind: "{{ gcp_auth_kind }}"
+    service_account_file: "{{ gcp_service_account_file | default(omit) }}"
+  loop: "{{ gcp_required_apis }}"
+  register: api_enable
+  retries: 3
+  delay: 10
+  until: api_enable is succeeded
+
+- name: Configure organization policies for Fourth Estate compliance
+  ansible.builtin.include_tasks: org_policies.yml
+  when: gcp_enforce_org_policies | bool
+
+- name: Set project IAM policy
+  google.cloud.gcp_resourcemanager_project_iam_policy:
+    project: "{{ gcp_project_id }}"
+    bindings: "{{ gcp_project_iam_bindings }}"
+    auth_kind: "{{ gcp_auth_kind }}"
+    service_account_file: "{{ gcp_service_account_file | default(omit) }}"
+  when: gcp_project_iam_bindings | length > 0
+
+- name: Configure essential contacts for security notifications
+  ansible.builtin.command:
+    cmd: >
+      gcloud essential-contacts create
+      --email={{ item.email }}
+      --notification-categories={{ item.categories | join(',') }}
+      --project={{ gcp_project_id }}
+  loop: "{{ gcp_essential_contacts }}"
+  register: essential_contacts_result
+  changed_when: "'Created' in essential_contacts_result.stdout"
+  failed_when:
+    - essential_contacts_result.rc != 0
+    - "'already exists' not in essential_contacts_result.stderr"
+  when: gcp_essential_contacts | length > 0
+
+- name: Enable deletion protection
+  ansible.builtin.command:
+    cmd: >
+      gcloud resource-manager liens create
+      --restrictions=resourcemanager.projects.delete
+      --reason="Fourth Estate production project protection"
+      --project={{ gcp_project_id }}
+  register: lien_result
+  changed_when: "'Created' in lien_result.stdout"
+  failed_when:
+    - lien_result.rc != 0
+    - "'already exists' not in lien_result.stderr"
+  when: gcp_enable_deletion_protection | bool
+
+- name: Apply project labels for governance
+  ansible.builtin.command:
+    cmd: >
+      gcloud projects update {{ gcp_project_id }}
+      --update-labels={{ item.key }}={{ item.value }}
+  loop: "{{ gcp_project_labels | dict2items }}"
+  changed_when: true
+  when: gcp_project_labels | length > 0
+
+- name: Configure budget alerts
+  ansible.builtin.include_tasks: budget_alerts.yml
+  when:
+    - gcp_enable_budget_alerts | bool
+    - gcp_billing_account_id is defined
+
+- name: Create project metadata for Fourth Estate tracking
+  ansible.builtin.template:
+    src: project_metadata.json.j2
+    dest: "{{ gcp_artifacts_dir }}/{{ gcp_project_id }}_metadata.json"
+    mode: '0644'
+  when: gcp_artifacts_dir is defined
+
+- name: Enable Assured Workloads compliance
+  ansible.builtin.include_tasks: assured_workloads.yml
+  when: gcp_enable_assured_workloads | bool
+
+- name: Configure VPC Service Controls perimeter
+  ansible.builtin.include_tasks: vpc_service_controls.yml
+  when: gcp_enable_vpc_service_controls | bool
+
+- name: Display project information
+  ansible.builtin.debug:
+    msg:
+      - "GCP Project created successfully"
+      - "Project ID: {{ gcp_project_id }}"
+      - "Project Name: {{ gcp_project_name }}"
+      - "Project Number: {{ gcp_project.projectNumber | default('N/A') }}"
+      - "Parent: {{ gcp_organization_id | default(gcp_folder_id) }}"
+      - "Deletion Protection: {{ gcp_enable_deletion_protection }}"
+      - "Assured Workloads: {{ gcp_enable_assured_workloads }}"

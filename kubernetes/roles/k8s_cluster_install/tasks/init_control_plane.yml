@@ -1,0 +1,119 @@
+---
+# Initialize the first control plane node
+
+- name: Skip if cluster already initialized
+  when: k8s_cluster_initialized | bool
+  block:
+    - name: Display skip message
+      ansible.builtin.debug:
+        msg: "Cluster already initialized, skipping initialization"
+    - name: End play for this host
+      ansible.builtin.meta: end_host
+
+- name: Generate kubeadm config file
+  ansible.builtin.template:
+    src: kubeadm-config.yaml.j2
+    dest: /etc/kubernetes/kubeadm-config.yaml
+    mode: '0600'
+
+- name: Pull Kubernetes images
+  ansible.builtin.command: kubeadm config images pull --config /etc/kubernetes/kubeadm-config.yaml
+  changed_when: true
+  register: image_pull
+
+- name: Initialize first control plane node
+  ansible.builtin.command: >
+    kubeadm init
+    --config /etc/kubernetes/kubeadm-config.yaml
+    --upload-certs
+    {{ k8s_kubeadm_init_extra_args }}
+  register: kubeadm_init
+  changed_when: true
+  retries: 3
+  delay: 10
+  until: kubeadm_init.rc == 0
+
+- name: Create .kube directory for root
+  ansible.builtin.file:
+    path: /root/.kube
+    state: directory
+    mode: '0700'
+
+- name: Copy admin.conf to root's kube config
+  ansible.builtin.copy:
+    src: /etc/kubernetes/admin.conf
+    dest: /root/.kube/config
+    remote_src: true
+    mode: '0600'
+
+- name: Extract certificate key from init output
+  ansible.builtin.set_fact:
+    k8s_certificate_key: "{{ kubeadm_init.stdout | regex_search('--certificate-key ([a-f0-9]+)', '\\1') | first }}"
+  when: kubeadm_init.stdout is defined
+
+- name: Extract join command for workers
+  ansible.builtin.set_fact:
+    k8s_join_command: "{{ kubeadm_init.stdout_lines | select('search', 'kubeadm join') | first | trim }}"
+  when: kubeadm_init.stdout_lines is defined
+
+- name: Extract discovery token ca cert hash
+  ansible.builtin.set_fact:
+    k8s_discovery_token_ca_cert_hash: "{{ kubeadm_init.stdout | regex_search('--discovery-token-ca-cert-hash (sha256:[a-f0-9]+)', '\\1') | first }}"
+  when: kubeadm_init.stdout is defined
+
+- name: Save join command to file
+  ansible.builtin.copy:
+    content: |
+      # Worker join command
+      {{ k8s_join_command }}
+
+      # Control plane join command
+      {{ k8s_join_command }} --control-plane --certificate-key {{ k8s_certificate_key }}
+    dest: /etc/kubernetes/join-command.sh
+    mode: '0600'
+
+- name: Create certificate expiration check script
+  ansible.builtin.copy:
+    content: |
+      #!/bin/bash
+      # Check certificate expiration
+      kubeadm certs check-expiration
+    dest: /usr/local/bin/check-k8s-certs.sh
+    mode: '0755'
+
+- name: Configure certificate auto-renewal cron job
+  ansible.builtin.cron:
+    name: "Kubernetes certificate auto-renewal"
+    minute: "0"
+    hour: "2"
+    day: "1"
+    month: "*"
+    job: "/usr/local/bin/kubeadm certs renew all && systemctl restart kubelet"
+    user: root
+  when: k8s_cert_auto_renew | bool
+
+- name: Wait for API server to be ready
+  ansible.builtin.wait_for:
+    host: "{{ ansible_default_ipv4.address }}"
+    port: 6443
+    timeout: 300
+
+- name: Wait for control plane pods to be ready
+  ansible.builtin.command: >
+    kubectl get pods -n kube-system
+    -l tier=control-plane
+    -o jsonpath='{.items[*].status.phase}'
+  register: control_plane_status
+  until: control_plane_status.stdout.split() | select('match', '^Running$') | list | length >= 3
+  retries: 30
+  delay: 10
+  changed_when: false
+
+- name: Get cluster info
+  ansible.builtin.command: kubectl cluster-info
+  register: cluster_info
+  changed_when: false
+
+- name: Display cluster information
+  ansible.builtin.debug:
+    msg: "{{ cluster_info.stdout_lines }}"

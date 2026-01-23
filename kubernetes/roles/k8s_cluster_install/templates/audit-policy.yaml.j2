@@ -1,0 +1,134 @@
+---
+# Kubernetes Audit Policy for Fourth Estate
+# Comprehensive audit logging for security and compliance
+apiVersion: audit.k8s.io/v1
+kind: Policy
+omitStages:
+  - "RequestReceived"
+rules:
+  # Log all requests at RequestResponse level for sensitive resources
+  - level: RequestResponse
+    verbs: ["create", "update", "patch", "delete", "deletecollection"]
+    resources:
+      - group: ""
+        resources: ["secrets", "configmaps", "serviceaccounts"]
+      - group: "rbac.authorization.k8s.io"
+        resources: ["roles", "rolebindings", "clusterroles", "clusterrolebindings"]
+      - group: "apps"
+        resources: ["deployments", "daemonsets", "statefulsets", "replicasets"]
+      - group: "batch"
+        resources: ["jobs", "cronjobs"]
+      - group: "networking.k8s.io"
+        resources: ["networkpolicies", "ingresses"]
+      - group: "policy"
+        resources: ["podsecuritypolicies", "poddisruptionbudgets"]
+      - group: "storage.k8s.io"
+        resources: ["storageclasses", "volumeattachments"]
+
+  # Log authentication and authorization events
+  - level: RequestResponse
+    verbs: ["create", "update", "patch", "delete"]
+    users: ["system:*"]
+    resources:
+      - group: "authentication.k8s.io"
+      - group: "authorization.k8s.io"
+
+  # Log pod exec/attach/portforward operations
+  - level: RequestResponse
+    verbs: ["create"]
+    resources:
+      - group: ""
+        resources: ["pods/exec", "pods/attach", "pods/portforward", "pods/proxy"]
+
+  # Log all admission webhook decisions
+  - level: RequestResponse
+    verbs: ["create", "update"]
+    resources:
+      - group: "admissionregistration.k8s.io"
+        resources: ["mutatingwebhookconfigurations", "validatingwebhookconfigurations"]
+
+  # Log certificate signing requests
+  - level: RequestResponse
+    resources:
+      - group: "certificates.k8s.io"
+        resources: ["certificatesigningrequests", "certificatesigningrequests/approval"]
+
+  # Log namespace operations
+  - level: RequestResponse
+    verbs: ["create", "update", "patch", "delete"]
+    resources:
+      - group: ""
+        resources: ["namespaces"]
+
+  # Log node operations
+  - level: RequestResponse
+    verbs: ["create", "update", "patch", "delete"]
+    resources:
+      - group: ""
+        resources: ["nodes"]
+
+  # Log PersistentVolume and PersistentVolumeClaim operations
+  - level: Request
+    verbs: ["create", "update", "patch", "delete"]
+    resources:
+      - group: ""
+        resources: ["persistentvolumes", "persistentvolumeclaims"]
+
+  # Log service and endpoint operations
+  - level: Request
+    verbs: ["create", "update", "patch", "delete"]
+    resources:
+      - group: ""
+        resources: ["services", "endpoints"]
+
+  # Log high-level API operations at Metadata level
+  - level: Metadata
+    verbs: ["get", "list", "watch"]
+    resources:
+      - group: ""
+      - group: "apps"
+      - group: "batch"
+      - group: "extensions"
+
+  # Exclude health check and metrics endpoints
+  - level: None
+    users: ["system:kube-proxy"]
+    verbs: ["watch"]
+    resources:
+      - group: ""
+        resources: ["endpoints", "services", "services/status"]
+
+  - level: None
+    users: ["system:unsecured"]
+    namespaces: ["kube-system"]
+    verbs: ["get"]
+    resources:
+      - group: ""
+        resources: ["configmaps"]
+
+  - level: None
+    users: ["kubelet"]
+    verbs: ["get"]
+    resources:
+      - group: ""
+        resources: ["nodes", "nodes/status"]
+
+  # Exclude read-only URLs
+  - level: None
+    nonResourceURLs:
+      - /healthz*
+      - /version
+      - /swagger*
+      - /metrics
+      - /livez*
+      - /readyz*
+
+  # Exclude kube-system watch operations
+  - level: None
+    verbs: ["watch"]
+    namespaces: ["kube-system"]
+
+  # Log everything else at Metadata level
+  - level: Metadata
+    omitStages:
+      - "RequestReceived"
