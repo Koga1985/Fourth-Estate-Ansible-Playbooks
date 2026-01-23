@@ -1,0 +1,129 @@
+---
+# Pre-flight checks for Kubernetes installation
+
+- name: Check OS compatibility
+  ansible.builtin.assert:
+    that:
+      - ansible_os_family in ['RedHat', 'Debian']
+      - ansible_distribution_major_version | int >= 8
+    fail_msg: "Unsupported OS: {{ ansible_distribution }} {{ ansible_distribution_version }}"
+    success_msg: "OS compatibility check passed"
+
+- name: Check minimum hardware requirements
+  ansible.builtin.assert:
+    that:
+      - ansible_memtotal_mb >= 2048
+      - ansible_processor_vcpus >= 2
+    fail_msg: "Insufficient hardware resources. Need at least 2 CPUs and 2GB RAM"
+    success_msg: "Hardware requirements met"
+
+- name: Check disk space for control plane nodes
+  ansible.builtin.assert:
+    that:
+      - ansible_mounts | selectattr('mount', 'equalto', '/') | map(attribute='size_available') | first > 20 * 1024 * 1024 * 1024
+    fail_msg: "Insufficient disk space. Control plane nodes need at least 20GB available"
+    success_msg: "Disk space check passed"
+  when: inventory_hostname in groups['k8s_control_plane']
+
+- name: Disable swap
+  ansible.builtin.command: swapoff -a
+  changed_when: false
+
+- name: Remove swap from fstab
+  ansible.builtin.lineinfile:
+    path: /etc/fstab
+    regexp: '^\s*([^#\s]+\s+){1}(\S+\s+){1}swap\s+'
+    state: absent
+
+- name: Load required kernel modules
+  community.general.modprobe:
+    name: "{{ item }}"
+    state: present
+    persistent: present
+  loop:
+    - overlay
+    - br_netfilter
+
+- name: Configure sysctl for Kubernetes
+  ansible.posix.sysctl:
+    name: "{{ item.name }}"
+    value: "{{ item.value }}"
+    state: present
+    reload: true
+    sysctl_file: /etc/sysctl.d/99-kubernetes.conf
+  loop:
+    - { name: 'net.bridge.bridge-nf-call-iptables', value: '1' }
+    - { name: 'net.bridge.bridge-nf-call-ip6tables', value: '1' }
+    - { name: 'net.ipv4.ip_forward', value: '1' }
+    - { name: 'net.ipv6.conf.all.forwarding', value: '1' }
+    - { name: 'vm.overcommit_memory', value: '1' }
+    - { name: 'kernel.panic', value: '10' }
+    - { name: 'kernel.panic_on_oops', value: '1' }
+
+- name: Disable SELinux (if present and required)
+  ansible.posix.selinux:
+    state: permissive
+    policy: targeted
+  when:
+    - ansible_selinux is defined
+    - ansible_selinux.status == 'enabled'
+
+- name: Configure firewalld for Kubernetes (RedHat)
+  ansible.posix.firewalld:
+    port: "{{ item }}"
+    permanent: true
+    state: enabled
+    immediate: true
+  loop:
+    - "6443/tcp"      # API server
+    - "2379-2380/tcp" # etcd
+    - "10250/tcp"     # Kubelet
+    - "10251/tcp"     # Scheduler
+    - "10252/tcp"     # Controller Manager
+    - "10255/tcp"     # Read-only Kubelet
+  when:
+    - ansible_os_family == 'RedHat'
+    - inventory_hostname in groups['k8s_control_plane']
+  ignore_errors: true
+
+- name: Configure firewalld for worker nodes (RedHat)
+  ansible.posix.firewalld:
+    port: "{{ item }}"
+    permanent: true
+    state: enabled
+    immediate: true
+  loop:
+    - "10250/tcp"     # Kubelet
+    - "30000-32767/tcp" # NodePort services
+  when:
+    - ansible_os_family == 'RedHat'
+    - inventory_hostname in groups['k8s_workers']
+  ignore_errors: true
+
+- name: Ensure /etc/hosts has all cluster nodes
+  ansible.builtin.lineinfile:
+    path: /etc/hosts
+    line: "{{ hostvars[item].ansible_default_ipv4.address }} {{ item }}"
+    state: present
+  loop: "{{ groups['k8s_control_plane'] + groups['k8s_workers'] }}"
+
+- name: Create Kubernetes directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: '0755'
+  loop:
+    - /etc/kubernetes
+    - /etc/kubernetes/pki
+    - /etc/kubernetes/manifests
+    - /var/lib/kubelet
+    - /var/log/kubernetes
+
+- name: Check if cluster already initialized
+  ansible.builtin.stat:
+    path: /etc/kubernetes/admin.conf
+  register: k8s_admin_conf
+
+- name: Set initialization flag
+  ansible.builtin.set_fact:
+    k8s_cluster_initialized: "{{ k8s_admin_conf.stat.exists }}"

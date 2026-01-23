@@ -1,0 +1,277 @@
+---
+# defaults file for panos_network_config
+# Fourth Estate network configuration defaults
+
+# PAN-OS provider connection details
+panos_provider:
+  ip_address: "{{ ansible_host }}"
+  username: "{{ panos_username | default('admin') }}"
+  password: "{{ panos_password }}"
+  api_key: "{{ panos_api_key | default(omit) }}"
+
+# Management profiles
+panos_mgmt_profiles:
+  - name: "mgmt_restricted"
+    ping: true
+    ssh: true
+    https: true
+    snmp: false
+    http: false
+    telnet: false
+    response_pages: false
+    userid_service: false
+    permitted_ips:
+      - "10.0.0.0/8"
+      - "172.16.0.0/12"
+      - "192.168.0.0/16"
+
+  - name: "userid_profile"
+    ping: false
+    ssh: false
+    https: false
+    snmp: false
+    userid_service: true
+    permitted_ips:
+      - "10.0.1.0/24"
+
+# Layer 3 interfaces (typical Fourth Estate deployment)
+panos_l3_interfaces:
+  - name: "ethernet1/1"
+    ip:
+      - "192.168.1.1/24"
+    zone: "trust"
+    virtual_router: "default"
+    management_profile: "mgmt_restricted"
+    comment: "Internal Trust Network"
+
+  - name: "ethernet1/2"
+    ip:
+      - "10.0.0.1/24"
+    zone: "untrust"
+    virtual_router: "default"
+    dhcp: false
+    comment: "External Untrust Network"
+
+  - name: "ethernet1/3"
+    ip:
+      - "172.16.1.1/24"
+    zone: "dmz"
+    virtual_router: "default"
+    comment: "DMZ Network - Publication Systems"
+
+# Layer 2 interfaces
+panos_l2_interfaces: []
+
+# Virtual wire interfaces
+panos_virtual_wire_interfaces: []
+
+# VLAN interfaces
+panos_vlan_interfaces:
+  - name: "vlan.100"
+    ip:
+      - "10.100.0.1/24"
+    zone: "trust_vlan100"
+    virtual_router: "default"
+    comment: "Journalist Workstations VLAN"
+
+  - name: "vlan.200"
+    ip:
+      - "10.200.0.1/24"
+    zone: "trust_vlan200"
+    virtual_router: "default"
+    comment: "Editorial Systems VLAN"
+
+# Security zones (Fourth Estate architecture)
+panos_zones:
+  - name: "trust"
+    mode: "layer3"
+    userid: true
+    device_id: true
+    zone_profile: "strict_zone_protection"
+    log_setting: "default_log_forwarding"
+
+  - name: "untrust"
+    mode: "layer3"
+    userid: false
+    device_id: false
+    zone_profile: "strict_zone_protection"
+    log_setting: "default_log_forwarding"
+
+  - name: "dmz"
+    mode: "layer3"
+    userid: false
+    device_id: true
+    zone_profile: "strict_zone_protection"
+    log_setting: "default_log_forwarding"
+
+  - name: "vpn"
+    mode: "layer3"
+    userid: true
+    device_id: true
+    zone_profile: "strict_zone_protection"
+    log_setting: "default_log_forwarding"
+
+  - name: "trust_vlan100"
+    mode: "layer3"
+    userid: true
+    device_id: true
+    log_setting: "default_log_forwarding"
+
+  - name: "trust_vlan200"
+    mode: "layer3"
+    userid: true
+    device_id: true
+    log_setting: "default_log_forwarding"
+
+# Zone interface assignments
+panos_zone_interfaces:
+  - zone: "trust"
+    interfaces:
+      - "ethernet1/1"
+  - zone: "untrust"
+    interfaces:
+      - "ethernet1/2"
+  - zone: "dmz"
+    interfaces:
+      - "ethernet1/3"
+  - zone: "vpn"
+    interfaces:
+      - "tunnel.1"
+      - "tunnel.2"
+
+# Virtual routers
+panos_virtual_routers:
+  - name: "default"
+    interfaces:
+      - "ethernet1/1"
+      - "ethernet1/2"
+      - "ethernet1/3"
+      - "vlan.100"
+      - "vlan.200"
+      - "tunnel.1"
+      - "tunnel.2"
+    ad_static: 10
+    ad_ospf_int: 30
+    ad_ospf_ext: 110
+    ad_ibgp: 200
+    ad_ebgp: 20
+
+# Static routes
+panos_static_routes:
+  - name: "default_route"
+    destination: "0.0.0.0/0"
+    nexthop_type: "ip-address"
+    nexthop: "10.0.0.254"
+    interface: "ethernet1/2"
+    admin_distance: 10
+    metric: 10
+    virtual_router: "default"
+
+  - name: "internal_networks"
+    destination: "10.0.0.0/8"
+    nexthop_type: "ip-address"
+    nexthop: "192.168.1.254"
+    interface: "ethernet1/1"
+    admin_distance: 10
+    metric: 1
+    virtual_router: "default"
+
+# BGP configuration (optional)
+panos_bgp_configs: []
+panos_bgp_peer_groups: []
+panos_bgp_peers: []
+
+# Example BGP configuration for Fourth Estate with ISP redundancy
+# panos_bgp_configs:
+#   - virtual_router: "default"
+#     router_id: "192.168.1.1"
+#     local_as: "65001"
+#     install_route: true
+#     reject_default: false
+#     allow_redist_default: false
+
+# panos_bgp_peer_groups:
+#   - virtual_router: "default"
+#     name: "ISP_Peers"
+#     type: "ebgp"
+#     export_nexthop: "resolve"
+#     import_nexthop: "original"
+#     remove_private_as: true
+
+# panos_bgp_peers:
+#   - virtual_router: "default"
+#     peer_group: "ISP_Peers"
+#     name: "ISP1"
+#     peer_as: "65000"
+#     local_interface: "ethernet1/2"
+#     local_ip: "10.0.0.1"
+#     peer_ip: "10.0.0.254"
+#     keepalive: 30
+#     hold_time: 90
+
+# OSPF configuration
+panos_ospf_configs: []
+panos_ospf_areas: []
+panos_ospf_interfaces: []
+
+# Multicast (PIM) configuration
+panos_multicast_configs: []
+panos_pim_interfaces: []
+
+# QoS profiles (prioritize critical traffic)
+panos_qos_profiles:
+  - name: "fourthestate_qos"
+    classes:
+      - name: "class1"
+        priority: "real-time"
+        bandwidth_mbps: 100
+      - name: "class2"
+        priority: "high"
+        bandwidth_mbps: 200
+      - name: "class3"
+        priority: "medium"
+        bandwidth_mbps: 300
+      - name: "class4"
+        priority: "low"
+        bandwidth_mbps: 400
+
+# Link aggregation groups (LAG)
+panos_lag_interfaces: []
+panos_lag_members: []
+
+# Example LAG configuration for redundant uplinks
+# panos_lag_interfaces:
+#   - name: "ae1"
+#     mode: "layer3"
+#     ip:
+#       - "10.0.0.1/24"
+#     management_profile: "mgmt_restricted"
+#     mtu: 1500
+#     comment: "Redundant uplink to ISP"
+
+# panos_lag_members:
+#   - interface: "ethernet1/4"
+#     lag_group: "ae1"
+#   - interface: "ethernet1/5"
+#     lag_group: "ae1"
+
+# LLDP
+panos_enable_lldp: true
+
+# Tunnel interfaces
+panos_tunnel_interfaces:
+  - name: "tunnel.1"
+    ip:
+      - "172.20.1.1/30"
+    zone: "vpn"
+    virtual_router: "default"
+    mtu: 1400
+    comment: "Site-to-Site VPN Tunnel 1"
+
+  - name: "tunnel.2"
+    ip:
+      - "172.20.2.1/30"
+    zone: "vpn"
+    virtual_router: "default"
+    mtu: 1400
+    comment: "Site-to-Site VPN Tunnel 2"

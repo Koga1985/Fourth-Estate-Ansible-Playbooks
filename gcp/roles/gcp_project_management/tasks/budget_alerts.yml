@@ -1,0 +1,22 @@
+---
+# Budget alerts for cost management
+
+- name: Create budget alert for project
+  ansible.builtin.command:
+    cmd: >
+      gcloud beta billing budgets create
+      --billing-account={{ gcp_billing_account_id }}
+      --display-name="{{ gcp_project_id }}-budget"
+      --budget-amount={{ gcp_budget_amount }}
+      --threshold-rule=percent={{ item.percent }},basis={{ item.basis | default('current-spend') }}
+      --filter-projects={{ gcp_project_id }}
+      {% if gcp_budget_notification_channels | length > 0 %}
+      --notification-channel-ids={{ gcp_budget_notification_channels | join(',') }}
+      {% endif %}
+  loop: "{{ gcp_budget_thresholds }}"
+  register: budget_create_result
+  changed_when: "'Created budget' in budget_create_result.stdout"
+  failed_when:
+    - budget_create_result.rc != 0
+    - "'already exists' not in budget_create_result.stderr"
+  when: gcp_budget_amount is defined

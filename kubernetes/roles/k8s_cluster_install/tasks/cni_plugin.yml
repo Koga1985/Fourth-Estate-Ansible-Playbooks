@@ -1,0 +1,85 @@
+---
+# Install and configure CNI plugin
+
+- name: Install Calico CNI
+  when: k8s_cni_plugin == 'calico'
+  block:
+    - name: Download Calico manifests
+      ansible.builtin.get_url:
+        url: "https://raw.githubusercontent.com/projectcalico/calico/{{ k8s_calico_version }}/manifests/calico.yaml"
+        dest: /tmp/calico.yaml
+        mode: '0644'
+
+    - name: Configure Calico pod network CIDR
+      ansible.builtin.replace:
+        path: /tmp/calico.yaml
+        regexp: '192\.168\.0\.0/16'
+        replace: '{{ k8s_pod_network_cidr }}'
+
+    - name: Apply Calico manifests
+      kubernetes.core.k8s:
+        state: present
+        src: /tmp/calico.yaml
+        kubeconfig: /etc/kubernetes/admin.conf
+
+    - name: Wait for Calico pods to be ready
+      ansible.builtin.command: >
+        kubectl wait --for=condition=ready pod
+        -l k8s-app=calico-node
+        -n kube-system
+        --timeout=300s
+        --kubeconfig /etc/kubernetes/admin.conf
+      register: calico_ready
+      retries: 5
+      delay: 30
+      until: calico_ready.rc == 0
+      changed_when: false
+
+- name: Install Cilium CNI
+  when: k8s_cni_plugin == 'cilium'
+  block:
+    - name: Download Cilium CLI
+      ansible.builtin.get_url:
+        url: "https://github.com/cilium/cilium-cli/releases/download/v{{ k8s_cilium_version }}/cilium-linux-amd64.tar.gz"
+        dest: /tmp/cilium-cli.tar.gz
+        mode: '0644'
+
+    - name: Extract Cilium CLI
+      ansible.builtin.unarchive:
+        src: /tmp/cilium-cli.tar.gz
+        dest: /usr/local/bin
+        remote_src: true
+        creates: /usr/local/bin/cilium
+
+    - name: Install Cilium
+      ansible.builtin.command: >
+        cilium install
+        --version {{ k8s_cilium_version }}
+        --set ipam.mode=kubernetes
+        --set tunnel={{ k8s_network_plugin_config.cilium.tunnel_mode }}
+        --set hubble.enabled={{ k8s_network_plugin_config.cilium.enable_hubble | lower }}
+        --set l7Proxy={{ k8s_network_plugin_config.cilium.enable_l7_proxy | lower }}
+        --kubeconfig /etc/kubernetes/admin.conf
+      changed_when: true
+      register: cilium_install
+
+    - name: Wait for Cilium to be ready
+      ansible.builtin.command: >
+        cilium status --wait
+        --kubeconfig /etc/kubernetes/admin.conf
+      register: cilium_ready
+      retries: 10
+      delay: 30
+      until: cilium_ready.rc == 0
+      changed_when: false
+
+- name: Verify CNI installation
+  ansible.builtin.command: >
+    kubectl get pods -n kube-system
+    --kubeconfig /etc/kubernetes/admin.conf
+  register: cni_pods
+  changed_when: false
+
+- name: Display CNI pods status
+  ansible.builtin.debug:
+    msg: "{{ cni_pods.stdout_lines }}"

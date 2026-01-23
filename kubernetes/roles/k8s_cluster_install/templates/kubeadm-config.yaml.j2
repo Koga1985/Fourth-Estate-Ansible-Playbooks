@@ -1,0 +1,225 @@
+---
+# kubeadm configuration for {{ k8s_cluster_name }}
+apiVersion: kubeadm.k8s.io/v1beta3
+kind: InitConfiguration
+bootstrapTokens:
+- groups:
+  - system:bootstrappers:kubeadm:default-node-token
+  token: ""
+  ttl: 24h0m0s
+  usages:
+  - signing
+  - authentication
+localAPIEndpoint:
+  advertiseAddress: {{ ansible_default_ipv4.address }}
+  bindPort: 6443
+nodeRegistration:
+  criSocket: unix://{{ k8s_containerd_socket }}
+  imagePullPolicy: IfNotPresent
+  name: {{ inventory_hostname }}
+  taints:
+{% for taint in k8s_control_plane_taints %}
+  - key: {{ taint.key }}
+    effect: {{ taint.effect }}
+{% endfor %}
+  kubeletExtraArgs:
+    max-pods: "{{ k8s_kubelet_max_pods }}"
+    pod-pids-limit: "{{ k8s_kubelet_pod_pids_limit }}"
+---
+apiVersion: kubeadm.k8s.io/v1beta3
+kind: ClusterConfiguration
+clusterName: {{ k8s_cluster_name }}
+kubernetesVersion: {{ k8s_version }}
+{% if k8s_control_plane_ha | bool %}
+controlPlaneEndpoint: {{ k8s_control_plane_endpoint }}
+{% endif %}
+certificatesDir: /etc/kubernetes/pki
+networking:
+  dnsDomain: {{ k8s_dns_domain }}
+  podSubnet: {{ k8s_pod_network_cidr }}
+  serviceSubnet: {{ k8s_service_cidr }}
+apiServer:
+  timeoutForControlPlane: 4m0s
+  certSANs:
+{% for san in k8s_api_server_cert_sans %}
+  - {{ san }}
+{% endfor %}
+  extraArgs:
+{% for key, value in k8s_api_server_extra_args.items() %}
+    {{ key }}: "{{ value }}"
+{% endfor %}
+{% if k8s_enable_audit_logging | bool %}
+    audit-log-path: {{ k8s_audit_log_path }}
+    audit-log-maxage: "{{ k8s_audit_log_maxage }}"
+    audit-log-maxbackup: "{{ k8s_audit_log_maxbackup }}"
+    audit-log-maxsize: "{{ k8s_audit_log_maxsize }}"
+    audit-policy-file: /etc/kubernetes/audit-policy.yaml
+{% endif %}
+{% if k8s_enable_admission_plugins | length > 0 %}
+    enable-admission-plugins: {{ k8s_enable_admission_plugins | join(',') }}
+{% endif %}
+{% if k8s_disable_admission_plugins | length > 0 %}
+    disable-admission-plugins: {{ k8s_disable_admission_plugins | join(',') }}
+{% endif %}
+{% if k8s_enable_audit_logging | bool %}
+  extraVolumes:
+  - name: audit-log
+    hostPath: /var/log/kubernetes
+    mountPath: /var/log/kubernetes
+    readOnly: false
+    pathType: DirectoryOrCreate
+  - name: audit-policy
+    hostPath: /etc/kubernetes/audit-policy.yaml
+    mountPath: /etc/kubernetes/audit-policy.yaml
+    readOnly: true
+    pathType: File
+{% endif %}
+controllerManager:
+  extraArgs:
+{% for key, value in k8s_controller_manager_extra_args.items() %}
+    {{ key }}: "{{ value }}"
+{% endfor %}
+scheduler:
+  extraArgs:
+{% for key, value in k8s_scheduler_extra_args.items() %}
+    {{ key }}: "{{ value }}"
+{% endfor %}
+etcd:
+  local:
+    dataDir: {{ k8s_etcd_data_dir }}
+    extraArgs:
+      listen-metrics-urls: "http://0.0.0.0:2381"
+{% if k8s_etcd_encryption_enabled | bool %}
+      experimental-encryption-provider-config: /etc/kubernetes/pki/etcd/encryption-config.yaml
+{% endif %}
+{% if k8s_etcd_encryption_enabled | bool %}
+    extraVolumes:
+    - name: etcd-encryption
+      hostPath: /etc/kubernetes/pki/etcd/encryption-config.yaml
+      mountPath: /etc/kubernetes/pki/etcd/encryption-config.yaml
+      readOnly: true
+      pathType: File
+{% endif %}
+dns:
+  imageRepository: registry.k8s.io/coredns
+  imageTag: v1.10.1
+{% if k8s_airgap_mode | bool and k8s_airgap_registry %}
+imageRepository: {{ k8s_airgap_registry }}/kubernetes
+{% else %}
+imageRepository: registry.k8s.io
+{% endif %}
+---
+apiVersion: kubelet.config.k8s.io/v1beta1
+kind: KubeletConfiguration
+authentication:
+  anonymous:
+    enabled: false
+  webhook:
+    enabled: true
+    cacheTTL: 2m0s
+  x509:
+    clientCAFile: /etc/kubernetes/pki/ca.crt
+authorization:
+  mode: Webhook
+  webhook:
+    cacheAuthorizedTTL: 5m0s
+    cacheUnauthorizedTTL: 30s
+cgroupDriver: systemd
+clusterDNS:
+- {{ k8s_service_cidr.split('.')[0] }}.{{ k8s_service_cidr.split('.')[1] }}.0.10
+clusterDomain: {{ k8s_dns_domain }}
+cpuManagerReconcilePeriod: 10s
+evictionHard:
+{% for key, value in k8s_kubelet_eviction_hard.items() %}
+  {{ key }}: {{ value }}
+{% endfor %}
+evictionPressureTransitionPeriod: 5m0s
+fileCheckFrequency: 20s
+healthzBindAddress: 127.0.0.1
+healthzPort: 10248
+httpCheckFrequency: 20s
+imageMinimumGCAge: 2m0s
+kind: KubeletConfiguration
+kubeReserved:
+{% for key, value in k8s_kubelet_kube_reserved.items() %}
+  {{ key }}: {{ value }}
+{% endfor %}
+logging:
+  flushFrequency: 5000000000
+  options:
+    json:
+      infoBufferSize: "0"
+  verbosity: 0
+maxOpenFiles: 1000000
+maxPods: {{ k8s_kubelet_max_pods }}
+nodeLeaseDurationSeconds: 40
+nodeStatusReportFrequency: 1m0s
+nodeStatusUpdateFrequency: 10s
+podPidsLimit: {{ k8s_kubelet_pod_pids_limit }}
+protectKernelDefaults: true
+readOnlyPort: 0
+resolvConf: /run/systemd/resolve/resolv.conf
+rotateCertificates: true
+runtimeRequestTimeout: 2m0s
+serverTLSBootstrap: true
+shutdownGracePeriod: 0s
+shutdownGracePeriodCriticalPods: 0s
+streamingConnectionIdleTimeout: 4h0m0s
+syncFrequency: 1m0s
+systemReserved:
+{% for key, value in k8s_kubelet_system_reserved.items() %}
+  {{ key }}: {{ value }}
+{% endfor %}
+tlsCipherSuites:
+- TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256
+- TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
+- TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384
+- TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384
+tlsMinVersion: VersionTLS12
+volumeStatsAggPeriod: 1m0s
+{% if k8s_feature_gates | length > 0 %}
+featureGates:
+{% for gate, enabled in k8s_feature_gates.items() %}
+  {{ gate }}: {{ enabled | lower }}
+{% endfor %}
+{% endif %}
+---
+apiVersion: kubeproxy.config.k8s.io/v1alpha1
+kind: KubeProxyConfiguration
+bindAddress: 0.0.0.0
+clientConnection:
+  acceptContentTypes: ""
+  burst: 10
+  contentType: application/vnd.kubernetes.protobuf
+  kubeconfig: /var/lib/kube-proxy/kubeconfig.conf
+  qps: 5
+clusterCIDR: {{ k8s_pod_network_cidr }}
+configSyncPeriod: 15m0s
+conntrack:
+  maxPerCore: 32768
+  min: 131072
+  tcpCloseWaitTimeout: 1h0m0s
+  tcpEstablishedTimeout: 24h0m0s
+enableProfiling: false
+healthzBindAddress: 0.0.0.0:10256
+hostnameOverride: ""
+iptables:
+  masqueradeAll: false
+  masqueradeBit: 14
+  minSyncPeriod: 0s
+  syncPeriod: 30s
+ipvs:
+  excludeCIDRs: null
+  minSyncPeriod: 0s
+  scheduler: "rr"
+  strictARP: false
+  syncPeriod: 30s
+  tcpFinTimeout: 0s
+  tcpTimeout: 0s
+  udpTimeout: 0s
+kind: KubeProxyConfiguration
+metricsBindAddress: 127.0.0.1:10249
+mode: {{ k8s_proxy_mode }}
+nodePortAddresses: null
+oomScoreAdj: -999
+portRange: ""

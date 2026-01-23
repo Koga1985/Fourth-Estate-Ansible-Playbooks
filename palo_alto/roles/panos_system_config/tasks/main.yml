@@ -1,0 +1,394 @@
+---
+# tasks file for panos_system_config
+# Comprehensive system configuration for Palo Alto Networks firewalls
+# Fourth Estate hardened configuration
+
+- name: Set system hostname
+  paloaltonetworks.panos.panos_mgtconfig:
+    provider: "{{ panos_provider }}"
+    hostname: "{{ panos_hostname }}"
+    domain: "{{ panos_domain }}"
+    dns_server_primary: "{{ panos_dns_primary }}"
+    dns_server_secondary: "{{ panos_dns_secondary }}"
+    ntp_server_primary: "{{ panos_ntp_primary }}"
+    ntp_server_secondary: "{{ panos_ntp_secondary }}"
+    timezone: "{{ panos_timezone }}"
+  notify: commit panos configuration
+  tags:
+    - system
+    - hostname
+
+- name: Configure login banner
+  paloaltonetworks.panos.panos_config_element:
+    provider: "{{ panos_provider }}"
+    xpath: "/config/devices/entry[@name='localhost.localdomain']/deviceconfig/system"
+    element: |
+      <login-banner>{{ panos_login_banner }}</login-banner>
+  notify: commit panos configuration
+  tags:
+    - system
+    - banner
+
+- name: Configure session timeout settings
+  paloaltonetworks.panos.panos_config_element:
+    provider: "{{ panos_provider }}"
+    xpath: "/config/devices/entry[@name='localhost.localdomain']/deviceconfig/setting/management"
+    element: |
+      <idle-timeout>{{ panos_idle_timeout }}</idle-timeout>
+  notify: commit panos configuration
+  tags:
+    - system
+    - timeout
+
+- name: Configure password profile
+  paloaltonetworks.panos.panos_config_element:
+    provider: "{{ panos_provider }}"
+    xpath: "/config/mgt-config/password-complexity"
+    element: |
+      <enabled>yes</enabled>
+      <minimum-length>{{ panos_password_min_length }}</minimum-length>
+      <minimum-uppercase-letters>{{ panos_password_min_uppercase }}</minimum-uppercase-letters>
+      <minimum-lowercase-letters>{{ panos_password_min_lowercase }}</minimum-lowercase-letters>
+      <minimum-numeric-letters>{{ panos_password_min_numeric }}</minimum-numeric-letters>
+      <minimum-special-characters>{{ panos_password_min_special }}</minimum-special-characters>
+      <block-repeated-characters>{{ panos_password_block_repeated }}</block-repeated-characters>
+      <block-username-inclusion>yes</block-username-inclusion>
+      <password-history-count>{{ panos_password_history_count }}</password-history-count>
+      <new-password-differs-by-characters>{{ panos_password_differs_by }}</new-password-differs-by-characters>
+      <password-change-on-first-login>yes</password-change-on-first-login>
+      <expiration-period>{{ panos_password_expiration_days }}</expiration-period>
+      <expiration-warning-period>{{ panos_password_expiration_warning_days }}</expiration-warning-period>
+      <post-expiration-admin-login-count>{{ panos_password_post_expiration_logins }}</post-expiration-admin-login-count>
+      <post-expiration-grace-period>{{ panos_password_post_expiration_grace_days }}</post-expiration-grace-period>
+  notify: commit panos configuration
+  tags:
+    - system
+    - password
+
+- name: Create administrator accounts
+  paloaltonetworks.panos.panos_administrator:
+    provider: "{{ panos_provider }}"
+    admin_username: "{{ item.username }}"
+    admin_password: "{{ item.password | default(omit) }}"
+    superuser: "{{ item.superuser | default(false) }}"
+    role: "{{ item.role | default(omit) }}"
+    password_profile: "{{ item.password_profile | default(omit) }}"
+    authentication_profile: "{{ item.auth_profile | default(omit) }}"
+    state: present
+  loop: "{{ panos_administrators }}"
+  no_log: true
+  notify: commit panos configuration
+  tags:
+    - system
+    - admin
+  when: panos_administrators is defined
+
+- name: Configure RADIUS authentication profile for MFA
+  paloaltonetworks.panos.panos_config_element:
+    provider: "{{ panos_provider }}"
+    xpath: "/config/shared/authentication-profile"
+    element: |
+      <entry name="{{ item.name }}">
+        <method>
+          <radius>
+            <server-profile>{{ item.server_profile }}</server-profile>
+            <use-userlist-as-fallback>{{ item.fallback_local | default('no') }}</use-userlist-as-fallback>
+          </radius>
+        </method>
+        <lockout>
+          <failed-attempts>{{ item.lockout_attempts | default('3') }}</failed-attempts>
+          <lockout-time>{{ item.lockout_time | default('30') }}</lockout-time>
+        </lockout>
+      </entry>
+  loop: "{{ panos_radius_profiles }}"
+  notify: commit panos configuration
+  tags:
+    - system
+    - radius
+    - mfa
+  when: panos_radius_profiles is defined
+
+- name: Configure RADIUS server profiles
+  paloaltonetworks.panos.panos_config_element:
+    provider: "{{ panos_provider }}"
+    xpath: "/config/shared/server-profile/radius"
+    element: |
+      <entry name="{{ item.name }}">
+        <protocol>
+          <{% if item.protocol == 'CHAP' %}CHAP{% else %}PAP{% endif %}>
+            <timeout>{{ item.timeout | default('5') }}</timeout>
+            <retries>{{ item.retries | default('3') }}</retries>
+          </{% if item.protocol == 'CHAP' %}CHAP{% else %}PAP{% endif %}>
+        </protocol>
+        <server>
+          {% for server in item.servers %}
+          <entry name="{{ server.name }}">
+            <ip-address>{{ server.ip }}</ip-address>
+            <secret>{{ server.secret }}</secret>
+            <port>{{ server.port | default('1812') }}</port>
+          </entry>
+          {% endfor %}
+        </server>
+      </entry>
+  loop: "{{ panos_radius_server_profiles }}"
+  no_log: true
+  notify: commit panos configuration
+  tags:
+    - system
+    - radius
+  when: panos_radius_server_profiles is defined
+
+- name: Configure TACACS+ authentication profile
+  paloaltonetworks.panos.panos_config_element:
+    provider: "{{ panos_provider }}"
+    xpath: "/config/shared/authentication-profile"
+    element: |
+      <entry name="{{ item.name }}">
+        <method>
+          <tacplus>
+            <server-profile>{{ item.server_profile }}</server-profile>
+            <use-userlist-as-fallback>{{ item.fallback_local | default('no') }}</use-userlist-as-fallback>
+          </tacplus>
+        </method>
+        <lockout>
+          <failed-attempts>{{ item.lockout_attempts | default('3') }}</failed-attempts>
+          <lockout-time>{{ item.lockout_time | default('30') }}</lockout-time>
+        </lockout>
+      </entry>
+  loop: "{{ panos_tacacs_profiles }}"
+  notify: commit panos configuration
+  tags:
+    - system
+    - tacacs
+    - mfa
+  when: panos_tacacs_profiles is defined
+
+- name: Configure TACACS+ server profiles
+  paloaltonetworks.panos.panos_config_element:
+    provider: "{{ panos_provider }}"
+    xpath: "/config/shared/server-profile/tacplus"
+    element: |
+      <entry name="{{ item.name }}">
+        <timeout>{{ item.timeout | default('5') }}</timeout>
+        <server>
+          {% for server in item.servers %}
+          <entry name="{{ server.name }}">
+            <ip-address>{{ server.ip }}</ip-address>
+            <secret>{{ server.secret }}</secret>
+            <port>{{ server.port | default('49') }}</port>
+          </entry>
+          {% endfor %}
+        </server>
+      </entry>
+  loop: "{{ panos_tacacs_server_profiles }}"
+  no_log: true
+  notify: commit panos configuration
+  tags:
+    - system
+    - tacacs
+  when: panos_tacacs_server_profiles is defined
+
+- name: Configure SNMPv3 settings
+  paloaltonetworks.panos.panos_snmp_v3_server:
+    provider: "{{ panos_provider }}"
+    snmp_name: "{{ item.name }}"
+    snmp_engineid: "{{ item.engine_id | default(omit) }}"
+    snmp_authpwd: "{{ item.auth_password }}"
+    snmp_privpwd: "{{ item.priv_password }}"
+    snmp_version: "{{ item.version | default('v3') }}"
+    snmp_v3_privprotocol: "{{ item.priv_protocol | default('AES256') }}"
+    snmp_v3_authprotocol: "{{ item.auth_protocol | default('SHA256') }}"
+    snmp_v3_securitylevel: "{{ item.security_level | default('authPriv') }}"
+    manager: "{{ item.manager }}"
+  loop: "{{ panos_snmp_v3_servers }}"
+  no_log: true
+  notify: commit panos configuration
+  tags:
+    - system
+    - snmp
+  when: panos_snmp_v3_servers is defined
+
+- name: Configure certificate import
+  paloaltonetworks.panos.panos_import:
+    provider: "{{ panos_provider }}"
+    category: "certificate"
+    certificate_name: "{{ item.name }}"
+    format: "{{ item.format | default('pem') }}"
+    filename: "{{ item.filename }}"
+    passphrase: "{{ item.passphrase | default(omit) }}"
+  loop: "{{ panos_certificates }}"
+  no_log: true
+  notify: commit panos configuration
+  tags:
+    - system
+    - certificates
+  when: panos_certificates is defined
+
+- name: Configure SSL/TLS service profile for management
+  paloaltonetworks.panos.panos_config_element:
+    provider: "{{ panos_provider }}"
+    xpath: "/config/shared/ssl-tls-service-profile"
+    element: |
+      <entry name="{{ panos_mgmt_ssl_profile }}">
+        <protocol-settings>
+          <min-version>{{ panos_mgmt_ssl_min_version }}</min-version>
+          <max-version>{{ panos_mgmt_ssl_max_version }}</max-version>
+        </protocol-settings>
+        <certificate>{{ panos_mgmt_ssl_certificate }}</certificate>
+      </entry>
+  notify: commit panos configuration
+  tags:
+    - system
+    - ssl
+  when: panos_mgmt_ssl_profile is defined
+
+- name: Configure syslog forwarding to SIEM
+  paloaltonetworks.panos.panos_syslog_server:
+    provider: "{{ panos_provider }}"
+    name: "{{ item.name }}"
+    server: "{{ item.server }}"
+    transport: "{{ item.transport | default('TCP') }}"
+    port: "{{ item.port | default('514') }}"
+    format: "{{ item.format | default('BSD') }}"
+    facility: "{{ item.facility | default('LOG_USER') }}"
+  loop: "{{ panos_syslog_servers }}"
+  notify: commit panos configuration
+  tags:
+    - system
+    - syslog
+  when: panos_syslog_servers is defined
+
+- name: Configure syslog profiles for system events
+  paloaltonetworks.panos.panos_config_element:
+    provider: "{{ panos_provider }}"
+    xpath: "/config/shared/log-settings/syslog"
+    element: |
+      <entry name="{{ item.name }}">
+        <server>
+          {% for server in item.servers %}
+          <entry name="{{ server.name }}">
+            <server>{{ server.name }}</server>
+            <transport>{{ server.transport | default('TCP') }}</transport>
+            <port>{{ server.port | default('514') }}</port>
+            <format>{{ server.format | default('BSD') }}</format>
+            <facility>{{ server.facility | default('LOG_USER') }}</facility>
+          </entry>
+          {% endfor %}
+        </server>
+        <format>
+          <config>
+            <escaping>
+              <escape-character>\</escape-character>
+              <escaped-characters>"</escaped-characters>
+            </escaping>
+          </config>
+          <system>
+            <escaping>
+              <escape-character>\</escape-character>
+              <escaped-characters>"</escaped-characters>
+            </escaping>
+          </system>
+        </format>
+      </entry>
+  loop: "{{ panos_syslog_profiles }}"
+  notify: commit panos configuration
+  tags:
+    - system
+    - syslog
+  when: panos_syslog_profiles is defined
+
+- name: Enable automatic security updates
+  paloaltonetworks.panos.panos_config_element:
+    provider: "{{ panos_provider }}"
+    xpath: "/config/devices/entry[@name='localhost.localdomain']/deviceconfig/system/update-schedule"
+    element: |
+      <threats>
+        <recurring>
+          <{{ panos_threat_update_schedule }}>
+            <action>download-and-install</action>
+            <at>{{ panos_threat_update_time }}</at>
+            <threshold>{{ panos_threat_update_threshold }}</threshold>
+          </{{ panos_threat_update_schedule }}>
+        </recurring>
+      </threats>
+      <anti-virus>
+        <recurring>
+          <{{ panos_av_update_schedule }}>
+            <action>download-and-install</action>
+            <at>{{ panos_av_update_time }}</at>
+          </{{ panos_av_update_schedule }}>
+        </recurring>
+      </anti-virus>
+      <wildfire>
+        <recurring>
+          <every-15-mins>
+            <action>download-and-install</action>
+          </every-15-mins>
+        </recurring>
+      </wildfire>
+  notify: commit panos configuration
+  tags:
+    - system
+    - updates
+
+- name: Configure permitted IP addresses for management
+  paloaltonetworks.panos.panos_config_element:
+    provider: "{{ panos_provider }}"
+    xpath: "/config/mgt-config"
+    element: |
+      <permitted-ip>
+        {% for ip in panos_permitted_mgmt_ips %}
+        <entry name="{{ ip }}"/>
+        {% endfor %}
+      </permitted-ip>
+  notify: commit panos configuration
+  tags:
+    - system
+    - management
+  when: panos_permitted_mgmt_ips is defined and panos_permitted_mgmt_ips | length > 0
+
+- name: Disable unused management services
+  paloaltonetworks.panos.panos_config_element:
+    provider: "{{ panos_provider }}"
+    xpath: "/config/devices/entry[@name='localhost.localdomain']/deviceconfig/system/service"
+    element: |
+      <disable-telnet>yes</disable-telnet>
+      <disable-http>yes</disable-http>
+      <disable-snmp>{{ 'no' if panos_enable_snmp else 'yes' }}</disable-snmp>
+  notify: commit panos configuration
+  tags:
+    - system
+    - hardening
+
+- name: Configure audit comment requirement
+  paloaltonetworks.panos.panos_config_element:
+    provider: "{{ panos_provider }}"
+    xpath: "/config/mgt-config"
+    element: |
+      <require-audit-comment>yes</require-audit-comment>
+  notify: commit panos configuration
+  tags:
+    - system
+    - audit
+
+- name: Enable management profile logging
+  paloaltonetworks.panos.panos_config_element:
+    provider: "{{ panos_provider }}"
+    xpath: "/config/devices/entry[@name='localhost.localdomain']/deviceconfig/system"
+    element: |
+      <management-log-rate>high</management-log-rate>
+  notify: commit panos configuration
+  tags:
+    - system
+    - logging
+
+- name: Configure global timeout settings
+  paloaltonetworks.panos.panos_config_element:
+    provider: "{{ panos_provider }}"
+    xpath: "/config/devices/entry[@name='localhost.localdomain']/deviceconfig/setting/session"
+    element: |
+      <timeout>{{ panos_global_session_timeout }}</timeout>
+  notify: commit panos configuration
+  tags:
+    - system
+    - timeout

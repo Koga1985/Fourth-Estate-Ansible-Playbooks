@@ -1,0 +1,160 @@
+---
+# Container Runtime (containerd) installation and configuration
+
+- name: Install containerd dependencies (Debian)
+  ansible.builtin.apt:
+    name:
+      - apt-transport-https
+      - ca-certificates
+      - curl
+      - gnupg
+      - lsb-release
+    state: present
+    update_cache: true
+  when: ansible_os_family == 'Debian'
+
+- name: Add Docker GPG key (Debian)
+  ansible.builtin.apt_key:
+    url: https://download.docker.com/linux/{{ ansible_distribution | lower }}/gpg
+    state: present
+  when: ansible_os_family == 'Debian'
+
+- name: Add Docker repository (Debian)
+  ansible.builtin.apt_repository:
+    repo: "deb [arch=amd64] https://download.docker.com/linux/{{ ansible_distribution | lower }} {{ ansible_distribution_release }} stable"
+    state: present
+  when: ansible_os_family == 'Debian'
+
+- name: Install containerd (Debian)
+  ansible.builtin.apt:
+    name: "containerd.io={{ k8s_containerd_version }}-1"
+    state: present
+    update_cache: true
+  when: ansible_os_family == 'Debian'
+
+- name: Install containerd dependencies (RedHat)
+  ansible.builtin.yum:
+    name:
+      - yum-utils
+      - device-mapper-persistent-data
+      - lvm2
+    state: present
+  when: ansible_os_family == 'RedHat'
+
+- name: Add Docker repository (RedHat)
+  ansible.builtin.yum_repository:
+    name: docker-ce-stable
+    description: Docker CE Stable - $basearch
+    baseurl: https://download.docker.com/linux/centos/$releasever/$basearch/stable
+    gpgcheck: true
+    gpgkey: https://download.docker.com/linux/centos/gpg
+    enabled: true
+  when: ansible_os_family == 'RedHat'
+
+- name: Install containerd (RedHat)
+  ansible.builtin.yum:
+    name: "containerd.io-{{ k8s_containerd_version }}"
+    state: present
+  when: ansible_os_family == 'RedHat'
+
+- name: Create containerd configuration directory
+  ansible.builtin.file:
+    path: "{{ k8s_containerd_config_dir }}"
+    state: directory
+    mode: '0755'
+
+- name: Generate default containerd configuration
+  ansible.builtin.shell: containerd config default > {{ k8s_containerd_config_dir }}/config.toml
+  args:
+    creates: "{{ k8s_containerd_config_dir }}/config.toml"
+
+- name: Configure containerd to use systemd cgroup driver
+  ansible.builtin.lineinfile:
+    path: "{{ k8s_containerd_config_dir }}/config.toml"
+    regexp: '^\s*SystemdCgroup\s*='
+    line: '            SystemdCgroup = true'
+    insertafter: '.*\[plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runc.options\]'
+
+- name: Configure containerd sandbox image
+  ansible.builtin.lineinfile:
+    path: "{{ k8s_containerd_config_dir }}/config.toml"
+    regexp: '^\s*sandbox_image\s*='
+    line: '    sandbox_image = "registry.k8s.io/pause:3.9"'
+
+- name: Configure containerd registry mirrors
+  ansible.builtin.blockinfile:
+    path: "{{ k8s_containerd_config_dir }}/config.toml"
+    marker: "# {mark} ANSIBLE MANAGED REGISTRY MIRRORS"
+    insertafter: '^\[plugins."io.containerd.grpc.v1.cri".registry\]'
+    block: |
+      {% if k8s_airgap_mode | bool and k8s_airgap_registry %}
+        [plugins."io.containerd.grpc.v1.cri".registry.mirrors]
+          [plugins."io.containerd.grpc.v1.cri".registry.mirrors."docker.io"]
+            endpoint = ["https://{{ k8s_airgap_registry }}"]
+          [plugins."io.containerd.grpc.v1.cri".registry.mirrors."registry.k8s.io"]
+            endpoint = ["https://{{ k8s_airgap_registry }}"]
+        [plugins."io.containerd.grpc.v1.cri".registry.configs]
+          [plugins."io.containerd.grpc.v1.cri".registry.configs."{{ k8s_airgap_registry }}".tls]
+            insecure_skip_verify = false
+      {% endif %}
+  when: k8s_airgap_mode | bool
+
+- name: Create containerd service override directory
+  ansible.builtin.file:
+    path: /etc/systemd/system/containerd.service.d
+    state: directory
+    mode: '0755'
+
+- name: Configure containerd service limits
+  ansible.builtin.copy:
+    content: |
+      [Service]
+      LimitNOFILE=1048576
+      LimitNPROC=infinity
+      LimitCORE=infinity
+      TasksMax=infinity
+      Delegate=yes
+      KillMode=process
+    dest: /etc/systemd/system/containerd.service.d/override.conf
+    mode: '0644'
+  notify: Restart containerd
+
+- name: Enable and start containerd service
+  ansible.builtin.systemd:
+    name: containerd
+    enabled: true
+    state: started
+    daemon_reload: true
+
+- name: Install crictl tool
+  ansible.builtin.get_url:
+    url: "https://github.com/kubernetes-sigs/cri-tools/releases/download/v1.28.0/crictl-v1.28.0-linux-amd64.tar.gz"
+    dest: /tmp/crictl.tar.gz
+    mode: '0644'
+
+- name: Extract crictl
+  ansible.builtin.unarchive:
+    src: /tmp/crictl.tar.gz
+    dest: /usr/local/bin
+    remote_src: true
+    creates: /usr/local/bin/crictl
+
+- name: Configure crictl to use containerd
+  ansible.builtin.copy:
+    content: |
+      runtime-endpoint: unix://{{ k8s_containerd_socket }}
+      image-endpoint: unix://{{ k8s_containerd_socket }}
+      timeout: 10
+      debug: false
+    dest: /etc/crictl.yaml
+    mode: '0644'
+
+- name: Verify containerd is running
+  ansible.builtin.command: crictl info
+  changed_when: false
+  register: crictl_info
+
+- name: Display containerd info
+  ansible.builtin.debug:
+    msg: "Containerd is running successfully"
+  when: crictl_info.rc == 0

@@ -1,2 +1,382 @@
 ---
 # tasks file for veeam_backup_server_install
+# Installs Veeam Backup & Replication server with all prerequisites
+
+- name: Validate Windows operating system
+  ansible.windows.win_shell: |
+    $os = Get-WmiObject Win32_OperatingSystem
+    if ($os.Caption -notmatch "Windows Server") {
+      throw "Veeam requires Windows Server OS"
+    }
+    $os.Caption
+  register: os_version
+  changed_when: false
+
+- name: Display OS version
+  ansible.builtin.debug:
+    msg: "Installing Veeam on {{ os_version.stdout | trim }}"
+
+- name: Create Veeam installation directory
+  ansible.windows.win_file:
+    path: "{{ veeam_install_dir }}"
+    state: directory
+
+- name: Create Veeam logs directory
+  ansible.windows.win_file:
+    path: "{{ veeam_log_dir }}"
+    state: directory
+
+- name: Check if Veeam is already installed
+  ansible.windows.win_shell: |
+    $veeam = Get-ItemProperty "HKLM:\Software\Veeam\Veeam Backup and Replication" -ErrorAction SilentlyContinue
+    if ($veeam) {
+      Write-Output $veeam.CorePath
+    } else {
+      Write-Output "NOT_INSTALLED"
+    }
+  register: veeam_existing
+  changed_when: false
+
+- name: Display existing installation
+  ansible.builtin.debug:
+    msg: "Veeam installation status: {{ veeam_existing.stdout | trim }}"
+
+- block:
+  - name: Install .NET Framework 4.7.2 or higher
+    ansible.windows.win_feature:
+      name:
+        - NET-Framework-45-Core
+        - NET-Framework-45-Features
+        - NET-Framework-45-ASPNET
+      state: present
+      include_management_tools: true
+    register: dotnet_install
+
+  - name: Install required Windows features
+    ansible.windows.win_feature:
+      name:
+        - Web-Server
+        - Web-WebServer
+        - Web-Common-Http
+        - Web-Default-Doc
+        - Web-Dir-Browsing
+        - Web-Http-Errors
+        - Web-Static-Content
+        - Web-Health
+        - Web-Http-Logging
+        - Web-Performance
+        - Web-Stat-Compression
+        - Web-Security
+        - Web-Filtering
+        - Web-Windows-Auth
+        - Web-Mgmt-Tools
+        - Web-Mgmt-Console
+      state: present
+      include_management_tools: true
+    register: features_install
+
+  - name: Reboot if required after feature installation
+    ansible.windows.win_reboot:
+      reboot_timeout: 3600
+    when: dotnet_install.reboot_required or features_install.reboot_required
+
+  - name: Download SQL Server Express (if using Express edition)
+    ansible.windows.win_get_url:
+      url: "{{ veeam_sql_express_url }}"
+      dest: "{{ veeam_install_dir }}\\SQLServerExpress.exe"
+      force: no
+    when: veeam_sql_edition == 'express'
+
+  - name: Install SQL Server Express for Veeam database
+    ansible.windows.win_shell: |
+      $setupFile = "{{ veeam_install_dir }}\SQLServerExpress.exe"
+      $args = @(
+        "/Q",
+        "/ACTION=Install",
+        "/FEATURES=SQLEngine",
+        "/INSTANCENAME={{ veeam_sql_instance_name }}",
+        "/SQLSVCACCOUNT='{{ veeam_sql_service_account }}'",
+        "/SQLSVCPASSWORD='{{ veeam_sql_service_password }}'",
+        "/SQLSYSADMINACCOUNTS='{{ veeam_sql_admin_account }}'",
+        "/SECURITYMODE=SQL",
+        "/SAPWD='{{ veeam_sql_sa_password }}'",
+        "/TCPENABLED=1",
+        "/IACCEPTSQLSERVERLICENSETERMS"
+      )
+      Start-Process -FilePath $setupFile -ArgumentList $args -Wait -NoNewWindow
+      if ($LASTEXITCODE -eq 0 -or $LASTEXITCODE -eq 3010) {
+        Write-Output "SQL Server installed successfully"
+      } else {
+        throw "SQL Server installation failed with exit code: $LASTEXITCODE"
+      }
+    args:
+      creates: "C:\\Program Files\\Microsoft SQL Server\\{{ veeam_sql_instance_name }}"
+    when: veeam_sql_edition == 'express'
+    no_log: true
+
+  - name: Configure SQL Server for Veeam
+    ansible.windows.win_shell: |
+      # Configure SQL Server settings for Veeam
+      $serverName = "{{ ansible_hostname }}\\{{ veeam_sql_instance_name }}"
+
+      # Set SQL Server authentication mode to mixed
+      Set-ItemProperty -Path "HKLM:\Software\Microsoft\Microsoft SQL Server\MSSQL*.*\MSSQLServer" `
+        -Name "LoginMode" -Value 2
+
+      # Set max server memory (leave 4GB for OS)
+      $totalMemory = (Get-WmiObject Win32_ComputerSystem).TotalPhysicalMemory / 1GB
+      $sqlMemory = [math]::Floor($totalMemory - 4) * 1024
+
+      Write-Output "Configured SQL Server memory to $sqlMemory MB"
+    when: veeam_sql_edition == 'express'
+
+  - name: Restart SQL Server service
+    ansible.windows.win_service:
+      name: "MSSQL${{ veeam_sql_instance_name }}"
+      state: restarted
+    when: veeam_sql_edition == 'express'
+
+  - name: Create Veeam service account
+    ansible.windows.win_user:
+      name: "{{ veeam_service_account_name }}"
+      password: "{{ veeam_service_account_password }}"
+      password_never_expires: true
+      user_cannot_change_password: true
+      description: "Veeam Backup Service Account"
+      groups:
+        - Administrators
+        - "Backup Operators"
+      state: present
+    when: veeam_create_service_account | bool
+    no_log: true
+
+  - name: Grant service account log on as a service right
+    ansible.windows.win_shell: |
+      $account = "{{ veeam_service_account_domain }}\\{{ veeam_service_account_name }}"
+      $tmp = New-TemporaryFile
+      secedit /export /cfg $tmp.FullName | Out-Null
+      $content = Get-Content $tmp.FullName
+      $content = $content -replace "SeServiceLogonRight = .*", "`$0,$account"
+      $content | Set-Content $tmp.FullName
+      secedit /configure /db secedit.sdb /cfg $tmp.FullName /areas USER_RIGHTS | Out-Null
+      Remove-Item $tmp.FullName
+      Write-Output "Granted SeServiceLogonRight to $account"
+    when: veeam_create_service_account | bool
+
+  - name: Download Veeam Backup & Replication installer
+    ansible.windows.win_get_url:
+      url: "{{ veeam_installer_url }}"
+      dest: "{{ veeam_install_dir }}\\VeeamBackup.iso"
+      force: no
+    when: veeam_installer_url is defined
+
+  - name: Mount Veeam installation ISO
+    ansible.windows.win_disk_image:
+      image_path: "{{ veeam_install_dir }}\\VeeamBackup.iso"
+      state: present
+    register: veeam_iso
+    when: veeam_installer_url is defined
+
+  - name: Set installation source path
+    ansible.builtin.set_fact:
+      veeam_setup_path: "{{ veeam_iso.mount_paths[0] if veeam_installer_url is defined else veeam_install_source }}"
+
+  - name: Install Veeam Backup & Replication server
+    ansible.windows.win_shell: |
+      $setupExe = "{{ veeam_setup_path }}\Setup.exe"
+
+      $args = @(
+        "/silent",
+        "/accepteula",
+        "/acceptthirdpartylicenses",
+        "VBR_LICENSE_FILE='{{ veeam_license_file }}'",
+        "VBR_SERVICE_USER='{{ veeam_service_account_domain }}\{{ veeam_service_account_name }}'",
+        "VBR_SERVICE_PASSWORD='{{ veeam_service_account_password }}'",
+        "VBR_SQLSERVER_SERVER='{{ ansible_hostname }}\{{ veeam_sql_instance_name }}'",
+        "VBR_SQLSERVER_DATABASE='{{ veeam_database_name }}'",
+        "VBR_SQLSERVER_AUTHENTICATION=0",
+        "VBR_SQLSERVER_USERNAME='sa'",
+        "VBR_SQLSERVER_PASSWORD='{{ veeam_sql_sa_password }}'"
+      )
+
+      if ("{{ veeam_install_catalog_path }}" -ne "") {
+        $args += "VBR_CATALOG_PATH='{{ veeam_install_catalog_path }}'"
+      }
+
+      if ("{{ veeam_install_logs_path }}" -ne "") {
+        $args += "VBR_LOGS_PATH='{{ veeam_install_logs_path }}'"
+      }
+
+      Write-Output "Starting Veeam installation..."
+      $process = Start-Process -FilePath $setupExe -ArgumentList $args -Wait -PassThru -NoNewWindow
+
+      if ($process.ExitCode -eq 0) {
+        Write-Output "Veeam Backup & Replication installed successfully"
+      } elseif ($process.ExitCode -eq 3010) {
+        Write-Output "Veeam installed successfully - reboot required"
+      } else {
+        throw "Veeam installation failed with exit code: $($process.ExitCode)"
+      }
+
+      $process.ExitCode
+    args:
+      creates: "C:\\Program Files\\Veeam\\Backup and Replication\\Backup\\Veeam.Backup.Service.exe"
+    register: veeam_install_result
+    no_log: true
+
+  - name: Unmount Veeam ISO
+    ansible.windows.win_disk_image:
+      image_path: "{{ veeam_install_dir }}\\VeeamBackup.iso"
+      state: absent
+    when: veeam_installer_url is defined
+
+  - name: Configure Windows Firewall rules for Veeam
+    ansible.windows.win_firewall_rule:
+      name: "{{ item.name }}"
+      localport: "{{ item.port }}"
+      protocol: tcp
+      direction: in
+      action: allow
+      enabled: yes
+      state: present
+    loop:
+      - { name: "Veeam Backup Service", port: "9392" }
+      - { name: "Veeam Backup Manager", port: "9394" }
+      - { name: "Veeam Mount Service", port: "9395" }
+      - { name: "Veeam Data Mover", port: "2500-3300" }
+      - { name: "Veeam Cloud Connect", port: "6180" }
+      - { name: "Veeam WAN Accelerator", port: "9281" }
+      - { name: "Veeam vPower NFS", port: "2049" }
+
+  - name: Install Veeam license
+    ansible.windows.win_shell: |
+      Add-PSSnapin VeeamPSSnapin -ErrorAction Stop
+
+      $licenseFile = "{{ veeam_license_file }}"
+      if (Test-Path $licenseFile) {
+        Install-VBRLicense -Path $licenseFile
+        Write-Output "License installed successfully"
+
+        $license = Get-VBRInstalledLicense
+        Write-Output "Licensed edition: $($license.Edition)"
+        Write-Output "Licensed to: $($license.LicensedTo)"
+        Write-Output "Expires: $($license.ExpirationDate)"
+      } else {
+        Write-Output "License file not found - using trial license"
+      }
+    register: license_install
+    when: veeam_license_file != ""
+
+  - name: Display license information
+    ansible.builtin.debug:
+      var: license_install.stdout_lines
+    when: license_install is defined and license_install.stdout_lines is defined
+
+  - name: Install TLS certificate for Veeam web console
+    ansible.windows.win_shell: |
+      # Import certificate
+      $certPassword = ConvertTo-SecureString -String "{{ veeam_tls_cert_password }}" -AsPlainText -Force
+      $cert = Import-PfxCertificate -FilePath "{{ veeam_tls_cert_path }}" `
+        -CertStoreLocation Cert:\LocalMachine\My `
+        -Password $certPassword
+
+      # Bind certificate to Veeam Enterprise Manager
+      $thumbprint = $cert.Thumbprint
+
+      netsh http delete sslcert ipport=0.0.0.0:9443
+      netsh http add sslcert ipport=0.0.0.0:9443 `
+        certhash=$thumbprint `
+        appid='{00000000-0000-0000-0000-000000000000}'
+
+      Write-Output "TLS certificate installed with thumbprint: $thumbprint"
+    when: veeam_tls_cert_path != "" and veeam_enable_tls | bool
+    no_log: true
+
+  - name: Enable strong cryptography for .NET
+    ansible.windows.win_regedit:
+      path: "{{ item.path }}"
+      name: SchUseStrongCrypto
+      data: 1
+      type: dword
+    loop:
+      - { path: 'HKLM:\SOFTWARE\Microsoft\.NETFramework\v4.0.30319' }
+      - { path: 'HKLM:\SOFTWARE\Wow6432Node\Microsoft\.NETFramework\v4.0.30319' }
+
+  - name: Configure TLS 1.2+ only
+    ansible.windows.win_regedit:
+      path: "{{ item.path }}"
+      name: "{{ item.name }}"
+      data: "{{ item.value }}"
+      type: dword
+    loop:
+      # Disable SSL 2.0
+      - { path: 'HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\SSL 2.0\Server', name: 'Enabled', value: 0 }
+      - { path: 'HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\SSL 2.0\Client', name: 'Enabled', value: 0 }
+      # Disable SSL 3.0
+      - { path: 'HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\SSL 3.0\Server', name: 'Enabled', value: 0 }
+      - { path: 'HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\SSL 3.0\Client', name: 'Enabled', value: 0 }
+      # Disable TLS 1.0
+      - { path: 'HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.0\Server', name: 'Enabled', value: 0 }
+      - { path: 'HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.0\Client', name: 'Enabled', value: 0 }
+      # Disable TLS 1.1
+      - { path: 'HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.1\Server', name: 'Enabled', value: 0 }
+      - { path: 'HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.1\Client', name: 'Enabled', value: 0 }
+      # Enable TLS 1.2
+      - { path: 'HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.2\Server', name: 'Enabled', value: 1 }
+      - { path: 'HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.2\Client', name: 'Enabled', value: 1 }
+      # Enable TLS 1.3
+      - { path: 'HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.3\Server', name: 'Enabled', value: 1 }
+      - { path: 'HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.3\Client', name: 'Enabled', value: 1 }
+
+  - name: Ensure Veeam Backup Service is running
+    ansible.windows.win_service:
+      name: VeeamBackupSvc
+      state: started
+      start_mode: auto
+
+  - name: Verify Veeam installation
+    ansible.windows.win_shell: |
+      Add-PSSnapin VeeamPSSnapin -ErrorAction Stop
+
+      $server = Get-VBRLocalhost
+      Write-Output "Veeam Server: $($server.Name)"
+      Write-Output "Version: $($server.Info.ProductVersion)"
+
+      $serverInfo = Get-VBRServerSession
+      Write-Output "Connected to: $($serverInfo.Server)"
+      Write-Output "User: $($serverInfo.User.Name)"
+
+      # Check services
+      $services = @(
+        "VeeamBackupSvc",
+        "VeeamBrokerSvc",
+        "VeeamCatalogSvc",
+        "VeeamCloudSvc",
+        "VeeamDeploymentService",
+        "VeeamEnterpriseManagerSvc",
+        "VeeamMountSvc",
+        "VeeamRESTSvc"
+      )
+
+      foreach ($svc in $services) {
+        $service = Get-Service $svc -ErrorAction SilentlyContinue
+        if ($service) {
+          Write-Output "Service $svc : $($service.Status)"
+        }
+      }
+    register: veeam_verification
+
+  - name: Display Veeam installation verification
+    ansible.builtin.debug:
+      var: veeam_verification.stdout_lines
+
+  - name: Reboot if required after installation
+    ansible.windows.win_reboot:
+      reboot_timeout: 3600
+    when: veeam_install_result.stdout | int == 3010
+
+  when: veeam_existing.stdout | trim == "NOT_INSTALLED"
+
+- name: Installation complete message
+  ansible.builtin.debug:
+    msg: "Veeam Backup & Replication installation complete. Access the console or web UI to continue configuration."

@@ -1,0 +1,28 @@
+---
+# Assured Workloads configuration for FedRAMP High/CJIS compliance
+
+- name: Create Assured Workloads environment
+  ansible.builtin.command:
+    cmd: >
+      gcloud assured workloads create
+      --billing-account={{ gcp_billing_account_id }}
+      --compliance-regime={{ gcp_assured_workload_regime }}
+      --display-name="{{ gcp_project_name }}-assured"
+      --location={{ gcp_assured_workload_location }}
+      --organization={{ gcp_organization_id }}
+      --labels={{ gcp_assured_workload_labels | default({}) | to_json }}
+  register: assured_workload_result
+  changed_when: "'Created Assured Workload' in assured_workload_result.stdout"
+  failed_when:
+    - assured_workload_result.rc != 0
+    - "'already exists' not in assured_workload_result.stderr"
+  when: gcp_organization_id is defined
+
+- name: Enable Assured Workloads monitoring
+  ansible.builtin.command:
+    cmd: >
+      gcloud assured workloads update {{ gcp_project_id }}
+      --enable-sovereign-controls
+      --organization={{ gcp_organization_id }}
+  changed_when: true
+  when: gcp_enable_sovereign_controls | bool

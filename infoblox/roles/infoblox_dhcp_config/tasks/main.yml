@@ -1,0 +1,309 @@
+---
+# tasks file for infoblox_dhcp_config
+# Infoblox DHCP Service Configuration for Fourth Estate Agencies
+# Manages DHCP service, failover, options, filters, reservations, and logging
+
+- name: Ensure Infoblox connection variables are defined
+  ansible.builtin.assert:
+    that:
+      - infoblox_grid_master is defined
+      - infoblox_username is defined
+      - infoblox_password is defined
+    fail_msg: "Required Infoblox connection variables are not defined"
+
+- name: Configure global DHCP properties
+  infoblox.nios_modules.nios_grid_dhcp_properties:
+    enable_dhcp: "{{ infoblox_enable_dhcp }}"
+    enable_dhcp_thresholds: "{{ infoblox_enable_dhcp_thresholds }}"
+    authority: "{{ infoblox_dhcp_authority }}"
+    email_list: "{{ infoblox_dhcp_email_list }}"
+    enable_email_warnings: "{{ infoblox_enable_dhcp_email_warnings }}"
+    enable_snmp_warnings: "{{ infoblox_enable_dhcp_snmp_warnings }}"
+    state: present
+    provider:
+      host: "{{ infoblox_grid_master }}"
+      username: "{{ infoblox_username }}"
+      password: "{{ infoblox_password }}"
+      wapi_version: "{{ infoblox_wapi_version }}"
+      validate_certs: "{{ infoblox_validate_certs }}"
+  tags:
+    - infoblox
+    - dhcp
+    - config
+
+- name: Configure DHCP failover associations
+  infoblox.nios_modules.nios_dhcp_failover:
+    name: "{{ item.name }}"
+    comment: "{{ item.comment }}"
+    primary_server: "{{ item.primary_server }}"
+    secondary_server: "{{ item.secondary_server }}"
+    failover_port: "{{ item.failover_port | default(647) }}"
+    max_response_delay: "{{ item.max_response_delay | default(60) }}"
+    max_unacked_updates: "{{ item.max_unacked_updates | default(10) }}"
+    mclt: "{{ item.mclt | default(3600) }}"
+    load_balance_split: "{{ item.load_balance_split | default(128) }}"
+    state: "{{ item.state | default('present') }}"
+    provider:
+      host: "{{ infoblox_grid_master }}"
+      username: "{{ infoblox_username }}"
+      password: "{{ infoblox_password }}"
+      wapi_version: "{{ infoblox_wapi_version }}"
+      validate_certs: "{{ infoblox_validate_certs }}"
+  loop: "{{ infoblox_dhcp_failover_pairs }}"
+  when: infoblox_dhcp_failover_pairs is defined
+  tags:
+    - infoblox
+    - dhcp
+    - failover
+    - ha
+
+- name: Configure DHCP option definitions (custom options)
+  infoblox.nios_modules.nios_dhcp_option:
+    name: "{{ item.name }}"
+    code: "{{ item.code }}"
+    type: "{{ item.type }}"
+    comment: "{{ item.comment | default(omit) }}"
+    state: "{{ item.state | default('present') }}"
+    provider:
+      host: "{{ infoblox_grid_master }}"
+      username: "{{ infoblox_username }}"
+      password: "{{ infoblox_password }}"
+      wapi_version: "{{ infoblox_wapi_version }}"
+      validate_certs: "{{ infoblox_validate_certs }}"
+  loop: "{{ infoblox_dhcp_custom_options }}"
+  when: infoblox_dhcp_custom_options is defined
+  tags:
+    - infoblox
+    - dhcp
+    - options
+
+- name: Configure global DHCP options
+  infoblox.nios_modules.nios_grid_dhcp_properties:
+    options:
+      - name: "domain-name"
+        value: "{{ infoblox_dhcp_domain_name }}"
+      - name: "domain-name-servers"
+        value: "{{ infoblox_dhcp_dns_servers | join(',') }}"
+      - name: "routers"
+        value: "{{ infoblox_dhcp_default_gateway }}"
+      - name: "ntp-servers"
+        value: "{{ infoblox_dhcp_ntp_servers | join(',') }}"
+    state: present
+    provider:
+      host: "{{ infoblox_grid_master }}"
+      username: "{{ infoblox_username }}"
+      password: "{{ infoblox_password }}"
+      wapi_version: "{{ infoblox_wapi_version }}"
+      validate_certs: "{{ infoblox_validate_certs }}"
+  when: infoblox_configure_global_dhcp_options | bool
+  tags:
+    - infoblox
+    - dhcp
+    - options
+
+- name: Configure DHCP MAC address filters
+  infoblox.nios_modules.nios_mac_filter_address:
+    filter: "{{ item.mac_address }}"
+    comment: "{{ item.comment | default(omit) }}"
+    authentication_time: "{{ item.authentication_time | default(omit) }}"
+    expiration_time: "{{ item.expiration_time | default(omit) }}"
+    fingerprint: "{{ item.fingerprint | default(omit) }}"
+    is_registered_user: "{{ item.is_registered_user | default(false) }}"
+    state: "{{ item.state | default('present') }}"
+    provider:
+      host: "{{ infoblox_grid_master }}"
+      username: "{{ infoblox_username }}"
+      password: "{{ infoblox_password }}"
+      wapi_version: "{{ infoblox_wapi_version }}"
+      validate_certs: "{{ infoblox_validate_certs }}"
+  loop: "{{ infoblox_dhcp_mac_filters }}"
+  when: infoblox_dhcp_mac_filters is defined
+  tags:
+    - infoblox
+    - dhcp
+    - filters
+    - security
+
+- name: Configure DHCP fingerprint filters
+  infoblox.nios_modules.nios_fingerprint_filter:
+    name: "{{ item.name }}"
+    comment: "{{ item.comment | default(omit) }}"
+    device_class: "{{ item.device_class }}"
+    vendor_id: "{{ item.vendor_id | default(omit) }}"
+    option_sequence: "{{ item.option_sequence | default(omit) }}"
+    state: "{{ item.state | default('present') }}"
+    provider:
+      host: "{{ infoblox_grid_master }}"
+      username: "{{ infoblox_username }}"
+      password: "{{ infoblox_password }}"
+      wapi_version: "{{ infoblox_wapi_version }}"
+      validate_certs: "{{ infoblox_validate_certs }}"
+  loop: "{{ infoblox_dhcp_fingerprint_filters }}"
+  when: infoblox_dhcp_fingerprint_filters is defined
+  tags:
+    - infoblox
+    - dhcp
+    - filters
+
+- name: Configure DHCP lease time settings
+  infoblox.nios_modules.nios_grid_dhcp_properties:
+    lease_time: "{{ infoblox_dhcp_default_lease_time }}"
+    pxe_lease_time: "{{ infoblox_dhcp_pxe_lease_time }}"
+    state: present
+    provider:
+      host: "{{ infoblox_grid_master }}"
+      username: "{{ infoblox_username }}"
+      password: "{{ infoblox_password }}"
+      wapi_version: "{{ infoblox_wapi_version }}"
+      validate_certs: "{{ infoblox_validate_certs }}"
+  tags:
+    - infoblox
+    - dhcp
+    - lease
+
+- name: Configure fixed address reservations
+  infoblox.nios_modules.nios_fixed_address:
+    ipaddr: "{{ item.ip_address }}"
+    mac: "{{ item.mac_address }}"
+    name: "{{ item.hostname | default(omit) }}"
+    comment: "{{ item.comment | default('Fourth Estate DHCP reservation') }}"
+    network_view: "{{ item.network_view | default('default') }}"
+    options: "{{ item.options | default(omit) }}"
+    state: "{{ item.state | default('present') }}"
+    provider:
+      host: "{{ infoblox_grid_master }}"
+      username: "{{ infoblox_username }}"
+      password: "{{ infoblox_password }}"
+      wapi_version: "{{ infoblox_wapi_version }}"
+      validate_certs: "{{ infoblox_validate_certs }}"
+  loop: "{{ infoblox_dhcp_reservations }}"
+  when: infoblox_dhcp_reservations is defined
+  tags:
+    - infoblox
+    - dhcp
+    - reservations
+
+- name: Configure DHCP relay agents
+  infoblox.nios_modules.nios_dhcp_relay:
+    name: "{{ item.name }}"
+    comment: "{{ item.comment | default(omit) }}"
+    servers: "{{ item.servers }}"
+    state: "{{ item.state | default('present') }}"
+    provider:
+      host: "{{ infoblox_grid_master }}"
+      username: "{{ infoblox_username }}"
+      password: "{{ infoblox_password }}"
+      wapi_version: "{{ infoblox_wapi_version }}"
+      validate_certs: "{{ infoblox_validate_certs }}"
+  loop: "{{ infoblox_dhcp_relay_agents }}"
+  when: infoblox_dhcp_relay_agents is defined
+  tags:
+    - infoblox
+    - dhcp
+    - relay
+
+- name: Configure PXE boot settings
+  infoblox.nios_modules.nios_grid_dhcp_properties:
+    pxe_boot_server: "{{ infoblox_pxe_boot_server }}"
+    pxe_boot_file: "{{ infoblox_pxe_boot_file }}"
+    state: present
+    provider:
+      host: "{{ infoblox_grid_master }}"
+      username: "{{ infoblox_username }}"
+      password: "{{ infoblox_password }}"
+      wapi_version: "{{ infoblox_wapi_version }}"
+      validate_certs: "{{ infoblox_validate_certs }}"
+  when:
+    - infoblox_enable_pxe_boot | bool
+    - infoblox_pxe_boot_server is defined
+  tags:
+    - infoblox
+    - dhcp
+    - pxe
+
+- name: Configure Dynamic DNS (DDNS) integration
+  infoblox.nios_modules.nios_grid_dhcp_properties:
+    enable_ddns: "{{ infoblox_enable_ddns }}"
+    ddns_domainname: "{{ infoblox_ddns_domain }}"
+    ddns_generate_hostname: "{{ infoblox_ddns_generate_hostname }}"
+    ddns_server_always_updates: "{{ infoblox_ddns_server_always_updates }}"
+    ddns_ttl: "{{ infoblox_ddns_ttl }}"
+    ddns_update_fixed_addresses: "{{ infoblox_ddns_update_fixed_addresses }}"
+    state: present
+    provider:
+      host: "{{ infoblox_grid_master }}"
+      username: "{{ infoblox_username }}"
+      password: "{{ infoblox_password }}"
+      wapi_version: "{{ infoblox_wapi_version }}"
+      validate_certs: "{{ infoblox_validate_certs }}"
+  when: infoblox_enable_ddns | bool
+  tags:
+    - infoblox
+    - dhcp
+    - ddns
+
+- name: Configure DHCP logging for security and compliance
+  infoblox.nios_modules.nios_grid_dhcp_properties:
+    enable_dhcp_audit_log: "{{ infoblox_enable_dhcp_audit_log }}"
+    log_lease_events: "{{ infoblox_log_dhcp_lease_events }}"
+    enable_fingerprint_tracking: "{{ infoblox_enable_fingerprint_tracking }}"
+    state: present
+    provider:
+      host: "{{ infoblox_grid_master }}"
+      username: "{{ infoblox_username }}"
+      password: "{{ infoblox_password }}"
+      wapi_version: "{{ infoblox_wapi_version }}"
+      validate_certs: "{{ infoblox_validate_certs }}"
+  tags:
+    - infoblox
+    - dhcp
+    - logging
+    - audit
+
+- name: Configure DHCP threshold warnings
+  infoblox.nios_modules.nios_grid_dhcp_properties:
+    enable_dhcp_thresholds: true
+    threshold_email_addresses: "{{ infoblox_dhcp_threshold_emails }}"
+    threshold_warning: "{{ infoblox_dhcp_threshold_warning }}"
+    threshold_critical: "{{ infoblox_dhcp_threshold_critical }}"
+    state: present
+    provider:
+      host: "{{ infoblox_grid_master }}"
+      username: "{{ infoblox_username }}"
+      password: "{{ infoblox_password }}"
+      wapi_version: "{{ infoblox_wapi_version }}"
+      validate_certs: "{{ infoblox_validate_certs }}"
+  when: infoblox_enable_dhcp_thresholds | bool
+  tags:
+    - infoblox
+    - dhcp
+    - monitoring
+
+- name: Configure IPv6 DHCP (DHCPv6) if enabled
+  infoblox.nios_modules.nios_grid_dhcp_properties:
+    enable_dhcpv6: "{{ infoblox_enable_dhcpv6 }}"
+    dhcpv6_options: "{{ infoblox_dhcpv6_options | default(omit) }}"
+    state: present
+    provider:
+      host: "{{ infoblox_grid_master }}"
+      username: "{{ infoblox_username }}"
+      password: "{{ infoblox_password }}"
+      wapi_version: "{{ infoblox_wapi_version }}"
+      validate_certs: "{{ infoblox_validate_certs }}"
+  when: infoblox_enable_dhcpv6 | bool
+  tags:
+    - infoblox
+    - dhcp
+    - ipv6
+
+- name: Display DHCP configuration summary
+  ansible.builtin.debug:
+    msg:
+      - "DHCP Service Enabled: {{ infoblox_enable_dhcp }}"
+      - "Failover Pairs: {{ infoblox_dhcp_failover_pairs | length if infoblox_dhcp_failover_pairs is defined else 0 }}"
+      - "DDNS Integration: {{ infoblox_enable_ddns }}"
+      - "Reservations Configured: {{ infoblox_dhcp_reservations | length if infoblox_dhcp_reservations is defined else 0 }}"
+      - "Default Lease Time: {{ infoblox_dhcp_default_lease_time }} seconds"
+  tags:
+    - infoblox
+    - dhcp

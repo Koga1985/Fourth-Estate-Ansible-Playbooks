@@ -1,0 +1,461 @@
+---
+# tasks file for panos_network_config
+# Comprehensive network configuration for Palo Alto Networks firewalls
+# Fourth Estate network fabric configuration
+
+- name: Create management interface configuration
+  paloaltonetworks.panos.panos_management_profile:
+    provider: "{{ panos_provider }}"
+    name: "{{ item.name }}"
+    ping: "{{ item.ping | default(false) }}"
+    telnet: "{{ item.telnet | default(false) }}"
+    ssh: "{{ item.ssh | default(true) }}"
+    http: "{{ item.http | default(false) }}"
+    https: "{{ item.https | default(true) }}"
+    snmp: "{{ item.snmp | default(false) }}"
+    response_pages: "{{ item.response_pages | default(false) }}"
+    userid_service: "{{ item.userid_service | default(false) }}"
+    userid_syslog_listener_ssl: "{{ item.userid_syslog_ssl | default(false) }}"
+    userid_syslog_listener_udp: "{{ item.userid_syslog_udp | default(false) }}"
+    permitted_ips: "{{ item.permitted_ips | default([]) }}"
+    state: present
+  loop: "{{ panos_mgmt_profiles }}"
+  notify: commit panos configuration
+  tags:
+    - network
+    - management
+
+- name: Configure Layer 3 interfaces
+  paloaltonetworks.panos.panos_interface:
+    provider: "{{ panos_provider }}"
+    if_name: "{{ item.name }}"
+    mode: "layer3"
+    ip: "{{ item.ip | default([]) }}"
+    ipv6_enabled: "{{ item.ipv6_enabled | default(false) }}"
+    management_profile: "{{ item.management_profile | default(omit) }}"
+    zone_name: "{{ item.zone | default(omit) }}"
+    vr_name: "{{ item.virtual_router | default('default') }}"
+    enable_dhcp: "{{ item.dhcp | default(false) }}"
+    create_default_route: "{{ item.default_route | default(false) }}"
+    comment: "{{ item.comment | default(omit) }}"
+    state: present
+  loop: "{{ panos_l3_interfaces }}"
+  notify: commit panos configuration
+  tags:
+    - network
+    - interfaces
+    - layer3
+  when: panos_l3_interfaces is defined
+
+- name: Configure Layer 2 interfaces
+  paloaltonetworks.panos.panos_interface:
+    provider: "{{ panos_provider }}"
+    if_name: "{{ item.name }}"
+    mode: "layer2"
+    zone_name: "{{ item.zone }}"
+    link_state: "{{ item.link_state | default('auto') }}"
+    link_duplex: "{{ item.link_duplex | default('auto') }}"
+    link_speed: "{{ item.link_speed | default('auto') }}"
+    comment: "{{ item.comment | default(omit) }}"
+    state: present
+  loop: "{{ panos_l2_interfaces }}"
+  notify: commit panos configuration
+  tags:
+    - network
+    - interfaces
+    - layer2
+  when: panos_l2_interfaces is defined
+
+- name: Configure virtual wire interfaces
+  paloaltonetworks.panos.panos_config_element:
+    provider: "{{ panos_provider }}"
+    xpath: "/config/devices/entry[@name='localhost.localdomain']/network/interface/ethernet"
+    element: |
+      <entry name="{{ item.name }}">
+        <layer1>
+          <virtual-wire>
+            <lldp>
+              <enable>yes</enable>
+            </lldp>
+          </virtual-wire>
+        </layer1>
+      </entry>
+  loop: "{{ panos_virtual_wire_interfaces }}"
+  notify: commit panos configuration
+  tags:
+    - network
+    - interfaces
+    - virtualwire
+  when: panos_virtual_wire_interfaces is defined
+
+- name: Configure VLAN interfaces
+  paloaltonetworks.panos.panos_vlan_interface:
+    provider: "{{ panos_provider }}"
+    vlan_name: "{{ item.name }}"
+    ip: "{{ item.ip }}"
+    management_profile: "{{ item.management_profile | default(omit) }}"
+    mtu: "{{ item.mtu | default(1500) }}"
+    netflow_profile: "{{ item.netflow_profile | default(omit) }}"
+    comment: "{{ item.comment | default(omit) }}"
+    zone_name: "{{ item.zone }}"
+    vr_name: "{{ item.virtual_router | default('default') }}"
+    state: present
+  loop: "{{ panos_vlan_interfaces }}"
+  notify: commit panos configuration
+  tags:
+    - network
+    - vlan
+  when: panos_vlan_interfaces is defined
+
+- name: Create security zones
+  paloaltonetworks.panos.panos_zone:
+    provider: "{{ panos_provider }}"
+    zone: "{{ item.name }}"
+    mode: "{{ item.mode | default('layer3') }}"
+    enable_userid: "{{ item.userid | default(false) }}"
+    enable_device_identification: "{{ item.device_id | default(false) }}"
+    zone_profile: "{{ item.zone_profile | default(omit) }}"
+    log_setting: "{{ item.log_setting | default(omit) }}"
+    state: present
+  loop: "{{ panos_zones }}"
+  notify: commit panos configuration
+  tags:
+    - network
+    - zones
+
+- name: Assign interfaces to zones
+  paloaltonetworks.panos.panos_zone:
+    provider: "{{ panos_provider }}"
+    zone: "{{ item.zone }}"
+    interface: "{{ item.interfaces }}"
+    state: present
+  loop: "{{ panos_zone_interfaces }}"
+  notify: commit panos configuration
+  tags:
+    - network
+    - zones
+  when: panos_zone_interfaces is defined
+
+- name: Configure virtual routers
+  paloaltonetworks.panos.panos_virtual_router:
+    provider: "{{ panos_provider }}"
+    name: "{{ item.name }}"
+    interface: "{{ item.interfaces | default([]) }}"
+    ad_static: "{{ item.ad_static | default(10) }}"
+    ad_static_ipv6: "{{ item.ad_static_ipv6 | default(10) }}"
+    ad_ospf_int: "{{ item.ad_ospf_int | default(30) }}"
+    ad_ospf_ext: "{{ item.ad_ospf_ext | default(110) }}"
+    ad_ospfv3_int: "{{ item.ad_ospfv3_int | default(30) }}"
+    ad_ospfv3_ext: "{{ item.ad_ospfv3_ext | default(110) }}"
+    ad_ibgp: "{{ item.ad_ibgp | default(200) }}"
+    ad_ebgp: "{{ item.ad_ebgp | default(20) }}"
+    ad_rip: "{{ item.ad_rip | default(120) }}"
+    state: present
+  loop: "{{ panos_virtual_routers }}"
+  notify: commit panos configuration
+  tags:
+    - network
+    - routing
+    - vr
+
+- name: Configure static routes
+  paloaltonetworks.panos.panos_static_route:
+    provider: "{{ panos_provider }}"
+    name: "{{ item.name }}"
+    destination: "{{ item.destination }}"
+    nexthop_type: "{{ item.nexthop_type | default('ip-address') }}"
+    nexthop: "{{ item.nexthop | default(omit) }}"
+    interface: "{{ item.interface | default(omit) }}"
+    admin_dist: "{{ item.admin_distance | default(10) }}"
+    metric: "{{ item.metric | default(10) }}"
+    virtual_router: "{{ item.virtual_router | default('default') }}"
+    state: present
+  loop: "{{ panos_static_routes }}"
+  notify: commit panos configuration
+  tags:
+    - network
+    - routing
+    - static
+  when: panos_static_routes is defined
+
+- name: Configure BGP
+  paloaltonetworks.panos.panos_bgp:
+    provider: "{{ panos_provider }}"
+    vr_name: "{{ item.virtual_router | default('default') }}"
+    router_id: "{{ item.router_id }}"
+    local_as: "{{ item.local_as }}"
+    install_route: "{{ item.install_route | default(true) }}"
+    reject_default_route: "{{ item.reject_default | default(true) }}"
+    allow_redist_default_route: "{{ item.allow_redist_default | default(false) }}"
+    state: present
+  loop: "{{ panos_bgp_configs }}"
+  notify: commit panos configuration
+  tags:
+    - network
+    - routing
+    - bgp
+  when: panos_bgp_configs is defined
+
+- name: Configure BGP peer groups
+  paloaltonetworks.panos.panos_bgp_peer_group:
+    provider: "{{ panos_provider }}"
+    vr_name: "{{ item.virtual_router | default('default') }}"
+    name: "{{ item.name }}"
+    enable: "{{ item.enable | default(true) }}"
+    aggregated_confed_as_path: "{{ item.aggregated_confed_as_path | default(true) }}"
+    soft_reset_with_stored_info: "{{ item.soft_reset | default(false) }}"
+    type: "{{ item.type | default('ebgp') }}"
+    export_nexthop: "{{ item.export_nexthop | default('resolve') }}"
+    import_nexthop: "{{ item.import_nexthop | default('original') }}"
+    remove_private_as: "{{ item.remove_private_as | default(false) }}"
+    state: present
+  loop: "{{ panos_bgp_peer_groups }}"
+  notify: commit panos configuration
+  tags:
+    - network
+    - routing
+    - bgp
+  when: panos_bgp_peer_groups is defined
+
+- name: Configure BGP peers
+  paloaltonetworks.panos.panos_bgp_peer:
+    provider: "{{ panos_provider }}"
+    vr_name: "{{ item.virtual_router | default('default') }}"
+    peer_group: "{{ item.peer_group }}"
+    name: "{{ item.name }}"
+    enable: "{{ item.enable | default(true) }}"
+    peer_as: "{{ item.peer_as }}"
+    local_interface: "{{ item.local_interface }}"
+    local_interface_ip: "{{ item.local_ip }}"
+    peer_address_ip: "{{ item.peer_ip }}"
+    connection_authentication: "{{ item.auth_password | default(omit) }}"
+    connection_keep_alive_interval: "{{ item.keepalive | default(30) }}"
+    connection_hold_time: "{{ item.hold_time | default(90) }}"
+    connection_idle_hold_time: "{{ item.idle_hold | default(15) }}"
+    enable_mp_bgp: "{{ item.mp_bgp | default(false) }}"
+    enable_sender_side_loop_detection: "{{ item.loop_detection | default(true) }}"
+    reflector_client: "{{ item.rr_client | default('non-client') }}"
+    state: present
+  loop: "{{ panos_bgp_peers }}"
+  notify: commit panos configuration
+  tags:
+    - network
+    - routing
+    - bgp
+  when: panos_bgp_peers is defined
+
+- name: Configure OSPF
+  paloaltonetworks.panos.panos_config_element:
+    provider: "{{ panos_provider }}"
+    xpath: "/config/devices/entry[@name='localhost.localdomain']/network/virtual-router/entry[@name='{{ item.virtual_router | default('default') }}']/protocol/ospf"
+    element: |
+      <enable>yes</enable>
+      <router-id>{{ item.router_id }}</router-id>
+      <reject-default-route>{{ 'yes' if item.reject_default | default(true) else 'no' }}</reject-default-route>
+      <allow-redist-default-route>{{ 'yes' if item.allow_redist_default | default(false) else 'no' }}</allow-redist-default-route>
+  loop: "{{ panos_ospf_configs }}"
+  notify: commit panos configuration
+  tags:
+    - network
+    - routing
+    - ospf
+  when: panos_ospf_configs is defined
+
+- name: Configure OSPF areas
+  paloaltonetworks.panos.panos_config_element:
+    provider: "{{ panos_provider }}"
+    xpath: "/config/devices/entry[@name='localhost.localdomain']/network/virtual-router/entry[@name='{{ item.virtual_router | default('default') }}']/protocol/ospf/area"
+    element: |
+      <entry name="{{ item.area_id }}">
+        <type>
+          <{% if item.area_type | default('normal') == 'stub' %}stub>
+            <accept-summary>{{ 'yes' if item.accept_summary | default(true) else 'no' }}</accept-summary>
+            <default-route>
+              <advertise>
+                <type>ext-2</type>
+              </advertise>
+            </default-route>
+          </stub{% elif item.area_type == 'nssa' %}nssa>
+            <accept-summary>{{ 'yes' if item.accept_summary | default(true) else 'no' }}</accept-summary>
+            <default-route>
+              <advertise>
+                <type>ext-2</type>
+              </advertise>
+            </default-route>
+          </nssa{% else %}normal{% endif %}>
+        </type>
+      </entry>
+  loop: "{{ panos_ospf_areas }}"
+  notify: commit panos configuration
+  tags:
+    - network
+    - routing
+    - ospf
+  when: panos_ospf_areas is defined
+
+- name: Configure OSPF interfaces
+  paloaltonetworks.panos.panos_config_element:
+    provider: "{{ panos_provider }}"
+    xpath: "/config/devices/entry[@name='localhost.localdomain']/network/virtual-router/entry[@name='{{ item.virtual_router | default('default') }}']/protocol/ospf/area/entry[@name='{{ item.area }}']/interface"
+    element: |
+      <entry name="{{ item.interface }}">
+        <enable>yes</enable>
+        <passive>{{ 'yes' if item.passive | default(false) else 'no' }}</passive>
+        <link-type>{{ item.link_type | default('broadcast') }}</link-type>
+        <metric>{{ item.metric | default('10') }}</metric>
+        <priority>{{ item.priority | default('1') }}</priority>
+        <hello-interval>{{ item.hello_interval | default('10') }}</hello-interval>
+        <dead-counts>{{ item.dead_counts | default('4') }}</dead-counts>
+        <retransmit-interval>{{ item.retransmit_interval | default('5') }}</retransmit-interval>
+        <transit-delay>{{ item.transit_delay | default('1') }}</transit-delay>
+        {% if item.authentication is defined %}
+        <authentication>
+          <md5>
+            <key-id>{{ item.auth_key_id }}</key-id>
+            <key>{{ item.auth_key }}</key>
+          </md5>
+        </authentication>
+        {% endif %}
+      </entry>
+  loop: "{{ panos_ospf_interfaces }}"
+  no_log: "{{ item.authentication is defined }}"
+  notify: commit panos configuration
+  tags:
+    - network
+    - routing
+    - ospf
+  when: panos_ospf_interfaces is defined
+
+- name: Configure multicast (PIM)
+  paloaltonetworks.panos.panos_config_element:
+    provider: "{{ panos_provider }}"
+    xpath: "/config/devices/entry[@name='localhost.localdomain']/network/virtual-router/entry[@name='{{ item.virtual_router | default('default') }}']/protocol/pim"
+    element: |
+      <enable>yes</enable>
+      <rp>
+        {% for rp in item.rendezvous_points %}
+        <entry name="{{ rp.address }}">
+          <address>{{ rp.address }}</address>
+          <group>
+            {% for group in rp.groups %}
+            <entry name="{{ group }}"/>
+            {% endfor %}
+          </group>
+        </entry>
+        {% endfor %}
+      </rp>
+  loop: "{{ panos_multicast_configs }}"
+  notify: commit panos configuration
+  tags:
+    - network
+    - multicast
+    - pim
+  when: panos_multicast_configs is defined
+
+- name: Configure PIM on interfaces
+  paloaltonetworks.panos.panos_config_element:
+    provider: "{{ panos_provider }}"
+    xpath: "/config/devices/entry[@name='localhost.localdomain']/network/interface/{{ item.interface_type }}/entry[@name='{{ item.interface }}']/layer3/pim"
+    element: |
+      <enable>yes</enable>
+      <mode>{{ item.pim_mode | default('sparse') }}</mode>
+  loop: "{{ panos_pim_interfaces }}"
+  notify: commit panos configuration
+  tags:
+    - network
+    - multicast
+    - pim
+  when: panos_pim_interfaces is defined
+
+- name: Configure QoS profiles
+  paloaltonetworks.panos.panos_config_element:
+    provider: "{{ panos_provider }}"
+    xpath: "/config/devices/entry[@name='localhost.localdomain']/network/qos/profile"
+    element: |
+      <entry name="{{ item.name }}">
+        <class-bandwidth-type>
+          <mbps>
+            <class>
+              {% for class in item.classes %}
+              <entry name="{{ class.name }}">
+                <priority>{{ class.priority }}</priority>
+                <class-bandwidth>
+                  <mbps>{{ class.bandwidth_mbps }}</mbps>
+                </class-bandwidth>
+              </entry>
+              {% endfor %}
+            </class>
+          </mbps>
+        </class-bandwidth-type>
+      </entry>
+  loop: "{{ panos_qos_profiles }}"
+  notify: commit panos configuration
+  tags:
+    - network
+    - qos
+  when: panos_qos_profiles is defined
+
+- name: Configure link aggregation groups (LAG)
+  paloaltonetworks.panos.panos_aggregate_interface:
+    provider: "{{ panos_provider }}"
+    if_name: "{{ item.name }}"
+    mode: "{{ item.mode | default('layer3') }}"
+    ip: "{{ item.ip | default([]) }}"
+    ipv6_enabled: "{{ item.ipv6_enabled | default(false) }}"
+    management_profile: "{{ item.management_profile | default(omit) }}"
+    mtu: "{{ item.mtu | default(1500) }}"
+    adjust_tcp_mss: "{{ item.adjust_tcp_mss | default(false) }}"
+    netflow_profile: "{{ item.netflow_profile | default(omit) }}"
+    comment: "{{ item.comment | default(omit) }}"
+    state: present
+  loop: "{{ panos_lag_interfaces }}"
+  notify: commit panos configuration
+  tags:
+    - network
+    - lag
+  when: panos_lag_interfaces is defined
+
+- name: Assign physical interfaces to LAG
+  paloaltonetworks.panos.panos_config_element:
+    provider: "{{ panos_provider }}"
+    xpath: "/config/devices/entry[@name='localhost.localdomain']/network/interface/ethernet/entry[@name='{{ item.interface }}']"
+    element: |
+      <aggregate-group>{{ item.lag_group }}</aggregate-group>
+  loop: "{{ panos_lag_members }}"
+  notify: commit panos configuration
+  tags:
+    - network
+    - lag
+  when: panos_lag_members is defined
+
+- name: Enable LLDP globally
+  paloaltonetworks.panos.panos_config_element:
+    provider: "{{ panos_provider }}"
+    xpath: "/config/devices/entry[@name='localhost.localdomain']/network"
+    element: |
+      <lldp>
+        <enable>yes</enable>
+      </lldp>
+  notify: commit panos configuration
+  tags:
+    - network
+    - lldp
+  when: panos_enable_lldp | default(true)
+
+- name: Configure tunnel interfaces (GRE/IPsec)
+  paloaltonetworks.panos.panos_tunnel:
+    provider: "{{ panos_provider }}"
+    if_name: "{{ item.name }}"
+    ip: "{{ item.ip }}"
+    management_profile: "{{ item.management_profile | default(omit) }}"
+    mtu: "{{ item.mtu | default(1500) }}"
+    comment: "{{ item.comment | default(omit) }}"
+    zone_name: "{{ item.zone | default(omit) }}"
+    vr_name: "{{ item.virtual_router | default('default') }}"
+    state: present
+  loop: "{{ panos_tunnel_interfaces }}"
+  notify: commit panos configuration
+  tags:
+    - network
+    - tunnel
+  when: panos_tunnel_interfaces is defined

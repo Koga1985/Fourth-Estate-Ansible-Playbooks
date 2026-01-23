@@ -1,0 +1,58 @@
+---
+# handlers file for gcp_project_management
+
+- name: Refresh project metadata
+  ansible.builtin.command:
+    cmd: gcloud projects describe {{ gcp_project_id }} --format=json
+  register: project_metadata_refresh
+  changed_when: false
+  listen: "refresh project"
+
+- name: Validate organization policies
+  ansible.builtin.command:
+    cmd: >
+      gcloud resource-manager org-policies list
+      --project={{ gcp_project_id }}
+      --format=json
+  register: org_policies_validation
+  changed_when: false
+  listen: "validate policies"
+
+- name: Audit IAM bindings
+  ansible.builtin.command:
+    cmd: >
+      gcloud projects get-iam-policy {{ gcp_project_id }}
+      --format=json
+  register: iam_audit
+  changed_when: false
+  listen: "audit iam"
+
+- name: Check API enablement status
+  ansible.builtin.command:
+    cmd: >
+      gcloud services list
+      --project={{ gcp_project_id }}
+      --enabled
+      --format=json
+  register: api_status
+  changed_when: false
+  listen: "check apis"
+
+- name: Verify VPC Service Controls
+  ansible.builtin.command:
+    cmd: >
+      gcloud access-context-manager perimeters describe {{ gcp_perimeter_name }}
+      --policy={{ gcp_access_policy_name }}
+      --format=json
+  register: vpc_sc_validation
+  changed_when: false
+  failed_when: false
+  listen: "verify vpc sc"
+
+- name: Generate compliance report
+  ansible.builtin.template:
+    src: compliance_report.html.j2
+    dest: "{{ gcp_artifacts_dir }}/{{ gcp_project_id }}_compliance_report.html"
+    mode: '0644'
+  listen: "generate compliance report"
+  when: gcp_artifacts_dir is defined
