@@ -1,0 +1,100 @@
+---
+# tenable_security_center_install/tasks/postgresql.yml
+# PostgreSQL Database Setup for Tenable Security Center
+
+- name: Install PostgreSQL server (RedHat)
+  ansible.builtin.yum:
+    name:
+      - postgresql-server
+      - postgresql-contrib
+      - python3-psycopg2
+    state: present
+  when: ansible_os_family == 'RedHat'
+
+- name: Install PostgreSQL server (Debian)
+  ansible.builtin.apt:
+    name:
+      - postgresql
+      - postgresql-contrib
+      - python3-psycopg2
+    state: present
+  when: ansible_os_family == 'Debian'
+
+- name: Initialize PostgreSQL database
+  ansible.builtin.command:
+    cmd: postgresql-setup --initdb
+    creates: /var/lib/pgsql/data/PG_VERSION
+  when: ansible_os_family == 'RedHat'
+
+- name: Ensure PostgreSQL is started and enabled
+  ansible.builtin.service:
+    name: postgresql
+    state: started
+    enabled: yes
+
+- name: Configure PostgreSQL authentication
+  ansible.builtin.lineinfile:
+    path: "{{ postgresql_config_dir }}/pg_hba.conf"
+    line: "host    {{ tsc_db_name }}    {{ tsc_db_user }}    127.0.0.1/32    md5"
+    insertafter: "# IPv4 local connections:"
+  notify: restart postgresql
+
+- name: Configure PostgreSQL to listen on localhost
+  ansible.builtin.lineinfile:
+    path: "{{ postgresql_config_dir }}/postgresql.conf"
+    regexp: "^#?listen_addresses"
+    line: "listen_addresses = 'localhost'"
+  notify: restart postgresql
+
+- name: Create Security Center database
+  community.postgresql.postgresql_db:
+    name: "{{ tsc_db_name }}"
+    encoding: UTF8
+    lc_collate: en_US.UTF-8
+    lc_ctype: en_US.UTF-8
+    template: template0
+  become: yes
+  become_user: postgres
+
+- name: Create Security Center database user
+  community.postgresql.postgresql_user:
+    name: "{{ tsc_db_user }}"
+    password: "{{ tsc_db_password }}"
+    db: "{{ tsc_db_name }}"
+    priv: ALL
+    encrypted: yes
+  become: yes
+  become_user: postgres
+  no_log: true
+
+- name: Grant all privileges to Security Center user
+  community.postgresql.postgresql_privs:
+    database: "{{ tsc_db_name }}"
+    state: present
+    privs: ALL
+    type: database
+    role: "{{ tsc_db_user }}"
+  become: yes
+  become_user: postgres
+
+- name: Configure PostgreSQL performance settings
+  ansible.builtin.blockinfile:
+    path: "{{ postgresql_config_dir }}/postgresql.conf"
+    block: |
+      # Tenable Security Center Performance Settings
+      shared_buffers = {{ tsc_pg_shared_buffers }}
+      effective_cache_size = {{ tsc_pg_effective_cache_size }}
+      maintenance_work_mem = {{ tsc_pg_maintenance_work_mem }}
+      checkpoint_completion_target = 0.9
+      wal_buffers = 16MB
+      default_statistics_target = 100
+      random_page_cost = 1.1
+      effective_io_concurrency = 200
+      work_mem = 4MB
+      min_wal_size = 1GB
+      max_wal_size = 4GB
+      max_worker_processes = 4
+      max_parallel_workers_per_gather = 2
+      max_parallel_workers = 4
+    marker: "# {mark} TENABLE SC SETTINGS"
+  notify: restart postgresql

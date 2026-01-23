@@ -1,1 +1,388 @@
 ---
+# ServiceNow CI Discovery Role - Main Tasks
+
+- name: Validate ServiceNow connection parameters
+  ansible.builtin.assert:
+    that:
+      - servicenow_instance is defined
+      - servicenow_instance | length > 0
+      - servicenow_username is defined or (servicenow_client_id is defined and servicenow_client_secret is defined)
+    fail_msg: "ServiceNow connection parameters must be defined"
+    success_msg: "ServiceNow connection parameters validated"
+
+- name: Create discovery credential records
+  ansible.builtin.uri:
+    url: "https://{{ servicenow_instance }}.service-now.com/api/now/table/discovery_credentials"
+    method: POST
+    user: "{{ servicenow_username }}"
+    password: "{{ servicenow_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ servicenow_validate_certs }}"
+    body_format: json
+    body:
+      name: "{{ item.name }}"
+      type: "{{ item.type }}"
+      username: "{{ item.username | default('') }}"
+      password: "{{ item.password | default('') }}"
+    status_code: [200, 201]
+  loop: "{{ discovery_credentials }}"
+  when:
+    - ci_discovery_mode in ['discover', 'schedule']
+    - item.type in ['snmp', 'ssh', 'wmi']
+  register: credential_result
+  changed_when: credential_result.status == 201
+  failed_when: false
+  no_log: true
+
+- name: Discover AWS EC2 Instances
+  amazon.aws.ec2_instance_info:
+    region: "{{ item }}"
+    aws_access_key: "{{ aws_discovery.credentials.access_key }}"
+    aws_secret_key: "{{ aws_discovery.credentials.secret_key }}"
+    aws_security_token: "{{ aws_discovery.credentials.session_token | default(omit) }}"
+    filters: "{{ aws_discovery.resources.ec2.tag_filters | default(omit) }}"
+  loop: "{{ aws_discovery.regions }}"
+  when:
+    - ci_discovery_mode in ['discover']
+    - aws_discovery.enabled | default(true)
+    - aws_discovery.resources.ec2.enabled | default(true)
+  register: aws_ec2_discovery
+  delegate_to: localhost
+
+- name: Create/Update AWS EC2 CIs in ServiceNow
+  servicenow.servicenow.snow_record:
+    instance: "{{ servicenow_instance }}"
+    username: "{{ servicenow_username }}"
+    password: "{{ servicenow_password }}"
+    table: "{{ aws_discovery.ci_mapping.ec2 }}"
+    state: present
+    lookup_field: object_id
+    data:
+      name: "{{ item.1.tags.Name | default(item.1.instance_id) }}"
+      object_id: "{{ item.1.instance_id }}"
+      ip_address: "{{ item.1.private_ip_address | default('') }}"
+      dns_domain: "{{ item.1.private_dns_name | default('') }}"
+      virtual: true
+      sys_class_name: "{{ aws_discovery.ci_mapping.ec2 }}"
+      u_cloud_provider: "AWS"
+      u_cloud_region: "{{ item.0 }}"
+      u_instance_type: "{{ item.1.instance_type }}"
+      operational_status: "{{ '1' if item.1.state.name == 'running' else '2' }}"
+      discovery_source: "AWS API"
+      last_discovered: "{{ ansible_date_time.iso8601 }}"
+  loop: "{{ aws_ec2_discovery.results | subelements('instances', skip_missing=True) }}"
+  when:
+    - aws_ec2_discovery is defined
+    - aws_ec2_discovery.results is defined
+    - discovery_results.create_new_cis | default(true)
+  notify: discovery completed
+
+- name: Discover AWS RDS Databases
+  community.aws.rds_instance_info:
+    region: "{{ item }}"
+    aws_access_key: "{{ aws_discovery.credentials.access_key }}"
+    aws_secret_key: "{{ aws_discovery.credentials.secret_key }}"
+  loop: "{{ aws_discovery.regions }}"
+  when:
+    - ci_discovery_mode in ['discover']
+    - aws_discovery.enabled | default(true)
+    - aws_discovery.resources.rds.enabled | default(true)
+  register: aws_rds_discovery
+  delegate_to: localhost
+
+- name: Create/Update AWS RDS CIs in ServiceNow
+  servicenow.servicenow.snow_record:
+    instance: "{{ servicenow_instance }}"
+    username: "{{ servicenow_username }}"
+    password: "{{ servicenow_password }}"
+    table: "{{ aws_discovery.ci_mapping.rds }}"
+    state: present
+    lookup_field: object_id
+    data:
+      name: "{{ item.1.db_instance_identifier }}"
+      object_id: "{{ item.1.db_instance_identifier }}"
+      dns_domain: "{{ item.1.endpoint.address | default('') }}"
+      sys_class_name: "{{ aws_discovery.ci_mapping.rds }}"
+      u_cloud_provider: "AWS"
+      u_cloud_region: "{{ item.0 }}"
+      u_database_engine: "{{ item.1.engine }}"
+      u_database_version: "{{ item.1.engine_version }}"
+      operational_status: "{{ '1' if item.1.db_instance_status == 'available' else '2' }}"
+      discovery_source: "AWS API"
+      last_discovered: "{{ ansible_date_time.iso8601 }}"
+  loop: "{{ aws_rds_discovery.results | subelements('instances', skip_missing=True) }}"
+  when:
+    - aws_rds_discovery is defined
+    - aws_rds_discovery.results is defined
+    - discovery_results.create_new_cis | default(true)
+  notify: discovery completed
+
+- name: Discover Azure Virtual Machines
+  azure.azcollection.azure_rm_virtualmachine_info:
+    resource_group: "{{ item }}"
+  loop: "{{ azure_discovery.resource_groups | default(['']) }}"
+  when:
+    - ci_discovery_mode in ['discover']
+    - azure_discovery.enabled | default(true)
+    - azure_discovery.resources.virtual_machines.enabled | default(true)
+    - item | length > 0
+  register: azure_vm_discovery
+  delegate_to: localhost
+
+- name: Create/Update Azure VM CIs in ServiceNow
+  servicenow.servicenow.snow_record:
+    instance: "{{ servicenow_instance }}"
+    username: "{{ servicenow_username }}"
+    password: "{{ servicenow_password }}"
+    table: "{{ azure_discovery.ci_mapping.virtual_machines }}"
+    state: present
+    lookup_field: object_id
+    data:
+      name: "{{ item.1.name }}"
+      object_id: "{{ item.1.id }}"
+      sys_class_name: "{{ azure_discovery.ci_mapping.virtual_machines }}"
+      virtual: true
+      u_cloud_provider: "Azure"
+      u_cloud_region: "{{ item.1.location }}"
+      u_instance_type: "{{ item.1.vm_size }}"
+      operational_status: "{{ '1' if item.1.power_state == 'running' else '2' }}"
+      discovery_source: "Azure API"
+      last_discovered: "{{ ansible_date_time.iso8601 }}"
+  loop: "{{ azure_vm_discovery.results | subelements('vms', skip_missing=True) }}"
+  when:
+    - azure_vm_discovery is defined
+    - azure_vm_discovery.results is defined
+    - discovery_results.create_new_cis | default(true)
+  notify: discovery completed
+
+- name: Discover VMware Virtual Machines
+  community.vmware.vmware_vm_info:
+    hostname: "{{ item.hostname }}"
+    username: "{{ item.username }}"
+    password: "{{ item.password }}"
+    port: "{{ item.port }}"
+    validate_certs: "{{ item.validate_certs }}"
+    vm_type: vm
+  loop: "{{ vmware_discovery.vcenter_hosts }}"
+  when:
+    - ci_discovery_mode in ['discover']
+    - vmware_discovery.enabled | default(true)
+    - item.hostname | length > 0
+  register: vmware_vm_discovery
+  delegate_to: localhost
+
+- name: Create/Update VMware VM CIs in ServiceNow
+  servicenow.servicenow.snow_record:
+    instance: "{{ servicenow_instance }}"
+    username: "{{ servicenow_username }}"
+    password: "{{ servicenow_password }}"
+    table: "{{ vmware_discovery.ci_mapping.virtual_machines }}"
+    state: present
+    lookup_field: object_id
+    data:
+      name: "{{ item.1.guest_name }}"
+      object_id: "{{ item.1.uuid }}"
+      ip_address: "{{ item.1.ip_address | default('') }}"
+      dns_domain: "{{ item.1.guest_fullname | default('') }}"
+      sys_class_name: "{{ vmware_discovery.ci_mapping.virtual_machines }}"
+      virtual: true
+      u_hypervisor: "VMware"
+      u_vcenter_host: "{{ item.0.hostname }}"
+      operational_status: "{{ '1' if item.1.power_state == 'poweredOn' else '2' }}"
+      discovery_source: "VMware vCenter"
+      last_discovered: "{{ ansible_date_time.iso8601 }}"
+  loop: "{{ vmware_vm_discovery.results | subelements('virtual_machines', skip_missing=True) }}"
+  when:
+    - vmware_vm_discovery is defined
+    - vmware_vm_discovery.results is defined
+    - discovery_results.create_new_cis | default(true)
+  notify: discovery completed
+
+- name: Discover Kubernetes Clusters and Nodes
+  kubernetes.core.k8s_info:
+    kind: Node
+    kubeconfig: "{{ item.kubeconfig }}"
+    context: "{{ item.context | default(omit) }}"
+  loop: "{{ kubernetes_discovery.clusters }}"
+  when:
+    - ci_discovery_mode in ['discover']
+    - kubernetes_discovery.enabled | default(true)
+  register: k8s_node_discovery
+  delegate_to: localhost
+
+- name: Create/Update Kubernetes Node CIs in ServiceNow
+  servicenow.servicenow.snow_record:
+    instance: "{{ servicenow_instance }}"
+    username: "{{ servicenow_username }}"
+    password: "{{ servicenow_password }}"
+    table: "{{ kubernetes_discovery.ci_mapping.nodes }}"
+    state: present
+    lookup_field: object_id
+    data:
+      name: "{{ item.1.metadata.name }}"
+      object_id: "{{ item.1.metadata.uid }}"
+      sys_class_name: "{{ kubernetes_discovery.ci_mapping.nodes }}"
+      u_cluster_name: "{{ item.0.name }}"
+      u_node_role: "{{ item.1.metadata.labels['kubernetes.io/role'] | default('worker') }}"
+      operational_status: "{{ '1' if item.1.status.conditions | selectattr('type', 'equalto', 'Ready') | selectattr('status', 'equalto', 'True') | list | length > 0 else '2' }}"
+      discovery_source: "Kubernetes API"
+      last_discovered: "{{ ansible_date_time.iso8601 }}"
+  loop: "{{ k8s_node_discovery.results | subelements('resources', skip_missing=True) }}"
+  when:
+    - k8s_node_discovery is defined
+    - k8s_node_discovery.results is defined
+    - discovery_results.create_new_cis | default(true)
+  notify: discovery completed
+
+- name: Create Discovery Schedules in ServiceNow
+  ansible.builtin.uri:
+    url: "https://{{ servicenow_instance }}.service-now.com/api/now/table/discovery_schedule"
+    method: POST
+    user: "{{ servicenow_username }}"
+    password: "{{ servicenow_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ servicenow_validate_certs }}"
+    body_format: json
+    body:
+      name: "{{ item.name }}"
+      active: "{{ item.enabled }}"
+      schedule: "{{ item.schedule }}"
+      discovery_source: "{{ item.discovery_source }}"
+      type: "scheduled"
+    status_code: [200, 201]
+  loop: "{{ ci_discovery_schedules }}"
+  when:
+    - ci_discovery_mode in ['schedule']
+    - item.enabled | default(true)
+  register: schedule_result
+  changed_when: schedule_result.status == 201
+  failed_when: false
+
+- name: Configure Service Mapping for Fourth Estate Systems
+  ansible.builtin.uri:
+    url: "https://{{ servicenow_instance }}.service-now.com/api/now/table/sa_pattern"
+    method: POST
+    user: "{{ servicenow_username }}"
+    password: "{{ servicenow_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ servicenow_validate_certs }}"
+    body_format: json
+    body:
+      name: "{{ item.name }}"
+      active: true
+      ci_class: "{{ item.ci_class }}"
+      description: "Fourth Estate {{ item.name }} discovery pattern"
+    status_code: [200, 201]
+  loop: "{{ service_mapping.map_services }}"
+  when:
+    - ci_discovery_mode in ['discover', 'schedule']
+    - service_mapping.enabled | default(true)
+    - fourth_estate_discovery.enabled | default(true)
+  register: service_map_result
+  changed_when: service_map_result.status == 201
+  failed_when: false
+
+- name: Discover Journalist Workstations
+  ansible.builtin.uri:
+    url: "https://{{ servicenow_instance }}.service-now.com/api/now/table/cmdb_ci_journalist_workstation"
+    method: GET
+    user: "{{ servicenow_username }}"
+    password: "{{ servicenow_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ servicenow_validate_certs }}"
+    return_content: true
+  when:
+    - ci_discovery_mode in ['discover', 'report']
+    - fourth_estate_discovery.journalist_workstation_discovery.enabled | default(true)
+  register: journalist_workstation_query
+
+- name: Apply Discovery Patterns
+  ansible.builtin.uri:
+    url: "https://{{ servicenow_instance }}.service-now.com/api/now/table/discovery_pattern"
+    method: POST
+    user: "{{ servicenow_username }}"
+    password: "{{ servicenow_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ servicenow_validate_certs }}"
+    body_format: json
+    body:
+      name: "{{ item.name }}"
+      ci_class: "{{ item.ci_class }}"
+      ports: "{{ item.ports | join(',') }}"
+      processes: "{{ item.process_names | join(',') }}"
+      active: true
+    status_code: [200, 201]
+  loop: "{{ discovery_patterns }}"
+  when: ci_discovery_mode in ['discover', 'schedule']
+  register: pattern_result
+  changed_when: pattern_result.status == 201
+  failed_when: false
+
+- name: Run CI Reconciliation
+  ansible.builtin.uri:
+    url: "https://{{ servicenow_instance }}.service-now.com/api/now/table/cmdb_reconciliation_job"
+    method: POST
+    user: "{{ servicenow_username }}"
+    password: "{{ servicenow_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ servicenow_validate_certs }}"
+    body_format: json
+    body:
+      type: "full_reconciliation"
+      auto_reconcile: "{{ discovery_results.auto_reconcile }}"
+      create_new_cis: "{{ discovery_results.create_new_cis }}"
+      update_existing_cis: "{{ discovery_results.update_existing_cis }}"
+    status_code: [200, 201, 202]
+  when:
+    - ci_discovery_mode in ['discover']
+    - discovery_results.auto_reconcile | default(true)
+  register: reconciliation_job
+
+- name: Wait for Reconciliation Job Completion
+  ansible.builtin.uri:
+    url: "https://{{ servicenow_instance }}.service-now.com/api/now/table/cmdb_reconciliation_job/{{ reconciliation_job.json.result.sys_id }}"
+    method: GET
+    user: "{{ servicenow_username }}"
+    password: "{{ servicenow_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ servicenow_validate_certs }}"
+    return_content: true
+  register: reconciliation_status
+  until: reconciliation_status.json.result.state in ['completed', 'failed']
+  retries: 30
+  delay: 10
+  when:
+    - reconciliation_job is defined
+    - reconciliation_job.json is defined
+
+- name: Query Discovery Results
+  ansible.builtin.uri:
+    url: "https://{{ servicenow_instance }}.service-now.com/api/now/stats/cmdb_ci?sysparm_count=true&sysparm_query=last_discoveredONToday@javascript:gs.beginningOfToday()@javascript:gs.endOfToday()"
+    method: GET
+    user: "{{ servicenow_username }}"
+    password: "{{ servicenow_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ servicenow_validate_certs }}"
+    return_content: true
+  when: ci_discovery_mode in ['report', 'validate']
+  register: discovery_stats
+
+- name: Generate Discovery Report
+  ansible.builtin.template:
+    src: discovery_report.md.j2
+    dest: "{{ playbook_dir }}/reports/ci_discovery_report_{{ ansible_date_time.iso8601_basic_short }}.md"
+    mode: '0644'
+  when: ci_discovery_mode in ['report']
+  delegate_to: localhost
+
+- name: Summary - CI Discovery
+  ansible.builtin.debug:
+    msg:
+      - "CI Discovery completed successfully"
+      - "Mode: {{ ci_discovery_mode }}"
+      - "AWS Discovery: {{ aws_discovery.enabled | default(false) }}"
+      - "Azure Discovery: {{ azure_discovery.enabled | default(false) }}"
+      - "VMware Discovery: {{ vmware_discovery.enabled | default(false) }}"
+      - "Kubernetes Discovery: {{ kubernetes_discovery.enabled | default(false) }}"
+      - "Fourth Estate Discovery: {{ fourth_estate_discovery.enabled | default(false) }}"
+      - "CIs Discovered Today: {{ discovery_stats.json.stats.count | default('N/A') if discovery_stats is defined else 'N/A' }}"

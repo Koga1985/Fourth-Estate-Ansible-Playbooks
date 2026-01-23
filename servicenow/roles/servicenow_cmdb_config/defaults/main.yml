@@ -1,1 +1,297 @@
 ---
+# ServiceNow CMDB Configuration Role - Default Variables
+
+# ServiceNow instance connection
+servicenow_instance: "{{ lookup('env', 'SN_INSTANCE') }}"
+servicenow_username: "{{ lookup('env', 'SN_USERNAME') }}"
+servicenow_password: "{{ lookup('env', 'SN_PASSWORD') }}"
+servicenow_client_id: "{{ lookup('env', 'SN_CLIENT_ID') | default('') }}"
+servicenow_client_secret: "{{ lookup('env', 'SN_CLIENT_SECRET') | default('') }}"
+servicenow_timeout: 30
+servicenow_validate_certs: true
+
+# CMDB Configuration
+cmdb_config_mode: "configure"  # configure, validate, report
+
+# CI Class Configuration
+cmdb_ci_classes:
+  - name: "cmdb_ci_server"
+    label: "Server"
+    parent_class: "cmdb_ci_hardware"
+    attributes:
+      - { name: "source_protection_level", type: "string", mandatory: false }
+      - { name: "journalist_accessible", type: "boolean", mandatory: false }
+      - { name: "publication_tier", type: "choice", choices: ["production", "staging", "development"] }
+  - name: "cmdb_ci_journalist_workstation"
+    label: "Journalist Workstation"
+    parent_class: "cmdb_ci_computer"
+    attributes:
+      - { name: "shield_law_compliant", type: "boolean", mandatory: true }
+      - { name: "source_protection_enabled", type: "boolean", mandatory: true }
+      - { name: "encryption_status", type: "choice", choices: ["full_disk", "partial", "none"] }
+      - { name: "assigned_journalist", type: "reference", reference_table: "sys_user" }
+  - name: "cmdb_ci_publication_system"
+    label: "Publication System"
+    parent_class: "cmdb_ci_service"
+    attributes:
+      - { name: "publication_type", type: "choice", choices: ["web", "mobile", "print"] }
+      - { name: "content_management_system", type: "string", mandatory: false }
+      - { name: "audience_reach", type: "string", mandatory: false }
+  - name: "cmdb_ci_content_management"
+    label: "Content Management System"
+    parent_class: "cmdb_ci_service"
+    attributes:
+      - { name: "cms_platform", type: "string", mandatory: false }
+      - { name: "editorial_workflow_enabled", type: "boolean", mandatory: false }
+      - { name: "version_control_integration", type: "string", mandatory: false }
+  - name: "cmdb_ci_web_property"
+    label: "Web Property"
+    parent_class: "cmdb_ci_service"
+    attributes:
+      - { name: "domain_name", type: "string", mandatory: true }
+      - { name: "cdn_enabled", type: "boolean", mandatory: false }
+      - { name: "ssl_certificate_expiry", type: "date", mandatory: false }
+
+# Relationship Types
+cmdb_relationship_types:
+  - name: "Hosts::Hosted by"
+    parent_descriptor: "Hosts"
+    child_descriptor: "Hosted by"
+    applies_to:
+      - { parent: "cmdb_ci_server", child: "cmdb_ci_service" }
+      - { parent: "cmdb_ci_vm_instance", child: "cmdb_ci_service" }
+  - name: "Depends on::Used by"
+    parent_descriptor: "Depends on"
+    child_descriptor: "Used by"
+    applies_to:
+      - { parent: "cmdb_ci_service", child: "cmdb_ci_service" }
+      - { parent: "cmdb_ci_database", child: "cmdb_ci_service" }
+  - name: "Protects::Protected by"
+    parent_descriptor: "Protects"
+    child_descriptor: "Protected by"
+    applies_to:
+      - { parent: "cmdb_ci_firewall", child: "cmdb_ci_server" }
+      - { parent: "cmdb_ci_firewall", child: "cmdb_ci_service" }
+  - name: "Manages::Managed by"
+    parent_descriptor: "Manages"
+    child_descriptor: "Managed by"
+    applies_to:
+      - { parent: "cmdb_ci_journalist_workstation", child: "sys_user" }
+
+# Reconciliation Rules
+cmdb_reconciliation_rules:
+  - name: "Server Reconciliation by Serial Number"
+    table: "cmdb_ci_server"
+    priority: 1
+    match_fields:
+      - "serial_number"
+    conditions:
+      - field: "serial_number"
+        operator: "is not empty"
+    active: true
+  - name: "Server Reconciliation by MAC Address"
+    table: "cmdb_ci_server"
+    priority: 2
+    match_fields:
+      - "mac_address"
+    conditions:
+      - field: "mac_address"
+        operator: "is not empty"
+    active: true
+  - name: "Server Reconciliation by Hostname and IP"
+    table: "cmdb_ci_server"
+    priority: 3
+    match_fields:
+      - "name"
+      - "ip_address"
+    conditions:
+      - field: "name"
+        operator: "is not empty"
+      - field: "ip_address"
+        operator: "is not empty"
+    active: true
+  - name: "Network Device Reconciliation"
+    table: "cmdb_ci_netgear"
+    priority: 1
+    match_fields:
+      - "serial_number"
+      - "mac_address"
+    conditions:
+      - field: "serial_number"
+        operator: "is not empty"
+    active: true
+  - name: "Journalist Workstation Reconciliation"
+    table: "cmdb_ci_journalist_workstation"
+    priority: 1
+    match_fields:
+      - "asset_tag"
+      - "serial_number"
+    conditions:
+      - field: "asset_tag"
+        operator: "is not empty"
+    active: true
+
+# Identification Rules
+cmdb_identification_rules:
+  - name: "AWS EC2 Instance Identification"
+    table: "cmdb_ci_vm_instance"
+    data_source: "AWS Discovery"
+    identifiers:
+      - { field: "object_id", value: "instance-*", operator: "starts with" }
+      - { field: "virtual", value: "true", operator: "=" }
+    priority: 10
+  - name: "Azure VM Identification"
+    table: "cmdb_ci_vm_instance"
+    data_source: "Azure Discovery"
+    identifiers:
+      - { field: "correlation_id", value: "*azure*", operator: "contains" }
+      - { field: "virtual", value: "true", operator: "=" }
+    priority: 10
+  - name: "Physical Server Identification"
+    table: "cmdb_ci_server"
+    data_source: "Discovery"
+    identifiers:
+      - { field: "virtual", value: "false", operator: "=" }
+      - { field: "serial_number", operator: "is not empty" }
+    priority: 5
+
+# Data Sources Configuration
+cmdb_data_sources:
+  - name: "AWS Cloud Discovery"
+    type: "cloud_api"
+    provider: "aws"
+    enabled: true
+    schedule: "0 */6 * * *"  # Every 6 hours
+    credentials_alias: "aws_cmdb_discovery"
+    discovery_scope:
+      - ec2
+      - rds
+      - s3
+      - eks
+      - elb
+  - name: "Azure Cloud Discovery"
+    type: "cloud_api"
+    provider: "azure"
+    enabled: true
+    schedule: "0 */6 * * *"
+    credentials_alias: "azure_cmdb_discovery"
+    discovery_scope:
+      - virtual_machines
+      - sql_databases
+      - aks
+      - storage_accounts
+  - name: "VMware vCenter Discovery"
+    type: "vmware"
+    enabled: true
+    schedule: "0 */4 * * *"  # Every 4 hours
+    vcenter_host: "{{ vcenter_host | default('') }}"
+    credentials_alias: "vmware_discovery"
+  - name: "Ansible Inventory"
+    type: "ansible"
+    enabled: true
+    schedule: "0 * * * *"  # Hourly
+    inventory_sources:
+      - dynamic_aws
+      - dynamic_azure
+      - static_inventory
+  - name: "Network Discovery"
+    type: "snmp"
+    enabled: true
+    schedule: "0 */12 * * *"  # Every 12 hours
+    ip_ranges:
+      - "{{ network_discovery_ranges | default([]) }}"
+
+# CMDB Health Configuration
+cmdb_health_checks:
+  - name: "Duplicate CI Check"
+    enabled: true
+    severity: "high"
+    tables:
+      - cmdb_ci_server
+      - cmdb_ci_netgear
+      - cmdb_ci_database
+  - name: "Orphaned CI Check"
+    enabled: true
+    severity: "medium"
+    tables:
+      - cmdb_ci_service
+  - name: "Stale CI Check"
+    enabled: true
+    severity: "low"
+    age_threshold_days: 90
+  - name: "Missing Mandatory Attributes"
+    enabled: true
+    severity: "high"
+    tables:
+      - cmdb_ci_journalist_workstation
+      - cmdb_ci_server
+
+# CMDB Metrics
+cmdb_metrics_enabled: true
+cmdb_metrics_collection:
+  - metric: "total_ci_count"
+    tables: "all"
+  - metric: "ci_accuracy_score"
+    threshold: 95
+  - metric: "duplicate_ci_count"
+    threshold: 10
+  - metric: "stale_ci_count"
+    threshold: 50
+  - metric: "relationship_accuracy"
+    threshold: 90
+
+# Fourth Estate Specific Configuration
+fourth_estate_config:
+  source_protection:
+    enabled: true
+    classification_levels:
+      - confidential_source
+      - protected_source
+      - public_source
+    retention_policies:
+      confidential_source: "7_years"
+      protected_source: "5_years"
+      public_source: "3_years"
+  journalist_workstation_tracking:
+    enabled: true
+    mandatory_attributes:
+      - shield_law_compliant
+      - source_protection_enabled
+      - encryption_status
+      - assigned_journalist
+  publication_system_tracking:
+    enabled: true
+    track_audience_metrics: true
+    track_publication_schedule: true
+  compliance_requirements:
+    - name: "Shield Law Compliance"
+      description: "Ensure journalist workstations comply with shield law requirements"
+      enabled: true
+    - name: "Source Protection"
+      description: "Track and protect confidential source information"
+      enabled: true
+    - name: "Evidence Preservation"
+      description: "Maintain chain of custody for legal holds"
+      enabled: true
+
+# Audit Configuration
+cmdb_audit_enabled: true
+cmdb_audit_tables:
+  - cmdb_ci_journalist_workstation
+  - cmdb_ci_server
+  - cmdb_ci_publication_system
+  - cmdb_ci_content_management
+
+# Notification Settings
+cmdb_notifications:
+  enabled: true
+  channels:
+    - email
+    - slack
+  recipients:
+    - "{{ cmdb_admin_email | default('cmdb-admin@example.com') }}"
+  events:
+    - duplicate_ci_detected
+    - reconciliation_conflict
+    - stale_ci_threshold_exceeded
+    - health_check_failed

@@ -1,1 +1,343 @@
 ---
+# ServiceNow CI Discovery Role - Default Variables
+
+# ServiceNow instance connection
+servicenow_instance: "{{ lookup('env', 'SN_INSTANCE') }}"
+servicenow_username: "{{ lookup('env', 'SN_USERNAME') }}"
+servicenow_password: "{{ lookup('env', 'SN_PASSWORD') }}"
+servicenow_client_id: "{{ lookup('env', 'SN_CLIENT_ID') | default('') }}"
+servicenow_client_secret: "{{ lookup('env', 'SN_CLIENT_SECRET') | default('') }}"
+servicenow_timeout: 60
+servicenow_validate_certs: true
+
+# Discovery Mode
+ci_discovery_mode: "discover"  # discover, schedule, validate, report
+
+# Discovery Schedules
+ci_discovery_schedules:
+  - name: "AWS Cloud Discovery"
+    enabled: true
+    schedule: "0 */6 * * *"  # Every 6 hours
+    discovery_source: "aws"
+  - name: "Azure Cloud Discovery"
+    enabled: true
+    schedule: "0 */6 * * *"
+    discovery_source: "azure"
+  - name: "VMware Discovery"
+    enabled: true
+    schedule: "0 */4 * * *"  # Every 4 hours
+    discovery_source: "vmware"
+  - name: "Physical Server Discovery"
+    enabled: true
+    schedule: "0 2 * * *"  # Daily at 2 AM
+    discovery_source: "snmp"
+  - name: "Network Device Discovery"
+    enabled: true
+    schedule: "0 */12 * * *"  # Every 12 hours
+    discovery_source: "snmp"
+  - name: "Kubernetes Discovery"
+    enabled: true
+    schedule: "0 * * * *"  # Hourly
+    discovery_source: "kubernetes"
+
+# AWS Discovery Configuration
+aws_discovery:
+  enabled: true
+  regions:
+    - us-east-1
+    - us-west-2
+    - eu-west-1
+  resources:
+    ec2:
+      enabled: true
+      include_tags: true
+      tag_filters:
+        - { key: "Environment", values: ["production", "staging"] }
+        - { key: "ManagedBy", values: ["ansible"] }
+    rds:
+      enabled: true
+      include_backups: true
+    s3:
+      enabled: true
+      inventory_enabled: true
+    eks:
+      enabled: true
+      include_nodes: true
+    elb:
+      enabled: true
+      include_target_groups: true
+    lambda:
+      enabled: true
+    dynamodb:
+      enabled: true
+  credentials:
+    access_key: "{{ lookup('env', 'AWS_ACCESS_KEY_ID') }}"
+    secret_key: "{{ lookup('env', 'AWS_SECRET_ACCESS_KEY') }}"
+    session_token: "{{ lookup('env', 'AWS_SESSION_TOKEN') | default('') }}"
+  ci_mapping:
+    ec2: "cmdb_ci_vm_instance"
+    rds: "cmdb_ci_database"
+    s3: "cmdb_ci_storage_device"
+    eks: "cmdb_ci_cluster"
+    elb: "cmdb_ci_lb_pool"
+
+# Azure Discovery Configuration
+azure_discovery:
+  enabled: true
+  subscriptions:
+    - "{{ azure_subscription_id | default('') }}"
+  resource_groups:
+    - "{{ azure_resource_groups | default([]) }}"
+  resources:
+    virtual_machines:
+      enabled: true
+      include_tags: true
+    sql_databases:
+      enabled: true
+      include_elastic_pools: true
+    aks:
+      enabled: true
+      include_node_pools: true
+    storage_accounts:
+      enabled: true
+    app_services:
+      enabled: true
+    load_balancers:
+      enabled: true
+  credentials:
+    client_id: "{{ lookup('env', 'AZURE_CLIENT_ID') }}"
+    client_secret: "{{ lookup('env', 'AZURE_CLIENT_SECRET') }}"
+    tenant_id: "{{ lookup('env', 'AZURE_TENANT_ID') }}"
+  ci_mapping:
+    virtual_machines: "cmdb_ci_vm_instance"
+    sql_databases: "cmdb_ci_database"
+    aks: "cmdb_ci_cluster"
+    storage_accounts: "cmdb_ci_storage_device"
+    app_services: "cmdb_ci_app_server"
+
+# VMware Discovery Configuration
+vmware_discovery:
+  enabled: true
+  vcenter_hosts:
+    - hostname: "{{ vcenter_hostname | default('') }}"
+      username: "{{ vcenter_username | default('') }}"
+      password: "{{ vcenter_password | default('') }}"
+      port: 443
+      validate_certs: false
+  discovery_scope:
+    - virtual_machines
+    - hosts
+    - clusters
+    - datastores
+    - networks
+  vm_filters:
+    power_state: ["poweredOn"]
+    guest_os: []  # Empty means all
+  ci_mapping:
+    virtual_machines: "cmdb_ci_vmware_instance"
+    hosts: "cmdb_ci_esx_server"
+    clusters: "cmdb_ci_cluster"
+    datastores: "cmdb_ci_storage_device"
+
+# Physical Server Discovery Configuration
+physical_discovery:
+  enabled: true
+  discovery_methods:
+    - snmp
+    - wmi
+    - ssh
+  snmp_config:
+    version: "2c"
+    community: "{{ snmp_community | default('public') }}"
+    port: 161
+    timeout: 5
+  wmi_config:
+    username: "{{ wmi_username | default('') }}"
+    password: "{{ wmi_password | default('') }}"
+    domain: "{{ wmi_domain | default('') }}"
+  ssh_config:
+    username: "{{ ssh_username | default('ansible') }}"
+    private_key: "{{ ssh_private_key | default('~/.ssh/id_rsa') }}"
+    port: 22
+  ip_ranges:
+    - "{{ physical_discovery_ranges | default([]) }}"
+  ci_mapping:
+    servers: "cmdb_ci_server"
+
+# Network Device Discovery Configuration
+network_discovery:
+  enabled: true
+  discovery_methods:
+    - snmp
+  snmp_config:
+    version: "2c"
+    community: "{{ snmp_community | default('public') }}"
+    port: 161
+    timeout: 5
+  device_types:
+    - router
+    - switch
+    - firewall
+    - load_balancer
+  ip_ranges:
+    - "{{ network_discovery_ranges | default([]) }}"
+  ci_mapping:
+    router: "cmdb_ci_ip_router"
+    switch: "cmdb_ci_ip_switch"
+    firewall: "cmdb_ci_firewall"
+    load_balancer: "cmdb_ci_lb_pool"
+
+# Kubernetes Discovery Configuration
+kubernetes_discovery:
+  enabled: true
+  clusters:
+    - name: "production-cluster"
+      kubeconfig: "{{ lookup('env', 'KUBECONFIG') | default('~/.kube/config') }}"
+      context: "{{ k8s_context | default('') }}"
+      namespaces: []  # Empty means all
+  resources:
+    - nodes
+    - pods
+    - services
+    - deployments
+    - statefulsets
+    - configmaps
+    - persistentvolumes
+  ci_mapping:
+    cluster: "cmdb_ci_cluster"
+    nodes: "cmdb_ci_server"
+    pods: "cmdb_ci_app_server_instance"
+    services: "cmdb_ci_service"
+    deployments: "cmdb_ci_app_server"
+
+# Discovery Patterns
+discovery_patterns:
+  - name: "Database Server Pattern"
+    ports:
+      - 3306  # MySQL
+      - 5432  # PostgreSQL
+      - 1433  # MS SQL
+      - 1521  # Oracle
+    process_names:
+      - mysqld
+      - postgres
+      - sqlservr
+      - oracle
+    ci_class: "cmdb_ci_database"
+  - name: "Web Server Pattern"
+    ports:
+      - 80
+      - 443
+      - 8080
+      - 8443
+    process_names:
+      - httpd
+      - nginx
+      - apache2
+    ci_class: "cmdb_ci_web_server"
+  - name: "Application Server Pattern"
+    ports:
+      - 8080
+      - 9080
+      - 8009
+    process_names:
+      - java
+      - tomcat
+      - jboss
+    ci_class: "cmdb_ci_app_server"
+
+# Service Mapping Configuration
+service_mapping:
+  enabled: true
+  discovery_methods:
+    - network_traffic
+    - application_dependencies
+    - database_connections
+  map_services:
+    - name: "Web Publication Service"
+      entry_points:
+        - type: "load_balancer"
+          identifier: "web-lb-*"
+      ci_class: "cmdb_ci_publication_system"
+    - name: "Content Management Service"
+      entry_points:
+        - type: "web_server"
+          identifier: "cms-*"
+      ci_class: "cmdb_ci_content_management"
+
+# Credential Management
+discovery_credentials:
+  - name: "aws_cmdb_discovery"
+    type: "aws"
+    username: "{{ aws_discovery.credentials.access_key }}"
+    password: "{{ aws_discovery.credentials.secret_key }}"
+  - name: "azure_cmdb_discovery"
+    type: "azure"
+    client_id: "{{ azure_discovery.credentials.client_id }}"
+    client_secret: "{{ azure_discovery.credentials.client_secret }}"
+    tenant_id: "{{ azure_discovery.credentials.tenant_id }}"
+  - name: "vmware_discovery"
+    type: "vmware"
+    username: "{{ vmware_discovery.vcenter_hosts[0].username | default('') }}"
+    password: "{{ vmware_discovery.vcenter_hosts[0].password | default('') }}"
+  - name: "snmp_discovery"
+    type: "snmp"
+    community: "{{ snmp_community | default('public') }}"
+  - name: "ssh_discovery"
+    type: "ssh"
+    username: "{{ ssh_username | default('ansible') }}"
+    private_key: "{{ ssh_private_key | default('~/.ssh/id_rsa') }}"
+
+# Fourth Estate Specific Discovery
+fourth_estate_discovery:
+  enabled: true
+  journalist_workstation_discovery:
+    enabled: true
+    ad_ou: "OU=Journalist Workstations,DC=fourthestate,DC=local"
+    required_software:
+      - "SecureDrop Client"
+      - "Signal Desktop"
+      - "PGP Encryption"
+  publication_system_discovery:
+    enabled: true
+    domains:
+      - "*.news.example.com"
+      - "*.media.example.com"
+  content_management_discovery:
+    enabled: true
+    cms_platforms:
+      - wordpress
+      - drupal
+      - custom_cms
+
+# Discovery Results Processing
+discovery_results:
+  auto_reconcile: true
+  create_new_cis: true
+  update_existing_cis: true
+  mark_missing_as_retired: false
+  deduplication: true
+  validation: true
+
+# Performance Settings
+discovery_performance:
+  max_concurrent_discoveries: 5
+  batch_size: 100
+  api_rate_limit: 100  # requests per minute
+  retry_attempts: 3
+  retry_delay: 5  # seconds
+
+# Notification Settings
+discovery_notifications:
+  enabled: true
+  channels:
+    - email
+    - slack
+  recipients:
+    - "{{ discovery_admin_email | default('discovery-admin@example.com') }}"
+  events:
+    - discovery_started
+    - discovery_completed
+    - discovery_failed
+    - new_cis_discovered
+    - ci_reconciliation_conflict

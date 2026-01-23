@@ -1,0 +1,56 @@
+#!/bin/bash
+# Prometheus Backup Script
+# Managed by Ansible - Fourth Estate Agency
+# {{ ansible_managed }}
+
+set -euo pipefail
+
+# Configuration
+PROMETHEUS_DATA_DIR="{{ prometheus_data_dir }}"
+BACKUP_DIR="{{ prometheus_backup_dir }}"
+RETENTION_DAYS="{{ prometheus_backup_retention_days }}"
+DATE=$(date +%Y%m%d_%H%M%S)
+BACKUP_FILE="${BACKUP_DIR}/prometheus_backup_${DATE}.tar.gz"
+LOG_FILE="{{ prometheus_log_dir }}/backup.log"
+
+# Function to log messages
+log() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a "${LOG_FILE}"
+}
+
+# Create backup directory if it doesn't exist
+mkdir -p "${BACKUP_DIR}"
+
+log "Starting Prometheus backup..."
+
+# Create snapshot using Prometheus API
+SNAPSHOT_NAME=$(curl -XPOST http://localhost:9090/api/v1/admin/tsdb/snapshot 2>/dev/null | \
+    grep -o '"name":"[^"]*"' | cut -d'"' -f4)
+
+if [ -z "${SNAPSHOT_NAME}" ]; then
+    log "ERROR: Failed to create Prometheus snapshot"
+    exit 1
+fi
+
+log "Created snapshot: ${SNAPSHOT_NAME}"
+
+# Compress snapshot
+log "Compressing snapshot..."
+tar -czf "${BACKUP_FILE}" -C "${PROMETHEUS_DATA_DIR}/snapshots" "${SNAPSHOT_NAME}"
+
+# Clean up snapshot
+rm -rf "${PROMETHEUS_DATA_DIR}/snapshots/${SNAPSHOT_NAME}"
+
+# Get backup size
+BACKUP_SIZE=$(du -h "${BACKUP_FILE}" | cut -f1)
+log "Backup completed: ${BACKUP_FILE} (${BACKUP_SIZE})"
+
+# Remove old backups
+log "Removing backups older than ${RETENTION_DAYS} days..."
+find "${BACKUP_DIR}" -name "prometheus_backup_*.tar.gz" -type f -mtime +${RETENTION_DAYS} -delete
+
+# Count remaining backups
+BACKUP_COUNT=$(find "${BACKUP_DIR}" -name "prometheus_backup_*.tar.gz" -type f | wc -l)
+log "Total backups: ${BACKUP_COUNT}"
+
+log "Backup process completed successfully"

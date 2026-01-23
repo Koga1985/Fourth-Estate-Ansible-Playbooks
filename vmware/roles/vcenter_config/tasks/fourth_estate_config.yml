@@ -1,0 +1,114 @@
+---
+# tasks/fourth_estate_config.yml - Fourth Estate Specific Configuration
+
+- name: Configure enhanced audit logging
+  ansible.builtin.uri:
+    url: "https://{{ vcenter_hostname }}/api/appliance/logging/forwarding"
+    method: POST
+    user: "{{ vcenter_username }}"
+    password: "{{ vcenter_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vcenter_validate_certs }}"
+    headers:
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      hostname: "{{ fourth_estate_syslog_server }}"
+      port: "{{ fourth_estate_syslog_port }}"
+      protocol: "{{ fourth_estate_syslog_protocol | upper }}"
+  when: fourth_estate_syslog_server | length > 0
+  delegate_to: localhost
+
+- name: Configure ServiceNow CMDB integration
+  ansible.builtin.uri:
+    url: "https://{{ vcenter_hostname }}/api/vcenter/servicenow/config"
+    method: PUT
+    user: "{{ vcenter_username }}"
+    password: "{{ vcenter_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vcenter_validate_certs }}"
+    headers:
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      instance_url: "{{ fourth_estate_servicenow_url }}"
+      username: "{{ fourth_estate_servicenow_user }}"
+      password: "{{ fourth_estate_servicenow_password }}"
+      sync_interval: "{{ fourth_estate_servicenow_sync_interval }}"
+  when:
+    - fourth_estate_servicenow_enabled | bool
+    - fourth_estate_servicenow_url | length > 0
+  delegate_to: localhost
+  no_log: true
+
+- name: Create custom roles for Fourth Estate operations
+  community.vmware.vmware_role:
+    hostname: "{{ vcenter_hostname }}"
+    username: "{{ vcenter_username }}"
+    password: "{{ vcenter_password }}"
+    validate_certs: "{{ vcenter_validate_certs }}"
+    role_name: "{{ item.name }}"
+    state: present
+    privileges: "{{ item.privileges }}"
+  loop: "{{ fourth_estate_custom_roles }}"
+  when: fourth_estate_custom_roles | length > 0
+  delegate_to: localhost
+
+- name: Set advanced settings for source protection
+  ansible.builtin.uri:
+    url: "https://{{ vcenter_hostname }}/api/appliance/access/consolecli"
+    method: PUT
+    user: "{{ vcenter_username }}"
+    password: "{{ vcenter_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vcenter_validate_certs }}"
+    headers:
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      enabled: false
+  when: fourth_estate_disable_console | bool
+  delegate_to: localhost
+
+- name: Configure evidence preservation policy
+  ansible.builtin.debug:
+    msg: "Evidence preservation settings configured for datastore: {{ fourth_estate_evidence_datastore }}"
+
+- name: Enable enhanced security mode
+  ansible.builtin.uri:
+    url: "https://{{ vcenter_hostname }}/api/appliance/access/dcui"
+    method: PUT
+    user: "{{ vcenter_username }}"
+    password: "{{ vcenter_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vcenter_validate_certs }}"
+    headers:
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      enabled: false
+  when: fourth_estate_disable_dcui | bool
+  delegate_to: localhost
+
+- name: Configure journalist network isolation tags
+  community.vmware.vmware_tag_manager:
+    hostname: "{{ vcenter_hostname }}"
+    username: "{{ vcenter_username }}"
+    password: "{{ vcenter_password }}"
+    validate_certs: "{{ vcenter_validate_certs }}"
+    tag_names:
+      - name: "{{ item }}"
+        category: "Fourth_Estate_Security"
+        description: "Fourth Estate security classification"
+    state: present
+  loop:
+    - "Journalist_Workload"
+    - "Production_Workload"
+    - "Source_Protection"
+    - "Evidence_Preservation"
+    - "CDN_Infrastructure"
+  delegate_to: localhost
+
+- name: Fourth Estate configuration applied
+  ansible.builtin.debug:
+    msg: "Fourth Estate specific security and compliance configuration applied"

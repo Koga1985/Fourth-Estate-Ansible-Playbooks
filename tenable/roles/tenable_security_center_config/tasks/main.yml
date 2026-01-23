@@ -1,1 +1,349 @@
 ---
+# tenable_security_center_config/tasks/main.yml
+# Tenable Security Center Configuration for Fourth Estate Agencies
+
+- name: Get API token for Security Center
+  ansible.builtin.uri:
+    url: "https://{{ tsc_host }}:{{ tsc_port }}/rest/token"
+    method: POST
+    body_format: json
+    body:
+      username: "{{ tsc_username }}"
+      password: "{{ tsc_password }}"
+    validate_certs: "{{ tsc_validate_certs }}"
+    status_code: 200
+  register: token_response
+  no_log: true
+
+- name: Set API token fact
+  ansible.builtin.set_fact:
+    tsc_token: "{{ token_response.json.response.token }}"
+  no_log: true
+
+# System Settings Configuration
+- name: Configure system settings
+  ansible.builtin.uri:
+    url: "https://{{ tsc_host }}:{{ tsc_port }}/rest/system"
+    method: PATCH
+    headers:
+      X-SecurityCenter: "{{ tsc_token }}"
+    body_format: json
+    body:
+      sessionTimeout: "{{ tsc_session_timeout }}"
+      idleTimeout: "{{ tsc_idle_timeout }}"
+      bannerText: "{{ tsc_banner_text }}"
+      allowPost: "{{ tsc_allow_post | lower }}"
+      enableSyslog: "{{ tsc_enable_syslog | lower }}"
+      syslogHost: "{{ tsc_syslog_host }}"
+      syslogPort: "{{ tsc_syslog_port }}"
+      syslogProtocol: "{{ tsc_syslog_protocol }}"
+    validate_certs: "{{ tsc_validate_certs }}"
+    status_code: 200
+
+# SMTP Configuration
+- name: Configure SMTP settings
+  ansible.builtin.uri:
+    url: "https://{{ tsc_host }}:{{ tsc_port }}/rest/system/smtp"
+    method: PATCH
+    headers:
+      X-SecurityCenter: "{{ tsc_token }}"
+    body_format: json
+    body:
+      smtpHost: "{{ tsc_smtp_host }}"
+      smtpPort: "{{ tsc_smtp_port }}"
+      smtpFrom: "{{ tsc_smtp_from }}"
+      smtpAuthType: "{{ tsc_smtp_auth_type }}"
+      smtpUsername: "{{ tsc_smtp_username | default(omit) }}"
+      smtpPassword: "{{ tsc_smtp_password | default(omit) }}"
+      smtpEncryption: "{{ tsc_smtp_encryption }}"
+    validate_certs: "{{ tsc_validate_certs }}"
+    status_code: 200
+  when: tsc_configure_smtp | bool
+  no_log: true
+
+# LDAP/AD Configuration
+- name: Include LDAP configuration tasks
+  ansible.builtin.include_tasks: ldap_config.yml
+  when: tsc_configure_ldap | bool
+
+# Organization Management
+- name: Create organizations
+  ansible.builtin.uri:
+    url: "https://{{ tsc_host }}:{{ tsc_port }}/rest/organization"
+    method: POST
+    headers:
+      X-SecurityCenter: "{{ tsc_token }}"
+    body_format: json
+    body:
+      name: "{{ item.name }}"
+      description: "{{ item.description }}"
+      address: "{{ item.address | default('') }}"
+      city: "{{ item.city | default('') }}"
+      state: "{{ item.state | default('') }}"
+      country: "{{ item.country | default('US') }}"
+      phone: "{{ item.phone | default('') }}"
+      email: "{{ item.email }}"
+      ipRange: "{{ item.ip_range | default('') }}"
+      nessusManagers: "{{ item.nessus_managers | default([]) }}"
+      zones: "{{ item.zones | default([]) }}"
+    validate_certs: "{{ tsc_validate_certs }}"
+    status_code: [200, 400]
+  loop: "{{ tsc_organizations }}"
+  when: tsc_organizations | length > 0
+  register: org_result
+
+# User Management
+- name: Create local users
+  ansible.builtin.uri:
+    url: "https://{{ tsc_host }}:{{ tsc_port }}/rest/user"
+    method: POST
+    headers:
+      X-SecurityCenter: "{{ tsc_token }}"
+    body_format: json
+    body:
+      username: "{{ item.username }}"
+      password: "{{ item.password }}"
+      firstname: "{{ item.firstname }}"
+      lastname: "{{ item.lastname }}"
+      email: "{{ item.email }}"
+      title: "{{ item.title | default('') }}"
+      phone: "{{ item.phone | default('') }}"
+      role:
+        id: "{{ item.role_id }}"
+      group:
+        id: "{{ item.group_id | default('0') }}"
+      organization:
+        id: "{{ item.organization_id | default('0') }}"
+      responsibleAssetID: "{{ item.responsible_asset_id | default('-1') }}"
+      locked: "{{ item.locked | default('false') }}"
+      mustChangePassword: "{{ item.must_change_password | default('true') }}"
+      authType: "local"
+    validate_certs: "{{ tsc_validate_certs }}"
+    status_code: [200, 400]
+  loop: "{{ tsc_users }}"
+  when: tsc_users | length > 0
+  no_log: true
+
+# Role Configuration
+- name: Create custom roles
+  ansible.builtin.uri:
+    url: "https://{{ tsc_host }}:{{ tsc_port }}/rest/role"
+    method: POST
+    headers:
+      X-SecurityCenter: "{{ tsc_token }}"
+    body_format: json
+    body:
+      name: "{{ item.name }}"
+      description: "{{ item.description }}"
+      canCreateTickets: "{{ item.can_create_tickets | default('false') }}"
+      canImportScans: "{{ item.can_import_scans | default('false') }}"
+      canManage: "{{ item.can_manage | default('false') }}"
+      canScan: "{{ item.can_scan | default('true') }}"
+      canSchedule: "{{ item.can_schedule | default('true') }}"
+      canUseAPI: "{{ item.can_use_api | default('true') }}"
+      canViewLogs: "{{ item.can_view_logs | default('false') }}"
+      scanAssetPermission: "{{ item.scan_asset_permission | default('0') }}"
+    validate_certs: "{{ tsc_validate_certs }}"
+    status_code: [200, 400]
+  loop: "{{ tsc_custom_roles }}"
+  when: tsc_custom_roles | length > 0
+
+# Repository Configuration
+- name: Create scan repositories
+  ansible.builtin.uri:
+    url: "https://{{ tsc_host }}:{{ tsc_port }}/rest/repository"
+    method: POST
+    headers:
+      X-SecurityCenter: "{{ tsc_token }}"
+    body_format: json
+    body:
+      name: "{{ item.name }}"
+      description: "{{ item.description }}"
+      dataFormat: "{{ item.data_format | default('IPv4') }}"
+      ipRange: "{{ item.ip_range | default('') }}"
+      trendingDays: "{{ item.trending_days | default('90') }}"
+      trendWithRaw: "{{ item.trend_with_raw | default('false') }}"
+      organizations: "{{ item.organizations | default([]) }}"
+    validate_certs: "{{ tsc_validate_certs }}"
+    status_code: [200, 400]
+  loop: "{{ tsc_repositories }}"
+  when: tsc_repositories | length > 0
+
+# Scanner Configuration
+- name: Register Nessus Scanners
+  ansible.builtin.uri:
+    url: "https://{{ tsc_host }}:{{ tsc_port }}/rest/scanner"
+    method: POST
+    headers:
+      X-SecurityCenter: "{{ tsc_token }}"
+    body_format: json
+    body:
+      name: "{{ item.name }}"
+      description: "{{ item.description }}"
+      ip: "{{ item.ip }}"
+      port: "{{ item.port | default('8834') }}"
+      useProxy: "{{ item.use_proxy | default('false') }}"
+      enabled: "{{ item.enabled | default('true') }}"
+      verifyHost: "{{ item.verify_host | default('false') }}"
+      managementType: "{{ item.management_type | default('agent') }}"
+      authType: "cert"
+      zones: "{{ item.zones | default([]) }}"
+    validate_certs: "{{ tsc_validate_certs }}"
+    status_code: [200, 400]
+  loop: "{{ tsc_scanners }}"
+  when: tsc_scanners | length > 0
+
+# Credential Management
+- name: Create scan credentials
+  ansible.builtin.uri:
+    url: "https://{{ tsc_host }}:{{ tsc_port }}/rest/credential"
+    method: POST
+    headers:
+      X-SecurityCenter: "{{ tsc_token }}"
+    body_format: json
+    body:
+      name: "{{ item.name }}"
+      description: "{{ item.description }}"
+      type: "{{ item.type }}"
+      authType: "{{ item.auth_type }}"
+      username: "{{ item.username | default(omit) }}"
+      password: "{{ item.password | default(omit) }}"
+      publicKey: "{{ item.public_key | default(omit) }}"
+      privateKey: "{{ item.private_key | default(omit) }}"
+      passphrase: "{{ item.passphrase | default(omit) }}"
+      privilegeEscalation: "{{ item.privilege_escalation | default('none') }}"
+      escalationUsername: "{{ item.escalation_username | default(omit) }}"
+      escalationPassword: "{{ item.escalation_password | default(omit) }}"
+      port: "{{ item.port | default(omit) }}"
+      dbType: "{{ item.db_type | default(omit) }}"
+      tags: "{{ item.tags | default('') }}"
+    validate_certs: "{{ tsc_validate_certs }}"
+    status_code: [200, 400]
+  loop: "{{ tsc_credentials }}"
+  when: tsc_credentials | length > 0
+  no_log: true
+
+# Asset Lists
+- name: Create asset lists
+  ansible.builtin.uri:
+    url: "https://{{ tsc_host }}:{{ tsc_port }}/rest/asset"
+    method: POST
+    headers:
+      X-SecurityCenter: "{{ tsc_token }}"
+    body_format: json
+    body:
+      name: "{{ item.name }}"
+      description: "{{ item.description }}"
+      type: "{{ item.type }}"
+      definedIPs: "{{ item.ips | default(omit) }}"
+      definedDNSNames: "{{ item.dns_names | default(omit) }}"
+      tags: "{{ item.tags | default('') }}"
+      context: "{{ item.context | default('') }}"
+    validate_certs: "{{ tsc_validate_certs }}"
+    status_code: [200, 400]
+  loop: "{{ tsc_assets }}"
+  when: tsc_assets | length > 0
+
+# API Key Management
+- name: Create API keys for automation
+  ansible.builtin.uri:
+    url: "https://{{ tsc_host }}:{{ tsc_port }}/rest/token/apikey"
+    method: POST
+    headers:
+      X-SecurityCenter: "{{ tsc_token }}"
+    body_format: json
+    body:
+      name: "{{ item.name }}"
+      description: "{{ item.description }}"
+      expirationDays: "{{ item.expiration_days | default('365') }}"
+    validate_certs: "{{ tsc_validate_certs }}"
+    status_code: [200, 400]
+  loop: "{{ tsc_api_keys }}"
+  when: tsc_api_keys | length > 0
+  register: api_key_result
+
+- name: Save API keys to vault
+  ansible.builtin.copy:
+    content: |
+      # Tenable Security Center API Keys
+      # Generated: {{ ansible_date_time.iso8601 }}
+      {% for result in api_key_result.results %}
+      {{ result.item.name }}:
+        api_key: {{ result.json.response.apiKey | default('ERROR') }}
+        secret_key: {{ result.json.response.secretKey | default('ERROR') }}
+      {% endfor %}
+    dest: "{{ tsc_api_key_file }}"
+    mode: '0600'
+  when:
+    - tsc_api_keys | length > 0
+    - api_key_result is defined
+  no_log: true
+
+# Audit Configuration
+- name: Configure audit settings
+  ansible.builtin.uri:
+    url: "https://{{ tsc_host }}:{{ tsc_port }}/rest/system/audit"
+    method: PATCH
+    headers:
+      X-SecurityCenter: "{{ tsc_token }}"
+    body_format: json
+    body:
+      auditLevel: "{{ tsc_audit_level }}"
+      retentionDays: "{{ tsc_audit_retention_days }}"
+      enableDetailedLogging: "{{ tsc_detailed_logging | lower }}"
+    validate_certs: "{{ tsc_validate_certs }}"
+    status_code: 200
+  when: tsc_configure_audit | bool
+
+# Security Settings
+- name: Configure security settings
+  ansible.builtin.uri:
+    url: "https://{{ tsc_host }}:{{ tsc_port }}/rest/system/security"
+    method: PATCH
+    headers:
+      X-SecurityCenter: "{{ tsc_token }}"
+    body_format: json
+    body:
+      passwordMinLength: "{{ tsc_password_min_length }}"
+      passwordComplexity: "{{ tsc_password_complexity }}"
+      passwordExpiration: "{{ tsc_password_expiration }}"
+      maxLoginAttempts: "{{ tsc_max_login_attempts }}"
+      lockoutDuration: "{{ tsc_lockout_duration }}"
+      enableMFA: "{{ tsc_enable_mfa | lower }}"
+      mfaType: "{{ tsc_mfa_type }}"
+    validate_certs: "{{ tsc_validate_certs }}"
+    status_code: 200
+
+# Plugin Feed Update
+- name: Trigger plugin feed update
+  ansible.builtin.uri:
+    url: "https://{{ tsc_host }}:{{ tsc_port }}/rest/system/updatePlugins"
+    method: POST
+    headers:
+      X-SecurityCenter: "{{ tsc_token }}"
+    validate_certs: "{{ tsc_validate_certs }}"
+    status_code: 200
+  when: tsc_update_plugins_now | bool
+
+# Revoke API token
+- name: Revoke API token
+  ansible.builtin.uri:
+    url: "https://{{ tsc_host }}:{{ tsc_port }}/rest/token"
+    method: DELETE
+    headers:
+      X-SecurityCenter: "{{ tsc_token }}"
+    validate_certs: "{{ tsc_validate_certs }}"
+    status_code: 200
+  no_log: true
+
+- name: Display configuration summary
+  ansible.builtin.debug:
+    msg: |
+      Tenable Security Center Configuration Complete
+      Organizations Created: {{ tsc_organizations | length }}
+      Users Created: {{ tsc_users | length }}
+      Repositories Created: {{ tsc_repositories | length }}
+      Scanners Registered: {{ tsc_scanners | length }}
+      Credentials Created: {{ tsc_credentials | length }}
+      Asset Lists Created: {{ tsc_assets | length }}
+      API Keys Generated: {{ tsc_api_keys | length }}

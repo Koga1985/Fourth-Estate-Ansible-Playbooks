@@ -1,0 +1,59 @@
+# Prometheus Configuration File
+# Managed by Ansible - Fourth Estate Agency
+# {{ ansible_managed }}
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    environment: '{{ prometheus_environment }}'
+    organization: '{{ prometheus_organization }}'
+    cluster: '{{ ansible_fqdn }}'
+{% if prometheus_ha_enabled %}
+    replica: '{{ prometheus_ha_replica_id }}'
+{% endif %}
+
+# Alertmanager configuration (to be configured by prometheus_config role)
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: []
+          # Configure in prometheus_config role
+
+# Rule files (to be configured by prometheus_config role)
+rule_files:
+  # - "{{ prometheus_config_dir }}/rules/*.yml"
+
+# Scrape configurations
+scrape_configs:
+  # Prometheus self-monitoring
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+        labels:
+          instance: '{{ ansible_fqdn }}'
+          environment: '{{ prometheus_environment }}'
+
+{% if prometheus_remote_write_enabled %}
+# Remote write configuration for long-term storage
+remote_write:
+  - url: {{ prometheus_remote_write_url }}
+{% if prometheus_remote_write_basic_auth_username %}
+    basic_auth:
+      username: {{ prometheus_remote_write_basic_auth_username }}
+      password: {{ prometheus_remote_write_basic_auth_password }}
+{% endif %}
+    queue_config:
+      max_samples_per_send: {{ prometheus_max_samples_per_send }}
+      batch_send_deadline: 5s
+      min_shards: 1
+      max_shards: 10
+      capacity: 10000
+{% endif %}
+
+{% if prometheus_remote_read_enabled %}
+# Remote read configuration
+remote_read:
+  - url: {{ prometheus_remote_read_url }}
+    read_recent: true
+{% endif %}

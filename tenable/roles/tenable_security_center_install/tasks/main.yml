@@ -1,1 +1,312 @@
 ---
+# tenable_security_center_install/tasks/main.yml
+# Tenable Security Center Installation for Fourth Estate Agencies
+
+- name: Include OS-specific variables
+  ansible.builtin.include_vars: "{{ ansible_os_family }}.yml"
+  when: ansible_os_family in ['RedHat', 'Debian']
+
+- name: Validate installation prerequisites
+  ansible.builtin.assert:
+    that:
+      - tsc_version is defined
+      - tsc_license_file is defined or tsc_license_content is defined
+      - tsc_db_type in ['postgresql', 'mysql']
+      - tsc_admin_password | length >= 12
+    fail_msg: "Required installation parameters are missing or invalid"
+
+- name: Create Tenable installation directory
+  ansible.builtin.file:
+    path: "{{ tsc_install_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Create Tenable data directory
+  ansible.builtin.file:
+    path: "{{ tsc_data_dir }}"
+    state: directory
+    owner: tns
+    group: tns
+    mode: '0750'
+  when: tsc_create_data_dir | bool
+
+# Database Setup
+- name: Include PostgreSQL setup tasks
+  ansible.builtin.include_tasks: postgresql.yml
+  when: tsc_db_type == 'postgresql'
+
+- name: Include MySQL setup tasks
+  ansible.builtin.include_tasks: mysql.yml
+  when: tsc_db_type == 'mysql'
+
+# Security Center Installation
+- name: Check if Security Center is already installed
+  ansible.builtin.stat:
+    path: /opt/sc/support/bin/scmanager
+  register: tsc_installed
+
+- name: Download Security Center package
+  ansible.builtin.get_url:
+    url: "{{ tsc_download_url }}/SecurityCenter-{{ tsc_version }}.{{ tsc_package_ext }}"
+    dest: "/tmp/SecurityCenter-{{ tsc_version }}.{{ tsc_package_ext }}"
+    checksum: "{{ tsc_checksum | default(omit) }}"
+    mode: '0644'
+    timeout: 600
+  when: not tsc_installed.stat.exists and tsc_download_enabled | bool
+
+- name: Copy Security Center package from local
+  ansible.builtin.copy:
+    src: "{{ tsc_package_path }}"
+    dest: "/tmp/SecurityCenter-{{ tsc_version }}.{{ tsc_package_ext }}"
+    mode: '0644'
+  when: not tsc_installed.stat.exists and not tsc_download_enabled | bool
+
+- name: Install Security Center (RPM)
+  ansible.builtin.yum:
+    name: "/tmp/SecurityCenter-{{ tsc_version }}.{{ tsc_package_ext }}"
+    state: present
+    disable_gpg_check: yes
+  when:
+    - ansible_os_family == 'RedHat'
+    - not tsc_installed.stat.exists
+  notify: restart security center
+
+- name: Install Security Center (DEB)
+  ansible.builtin.apt:
+    deb: "/tmp/SecurityCenter-{{ tsc_version }}.{{ tsc_package_ext }}"
+    state: present
+  when:
+    - ansible_os_family == 'Debian'
+    - not tsc_installed.stat.exists
+  notify: restart security center
+
+# License Configuration
+- name: Copy license file
+  ansible.builtin.copy:
+    src: "{{ tsc_license_file }}"
+    dest: /opt/sc/license.txt
+    owner: tns
+    group: tns
+    mode: '0640'
+  when: tsc_license_file is defined
+  notify: restart security center
+
+- name: Create license file from content
+  ansible.builtin.copy:
+    content: "{{ tsc_license_content }}"
+    dest: /opt/sc/license.txt
+    owner: tns
+    group: tns
+    mode: '0640'
+  when: tsc_license_content is defined
+  notify: restart security center
+
+# SSL/TLS Configuration
+- name: Create SSL directory
+  ansible.builtin.file:
+    path: /opt/sc/support/conf/ssl
+    state: directory
+    owner: tns
+    group: tns
+    mode: '0750'
+
+- name: Copy SSL certificate
+  ansible.builtin.copy:
+    src: "{{ tsc_ssl_cert }}"
+    dest: /opt/sc/support/conf/ssl/server.crt
+    owner: tns
+    group: tns
+    mode: '0640'
+  when: tsc_ssl_cert is defined
+  notify: restart security center
+
+- name: Copy SSL private key
+  ansible.builtin.copy:
+    src: "{{ tsc_ssl_key }}"
+    dest: /opt/sc/support/conf/ssl/server.key
+    owner: tns
+    group: tns
+    mode: '0600'
+  when: tsc_ssl_key is defined
+  notify: restart security center
+
+- name: Generate self-signed certificate
+  ansible.builtin.command:
+    cmd: >
+      openssl req -x509 -nodes -days 365 -newkey rsa:4096
+      -keyout /opt/sc/support/conf/ssl/server.key
+      -out /opt/sc/support/conf/ssl/server.crt
+      -subj "/C=US/ST={{ tsc_ssl_state }}/L={{ tsc_ssl_city }}/O={{ tsc_ssl_org }}/CN={{ tsc_hostname }}"
+    creates: /opt/sc/support/conf/ssl/server.crt
+  when:
+    - tsc_ssl_cert is not defined
+    - tsc_generate_self_signed | bool
+  notify: restart security center
+
+# Service Configuration
+- name: Template Security Center configuration
+  ansible.builtin.template:
+    src: sc_config.conf.j2
+    dest: /opt/sc/support/conf/sc_config.conf
+    owner: tns
+    group: tns
+    mode: '0640'
+  notify: restart security center
+
+- name: Configure Security Center systemd service
+  ansible.builtin.template:
+    src: tenable-sc.service.j2
+    dest: /etc/systemd/system/tenable-sc.service
+    owner: root
+    group: root
+    mode: '0644'
+  notify:
+    - reload systemd
+    - restart security center
+
+# Firewall Configuration
+- name: Configure firewalld for Security Center
+  ansible.posix.firewalld:
+    port: "{{ item }}"
+    permanent: yes
+    state: enabled
+    immediate: yes
+  loop:
+    - "{{ tsc_https_port }}/tcp"
+    - "{{ tsc_http_port }}/tcp"
+  when:
+    - ansible_os_family == 'RedHat'
+    - tsc_configure_firewall | bool
+
+- name: Configure UFW for Security Center
+  community.general.ufw:
+    rule: allow
+    port: "{{ item }}"
+    proto: tcp
+  loop:
+    - "{{ tsc_https_port }}"
+    - "{{ tsc_http_port }}"
+  when:
+    - ansible_os_family == 'Debian'
+    - tsc_configure_firewall | bool
+
+# SELinux Configuration
+- name: Set SELinux contexts for Security Center
+  community.general.sefcontext:
+    target: "{{ item.target }}"
+    setype: "{{ item.type }}"
+    state: present
+  loop:
+    - { target: '/opt/sc(/.*)?', type: 'usr_t' }
+    - { target: '/opt/sc/support/bin(/.*)?', type: 'bin_t' }
+    - { target: '{{ tsc_data_dir }}(/.*)?', type: 'var_lib_t' }
+  when:
+    - ansible_selinux.status == 'enabled'
+    - tsc_configure_selinux | bool
+
+- name: Apply SELinux file contexts
+  ansible.builtin.command:
+    cmd: restorecon -Rv {{ item }}
+  loop:
+    - /opt/sc
+    - "{{ tsc_data_dir }}"
+  when:
+    - ansible_selinux.status == 'enabled'
+    - tsc_configure_selinux | bool
+  changed_when: false
+
+- name: Configure SELinux boolean for network connections
+  ansible.posix.seboolean:
+    name: httpd_can_network_connect
+    state: yes
+    persistent: yes
+  when:
+    - ansible_selinux.status == 'enabled'
+    - tsc_configure_selinux | bool
+
+# Initial Admin Setup
+- name: Wait for Security Center to initialize
+  ansible.builtin.wait_for:
+    port: "{{ tsc_https_port }}"
+    host: localhost
+    delay: 30
+    timeout: 300
+  when: not tsc_installed.stat.exists
+
+- name: Configure initial admin account
+  ansible.builtin.uri:
+    url: "https://{{ tsc_hostname }}:{{ tsc_https_port }}/rest/system/init"
+    method: POST
+    body_format: json
+    body:
+      username: "{{ tsc_admin_username }}"
+      password: "{{ tsc_admin_password }}"
+      email: "{{ tsc_admin_email }}"
+      firstName: "{{ tsc_admin_firstname }}"
+      lastName: "{{ tsc_admin_lastname }}"
+      role: "SecurityManager"
+    validate_certs: "{{ tsc_validate_certs }}"
+    status_code: [200, 400]
+  register: admin_setup
+  when: not tsc_installed.stat.exists
+  no_log: true
+
+# Plugin Feed Configuration
+- name: Configure plugin feed settings
+  ansible.builtin.template:
+    src: plugin_feed.conf.j2
+    dest: /opt/sc/support/conf/plugin_feed.conf
+    owner: tns
+    group: tns
+    mode: '0640'
+  notify: restart security center
+
+- name: Enable automatic plugin updates
+  ansible.builtin.cron:
+    name: "Tenable plugin feed update"
+    minute: "{{ tsc_plugin_update_minute }}"
+    hour: "{{ tsc_plugin_update_hour }}"
+    job: "/opt/sc/support/bin/scmanager update plugins"
+    user: tns
+  when: tsc_auto_plugin_update | bool
+
+# Log Rotation
+- name: Configure log rotation for Security Center
+  ansible.builtin.template:
+    src: tenable-sc-logrotate.j2
+    dest: /etc/logrotate.d/tenable-sc
+    owner: root
+    group: root
+    mode: '0644'
+
+# Health Check
+- name: Verify Security Center is running
+  ansible.builtin.uri:
+    url: "https://{{ tsc_hostname }}:{{ tsc_https_port }}/rest/status"
+    method: GET
+    validate_certs: "{{ tsc_validate_certs }}"
+    status_code: 200
+  register: health_check
+  retries: 5
+  delay: 10
+  until: health_check.status == 200
+
+- name: Display installation status
+  ansible.builtin.debug:
+    msg: |
+      Tenable Security Center Installation Complete
+      Version: {{ tsc_version }}
+      URL: https://{{ tsc_hostname }}:{{ tsc_https_port }}
+      Admin Username: {{ tsc_admin_username }}
+      Database: {{ tsc_db_type }}
+      Data Directory: {{ tsc_data_dir }}
+      SSL Enabled: Yes
+      Plugin Auto-Update: {{ tsc_auto_plugin_update }}
+
+- name: Clean up installation package
+  ansible.builtin.file:
+    path: "/tmp/SecurityCenter-{{ tsc_version }}.{{ tsc_package_ext }}"
+    state: absent
+  when: tsc_cleanup_package | bool

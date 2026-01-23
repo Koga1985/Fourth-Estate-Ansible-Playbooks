@@ -1,0 +1,237 @@
+---
+# Prometheus Configuration Role - Main Tasks
+# Fourth Estate Agency - Infrastructure Monitoring
+
+- name: Ensure Prometheus configuration directory exists
+  file:
+    path: "{{ item }}"
+    state: directory
+    owner: prometheus
+    group: prometheus
+    mode: "0755"
+  loop:
+    - "{{ prometheus_config_dir }}"
+    - "{{ prometheus_config_dir }}/rules"
+    - "{{ prometheus_config_dir }}/file_sd"
+  tags:
+    - prometheus
+    - prometheus_config
+
+- name: Create Prometheus main configuration file
+  template:
+    src: prometheus.yml.j2
+    dest: "{{ prometheus_config_dir }}/prometheus.yml"
+    owner: prometheus
+    group: prometheus
+    mode: "0644"
+    backup: true
+    validate: "{{ prometheus_install_dir }}/promtool check config %s"
+  notify:
+    - validate prometheus config
+    - reload prometheus
+  tags:
+    - prometheus
+    - prometheus_config
+
+- name: Create recording rules files
+  template:
+    src: recording_rules.yml.j2
+    dest: "{{ prometheus_config_dir }}/rules/{{ item.name }}.yml"
+    owner: prometheus
+    group: prometheus
+    mode: "0644"
+    backup: true
+    validate: "{{ prometheus_install_dir }}/promtool check rules %s"
+  loop: "{{ prometheus_recording_rules_files }}"
+  when: prometheus_recording_rules_enabled
+  notify:
+    - validate prometheus config
+    - reload prometheus
+  tags:
+    - prometheus
+    - prometheus_config
+    - recording_rules
+
+- name: Create alert rules files
+  template:
+    src: alert_rules.yml.j2
+    dest: "{{ prometheus_config_dir }}/rules/{{ item.name }}.yml"
+    owner: prometheus
+    group: prometheus
+    mode: "0644"
+    backup: true
+    validate: "{{ prometheus_install_dir }}/promtool check rules %s"
+  loop: "{{ prometheus_alert_rules_files }}"
+  when: prometheus_alert_rules_enabled
+  notify:
+    - validate prometheus config
+    - reload prometheus
+  tags:
+    - prometheus
+    - prometheus_config
+    - alert_rules
+
+- name: Create service discovery files for node exporters
+  template:
+    src: file_sd_node_exporter.yml.j2
+    dest: "{{ prometheus_config_dir }}/file_sd/node_exporter.yml"
+    owner: prometheus
+    group: prometheus
+    mode: "0644"
+  when: prometheus_node_exporter_targets is defined
+  notify: reload prometheus
+  tags:
+    - prometheus
+    - prometheus_config
+    - service_discovery
+
+- name: Create service discovery files for blackbox exporters
+  template:
+    src: file_sd_blackbox.yml.j2
+    dest: "{{ prometheus_config_dir }}/file_sd/blackbox_http.yml"
+    owner: prometheus
+    group: prometheus
+    mode: "0644"
+  when: prometheus_blackbox_targets is defined
+  notify: reload prometheus
+  tags:
+    - prometheus
+    - prometheus_config
+    - service_discovery
+
+- name: Create service discovery files for PostgreSQL exporters
+  template:
+    src: file_sd_postgresql.yml.j2
+    dest: "{{ prometheus_config_dir }}/file_sd/postgresql.yml"
+    owner: prometheus
+    group: prometheus
+    mode: "0644"
+  when: prometheus_postgresql_targets is defined
+  notify: reload prometheus
+  tags:
+    - prometheus
+    - prometheus_config
+    - service_discovery
+
+- name: Create service discovery files for MySQL exporters
+  template:
+    src: file_sd_mysql.yml.j2
+    dest: "{{ prometheus_config_dir }}/file_sd/mysql.yml"
+    owner: prometheus
+    group: prometheus
+    mode: "0644"
+  when: prometheus_mysql_targets is defined
+  notify: reload prometheus
+  tags:
+    - prometheus
+    - prometheus_config
+    - service_discovery
+
+- name: Create service discovery files for Redis exporters
+  template:
+    src: file_sd_redis.yml.j2
+    dest: "{{ prometheus_config_dir }}/file_sd/redis.yml"
+    owner: prometheus
+    group: prometheus
+    mode: "0644"
+  when: prometheus_redis_targets is defined
+  notify: reload prometheus
+  tags:
+    - prometheus
+    - prometheus_config
+    - service_discovery
+
+- name: Create service discovery files for NGINX exporters
+  template:
+    src: file_sd_nginx.yml.j2
+    dest: "{{ prometheus_config_dir }}/file_sd/nginx.yml"
+    owner: prometheus
+    group: prometheus
+    mode: "0644"
+  when: prometheus_nginx_targets is defined
+  notify: reload prometheus
+  tags:
+    - prometheus
+    - prometheus_config
+    - service_discovery
+
+- name: Create service discovery files for HAProxy exporters
+  template:
+    src: file_sd_haproxy.yml.j2
+    dest: "{{ prometheus_config_dir }}/file_sd/haproxy.yml"
+    owner: prometheus
+    group: prometheus
+    mode: "0644"
+  when: prometheus_haproxy_targets is defined
+  notify: reload prometheus
+  tags:
+    - prometheus
+    - prometheus_config
+    - service_discovery
+
+- name: Validate Prometheus configuration
+  command: "{{ prometheus_install_dir }}/promtool check config {{ prometheus_config_dir }}/prometheus.yml"
+  changed_when: false
+  register: prometheus_config_validation
+  tags:
+    - prometheus
+    - prometheus_config
+    - validation
+
+- name: Display configuration validation results
+  debug:
+    msg: "{{ prometheus_config_validation.stdout_lines }}"
+  tags:
+    - prometheus
+    - prometheus_config
+    - validation
+
+- name: Check Prometheus rules
+  command: "{{ prometheus_install_dir }}/promtool check rules {{ prometheus_config_dir }}/rules/*.yml"
+  changed_when: false
+  register: prometheus_rules_validation
+  failed_when: false
+  tags:
+    - prometheus
+    - prometheus_config
+    - validation
+
+- name: Display rules validation results
+  debug:
+    msg: "{{ prometheus_rules_validation.stdout_lines }}"
+  when: prometheus_rules_validation.stdout_lines is defined
+  tags:
+    - prometheus
+    - prometheus_config
+    - validation
+
+- name: Test alert rules
+  command: "{{ prometheus_install_dir }}/promtool test rules {{ prometheus_config_dir }}/rules/*.yml"
+  changed_when: false
+  register: prometheus_rules_test
+  failed_when: false
+  tags:
+    - prometheus
+    - prometheus_config
+    - testing
+
+- name: Ensure Prometheus service is running
+  systemd:
+    name: prometheus
+    state: started
+    enabled: true
+  tags:
+    - prometheus
+    - prometheus_config
+    - service
+
+- name: Wait for Prometheus to be ready
+  uri:
+    url: "http://localhost:9090/-/ready"
+    status_code: 200
+  retries: 10
+  delay: 5
+  tags:
+    - prometheus
+    - prometheus_config
+    - service

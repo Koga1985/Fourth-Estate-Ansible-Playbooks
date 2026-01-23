@@ -1,1 +1,46 @@
 ---
+# ServiceNow CMDB Configuration Role - Handlers
+
+- name: cmdb configuration changed
+  ansible.builtin.debug:
+    msg: "CMDB configuration has been updated in ServiceNow instance {{ servicenow_instance }}"
+
+- name: send cmdb config notification
+  ansible.builtin.uri:
+    url: "{{ notification_webhook_url }}"
+    method: POST
+    body_format: json
+    body:
+      text: "ServiceNow CMDB configuration updated on {{ servicenow_instance }}"
+      timestamp: "{{ ansible_date_time.iso8601 }}"
+    status_code: [200, 201, 204]
+  when:
+    - notification_webhook_url is defined
+    - cmdb_notifications.enabled | default(true)
+  delegate_to: localhost
+
+- name: refresh cmdb cache
+  ansible.builtin.uri:
+    url: "https://{{ servicenow_instance }}.service-now.com/api/now/cache/refresh"
+    method: POST
+    user: "{{ servicenow_username }}"
+    password: "{{ servicenow_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ servicenow_validate_certs }}"
+    status_code: [200, 202]
+  when: servicenow_username is defined
+
+- name: run cmdb health scan
+  ansible.builtin.uri:
+    url: "https://{{ servicenow_instance }}.service-now.com/api/now/table/cmdb_health_scan"
+    method: POST
+    user: "{{ servicenow_username }}"
+    password: "{{ servicenow_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ servicenow_validate_certs }}"
+    body_format: json
+    body:
+      scan_type: "full"
+      scheduled: false
+    status_code: [200, 201]
+  when: servicenow_username is defined

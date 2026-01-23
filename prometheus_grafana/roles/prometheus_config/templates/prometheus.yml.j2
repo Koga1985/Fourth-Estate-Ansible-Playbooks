@@ -1,0 +1,253 @@
+# Prometheus Configuration File
+# Managed by Ansible - Fourth Estate Agency
+# {{ ansible_managed }}
+
+# Global configuration
+global:
+  scrape_interval: {{ prometheus_global_scrape_interval }}
+  scrape_timeout: {{ prometheus_global_scrape_timeout }}
+  evaluation_interval: {{ prometheus_global_evaluation_interval }}
+
+  external_labels:
+{% for key, value in prometheus_external_labels.items() %}
+    {{ key }}: '{{ value }}'
+{% endfor %}
+
+# Alertmanager configuration
+{% if prometheus_alertmanager_enabled %}
+alerting:
+  alertmanagers:
+{% for alertmanager in prometheus_alertmanagers %}
+    - scheme: {{ alertmanager.scheme | default('http') }}
+      timeout: {{ alertmanager.timeout | default('10s') }}
+{% if alertmanager.static_configs is defined %}
+      static_configs:
+{% for config in alertmanager.static_configs %}
+        - targets:
+{% for target in config.targets %}
+            - '{{ target }}'
+{% endfor %}
+{% if config.labels is defined %}
+          labels:
+{% for key, value in config.labels.items() %}
+            {{ key }}: '{{ value }}'
+{% endfor %}
+{% endif %}
+{% endfor %}
+{% endif %}
+{% if alertmanager.path_prefix is defined %}
+      path_prefix: {{ alertmanager.path_prefix }}
+{% endif %}
+{% endfor %}
+{% endif %}
+
+# Rule files
+rule_files:
+{% if prometheus_recording_rules_enabled %}
+{% for rule_file in prometheus_recording_rules_files %}
+  - '{{ prometheus_config_dir }}/rules/{{ rule_file.name }}.yml'
+{% endfor %}
+{% endif %}
+{% if prometheus_alert_rules_enabled %}
+{% for rule_file in prometheus_alert_rules_files %}
+  - '{{ prometheus_config_dir }}/rules/{{ rule_file.name }}.yml'
+{% endfor %}
+{% endif %}
+
+# Scrape configurations
+scrape_configs:
+  # Prometheus self-monitoring
+  - job_name: 'prometheus'
+    scrape_interval: 30s
+    static_configs:
+      - targets: ['localhost:9090']
+        labels:
+          environment: '{{ prometheus_external_labels.environment }}'
+          organization: '{{ prometheus_external_labels.organization }}'
+
+{% for scrape_config in prometheus_scrape_configs %}
+  - job_name: '{{ scrape_config.job_name }}'
+{% if scrape_config.scrape_interval is defined %}
+    scrape_interval: {{ scrape_config.scrape_interval }}
+{% endif %}
+{% if scrape_config.scrape_timeout is defined %}
+    scrape_timeout: {{ scrape_config.scrape_timeout }}
+{% endif %}
+{% if scrape_config.metrics_path is defined %}
+    metrics_path: {{ scrape_config.metrics_path }}
+{% endif %}
+{% if scrape_config.scheme is defined %}
+    scheme: {{ scrape_config.scheme }}
+{% endif %}
+{% if scrape_config.params is defined %}
+    params:
+{% for key, values in scrape_config.params.items() %}
+      {{ key }}:
+{% for value in values %}
+        - {{ value }}
+{% endfor %}
+{% endfor %}
+{% endif %}
+{% if scrape_config.static_configs is defined %}
+    static_configs:
+{% for config in scrape_config.static_configs %}
+      - targets:
+{% for target in config.targets %}
+          - '{{ target }}'
+{% endfor %}
+{% if config.labels is defined %}
+        labels:
+{% for key, value in config.labels.items() %}
+          {{ key }}: '{{ value }}'
+{% endfor %}
+{% endif %}
+{% endfor %}
+{% endif %}
+{% if scrape_config.file_sd_configs is defined %}
+    file_sd_configs:
+{% for config in scrape_config.file_sd_configs %}
+      - files:
+{% for file in config.files %}
+          - '{{ file }}'
+{% endfor %}
+{% if config.refresh_interval is defined %}
+        refresh_interval: {{ config.refresh_interval }}
+{% endif %}
+{% endfor %}
+{% endif %}
+{% if scrape_config.relabel_configs is defined %}
+    relabel_configs:
+{% for relabel in scrape_config.relabel_configs %}
+      - source_labels: {{ relabel.source_labels | to_json }}
+{% if relabel.target_label is defined %}
+        target_label: {{ relabel.target_label }}
+{% endif %}
+{% if relabel.regex is defined %}
+        regex: {{ relabel.regex }}
+{% endif %}
+{% if relabel.replacement is defined %}
+        replacement: {{ relabel.replacement }}
+{% endif %}
+{% if relabel.action is defined %}
+        action: {{ relabel.action }}
+{% endif %}
+{% endfor %}
+{% endif %}
+{% if scrape_config.metric_relabel_configs is defined %}
+    metric_relabel_configs:
+{% for relabel in scrape_config.metric_relabel_configs %}
+      - source_labels: {{ relabel.source_labels | to_json }}
+{% if relabel.target_label is defined %}
+        target_label: {{ relabel.target_label }}
+{% endif %}
+{% if relabel.regex is defined %}
+        regex: {{ relabel.regex }}
+{% endif %}
+{% if relabel.action is defined %}
+        action: {{ relabel.action }}
+{% endif %}
+{% endfor %}
+{% endif %}
+
+{% endfor %}
+
+{% if prometheus_kubernetes_sd_enabled %}
+  # Kubernetes service discovery
+  - job_name: 'kubernetes-nodes'
+    kubernetes_sd_configs:
+      - role: node
+        api_server: {{ prometheus_kubernetes_api_server }}
+    relabel_configs:
+      - source_labels: [__address__]
+        regex: '(.*):10250'
+        replacement: '${1}:9100'
+        target_label: __address__
+      - source_labels: [__meta_kubernetes_node_name]
+        target_label: instance
+
+  - job_name: 'kubernetes-pods'
+    kubernetes_sd_configs:
+      - role: pod
+        api_server: {{ prometheus_kubernetes_api_server }}
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+        action: keep
+        regex: true
+      - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+        action: replace
+        target_label: __metrics_path__
+        regex: (.+)
+      - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
+        action: replace
+        regex: ([^:]+)(?::\d+)?;(\d+)
+        replacement: $1:$2
+        target_label: __address__
+      - source_labels: [__meta_kubernetes_namespace]
+        target_label: kubernetes_namespace
+      - source_labels: [__meta_kubernetes_pod_name]
+        target_label: kubernetes_pod_name
+{% endif %}
+
+{% if prometheus_consul_sd_enabled %}
+  # Consul service discovery
+  - job_name: 'consul-services'
+    consul_sd_configs:
+      - server: '{{ prometheus_consul_server }}'
+        datacenter: '{{ prometheus_consul_datacenter }}'
+    relabel_configs:
+      - source_labels: [__meta_consul_service]
+        target_label: job
+      - source_labels: [__meta_consul_node]
+        target_label: instance
+{% endif %}
+
+{% if prometheus_remote_write_enabled %}
+# Remote write configuration
+remote_write:
+{% for config in prometheus_remote_write_configs %}
+  - url: {{ config.url }}
+{% if config.remote_timeout is defined %}
+    remote_timeout: {{ config.remote_timeout }}
+{% endif %}
+{% if config.basic_auth is defined %}
+    basic_auth:
+      username: {{ config.basic_auth.username }}
+      password: {{ config.basic_auth.password }}
+{% endif %}
+{% if config.bearer_token is defined %}
+    bearer_token: {{ config.bearer_token }}
+{% endif %}
+{% if config.write_relabel_configs is defined %}
+    write_relabel_configs:
+{% for relabel in config.write_relabel_configs %}
+      - source_labels: {{ relabel.source_labels | to_json }}
+{% if relabel.target_label is defined %}
+        target_label: {{ relabel.target_label }}
+{% endif %}
+{% if relabel.action is defined %}
+        action: {{ relabel.action }}
+{% endif %}
+{% endfor %}
+{% endif %}
+    queue_config:
+      capacity: {{ config.queue_config.capacity | default(10000) }}
+      max_shards: {{ config.queue_config.max_shards | default(10) }}
+      max_samples_per_send: {{ config.queue_config.max_samples_per_send | default(500) }}
+{% endfor %}
+{% endif %}
+
+{% if prometheus_remote_read_enabled %}
+# Remote read configuration
+remote_read:
+{% for config in prometheus_remote_read_configs %}
+  - url: {{ config.url }}
+{% if config.read_recent is defined %}
+    read_recent: {{ config.read_recent | lower }}
+{% endif %}
+{% if config.basic_auth is defined %}
+    basic_auth:
+      username: {{ config.basic_auth.username }}
+      password: {{ config.basic_auth.password }}
+{% endif %}
+{% endfor %}
+{% endif %}

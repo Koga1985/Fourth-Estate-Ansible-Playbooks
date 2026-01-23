@@ -1,1 +1,165 @@
 ---
+# F5 BIG-IP Network Configuration Tasks
+# Fourth Estate Production Standards
+
+- name: Configure Network Interfaces
+  f5networks.f5_modules.bigip_interface:
+    provider: "{{ f5_bigip_provider }}"
+    name: "{{ item.name }}"
+    enabled: "{{ item.enabled | default(true) }}"
+    description: "{{ item.description | default(omit) }}"
+  loop: "{{ f5_bigip_interfaces }}"
+  when: f5_bigip_interfaces is defined and f5_bigip_interfaces | length > 0
+  notify: Save F5 Configuration
+  tags:
+    - f5_network
+    - f5_interfaces
+
+- name: Create VLANs
+  f5networks.f5_modules.bigip_vlan:
+    provider: "{{ f5_bigip_provider }}"
+    name: "{{ item.name }}"
+    tag: "{{ item.tag | default(omit) }}"
+    description: "{{ item.description | default(omit) }}"
+    tagged_interfaces: "{{ item.interfaces | selectattr('tagged', 'defined') | selectattr('tagged', 'equalto', true) | map(attribute='name') | list | default(omit) }}"
+    untagged_interfaces: "{{ item.interfaces | selectattr('tagged', 'defined') | selectattr('tagged', 'equalto', false) | map(attribute='name') | list | default(omit) }}"
+    mtu: "{{ item.mtu | default(f5_bigip_default_mtu) }}"
+  loop: "{{ f5_bigip_vlans }}"
+  when: f5_bigip_vlans is defined and f5_bigip_vlans | length > 0
+  notify: Save F5 Configuration
+  tags:
+    - f5_network
+    - f5_vlans
+
+- name: Configure Trunks (Link Aggregation)
+  f5networks.f5_modules.bigip_trunk:
+    provider: "{{ f5_bigip_provider }}"
+    name: "{{ item.name }}"
+    interfaces: "{{ item.interfaces }}"
+    lacp_enabled: "{{ item.lacp_enabled | default(true) }}"
+    lacp_mode: "{{ item.lacp_mode | default('active') }}"
+    description: "{{ item.description | default(omit) }}"
+  loop: "{{ f5_bigip_trunks }}"
+  when: f5_bigip_trunks is defined and f5_bigip_trunks | length > 0
+  notify: Save F5 Configuration
+  tags:
+    - f5_network
+    - f5_trunks
+
+- name: Create Self IPs
+  f5networks.f5_modules.bigip_selfip:
+    provider: "{{ f5_bigip_provider }}"
+    name: "{{ item.name }}"
+    address: "{{ item.address }}"
+    netmask: "{{ item.netmask }}"
+    vlan: "{{ item.vlan }}"
+    allow_service: "{{ item.allow_service | default(f5_bigip_port_lockdown_default) }}"
+    traffic_group: "{{ item.traffic_group | default('traffic-group-local-only') }}"
+    route_domain: "{{ item.route_domain | default(omit) }}"
+  loop: "{{ f5_bigip_selfips }}"
+  when: f5_bigip_selfips is defined and f5_bigip_selfips | length > 0
+  notify: Save F5 Configuration
+  tags:
+    - f5_network
+    - f5_selfips
+
+- name: Configure Static Routes
+  f5networks.f5_modules.bigip_static_route:
+    provider: "{{ f5_bigip_provider }}"
+    name: "{{ item.name }}"
+    destination: "{{ item.destination }}"
+    netmask: "{{ item.netmask }}"
+    gateway_address: "{{ item.gateway_address }}"
+    description: "{{ item.description | default(omit) }}"
+    route_domain: "{{ item.route_domain | default(omit) }}"
+  loop: "{{ f5_bigip_static_routes }}"
+  when: f5_bigip_static_routes is defined and f5_bigip_static_routes | length > 0
+  notify: Save F5 Configuration
+  tags:
+    - f5_network
+    - f5_routes
+
+- name: Configure Route Domains
+  f5networks.f5_modules.bigip_routedomain:
+    provider: "{{ f5_bigip_provider }}"
+    name: "{{ item.name | default(item.id | string) }}"
+    id: "{{ item.id }}"
+    description: "{{ item.description | default(omit) }}"
+    vlans: "{{ item.vlans | default(omit) }}"
+  loop: "{{ f5_bigip_route_domains }}"
+  when: f5_bigip_route_domains is defined and f5_bigip_route_domains | length > 0
+  notify: Save F5 Configuration
+  tags:
+    - f5_network
+    - f5_route_domains
+
+- name: Configure Management Route
+  f5networks.f5_modules.bigip_management_route:
+    provider: "{{ f5_bigip_provider }}"
+    gateway: "{{ f5_bigip_management_route.gateway }}"
+    network: "{{ f5_bigip_management_route.network | default('default') }}"
+  when: f5_bigip_management_route is defined
+  notify: Save F5 Configuration
+  tags:
+    - f5_network
+    - f5_management_route
+
+- name: Configure Network Tunnels
+  f5networks.f5_modules.bigip_tunnel:
+    provider: "{{ f5_bigip_provider }}"
+    name: "{{ item.name }}"
+    profile: "{{ item.profile }}"
+    local_address: "{{ item.local_address }}"
+    remote_address: "{{ item.remote_address }}"
+    description: "{{ item.description | default(omit) }}"
+  loop: "{{ f5_bigip_tunnels }}"
+  when: f5_bigip_tunnels is defined and f5_bigip_tunnels | length > 0
+  notify: Save F5 Configuration
+  tags:
+    - f5_network
+    - f5_tunnels
+
+- name: Configure MAC Masquerading
+  f5networks.f5_modules.bigip_command:
+    provider: "{{ f5_bigip_provider }}"
+    commands:
+      - "modify cm traffic-group {{ item.traffic_group }} mac {{ item.mac_address }}"
+  loop: "{{ f5_bigip_mac_masquerade_addresses }}"
+  when:
+    - f5_bigip_mac_masquerade_enabled | bool
+    - f5_bigip_mac_masquerade_addresses is defined
+  notify: Save F5 Configuration
+  tags:
+    - f5_network
+    - f5_mac_masquerade
+    - f5_ha
+
+- name: Verify Network Configuration
+  f5networks.f5_modules.bigip_command:
+    provider: "{{ f5_bigip_provider }}"
+    commands:
+      - "show net vlan"
+      - "show net self"
+      - "show net route"
+  register: f5_network_output
+  changed_when: false
+  tags:
+    - f5_network
+    - f5_verify
+
+- name: Display Network Configuration
+  ansible.builtin.debug:
+    var: f5_network_output.stdout_lines
+  when: f5_network_output is defined
+  tags:
+    - f5_network
+    - f5_verify
+
+- name: Ensure Configuration is Saved
+  f5networks.f5_modules.bigip_config:
+    provider: "{{ f5_bigip_provider }}"
+    save: true
+  when: f5_bigip_save_config | bool
+  tags:
+    - f5_network
+    - f5_save
