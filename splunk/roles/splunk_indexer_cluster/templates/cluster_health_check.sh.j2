@@ -1,0 +1,34 @@
+#!/bin/bash
+# Splunk Indexer Cluster Health Check Script
+# Fourth Estate Production Environment
+
+SPLUNK_HOME="{{ splunk_home }}"
+ADMIN_USER="{{ splunk_admin_user }}"
+ADMIN_PASS="{{ splunk_admin_password }}"
+MGMT_PORT="{{ splunk_management_port }}"
+
+echo "========================================"
+echo "Splunk Cluster Health Check - $(date)"
+echo "========================================"
+
+# Check cluster master status
+echo "Checking cluster master status..."
+${SPLUNK_HOME}/bin/splunk list cluster-peers -auth ${ADMIN_USER}:${ADMIN_PASS}
+
+# Check bucket replication status
+echo "Checking bucket replication..."
+${SPLUNK_HOME}/bin/splunk show cluster-bundle-status -auth ${ADMIN_USER}:${ADMIN_PASS}
+
+# Check for any indexers in detention
+DETENTION=$(/usr/bin/curl -k -u ${ADMIN_USER}:${ADMIN_PASS} https://localhost:${MGMT_PORT}/services/cluster/master/peers | grep -c "status>Down")
+if [ $DETENTION -gt 0 ]; then
+    echo "WARNING: $DETENTION indexer(s) are down or in detention!"
+fi
+
+# Check search head connectivity
+echo "Checking search head connectivity..."
+${SPLUNK_HOME}/bin/splunk list forward-server -auth ${ADMIN_USER}:${ADMIN_PASS}
+
+echo "========================================"
+echo "Health check completed"
+echo "========================================"

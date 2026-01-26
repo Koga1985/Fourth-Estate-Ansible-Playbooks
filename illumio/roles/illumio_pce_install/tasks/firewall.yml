@@ -1,0 +1,131 @@
+---
+# Firewall configuration for PCE
+
+- name: Install firewalld
+  package:
+    name: firewalld
+    state: present
+  when: not illumio_pce_use_iptables | bool
+
+- name: Start and enable firewalld
+  systemd:
+    name: firewalld
+    enabled: yes
+    state: started
+  when: not illumio_pce_use_iptables | bool
+
+- name: Configure firewalld for PCE
+  firewalld:
+    port: "{{ item.port }}"
+    permanent: yes
+    state: enabled
+    immediate: yes
+  loop:
+    - { port: "8443/tcp", desc: "PCE Web Console" }
+    - { port: "443/tcp", desc: "PCE API (HTTPS)" }
+    - { port: "8444/tcp", desc: "PCE Service Core" }
+    - { port: "8445/tcp", desc: "Event Service" }
+    - { port: "8446/tcp", desc: "PCE Management" }
+  when: not illumio_pce_use_iptables | bool
+
+- name: Allow SSH for management
+  firewalld:
+    service: ssh
+    permanent: yes
+    state: enabled
+    immediate: yes
+  when: not illumio_pce_use_iptables | bool
+
+- name: Configure iptables rules (if using iptables)
+  block:
+    - name: Install iptables-services
+      package:
+        name: iptables-services
+        state: present
+
+    - name: Create iptables rules for PCE
+      iptables:
+        chain: INPUT
+        protocol: tcp
+        destination_port: "{{ item }}"
+        jump: ACCEPT
+        comment: "Illumio PCE port {{ item }}"
+      loop:
+        - 8443
+        - 443
+        - 8444
+        - 8445
+        - 8446
+        - 22
+
+    - name: Allow established connections
+      iptables:
+        chain: INPUT
+        ctstate: ESTABLISHED,RELATED
+        jump: ACCEPT
+
+    - name: Allow loopback traffic
+      iptables:
+        chain: INPUT
+        in_interface: lo
+        jump: ACCEPT
+
+    - name: Save iptables rules
+      command: service iptables save
+      changed_when: true
+
+    - name: Enable and start iptables
+      systemd:
+        name: iptables
+        enabled: yes
+        state: started
+
+  when: illumio_pce_use_iptables | bool
+
+- name: Configure source IP restrictions (if defined)
+  firewalld:
+    rich_rule: 'rule family="ipv4" source address="{{ item.source }}" port protocol="tcp" port="{{ item.port }}" accept'
+    permanent: yes
+    state: enabled
+    immediate: yes
+  loop: "{{ illumio_pce_firewall_rules }}"
+  when:
+    - not illumio_pce_use_iptables | bool
+    - illumio_pce_firewall_rules is defined
+
+- name: Create firewall rule documentation
+  copy:
+    content: |
+      Illumio PCE Firewall Rules
+      ==========================
+
+      Required Inbound Ports:
+      - TCP 8443: PCE Web Console (HTTPS)
+      - TCP 443: PCE REST API (HTTPS)
+      - TCP 8444: PCE Service Core
+      - TCP 8445: Event Service
+      - TCP 8446: PCE Management
+
+      VEN Communication:
+      - VENs connect to PCE on port 8443 (can be customized)
+      - VENs communicate using TLS 1.2+
+
+      Database (if co-located):
+      - TCP 5432: PostgreSQL (localhost only)
+
+      Cluster Communication (HA mode):
+      - TCP 2379: etcd client
+      - TCP 2380: etcd peer
+      - TCP 7946: Gossip protocol
+      - UDP 7946: Gossip protocol
+
+      Management:
+      - TCP 22: SSH (restrict to management network)
+
+      Outbound:
+      - Allow all outbound for VEN communication
+      - Allow outbound SMTP if email alerts configured
+      - Allow outbound syslog if log forwarding configured
+
+    dest: /etc/illumio-pce/firewall-rules.txt
+    mode: '0644'

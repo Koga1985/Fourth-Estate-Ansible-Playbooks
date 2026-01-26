@@ -1,0 +1,177 @@
+---
+# Illumio PCE installation tasks
+
+- name: Create PCE installation directory
+  file:
+    path: /tmp/illumio-pce-install
+    state: directory
+    mode: '0755'
+
+- name: Download PCE installation package (online)
+  get_url:
+    url: "{{ illumio_pce_package_url }}"
+    dest: "/tmp/illumio-pce-install/{{ illumio_pce_package_file }}"
+    mode: '0644'
+    timeout: 300
+  when: illumio_pce_online_install | bool
+
+- name: Copy PCE installation package (offline)
+  copy:
+    src: "{{ illumio_pce_package_local_path }}"
+    dest: "/tmp/illumio-pce-install/{{ illumio_pce_package_file }}"
+    mode: '0644'
+  when: not illumio_pce_online_install | bool
+
+- name: Extract PCE installation package
+  unarchive:
+    src: "/tmp/illumio-pce-install/{{ illumio_pce_package_file }}"
+    dest: /tmp/illumio-pce-install/
+    remote_src: yes
+    creates: /tmp/illumio-pce-install/illumio-pce
+
+- name: Find PCE installation directory
+  find:
+    paths: /tmp/illumio-pce-install
+    patterns: "illumio-pce-*"
+    file_type: directory
+  register: pce_install_dir
+
+- name: Set PCE installation directory fact
+  set_fact:
+    pce_installer_path: "{{ pce_install_dir.files[0].path }}"
+
+- name: Create PCE installation configuration
+  template:
+    src: install_config.json.j2
+    dest: "{{ pce_installer_path }}/install_config.json"
+    mode: '0600'
+
+- name: Run PCE installation script
+  shell: |
+    cd {{ pce_installer_path }}
+    ./install.sh --config install_config.json
+  args:
+    creates: /opt/illumio-pce/illumio-pce-ctl
+  register: pce_install_result
+  environment:
+    ILLUMIO_PCE_ADMIN_PASSWORD: "{{ illumio_pce_admin_password }}"
+
+- name: Display installation output
+  debug:
+    var: pce_install_result.stdout_lines
+  when: pce_install_result.changed
+
+- name: Create PCE runtime configuration
+  template:
+    src: runtime_env.yml.j2
+    dest: /etc/illumio-pce/runtime_env.yml
+    owner: "{{ illumio_pce_user }}"
+    group: "{{ illumio_pce_group }}"
+    mode: '0600'
+
+- name: Create PCE service override directory
+  file:
+    path: /etc/systemd/system/illumio-pce.service.d
+    state: directory
+    mode: '0755'
+
+- name: Configure PCE service overrides
+  copy:
+    content: |
+      [Service]
+      LimitNOFILE=65536
+      LimitNPROC=65536
+      Environment="ILLUMIO_PCE_DATA_DIR={{ illumio_pce_data_dir }}"
+      Environment="ILLUMIO_PCE_CONFIG_DIR={{ illumio_pce_config_dir }}"
+    dest: /etc/systemd/system/illumio-pce.service.d/override.conf
+    mode: '0644'
+  notify: daemon-reload
+
+- name: Create PCE control script wrapper
+  template:
+    src: pce-ctl-wrapper.sh.j2
+    dest: /usr/local/bin/pce-ctl
+    mode: '0755'
+
+- name: Set proper ownership on PCE directories
+  file:
+    path: "{{ item }}"
+    owner: "{{ illumio_pce_user }}"
+    group: "{{ illumio_pce_group }}"
+    recurse: yes
+  loop:
+    - /opt/illumio-pce
+    - "{{ illumio_pce_data_dir }}"
+    - "{{ illumio_pce_config_dir }}"
+
+- name: Enable PCE service
+  systemd:
+    name: illumio-pce
+    enabled: yes
+    daemon_reload: yes
+
+- name: Check PCE service status
+  systemd:
+    name: illumio-pce
+    state: started
+  register: pce_service_status
+
+- name: Wait for PCE to be ready
+  uri:
+    url: "https://{{ illumio_pce_fqdn }}:{{ illumio_pce_port }}/health"
+    method: GET
+    validate_certs: no
+    status_code: 200
+  register: pce_health_check
+  until: pce_health_check.status == 200
+  retries: 30
+  delay: 10
+  when: pce_service_status.changed
+
+- name: Get PCE version
+  shell: /opt/illumio-pce/illumio-pce-ctl version
+  register: installed_pce_version
+  changed_when: false
+
+- name: Display installed PCE version
+  debug:
+    msg: "Illumio PCE {{ installed_pce_version.stdout }} installed successfully"
+
+- name: Create PCE CLI configuration for admin user
+  template:
+    src: illumio_cli_config.j2
+    dest: "/home/{{ illumio_pce_user }}/.illumio/config.yml"
+    owner: "{{ illumio_pce_user }}"
+    group: "{{ illumio_pce_group }}"
+    mode: '0600'
+
+- name: Generate initial API key for automation
+  uri:
+    url: "https://{{ illumio_pce_fqdn }}:{{ illumio_pce_port }}/api/v2/users/login"
+    method: POST
+    user: "{{ illumio_pce_admin_user }}"
+    password: "{{ illumio_pce_admin_password }}"
+    force_basic_auth: yes
+    validate_certs: no
+    body_format: json
+    body:
+      pce_fqdn: "{{ illumio_pce_fqdn }}"
+      org_id: 1
+    status_code: 200
+  register: pce_login_response
+  no_log: true
+  when: illumio_pce_generate_api_key | bool
+
+- name: Save PCE session token
+  set_fact:
+    pce_session_token: "{{ pce_login_response.json.auth_token }}"
+  no_log: true
+  when:
+    - illumio_pce_generate_api_key | bool
+    - pce_login_response.json.auth_token is defined
+
+- name: Cleanup installation files
+  file:
+    path: /tmp/illumio-pce-install
+    state: absent
+  when: illumio_pce_cleanup_install_files | bool

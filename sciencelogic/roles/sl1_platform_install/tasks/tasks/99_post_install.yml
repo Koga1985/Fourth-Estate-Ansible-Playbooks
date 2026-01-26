@@ -1,0 +1,74 @@
+---
+- name: Restart SL1 services
+  ansible.builtin.service:
+    name: "{{ item.name }}"
+    state: restarted
+    enabled: "{{ item.enabled }}"
+  loop: "{{ sl1_services }}"
+  when:
+    - sl1_post_install.restart_services
+    - not dry_run
+
+- name: Wait for SL1 to be fully operational
+  ansible.builtin.wait_for:
+    port: 443
+    host: "{{ sl1_aio.hostname }}"
+    timeout: 600
+    delay: 30
+  when: not dry_run
+
+- name: Run health check
+  ansible.builtin.uri:
+    url: "https://{{ sl1_aio.hostname }}/api/system/health"
+    method: GET
+    headers:
+      X-EM7-API-Username: "{{ sl1_setup_wizard.admin_user }}"
+      X-EM7-API-Password: "{{ sl1_setup_wizard.admin_password }}"
+    validate_certs: "{{ sl1_ssl.enabled }}"
+    status_code: 200
+  register: health_check
+  when:
+    - sl1_post_install.run_healthcheck
+    - not dry_run
+
+- name: Display health check results
+  ansible.builtin.debug:
+    var: health_check.json
+  when:
+    - sl1_post_install.run_healthcheck
+    - not dry_run
+
+- name: Configure automated backup
+  ansible.builtin.template:
+    src: backup_config.j2
+    dest: /opt/em7/conf/backup.conf
+    owner: em7admin
+    group: em7admin
+    mode: '0644'
+  when:
+    - sl1_post_install.configure_backup
+    - not dry_run
+
+- name: Create backup cron job
+  ansible.builtin.cron:
+    name: "SL1 Daily Backup"
+    hour: "2"
+    minute: "0"
+    job: "/opt/em7/bin/em7_backup.sh"
+    user: em7admin
+  when:
+    - sl1_post_install.configure_backup
+    - not dry_run
+
+- name: Post-installation summary
+  ansible.builtin.debug:
+    msg:
+      - "================================================"
+      - "SL1 Platform Installation Completed Successfully"
+      - "================================================"
+      - "Access URL: https://{{ sl1_aio.hostname }}"
+      - "Admin User: {{ sl1_setup_wizard.admin_user }}"
+      - "Version: {{ sl1_version }}"
+      - "Organization: {{ sl1_setup_wizard.organization }}"
+      - "Health Status: {{ health_check.json.status | default('OK') if not dry_run else 'DRY RUN' }}"
+      - "================================================"

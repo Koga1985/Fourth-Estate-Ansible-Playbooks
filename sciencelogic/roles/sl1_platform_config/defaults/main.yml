@@ -1,0 +1,265 @@
+---
+# SL1 Platform Configuration
+
+# SL1 Connection
+sl1:
+  url: "https://sl1.example.com"
+  api_user: "{{ vault_sl1_api_user }}"
+  api_password: "{{ vault_sl1_api_password }}"
+  api_token: "{{ vault_sl1_api_token | default('') }}"
+  verify_ssl: true
+  timeout: 30
+
+# System Settings
+sl1_system_settings:
+  company_name: "Fourth Estate"
+  system_name: "SL1 Production"
+  session_timeout: 30  # minutes
+  password_policy:
+    min_length: 12
+    require_uppercase: true
+    require_lowercase: true
+    require_numbers: true
+    require_special: true
+    password_history: 5
+    max_age_days: 90
+  login_banner: "Authorized Access Only - Fourth Estate"
+  enable_audit_log: true
+  log_level: "INFO"
+  max_concurrent_users: 500
+
+# SMTP Configuration
+sl1_smtp:
+  enabled: true
+  server: "smtp.example.com"
+  port: 587
+  use_tls: true
+  use_auth: true
+  username: "{{ vault_smtp_username }}"
+  password: "{{ vault_smtp_password }}"
+  from_address: "sl1-alerts@example.com"
+  from_name: "SL1 Monitoring"
+  test_email: "admin@example.com"
+
+# SNMP Trap Receiver
+sl1_snmp_trap:
+  enabled: true
+  port: 162
+  community_strings:
+    - "public"
+    - "{{ vault_snmp_community }}"
+  allowed_sources:
+    - "10.0.0.0/8"
+    - "172.16.0.0/12"
+  trap_processing: true
+  auto_clear_events: true
+
+# Syslog Receiver
+sl1_syslog:
+  enabled: true
+  tcp_port: 514
+  udp_port: 514
+  allowed_sources:
+    - "10.0.0.0/8"
+    - "172.16.0.0/12"
+  facility_mapping:
+    - facility: "local0"
+      severity: "error"
+      action: "create_event"
+    - facility: "local1"
+      severity: "warning"
+      action: "log_only"
+  message_parsing: true
+  create_events: true
+
+# Authentication Configuration
+sl1_authentication:
+  method: "ldap"  # local, ldap, saml
+  allow_local_fallback: true
+
+  # LDAP/AD Configuration
+  ldap:
+    enabled: true
+    server: "ldap.example.com"
+    port: 636
+    use_ssl: true
+    base_dn: "dc=example,dc=com"
+    bind_dn: "cn=sl1bind,ou=services,dc=example,dc=com"
+    bind_password: "{{ vault_ldap_bind_password }}"
+    user_search_filter: "(sAMAccountName=%s)"
+    group_search_filter: "(member=%s)"
+    user_dn: "ou=users,dc=example,dc=com"
+    group_dn: "ou=groups,dc=example,dc=com"
+    attributes:
+      username: "sAMAccountName"
+      email: "mail"
+      first_name: "givenName"
+      last_name: "sn"
+    group_mapping:
+      - ldap_group: "SL1-Admins"
+        sl1_role: "Administrator"
+      - ldap_group: "SL1-Operators"
+        sl1_role: "Operator"
+      - ldap_group: "SL1-Viewers"
+        sl1_role: "Read Only"
+
+  # SAML Configuration
+  saml:
+    enabled: false
+    idp_entity_id: "https://idp.example.com/saml"
+    idp_sso_url: "https://idp.example.com/sso"
+    idp_slo_url: "https://idp.example.com/slo"
+    idp_certificate: "/etc/ssl/certs/idp.crt"
+    sp_entity_id: "https://sl1.example.com/saml"
+    sp_acs_url: "https://sl1.example.com/api/saml/acs"
+    attribute_mapping:
+      username: "urn:oid:0.9.2342.19200300.100.1.1"
+      email: "urn:oid:0.9.2342.19200300.100.1.3"
+      first_name: "urn:oid:2.5.4.42"
+      last_name: "urn:oid:2.5.4.4"
+
+# User Accounts and Roles
+sl1_users:
+  - username: "admin"
+    email: "admin@example.com"
+    first_name: "System"
+    last_name: "Administrator"
+    role: "Administrator"
+    organization: "System"
+    active: true
+    password: "{{ vault_admin_password }}"
+  - username: "operator"
+    email: "operator@example.com"
+    first_name: "System"
+    last_name: "Operator"
+    role: "Operator"
+    organization: "Fourth Estate"
+    active: true
+    password: "{{ vault_operator_password }}"
+
+# Organizations (Multi-Tenancy)
+sl1_organizations:
+  - name: "Fourth Estate"
+    description: "Fourth Estate Production Organization"
+    billing_id: "FE-001"
+    parent_org: "System"
+    contact_email: "fourth-estate-ops@example.com"
+    theme: "default"
+    capabilities:
+      - "device_management"
+      - "event_management"
+      - "reporting"
+      - "automation"
+  - name: "Publishing"
+    description: "Publishing Division"
+    billing_id: "FE-PUB-001"
+    parent_org: "Fourth Estate"
+    contact_email: "publishing-ops@example.com"
+
+# API Access Configuration
+sl1_api:
+  enabled: true
+  rate_limiting:
+    enabled: true
+    requests_per_minute: 1000
+    requests_per_hour: 10000
+  api_keys:
+    - name: "automation_key"
+      description: "Automation API Key"
+      permissions: ["read", "write"]
+      organizations: ["Fourth Estate"]
+      expiration_days: 365
+    - name: "integration_key"
+      description: "Integration API Key"
+      permissions: ["read"]
+      organizations: ["Fourth Estate", "Publishing"]
+      expiration_days: 365
+  allowed_ips:
+    - "10.0.0.0/8"
+    - "172.16.0.0/12"
+  cors_enabled: false
+
+# Branding Customization
+sl1_branding:
+  enabled: true
+  logo_path: "/path/to/logo.png"
+  favicon_path: "/path/to/favicon.ico"
+  login_page_title: "Fourth Estate Monitoring"
+  login_page_text: "Welcome to Fourth Estate SL1 Platform"
+  color_scheme:
+    primary: "#003366"
+    secondary: "#006699"
+    accent: "#FF6600"
+
+# Backup Configuration
+sl1_backup:
+  enabled: true
+  schedule: "0 2 * * *"  # Daily at 2 AM
+  retention_days: 30
+  backup_path: "/var/backups/sl1"
+  include_database: true
+  include_config: true
+  include_logs: false
+  compress: true
+  remote_backup:
+    enabled: false
+    type: "s3"  # s3, sftp, nfs
+    destination: "s3://backup-bucket/sl1"
+    credentials: "{{ vault_backup_credentials }}"
+
+# Log Retention Policies
+sl1_log_retention:
+  event_logs:
+    retention_days: 90
+    archive_enabled: true
+    archive_location: "/mnt/archive/events"
+  performance_data:
+    retention_days: 365
+    aggregation:
+      - interval: "5min"
+        retention_days: 7
+      - interval: "1hour"
+        retention_days: 30
+      - interval: "1day"
+        retention_days: 365
+  audit_logs:
+    retention_days: 2555  # 7 years for compliance
+    archive_enabled: true
+    archive_location: "/mnt/archive/audit"
+  system_logs:
+    retention_days: 30
+
+# Performance Tuning
+sl1_performance:
+  collector_threads: 50
+  polling_threads: 100
+  event_processing_threads: 20
+  database_connections: 200
+  cache_size_mb: 2048
+  elasticsearch_shards: 5
+  elasticsearch_replicas: 1
+  memcached_size_mb: 1024
+  queue_size: 10000
+
+# Database Maintenance
+sl1_database_maintenance:
+  optimize_tables: true
+  optimize_schedule: "0 3 * * 0"  # Weekly on Sunday at 3 AM
+  vacuum_analyze: true
+  reindex: true
+  statistics_update: true
+  backup_before_maintenance: true
+
+# Fourth Estate Specific
+fourth_estate:
+  environment: "production"
+  compliance_mode: true
+  encryption_at_rest: true
+  encryption_in_transit: true
+  data_classification: "sensitive"
+  audit_all_actions: true
+
+# Artifacts and Logging
+artifacts_dir: "/tmp/sl1-config-artifacts"
+log_level: "info"
+dry_run: false

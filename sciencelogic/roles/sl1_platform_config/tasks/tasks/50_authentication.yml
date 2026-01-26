@@ -1,0 +1,92 @@
+---
+- name: Configure LDAP authentication
+  ansible.builtin.uri:
+    url: "{{ sl1.url }}/api/account/auth/ldap"
+    method: PUT
+    body:
+      enabled: "{{ sl1_authentication.ldap.enabled }}"
+      server: "{{ sl1_authentication.ldap.server }}"
+      port: "{{ sl1_authentication.ldap.port }}"
+      use_ssl: "{{ sl1_authentication.ldap.use_ssl }}"
+      base_dn: "{{ sl1_authentication.ldap.base_dn }}"
+      bind_dn: "{{ sl1_authentication.ldap.bind_dn }}"
+      bind_password: "{{ sl1_authentication.ldap.bind_password }}"
+      user_search_filter: "{{ sl1_authentication.ldap.user_search_filter }}"
+      group_search_filter: "{{ sl1_authentication.ldap.group_search_filter }}"
+      user_dn: "{{ sl1_authentication.ldap.user_dn }}"
+      group_dn: "{{ sl1_authentication.ldap.group_dn }}"
+      attributes: "{{ sl1_authentication.ldap.attributes }}"
+    body_format: json
+    headers:
+      Content-Type: "application/json"
+      X-EM7-API-Username: "{{ sl1.api_user }}"
+      X-EM7-API-Password: "{{ sl1.api_password }}"
+    validate_certs: "{{ sl1.verify_ssl }}"
+    status_code: [200, 201]
+  when:
+    - sl1_authentication.method == "ldap"
+    - sl1_authentication.ldap.enabled
+    - not dry_run
+
+- name: Configure LDAP group mapping
+  ansible.builtin.uri:
+    url: "{{ sl1.url }}/api/account/auth/ldap/groups"
+    method: POST
+    body:
+      ldap_group: "{{ item.ldap_group }}"
+      sl1_role: "{{ item.sl1_role }}"
+    body_format: json
+    headers:
+      Content-Type: "application/json"
+      X-EM7-API-Username: "{{ sl1.api_user }}"
+      X-EM7-API-Password: "{{ sl1.api_password }}"
+    validate_certs: "{{ sl1.verify_ssl }}"
+    status_code: [200, 201, 409]
+  loop: "{{ sl1_authentication.ldap.group_mapping }}"
+  when:
+    - sl1_authentication.method == "ldap"
+    - sl1_authentication.ldap.enabled
+    - not dry_run
+
+- name: Configure SAML authentication
+  ansible.builtin.uri:
+    url: "{{ sl1.url }}/api/account/auth/saml"
+    method: PUT
+    body:
+      enabled: "{{ sl1_authentication.saml.enabled }}"
+      idp_entity_id: "{{ sl1_authentication.saml.idp_entity_id }}"
+      idp_sso_url: "{{ sl1_authentication.saml.idp_sso_url }}"
+      idp_slo_url: "{{ sl1_authentication.saml.idp_slo_url }}"
+      sp_entity_id: "{{ sl1_authentication.saml.sp_entity_id }}"
+      sp_acs_url: "{{ sl1_authentication.saml.sp_acs_url }}"
+      attribute_mapping: "{{ sl1_authentication.saml.attribute_mapping }}"
+    body_format: json
+    headers:
+      Content-Type: "application/json"
+      X-EM7-API-Username: "{{ sl1.api_user }}"
+      X-EM7-API-Password: "{{ sl1.api_password }}"
+    validate_certs: "{{ sl1.verify_ssl }}"
+    status_code: [200, 201]
+  when:
+    - sl1_authentication.method == "saml"
+    - sl1_authentication.saml.enabled
+    - not dry_run
+
+- name: Upload SAML IdP certificate
+  ansible.builtin.copy:
+    src: "{{ sl1_authentication.saml.idp_certificate }}"
+    dest: /opt/em7/conf/saml/idp.crt
+    owner: em7admin
+    group: em7admin
+    mode: '0644'
+  when:
+    - sl1_authentication.method == "saml"
+    - sl1_authentication.saml.enabled
+    - not dry_run
+
+- name: Authentication configuration summary
+  ansible.builtin.debug:
+    msg:
+      - "Authentication method: {{ sl1_authentication.method }}"
+      - "LDAP enabled: {{ sl1_authentication.ldap.enabled }}"
+      - "SAML enabled: {{ sl1_authentication.saml.enabled }}"

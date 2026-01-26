@@ -1,0 +1,31 @@
+---
+# Configure SSL certificates
+- name: Read SSL certificate
+  ansible.builtin.slurp:
+    src: "{{ cohesity_ssl_certificate_path }}"
+  register: ssl_cert
+  delegate_to: localhost
+  when: cohesity_ssl_certificate_type == "custom"
+
+- name: Read SSL private key
+  ansible.builtin.slurp:
+    src: "{{ cohesity_ssl_private_key_path }}"
+  register: ssl_key
+  delegate_to: localhost
+  no_log: true
+  when: cohesity_ssl_certificate_type == "custom"
+
+- name: Upload custom SSL certificate
+  ansible.builtin.uri:
+    url: "{{ cohesity_api_protocol }}://{{ cohesity_cluster_vip }}/irisservices/api/v1/public/certificates/webServer"
+    method: PUT
+    headers:
+      Authorization: "Bearer {{ cohesity_api_token }}"
+    body_format: json
+    body:
+      certificate: "{{ ssl_cert.content | b64decode }}"
+      privateKey: "{{ ssl_key.content | b64decode }}"
+    validate_certs: "{{ cohesity_api_verify_ssl }}"
+    status_code: 200
+  no_log: true
+  when: cohesity_ssl_certificate_type == "custom"

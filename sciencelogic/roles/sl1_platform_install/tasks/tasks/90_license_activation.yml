@@ -1,0 +1,32 @@
+---
+- name: Copy license file to SL1
+  ansible.builtin.copy:
+    src: "{{ sl1_license_file }}"
+    dest: /opt/em7/conf/license.lic
+    owner: em7admin
+    group: em7admin
+    mode: '0644'
+  when: not dry_run
+
+- name: Activate SL1 license via API
+  ansible.builtin.uri:
+    url: "https://{{ sl1_aio.hostname }}/api/account/license"
+    method: POST
+    body:
+      license_key: "{{ sl1_license.license_key }}"
+    body_format: json
+    headers:
+      Content-Type: "application/json"
+      X-EM7-API-Username: "{{ sl1_setup_wizard.admin_user }}"
+      X-EM7-API-Password: "{{ sl1_setup_wizard.admin_password }}"
+    validate_certs: "{{ sl1_ssl.enabled }}"
+    status_code: [200, 201]
+  register: license_result
+  when: not dry_run
+
+- name: Display license activation status
+  ansible.builtin.debug:
+    msg:
+      - "License activation completed"
+      - "License Status: {{ license_result.json.status | default('Active') }}"
+  when: not dry_run

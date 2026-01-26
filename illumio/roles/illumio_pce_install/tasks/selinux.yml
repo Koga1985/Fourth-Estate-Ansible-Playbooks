@@ -1,0 +1,173 @@
+---
+# SELinux configuration for PCE
+
+- name: Install SELinux management tools
+  package:
+    name:
+      - policycoreutils-python-utils
+      - setools-console
+    state: present
+  when: ansible_distribution_major_version in ["8", "9"]
+
+- name: Install SELinux management tools (RHEL 7)
+  package:
+    name:
+      - policycoreutils-python
+      - setools-console
+    state: present
+  when: ansible_distribution_major_version == "7"
+
+- name: Set SELinux file contexts for PCE directories
+  sefcontext:
+    target: "{{ item.path }}(/.*)?"
+    setype: "{{ item.setype }}"
+    state: present
+  loop:
+    - { path: '/opt/illumio-pce', setype: 'usr_t' }
+    - { path: '{{ illumio_pce_data_dir }}', setype: 'var_lib_t' }
+    - { path: '{{ illumio_pce_data_dir }}/log', setype: 'var_log_t' }
+    - { path: '{{ illumio_pce_config_dir }}', setype: 'etc_t' }
+
+- name: Apply SELinux file contexts
+  command: restorecon -R {{ item }}
+  loop:
+    - /opt/illumio-pce
+    - "{{ illumio_pce_data_dir }}"
+    - "{{ illumio_pce_config_dir }}"
+  changed_when: true
+
+- name: Allow PCE to bind to required ports
+  seport:
+    ports: "{{ item }}"
+    proto: tcp
+    setype: http_port_t
+    state: present
+  loop:
+    - 8443
+    - 8444
+    - 8445
+    - 8446
+
+- name: Create SELinux policy module for PCE
+  copy:
+    content: |
+      module illumio_pce 1.0;
+
+      require {
+        type unconfined_t;
+        type usr_t;
+        type var_lib_t;
+        type http_port_t;
+        class tcp_socket { bind listen accept };
+        class file { read write execute open };
+      }
+
+      # Allow PCE to bind to custom ports
+      allow unconfined_t http_port_t:tcp_socket { bind listen accept };
+
+      # Allow PCE to read/write data files
+      allow unconfined_t var_lib_t:file { read write open };
+
+      # Allow PCE to execute binaries
+      allow unconfined_t usr_t:file execute;
+    dest: /tmp/illumio_pce.te
+    mode: '0644'
+
+- name: Compile SELinux policy module
+  shell: |
+    checkmodule -M -m -o /tmp/illumio_pce.mod /tmp/illumio_pce.te
+    semodule_package -o /tmp/illumio_pce.pp -m /tmp/illumio_pce.mod
+  args:
+    creates: /tmp/illumio_pce.pp
+
+- name: Install SELinux policy module
+  command: semodule -i /tmp/illumio_pce.pp
+  register: semodule_install
+  changed_when: semodule_install.rc == 0
+
+- name: Allow PCE network connections
+  seboolean:
+    name: "{{ item }}"
+    state: yes
+    persistent: yes
+  loop:
+    - httpd_can_network_connect
+    - httpd_can_network_connect_db
+  when: ansible_distribution_major_version in ["7", "8", "9"]
+
+- name: Set SELinux to enforcing mode (if configured)
+  selinux:
+    policy: targeted
+    state: enforcing
+  when: illumio_pce_selinux_enforcing | bool
+
+- name: Verify SELinux status
+  command: getenforce
+  register: selinux_status
+  changed_when: false
+
+- name: Display SELinux status
+  debug:
+    msg: "SELinux is currently in {{ selinux_status.stdout }} mode"
+
+- name: Check for SELinux denials
+  shell: ausearch -m avc -ts recent | grep illumio || echo "No recent SELinux denials found"
+  register: selinux_denials
+  changed_when: false
+  failed_when: false
+
+- name: Display SELinux denials (if any)
+  debug:
+    var: selinux_denials.stdout_lines
+  when: "'denied' in selinux_denials.stdout"
+
+- name: Create SELinux troubleshooting guide
+  copy:
+    content: |
+      Illumio PCE SELinux Configuration
+      =================================
+
+      Current Status: {{ selinux_status.stdout }}
+
+      Configured Ports:
+      - 8443/tcp (PCE Web Console)
+      - 8444/tcp (Service Core)
+      - 8445/tcp (Event Service)
+      - 8446/tcp (Management)
+
+      File Contexts:
+      - /opt/illumio-pce: usr_t
+      - {{ illumio_pce_data_dir }}: var_lib_t
+      - {{ illumio_pce_data_dir }}/log: var_log_t
+      - {{ illumio_pce_config_dir }}: etc_t
+
+      Troubleshooting SELinux Issues:
+      1. Check for denials:
+         ausearch -m avc -ts recent | grep illumio
+
+      2. Generate policy from denials:
+         ausearch -m avc -ts recent | audit2allow -M illumio_pce_custom
+         semodule -i illumio_pce_custom.pp
+
+      3. Temporarily set to permissive (troubleshooting only):
+         setenforce 0
+
+      4. Check file contexts:
+         ls -Z /opt/illumio-pce
+         ls -Z {{ illumio_pce_data_dir }}
+
+      5. Restore file contexts:
+         restorecon -R /opt/illumio-pce
+         restorecon -R {{ illumio_pce_data_dir }}
+
+    dest: /etc/illumio-pce/selinux-guide.txt
+    mode: '0644'
+
+- name: Cleanup temporary SELinux files
+  file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /tmp/illumio_pce.te
+    - /tmp/illumio_pce.mod
+    - /tmp/illumio_pce.pp

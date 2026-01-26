@@ -1,0 +1,218 @@
+---
+# Pure Storage FlashArray Replication Management
+# Handles ActiveCluster, ActiveDR, array pairing, and replication policies
+
+- name: Create array connections for replication
+  purefa_connect:
+    fa_url: "{{ flasharray_url }}"
+    api_token: "{{ flasharray_api_token }}"
+    target_url: "{{ item.target_url }}"
+    target_api: "{{ item.target_api_token }}"
+    connection: "replication"
+    state: present
+  loop: "{{ flasharray_replication_targets }}"
+  when: flasharray_replication_targets is defined
+  no_log: true
+
+- name: Configure ActiveCluster (synchronous replication)
+  purefa_connect:
+    fa_url: "{{ flasharray_url }}"
+    api_token: "{{ flasharray_api_token }}"
+    target_url: "{{ item.target_url }}"
+    target_api: "{{ item.target_api_token }}"
+    connection: "sync-replication"
+    transport: "{{ item.transport | default('ip') }}"
+    state: present
+  loop: "{{ flasharray_activecluster_arrays }}"
+  when: flasharray_activecluster_arrays is defined
+  no_log: true
+
+- name: Create pods for ActiveCluster
+  purefa_pod:
+    fa_url: "{{ flasharray_url }}"
+    api_token: "{{ flasharray_api_token }}"
+    name: "{{ item.name }}"
+    state: present
+  loop: "{{ flasharray_activecluster_pods }}"
+  when: flasharray_activecluster_pods is defined
+
+- name: Stretch pods across arrays (ActiveCluster)
+  purefa_pod:
+    fa_url: "{{ flasharray_url }}"
+    api_token: "{{ flasharray_api_token }}"
+    name: "{{ item.pod_name }}"
+    stretch: "{{ item.target_array }}"
+    state: present
+  loop: "{{ flasharray_stretched_pods }}"
+  when: flasharray_stretched_pods is defined
+
+- name: Add volumes to pods
+  purefa_volume:
+    fa_url: "{{ flasharray_url }}"
+    api_token: "{{ flasharray_api_token }}"
+    name: "{{ item.pod_name }}::{{ item.volume_name }}"
+    size: "{{ item.size }}"
+    state: present
+  loop: "{{ flasharray_pod_volumes }}"
+  when: flasharray_pod_volumes is defined
+
+- name: Configure ActiveDR (asynchronous replication)
+  purefa_pg:
+    fa_url: "{{ flasharray_url }}"
+    api_token: "{{ flasharray_api_token }}"
+    name: "{{ item.pg_name }}"
+    target: "{{ item.target_array }}"
+    state: present
+  loop: "{{ flasharray_activedr_pgroups }}"
+  when: flasharray_activedr_pgroups is defined
+
+- name: Configure replication schedules
+  purefa_pgsnap:
+    fa_url: "{{ flasharray_url }}"
+    api_token: "{{ flasharray_api_token }}"
+    name: "{{ item.pg_name }}"
+    enabled: true
+    replicate_enabled: true
+    replicate_frequency: "{{ item.replicate_frequency }}"
+    target: "{{ item.target_array }}"
+    state: present
+  loop: "{{ flasharray_replication_schedules }}"
+  when: flasharray_replication_schedules is defined
+
+- name: Set replication bandwidth limits
+  purefa_connect:
+    fa_url: "{{ flasharray_url }}"
+    api_token: "{{ flasharray_api_token }}"
+    target_url: "{{ item.target_url }}"
+    target_api: "{{ item.target_api_token }}"
+    bandwidth: "{{ item.bandwidth_limit }}"
+    state: present
+  loop: "{{ flasharray_replication_bandwidth }}"
+  when: flasharray_replication_bandwidth is defined
+  no_log: true
+
+- name: Configure replication networks
+  purefa_network:
+    fa_url: "{{ flasharray_url }}"
+    api_token: "{{ flasharray_api_token }}"
+    name: "{{ item.interface }}"
+    address: "{{ item.address }}"
+    netmask: "{{ item.netmask }}"
+    gateway: "{{ item.gateway | default(omit) }}"
+    mtu: "{{ item.mtu | default(9000) }}"
+    services:
+      - replication
+    state: present
+  loop: "{{ flasharray_replication_interfaces }}"
+  when: flasharray_replication_interfaces is defined
+
+- name: Enable continuous replication
+  purefa_pg:
+    fa_url: "{{ flasharray_url }}"
+    api_token: "{{ flasharray_api_token }}"
+    name: "{{ item.pg_name }}"
+    target: "{{ item.target_array }}"
+    replicate_enabled: true
+    state: present
+  loop: "{{ flasharray_continuous_replication }}"
+  when: flasharray_continuous_replication is defined
+
+- name: Configure RPO targets
+  purefa_pgsnap:
+    fa_url: "{{ flasharray_url }}"
+    api_token: "{{ flasharray_api_token }}"
+    name: "{{ item.pg_name }}"
+    replicate_frequency: "{{ item.rpo_seconds }}"
+    target: "{{ item.target_array }}"
+    state: present
+  loop: "{{ flasharray_rpo_targets }}"
+  when: flasharray_rpo_targets is defined
+
+- name: Pause replication for maintenance
+  purefa_pg:
+    fa_url: "{{ flasharray_url }}"
+    api_token: "{{ flasharray_api_token }}"
+    name: "{{ item }}"
+    replicate_enabled: false
+    state: present
+  loop: "{{ flasharray_pause_replication }}"
+  when: flasharray_pause_replication is defined
+
+- name: Resume replication after maintenance
+  purefa_pg:
+    fa_url: "{{ flasharray_url }}"
+    api_token: "{{ flasharray_api_token }}"
+    name: "{{ item }}"
+    replicate_enabled: true
+    state: present
+  loop: "{{ flasharray_resume_replication }}"
+  when: flasharray_resume_replication is defined
+
+- name: Promote replica to primary (failover)
+  purefa_pg:
+    fa_url: "{{ flasharray_url }}"
+    api_token: "{{ flasharray_api_token }}"
+    name: "{{ item.pg_name }}"
+    promote: true
+    state: present
+  loop: "{{ flasharray_failover_pgroups }}"
+  when: flasharray_failover_pgroups is defined
+
+- name: Demote primary to replica (failback)
+  purefa_pg:
+    fa_url: "{{ flasharray_url }}"
+    api_token: "{{ flasharray_api_token }}"
+    name: "{{ item.pg_name }}"
+    demote: true
+    state: present
+  loop: "{{ flasharray_failback_pgroups }}"
+  when: flasharray_failback_pgroups is defined
+
+- name: Monitor replication lag
+  purefa_info:
+    fa_url: "{{ flasharray_url }}"
+    api_token: "{{ flasharray_api_token }}"
+    gather_subset:
+      - pgroups
+  register: replication_status
+
+- name: Configure WAN optimization
+  purefa_network:
+    fa_url: "{{ flasharray_url }}"
+    api_token: "{{ flasharray_api_token }}"
+    name: "{{ item.interface }}"
+    mtu: 9000  # Jumbo frames for replication
+    state: present
+  loop: "{{ flasharray_replication_interfaces }}"
+  when: flasharray_replication_interfaces is defined
+
+- name: Set up Fourth Estate DR replication
+  purefa_pg:
+    fa_url: "{{ flasharray_url }}"
+    api_token: "{{ flasharray_api_token }}"
+    name: "{{ item.name }}"
+    target: "{{ flasharray_dr_site_array }}"
+    replicate_enabled: true
+    state: present
+  loop: "{{ flasharray_fourth_estate_dr_pgroups }}"
+  when:
+    - flasharray_fourth_estate_dr_pgroups is defined
+    - flasharray_dr_site_array is defined
+  tags:
+    - dr
+    - fourth-estate
+
+- name: Replication management summary
+  ansible.builtin.debug:
+    msg:
+      - "FlashArray Replication Management Complete"
+      - "Replication Targets: {{ flasharray_replication_targets | default([]) | length }}"
+      - "ActiveCluster Arrays: {{ flasharray_activecluster_arrays | default([]) | length }}"
+      - "ActiveCluster Pods: {{ flasharray_activecluster_pods | default([]) | length }}"
+      - "ActiveDR Protection Groups: {{ flasharray_activedr_pgroups | default([]) | length }}"
+      - "Replication Schedules: {{ flasharray_replication_schedules | default([]) | length }}"
+      - "Bandwidth Limits: {{ flasharray_replication_bandwidth | default([]) | length }} configured"
+      - "Continuous Replication: {{ flasharray_continuous_replication | default([]) | length }} PGs"
+      - "Fourth Estate DR: {{ flasharray_dr_site_array | default('Not configured') }}"
+      - "ActiveCluster RPO: 0 seconds (synchronous)"
+      - "ActiveDR RPO: {{ flasharray_default_rpo_minutes | default(15) }} minutes"

@@ -1,0 +1,47 @@
+---
+- name: Configure initial admin user
+  ansible.builtin.uri:
+    url: "https://{{ sl1_aio.hostname }}/api/account/user"
+    method: POST
+    body:
+      username: "{{ sl1_setup_wizard.admin_user }}"
+      password: "{{ sl1_setup_wizard.admin_password }}"
+      email: "{{ sl1_setup_wizard.admin_email }}"
+      role: "Administrator"
+      active: 1
+    body_format: json
+    headers:
+      Content-Type: "application/json"
+    validate_certs: "{{ sl1_ssl.enabled }}"
+    status_code: [200, 201, 409]
+  register: admin_user_result
+  when: not dry_run
+
+- name: Configure organization
+  ansible.builtin.uri:
+    url: "https://{{ sl1_aio.hostname }}/api/organization"
+    method: POST
+    body:
+      company: "{{ sl1_setup_wizard.organization }}"
+      timezone: "{{ sl1_setup_wizard.timezone }}"
+      locale: "{{ sl1_setup_wizard.locale }}"
+    body_format: json
+    headers:
+      Content-Type: "application/json"
+      X-EM7-API-Username: "{{ sl1_setup_wizard.admin_user }}"
+      X-EM7-API-Password: "{{ sl1_setup_wizard.admin_password }}"
+    validate_certs: "{{ sl1_ssl.enabled }}"
+    status_code: [200, 201, 409]
+  when: not dry_run
+
+- name: Run post-setup configuration script
+  ansible.builtin.shell: /opt/em7/bin/em7_post_setup.sh
+  changed_when: true
+  when: not dry_run
+
+- name: Setup wizard completion summary
+  ansible.builtin.debug:
+    msg:
+      - "SL1 setup wizard completed"
+      - "Organization: {{ sl1_setup_wizard.organization }}"
+      - "Admin Email: {{ sl1_setup_wizard.admin_email }}"

@@ -1,0 +1,67 @@
+---
+- name: Create database server installation configuration
+  ansible.builtin.template:
+    src: install_config_db.j2
+    dest: "{{ artifacts_dir }}/sl1_db_install_config.conf"
+    mode: '0600'
+  when: not dry_run
+
+- name: Run SL1 Database Server installer
+  ansible.builtin.shell: |
+    {{ sl1_package_path }} --unattended \
+      --config {{ artifacts_dir }}/sl1_db_install_config.conf \
+      --accept-eula \
+      --install-type database \
+      --hostname {{ sl1_db_server.hostname }} \
+      --ip-address {{ sl1_db_server.ip_address }} \
+      --db-root-password {{ sl1_db_server.root_password }} \
+      --innodb-buffer-pool-size {{ sl1_system.mysql_innodb_buffer_pool_size }} \
+      --log-file {{ artifacts_dir }}/sl1_db_install.log
+  args:
+    creates: /opt/em7/mysql
+  register: sl1_db_install_result
+  when: not dry_run
+
+- name: Configure MySQL for SL1
+  ansible.builtin.template:
+    src: my.cnf.j2
+    dest: /etc/my.cnf
+    owner: mysql
+    group: mysql
+    mode: '0644'
+  when: not dry_run
+  notify: Restart MySQL
+
+- name: Start MySQL service
+  ansible.builtin.service:
+    name: mysql
+    state: started
+    enabled: true
+  when: not dry_run
+
+- name: Wait for MySQL to be ready
+  ansible.builtin.wait_for:
+    port: 3306
+    host: "{{ sl1_db_server.ip_address }}"
+    timeout: 300
+  when: not dry_run
+
+- name: Create SL1 databases
+  community.mysql.mysql_db:
+    name: "{{ item }}"
+    state: present
+    login_unix_socket: /var/lib/mysql/mysql.sock
+    login_user: root
+    login_password: "{{ sl1_db_server.root_password }}"
+  loop:
+    - em7
+    - em7_logs
+    - em7_time_series
+  when: not dry_run
+
+- name: Database server installation summary
+  ansible.builtin.debug:
+    msg:
+      - "SL1 Database Server installation completed"
+      - "Database Host: {{ sl1_db_server.hostname }}"
+      - "MySQL Port: 3306"

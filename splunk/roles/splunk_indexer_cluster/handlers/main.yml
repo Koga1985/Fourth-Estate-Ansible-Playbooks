@@ -1,0 +1,47 @@
+---
+# splunk_indexer_cluster/handlers/main.yml
+
+- name: restart splunk
+  ansible.builtin.systemd:
+    name: Splunkd
+    state: restarted
+  listen: restart splunk
+
+- name: apply cluster bundle
+  ansible.builtin.command:
+    cmd: "{{ splunk_home }}/bin/splunk apply cluster-bundle --answer-yes -auth {{ splunk_admin_user }}:{{ splunk_admin_password }}"
+  become: true
+  become_user: "{{ splunk_user }}"
+  listen: apply cluster bundle
+  when: splunk_cluster_mode == 'master'
+  no_log: true
+  register: bundle_apply
+  changed_when: "'Bundle has been pushed' in bundle_apply.stdout"
+
+- name: validate cluster bundle
+  ansible.builtin.command:
+    cmd: "{{ splunk_home }}/bin/splunk validate cluster-bundle -auth {{ splunk_admin_user }}:{{ splunk_admin_password }}"
+  become: true
+  become_user: "{{ splunk_user }}"
+  listen: validate cluster bundle
+  when: splunk_cluster_mode == 'master'
+  no_log: true
+  changed_when: false
+
+- name: rolling restart cluster peers
+  ansible.builtin.command:
+    cmd: "{{ splunk_home }}/bin/splunk rolling-restart cluster-peers -auth {{ splunk_admin_user }}:{{ splunk_admin_password }}"
+  become: true
+  become_user: "{{ splunk_user }}"
+  listen: rolling restart cluster peers
+  when: splunk_cluster_mode == 'master'
+  no_log: true
+
+- name: reload indexer
+  ansible.builtin.command:
+    cmd: "{{ splunk_home }}/bin/splunk reload index {{ item }} -auth {{ splunk_admin_user }}:{{ splunk_admin_password }}"
+  become: true
+  become_user: "{{ splunk_user }}"
+  listen: reload indexer
+  loop: "{{ splunk_indexes | map(attribute='name') | list }}"
+  no_log: true

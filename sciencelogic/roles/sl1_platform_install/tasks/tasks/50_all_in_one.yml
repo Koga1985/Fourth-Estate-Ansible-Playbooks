@@ -1,0 +1,61 @@
+---
+- name: Create SL1 installation configuration file
+  ansible.builtin.template:
+    src: install_config_aio.j2
+    dest: "{{ artifacts_dir }}/sl1_install_config.conf"
+    mode: '0600'
+  when: not dry_run
+
+- name: Run SL1 All-In-One installer
+  ansible.builtin.shell: |
+    {{ sl1_package_path }} --unattended \
+      --config {{ artifacts_dir }}/sl1_install_config.conf \
+      --accept-eula \
+      --install-type all-in-one \
+      --hostname {{ sl1_aio.hostname }} \
+      --ip-address {{ sl1_aio.ip_address }} \
+      --netmask {{ sl1_aio.netmask }} \
+      --gateway {{ sl1_aio.gateway }} \
+      --dns {{ sl1_aio.dns_servers | join(',') }} \
+      --admin-password {{ sl1_setup_wizard.admin_password }} \
+      --db-root-password {{ sl1_db_server.root_password }} \
+      --log-file {{ artifacts_dir }}/sl1_install.log
+  args:
+    creates: /opt/em7/em7.version
+  register: sl1_install_result
+  when: not dry_run
+  notify: Restart SL1 services
+
+- name: Wait for SL1 services to start
+  ansible.builtin.wait_for:
+    port: 443
+    host: "{{ sl1_aio.ip_address }}"
+    timeout: 600
+    delay: 30
+  when: not dry_run
+
+- name: Check SL1 installation status
+  ansible.builtin.shell: /opt/em7/bin/em7_status.sh
+  register: sl1_status
+  changed_when: false
+  when: not dry_run
+
+- name: Display installation status
+  ansible.builtin.debug:
+    var: sl1_status.stdout_lines
+  when: not dry_run
+
+- name: Save installation log
+  ansible.builtin.fetch:
+    src: "{{ artifacts_dir }}/sl1_install.log"
+    dest: "{{ artifacts_dir }}/install_logs/"
+    flat: false
+  when: not dry_run
+
+- name: AIO installation summary
+  ansible.builtin.debug:
+    msg:
+      - "SL1 All-In-One installation completed"
+      - "Access URL: https://{{ sl1_aio.hostname }}"
+      - "Admin User: {{ sl1_setup_wizard.admin_user }}"
+      - "Version: {{ sl1_version }}"
