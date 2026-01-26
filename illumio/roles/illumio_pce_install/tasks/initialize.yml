@@ -1,0 +1,195 @@
+---
+# PCE initialization tasks
+
+- name: Check if PCE is already initialized
+  uri:
+    url: "https://{{ illumio_pce_fqdn }}:{{ illumio_pce_port }}/api/v2/health"
+    method: GET
+    validate_certs: no
+    status_code: [200, 503]
+  register: pce_init_check
+  failed_when: false
+
+- name: Run PCE database initialization
+  command: /opt/illumio-pce/illumio-pce-db-management setup
+  become: yes
+  become_user: "{{ illumio_pce_user }}"
+  when: pce_init_check.status == 503
+  register: db_init_result
+
+- name: Display database initialization output
+  debug:
+    var: db_init_result.stdout_lines
+  when: db_init_result.changed | default(false)
+
+- name: Start PCE services
+  systemd:
+    name: illumio-pce
+    state: started
+
+- name: Wait for PCE to become ready
+  uri:
+    url: "https://{{ illumio_pce_fqdn }}:{{ illumio_pce_port }}/api/v2/health"
+    method: GET
+    validate_certs: no
+    status_code: 200
+  register: pce_ready
+  until: pce_ready.status == 200
+  retries: 30
+  delay: 10
+
+- name: Create initial organization
+  uri:
+    url: "https://{{ illumio_pce_fqdn }}:{{ illumio_pce_port }}/api/v2/orgs"
+    method: POST
+    user: "{{ illumio_pce_superuser }}"
+    password: "{{ illumio_pce_superuser_password }}"
+    force_basic_auth: yes
+    validate_certs: no
+    body_format: json
+    body:
+      name: "{{ illumio_pce_org_name }}"
+      description: "{{ illumio_pce_org_description | default('Primary organization for microsegmentation') }}"
+    status_code: [201, 409]
+  register: org_creation
+  no_log: true
+
+- name: Get organization ID
+  uri:
+    url: "https://{{ illumio_pce_fqdn }}:{{ illumio_pce_port }}/api/v2/orgs"
+    method: GET
+    user: "{{ illumio_pce_superuser }}"
+    password: "{{ illumio_pce_superuser_password }}"
+    force_basic_auth: yes
+    validate_certs: no
+    return_content: yes
+  register: orgs_list
+  no_log: true
+
+- name: Set organization ID fact
+  set_fact:
+    illumio_org_id: "{{ (orgs_list.json | selectattr('name', 'equalto', illumio_pce_org_name) | list)[0].href.split('/')[-1] }}"
+
+- name: Create PCE admin user
+  uri:
+    url: "https://{{ illumio_pce_fqdn }}:{{ illumio_pce_port }}/api/v2/users"
+    method: POST
+    user: "{{ illumio_pce_superuser }}"
+    password: "{{ illumio_pce_superuser_password }}"
+    force_basic_auth: yes
+    validate_certs: no
+    body_format: json
+    body:
+      username: "{{ illumio_pce_admin_user }}"
+      full_name: "{{ illumio_pce_admin_fullname | default('PCE Administrator') }}"
+      email: "{{ illumio_pce_admin_email | default('admin@' + illumio_pce_fqdn) }}"
+      password: "{{ illumio_pce_admin_password }}"
+      type: "local"
+      auth_security_principal_id: null
+      org_id: "{{ illumio_org_id }}"
+    status_code: [201, 409]
+  register: admin_user_creation
+  no_log: true
+
+- name: Assign admin role to user
+  uri:
+    url: "https://{{ illumio_pce_fqdn }}:{{ illumio_pce_port }}/api/v2/users/{{ illumio_pce_admin_user }}/roles"
+    method: POST
+    user: "{{ illumio_pce_superuser }}"
+    password: "{{ illumio_pce_superuser_password }}"
+    force_basic_auth: yes
+    validate_certs: no
+    body_format: json
+    body:
+      org_id: "{{ illumio_org_id }}"
+      role: "owner"
+    status_code: [201, 409]
+  no_log: true
+
+- name: Generate API key for admin user
+  uri:
+    url: "https://{{ illumio_pce_fqdn }}:{{ illumio_pce_port }}/api/v2/users/login"
+    method: POST
+    user: "{{ illumio_pce_admin_user }}"
+    password: "{{ illumio_pce_admin_password }}"
+    force_basic_auth: yes
+    validate_certs: no
+    body_format: json
+    body:
+      pce_fqdn: "{{ illumio_pce_fqdn }}"
+      org_id: "{{ illumio_org_id }}"
+    status_code: 200
+    return_content: yes
+  register: admin_login
+  no_log: true
+
+- name: Create API credentials file
+  copy:
+    content: |
+      # Illumio PCE API Credentials
+      # Generated: {{ ansible_date_time.iso8601 }}
+
+      PCE_HOST={{ illumio_pce_fqdn }}
+      PCE_PORT={{ illumio_pce_port }}
+      PCE_ORG_ID={{ illumio_org_id }}
+      API_KEY={{ admin_login.json.session_token }}
+
+      # For use with illumio-pce-cli:
+      # export $(grep -v '^#' /etc/illumio-pce/api-credentials.env | xargs)
+    dest: /etc/illumio-pce/api-credentials.env
+    owner: "{{ illumio_pce_user }}"
+    group: "{{ illumio_pce_group }}"
+    mode: '0600'
+  no_log: true
+
+- name: Configure default label types
+  uri:
+    url: "https://{{ illumio_pce_fqdn }}:{{ illumio_pce_port }}/api/v2/orgs/{{ illumio_org_id }}/label_types"
+    method: GET
+    user: "{{ illumio_pce_admin_user }}"
+    password: "{{ illumio_pce_admin_password }}"
+    force_basic_auth: yes
+    validate_certs: no
+    return_content: yes
+  register: label_types
+  no_log: true
+
+- name: Enable default label dimensions (Role, App, Env, Loc)
+  debug:
+    msg: "Default label dimensions already configured"
+  when: label_types.json | length >= 4
+
+- name: Create PCE initialization report
+  copy:
+    content: |
+      Illumio PCE Initialization Report
+      ==================================
+      Date: {{ ansible_date_time.iso8601 }}
+      PCE FQDN: {{ illumio_pce_fqdn }}
+      PCE Version: {{ installed_pce_version.stdout | default('Unknown') }}
+
+      Organization:
+      - Name: {{ illumio_pce_org_name }}
+      - ID: {{ illumio_org_id }}
+
+      Admin User:
+      - Username: {{ illumio_pce_admin_user }}
+      - Email: {{ illumio_pce_admin_email | default('Not configured') }}
+
+      Access URLs:
+      - Web Console: https://{{ illumio_pce_fqdn }}:{{ illumio_pce_port }}
+      - API Endpoint: https://{{ illumio_pce_fqdn }}:{{ illumio_pce_port }}/api/v2
+
+      API Credentials: /etc/illumio-pce/api-credentials.env
+
+      Next Steps:
+      1. Configure authentication (AD/LDAP or SAML)
+      2. Create additional users and assign roles
+      3. Install VENs on workloads
+      4. Create labels and assign to workloads
+      5. Design segmentation policies
+      6. Create rulesets
+      7. Test policies in illumination mode
+      8. Enforce policies
+    dest: /etc/illumio-pce/initialization-report.txt
+    mode: '0644'

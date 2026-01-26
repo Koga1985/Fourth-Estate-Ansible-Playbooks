@@ -1,0 +1,75 @@
+---
+# PCE license activation
+
+- name: Check if license file exists
+  stat:
+    path: "{{ illumio_pce_license_file }}"
+  delegate_to: localhost
+  register: license_file_stat
+
+- name: Fail if license file not found
+  fail:
+    msg: "License file not found: {{ illumio_pce_license_file }}"
+  when: not license_file_stat.stat.exists
+
+- name: Copy license file to PCE
+  copy:
+    src: "{{ illumio_pce_license_file }}"
+    dest: /tmp/illumio_license.json
+    mode: '0600'
+
+- name: Upload license to PCE
+  uri:
+    url: "https://{{ illumio_pce_fqdn }}:{{ illumio_pce_port }}/api/v2/orgs/{{ illumio_org_id }}/licenses"
+    method: POST
+    user: "{{ illumio_pce_admin_user }}"
+    password: "{{ illumio_pce_admin_password }}"
+    force_basic_auth: yes
+    validate_certs: no
+    body: "{{ lookup('file', '/tmp/illumio_license.json') }}"
+    body_format: json
+    status_code: [201, 409]
+  register: license_upload
+  no_log: true
+
+- name: Get license information
+  uri:
+    url: "https://{{ illumio_pce_fqdn }}:{{ illumio_pce_port }}/api/v2/orgs/{{ illumio_org_id }}/licenses"
+    method: GET
+    user: "{{ illumio_pce_admin_user }}"
+    password: "{{ illumio_pce_admin_password }}"
+    force_basic_auth: yes
+    validate_certs: no
+    return_content: yes
+  register: license_info
+  no_log: true
+
+- name: Parse license details
+  set_fact:
+    license_expiration: "{{ license_info.json[0].expiration_date if license_info.json | length > 0 else 'Unknown' }}"
+    license_max_workloads: "{{ license_info.json[0].max_workloads if license_info.json | length > 0 else 'Unknown' }}"
+
+- name: Display license information
+  debug:
+    msg: |
+      License activated successfully
+      - Expiration: {{ license_expiration }}
+      - Max Workloads: {{ license_max_workloads }}
+
+- name: Remove temporary license file
+  file:
+    path: /tmp/illumio_license.json
+    state: absent
+
+- name: Create license expiration reminder
+  cron:
+    name: "Check Illumio PCE license expiration"
+    minute: "0"
+    hour: "9"
+    day: "1"
+    job: |
+      /usr/bin/curl -s -u {{ illumio_pce_admin_user }}:{{ illumio_pce_admin_password }} \
+      https://{{ illumio_pce_fqdn }}:{{ illumio_pce_port }}/api/v2/orgs/{{ illumio_org_id }}/licenses \
+      | grep -q "expiration_date" && echo "PCE license check completed" || \
+      echo "WARNING: PCE license check failed" | mail -s "Illumio PCE License Alert" {{ illumio_pce_admin_email }}
+  when: illumio_pce_admin_email is defined

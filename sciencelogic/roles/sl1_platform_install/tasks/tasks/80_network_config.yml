@@ -1,0 +1,27 @@
+---
+- name: Configure network interface
+  ansible.builtin.template:
+    src: ifcfg-interface.j2
+    dest: "/etc/sysconfig/network-scripts/ifcfg-{{ sl1_network.interface }}"
+    owner: root
+    group: root
+    mode: '0644'
+  when: not dry_run
+  notify: Restart network
+
+- name: Set MTU on interface
+  ansible.builtin.command: ip link set {{ sl1_network.interface }} mtu {{ sl1_network.mtu }}
+  changed_when: true
+  when: not dry_run
+
+- name: Configure firewall allowed IPs
+  ansible.posix.firewalld:
+    source: "{{ item }}"
+    zone: trusted
+    permanent: true
+    state: enabled
+    immediate: true
+  loop: "{{ sl1_network.allowed_ips }}"
+  when:
+    - sl1_network.firewall_enabled
+    - not dry_run

@@ -1,0 +1,249 @@
+---
+# splunk_indexer_cluster/tasks/main.yml
+# Production-ready Splunk Indexer Cluster configuration for Fourth Estate agencies
+# Handles cluster master, indexer peers, replication, and SmartStore
+
+- name: Validate indexer cluster configuration
+  ansible.builtin.assert:
+    that:
+      - splunk_cluster_mode in ['master', 'peer', 'searchhead']
+      - splunk_cluster_replication_factor | int >= 2
+      - splunk_cluster_search_factor | int >= 2
+      - splunk_cluster_secret is defined
+      - splunk_cluster_secret | length > 0
+    fail_msg: "Invalid indexer cluster configuration"
+
+- name: Configure Cluster Master
+  block:
+    - name: Create cluster master directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: "{{ splunk_user }}"
+        group: "{{ splunk_group }}"
+        mode: '0755'
+      loop:
+        - "{{ splunk_home }}/etc/master-apps/_cluster"
+        - "{{ splunk_home }}/etc/master-apps/_cluster/local"
+        - "{{ splunk_home }}/var/run/splunk/cluster/master"
+
+    - name: Configure cluster master server.conf
+      ansible.builtin.template:
+        src: cluster_master_server.conf.j2
+        dest: "{{ splunk_home }}/etc/system/local/server.conf"
+        owner: "{{ splunk_user }}"
+        group: "{{ splunk_group }}"
+        mode: '0600'
+      notify: restart splunk
+
+    - name: Deploy cluster master apps
+      ansible.builtin.copy:
+        src: "{{ item }}"
+        dest: "{{ splunk_home }}/etc/master-apps/"
+        owner: "{{ splunk_user }}"
+        group: "{{ splunk_group }}"
+        mode: '0644'
+      loop: "{{ splunk_cluster_master_apps }}"
+      when: splunk_cluster_master_apps is defined
+      notify: apply cluster bundle
+
+    - name: Configure indexes on cluster master
+      ansible.builtin.template:
+        src: indexes.conf.j2
+        dest: "{{ splunk_home }}/etc/master-apps/_cluster/local/indexes.conf"
+        owner: "{{ splunk_user }}"
+        group: "{{ splunk_group }}"
+        mode: '0600'
+      notify: apply cluster bundle
+
+    - name: Configure SmartStore on cluster master
+      ansible.builtin.template:
+        src: smartstore_indexes.conf.j2
+        dest: "{{ splunk_home }}/etc/master-apps/_cluster/local/indexes.conf"
+        owner: "{{ splunk_user }}"
+        group: "{{ splunk_group }}"
+        mode: '0600'
+      when: splunk_smartstore_enabled | bool
+      notify: apply cluster bundle
+
+    - name: Apply cluster bundle
+      ansible.builtin.command:
+        cmd: "{{ splunk_home }}/bin/splunk apply cluster-bundle --answer-yes -auth {{ splunk_admin_user }}:{{ splunk_admin_password }}"
+      become: true
+      become_user: "{{ splunk_user }}"
+      register: bundle_result
+      changed_when: "'Bundle has been pushed' in bundle_result.stdout"
+      no_log: true
+
+    - name: Get cluster master status
+      ansible.builtin.uri:
+        url: "https://{{ ansible_default_ipv4.address }}:{{ splunk_management_port }}/services/cluster/master/info"
+        method: GET
+        user: "{{ splunk_admin_user }}"
+        password: "{{ splunk_admin_password }}"
+        validate_certs: false
+        return_content: true
+      register: cluster_master_status
+      no_log: true
+
+  when: splunk_cluster_mode == 'master'
+
+- name: Configure Indexer Peer
+  block:
+    - name: Create indexer peer directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: "{{ splunk_user }}"
+        group: "{{ splunk_group }}"
+        mode: '0755'
+      loop:
+        - "{{ splunk_db_path }}/{{ item.name }}/db"
+        - "{{ splunk_db_path }}/{{ item.name }}/colddb"
+        - "{{ splunk_db_path }}/{{ item.name }}/thaweddb"
+        - "{{ splunk_db_path }}/{{ item.name }}/datamodel_summary"
+      loop: "{{ splunk_indexes }}"
+      when: splunk_indexes is defined
+
+    - name: Create hot/warm/cold storage volumes
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: directory
+        owner: "{{ splunk_user }}"
+        group: "{{ splunk_group }}"
+        mode: '0755'
+      loop: "{{ splunk_storage_volumes }}"
+      when: splunk_storage_volumes is defined
+
+    - name: Configure indexer peer server.conf
+      ansible.builtin.template:
+        src: indexer_peer_server.conf.j2
+        dest: "{{ splunk_home }}/etc/system/local/server.conf"
+        owner: "{{ splunk_user }}"
+        group: "{{ splunk_group }}"
+        mode: '0600'
+      notify: restart splunk
+
+    - name: Configure indexer inputs for cluster replication
+      ansible.builtin.template:
+        src: indexer_inputs.conf.j2
+        dest: "{{ splunk_home }}/etc/system/local/inputs.conf"
+        owner: "{{ splunk_user }}"
+        group: "{{ splunk_group }}"
+        mode: '0600'
+      notify: restart splunk
+
+    - name: Configure SmartStore on indexer peer
+      ansible.builtin.template:
+        src: smartstore_server.conf.j2
+        dest: "{{ splunk_home }}/etc/system/local/server.conf"
+        owner: "{{ splunk_user }}"
+        group: "{{ splunk_group }}"
+        mode: '0600'
+      when: splunk_smartstore_enabled | bool
+      notify: restart splunk
+
+    - name: Join cluster as peer
+      ansible.builtin.command:
+        cmd: >
+          {{ splunk_home }}/bin/splunk edit cluster-config
+          -mode peer
+          -master_uri {{ splunk_cluster_master_uri }}
+          -replication_port {{ splunk_replication_port }}
+          -secret {{ splunk_cluster_secret }}
+          -auth {{ splunk_admin_user }}:{{ splunk_admin_password }}
+      become: true
+      become_user: "{{ splunk_user }}"
+      register: peer_join
+      changed_when: "'property has been edited' in peer_join.stdout"
+      no_log: true
+      notify: restart splunk
+
+    - name: Enable data replication
+      ansible.builtin.lineinfile:
+        path: "{{ splunk_home }}/etc/system/local/server.conf"
+        insertafter: "^\\[replication_port://{{ splunk_replication_port }}\\]"
+        line: "{{ item }}"
+        state: present
+      loop:
+        - "acceptFrom = {{ splunk_cluster_peer_networks | join(',') }}"
+        - "compress = true"
+      when: splunk_cluster_peer_networks is defined
+      notify: restart splunk
+
+    - name: Get peer status
+      ansible.builtin.uri:
+        url: "https://{{ ansible_default_ipv4.address }}:{{ splunk_management_port }}/services/cluster/slave/info"
+        method: GET
+        user: "{{ splunk_admin_user }}"
+        password: "{{ splunk_admin_password }}"
+        validate_certs: false
+        return_content: true
+      register: peer_status
+      no_log: true
+
+    - name: Display peer status
+      ansible.builtin.debug:
+        msg: "Peer status: {{ peer_status.content | from_json }}"
+
+  when: splunk_cluster_mode == 'peer'
+
+- name: Configure multisite clustering
+  block:
+    - name: Configure multisite cluster master
+      ansible.builtin.template:
+        src: multisite_master.conf.j2
+        dest: "{{ splunk_home }}/etc/system/local/server.conf"
+        owner: "{{ splunk_user }}"
+        group: "{{ splunk_group }}"
+        mode: '0600'
+      when: splunk_cluster_mode == 'master'
+      notify: restart splunk
+
+    - name: Configure multisite peer
+      ansible.builtin.command:
+        cmd: >
+          {{ splunk_home }}/bin/splunk edit cluster-config
+          -site {{ splunk_cluster_site }}
+          -auth {{ splunk_admin_user }}:{{ splunk_admin_password }}
+      become: true
+      become_user: "{{ splunk_user }}"
+      when: splunk_cluster_mode == 'peer'
+      register: site_config
+      changed_when: "'property has been edited' in site_config.stdout"
+      no_log: true
+      notify: restart splunk
+
+  when:
+    - splunk_multisite_clustering | bool
+    - splunk_cluster_site is defined
+
+- name: Configure storage retention policies
+  ansible.builtin.template:
+    src: retention_policies.conf.j2
+    dest: "{{ splunk_home }}/etc/master-apps/_cluster/local/indexes.conf"
+    owner: "{{ splunk_user }}"
+    group: "{{ splunk_group }}"
+    mode: '0600'
+  when: splunk_cluster_mode == 'master'
+  notify: apply cluster bundle
+
+- name: Monitor cluster health
+  block:
+    - name: Create cluster health check script
+      ansible.builtin.template:
+        src: cluster_health_check.sh.j2
+        dest: "{{ splunk_home }}/bin/scripts/cluster_health_check.sh"
+        owner: "{{ splunk_user }}"
+        group: "{{ splunk_group }}"
+        mode: '0755'
+
+    - name: Schedule cluster health checks
+      ansible.builtin.cron:
+        name: "Splunk cluster health check"
+        minute: "*/5"
+        job: "{{ splunk_home }}/bin/scripts/cluster_health_check.sh >> {{ splunk_home }}/var/log/splunk/cluster_health.log 2>&1"
+        user: "{{ splunk_user }}"
+      when: splunk_cluster_mode == 'master'
+
+  when: splunk_enable_cluster_monitoring | bool

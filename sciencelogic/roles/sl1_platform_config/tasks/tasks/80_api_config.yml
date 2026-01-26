@@ -1,0 +1,69 @@
+---
+- name: Configure API rate limiting
+  ansible.builtin.uri:
+    url: "{{ sl1.url }}/api/system/api/rate_limit"
+    method: PUT
+    body:
+      enabled: "{{ sl1_api.rate_limiting.enabled }}"
+      requests_per_minute: "{{ sl1_api.rate_limiting.requests_per_minute }}"
+      requests_per_hour: "{{ sl1_api.rate_limiting.requests_per_hour }}"
+    body_format: json
+    headers:
+      Content-Type: "application/json"
+      X-EM7-API-Username: "{{ sl1.api_user }}"
+      X-EM7-API-Password: "{{ sl1.api_password }}"
+    validate_certs: "{{ sl1.verify_ssl }}"
+    status_code: [200, 201]
+  when: not dry_run
+
+- name: Create API keys
+  ansible.builtin.uri:
+    url: "{{ sl1.url }}/api/account/apikey"
+    method: POST
+    body:
+      name: "{{ item.name }}"
+      description: "{{ item.description }}"
+      permissions: "{{ item.permissions }}"
+      organizations: "{{ item.organizations }}"
+      expiration_days: "{{ item.expiration_days }}"
+    body_format: json
+    headers:
+      Content-Type: "application/json"
+      X-EM7-API-Username: "{{ sl1.api_user }}"
+      X-EM7-API-Password: "{{ sl1.api_password }}"
+    validate_certs: "{{ sl1.verify_ssl }}"
+    status_code: [200, 201, 409]
+  loop: "{{ sl1_api.api_keys }}"
+  register: api_keys_result
+  when: not dry_run
+
+- name: Save API keys to artifacts
+  ansible.builtin.copy:
+    content: "{{ api_keys_result | to_nice_json }}"
+    dest: "{{ artifacts_dir }}/api_keys.json"
+    mode: '0600'
+  when:
+    - not dry_run
+    - api_keys_result is defined
+
+- name: Configure API allowed IPs
+  ansible.builtin.uri:
+    url: "{{ sl1.url }}/api/system/api/allowed_ips"
+    method: PUT
+    body:
+      allowed_ips: "{{ sl1_api.allowed_ips }}"
+    body_format: json
+    headers:
+      Content-Type: "application/json"
+      X-EM7-API-Username: "{{ sl1.api_user }}"
+      X-EM7-API-Password: "{{ sl1.api_password }}"
+    validate_certs: "{{ sl1.verify_ssl }}"
+    status_code: [200, 201]
+  when: not dry_run
+
+- name: API configuration summary
+  ansible.builtin.debug:
+    msg:
+      - "API configuration completed"
+      - "Rate limiting enabled: {{ sl1_api.rate_limiting.enabled }}"
+      - "Created {{ sl1_api.api_keys | length }} API keys"

@@ -1,0 +1,84 @@
+---
+- name: Check if SL1 installer package exists
+  ansible.builtin.stat:
+    path: "{{ sl1_package_path }}"
+  register: sl1_installer_stat
+  failed_when: not sl1_installer_stat.stat.exists
+
+- name: Check system requirements - CPU
+  ansible.builtin.assert:
+    that:
+      - ansible_processor_vcpus >= 8
+    fail_msg: "Minimum 8 CPUs required for SL1 installation"
+    success_msg: "CPU requirements met: {{ ansible_processor_vcpus }} CPUs"
+
+- name: Check system requirements - Memory
+  ansible.builtin.assert:
+    that:
+      - ansible_memtotal_mb >= 16384
+    fail_msg: "Minimum 16GB RAM required for SL1 installation"
+    success_msg: "Memory requirements met: {{ ansible_memtotal_mb }}MB"
+
+- name: Check system requirements - Disk Space
+  ansible.builtin.shell: |
+    df -BG / | awk 'NR==2 {print $4}' | sed 's/G//'
+  register: available_disk_space
+  changed_when: false
+
+- name: Validate disk space
+  ansible.builtin.assert:
+    that:
+      - available_disk_space.stdout | int >= 100
+    fail_msg: "Minimum 100GB disk space required for SL1 installation"
+    success_msg: "Disk space requirements met: {{ available_disk_space.stdout }}GB available"
+
+- name: Check OS compatibility
+  ansible.builtin.assert:
+    that:
+      - ansible_os_family == 'RedHat'
+      - ansible_distribution_major_version | int >= 7
+    fail_msg: "SL1 requires RHEL/CentOS 7 or later"
+    success_msg: "OS compatibility verified: {{ ansible_distribution }} {{ ansible_distribution_version }}"
+
+- name: Check network connectivity to SL1 repository
+  ansible.builtin.uri:
+    url: "https://updates.sciencelogic.com"
+    method: GET
+    timeout: 10
+    validate_certs: "{{ sl1_ssl.enabled }}"
+  register: repo_check
+  failed_when: false
+  changed_when: false
+
+- name: Check if SL1 is already installed
+  ansible.builtin.stat:
+    path: /opt/em7
+  register: sl1_existing_install
+
+- name: Fail if SL1 is already installed and force not set
+  ansible.builtin.fail:
+    msg: "SL1 is already installed at /opt/em7. Use force_reinstall to override."
+  when:
+    - sl1_existing_install.stat.exists
+    - not (sl1_install_options.force_reinstall | default(false))
+
+- name: Check license file
+  ansible.builtin.stat:
+    path: "{{ sl1_license_file }}"
+  register: license_file_stat
+  when: sl1_license.activate
+
+- name: Validate license file exists
+  ansible.builtin.fail:
+    msg: "License file not found at {{ sl1_license_file }}"
+  when:
+    - sl1_license.activate
+    - not license_file_stat.stat.exists
+
+- name: Pre-installation checks summary
+  ansible.builtin.debug:
+    msg:
+      - "Pre-installation validation completed successfully"
+      - "Install Mode: {{ sl1_install_mode }}"
+      - "SL1 Version: {{ sl1_version }}"
+      - "Target Hostname: {{ sl1_aio.hostname if sl1_install_mode == 'all_in_one' else sl1_db_server.hostname }}"

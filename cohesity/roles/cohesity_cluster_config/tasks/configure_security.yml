@@ -1,0 +1,46 @@
+---
+# Configure security settings
+
+- name: Configure password policy
+  ansible.builtin.uri:
+    url: "{{ cohesity_api_protocol }}://{{ cohesity_cluster_vip }}/irisservices/api/v1/public/cluster/security"
+    method: PUT
+    headers:
+      Authorization: "Bearer {{ cohesity_api_token }}"
+    body_format: json
+    body:
+      passwordPolicy:
+        minPasswordLength: "{{ cohesity_security_settings.password_min_length }}"
+        requireComplexPassword: "{{ cohesity_security_settings.password_complexity }}"
+        passwordExpiryDays: "{{ cohesity_security_settings.password_expiry_days }}"
+      sessionPolicy:
+        sessionTimeoutMinutes: "{{ cohesity_security_settings.session_timeout_minutes }}"
+      loginPolicy:
+        maxFailedLoginAttempts: "{{ cohesity_security_settings.max_failed_login_attempts }}"
+        lockoutDurationMinutes: "{{ cohesity_security_settings.lockout_duration_minutes }}"
+      enableMultiFactorAuth: "{{ cohesity_security_settings.enable_multi_factor_auth }}"
+    validate_certs: "{{ cohesity_api_verify_ssl }}"
+    status_code: 200
+
+- name: Configure audit logging
+  ansible.builtin.uri:
+    url: "{{ cohesity_api_protocol }}://{{ cohesity_cluster_vip }}/irisservices/api/v1/public/auditLog"
+    method: PUT
+    headers:
+      Authorization: "Bearer {{ cohesity_api_token }}"
+    body_format: json
+    body:
+      enabled: "{{ cohesity_security_settings.enable_audit_logging }}"
+      retentionDays: "{{ cohesity_security_settings.audit_log_retention_days }}"
+      logLevel: "kInfo"
+    validate_certs: "{{ cohesity_api_verify_ssl }}"
+    status_code: 200
+
+- name: Display security configuration status
+  ansible.builtin.debug:
+    msg:
+      - "Security settings configured:"
+      - "Password min length: {{ cohesity_security_settings.password_min_length }}"
+      - "Session timeout: {{ cohesity_security_settings.session_timeout_minutes }} minutes"
+      - "MFA: {{ 'Enabled' if cohesity_security_settings.enable_multi_factor_auth else 'Disabled' }}"
+      - "Audit logging: {{ cohesity_security_settings.audit_log_retention_days }} days retention"

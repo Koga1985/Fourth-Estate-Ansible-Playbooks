@@ -1,0 +1,65 @@
+---
+- name: Set system hostname
+  ansible.builtin.hostname:
+    name: "{{ sl1_aio.hostname if sl1_install_mode == 'all_in_one' else sl1_db_server.hostname }}"
+  when: not dry_run
+
+- name: Configure /etc/hosts
+  ansible.builtin.lineinfile:
+    path: /etc/hosts
+    line: "{{ item.ip }} {{ item.hostname }}"
+    state: present
+  loop:
+    - { ip: "{{ sl1_aio.ip_address }}", hostname: "{{ sl1_aio.hostname }}" }
+    - { ip: "{{ sl1_db_server.ip_address }}", hostname: "{{ sl1_db_server.hostname }}" }
+  when: not dry_run
+
+- name: Configure DNS resolvers
+  ansible.builtin.template:
+    src: resolv.conf.j2
+    dest: /etc/resolv.conf
+    owner: root
+    group: root
+    mode: '0644'
+  when: not dry_run
+
+- name: Disable transparent huge pages
+  ansible.builtin.shell: |
+    echo never > /sys/kernel/mm/transparent_hugepage/enabled
+    echo never > /sys/kernel/mm/transparent_hugepage/defrag
+  changed_when: true
+  when: not dry_run
+
+- name: Make transparent huge pages disable persistent
+  ansible.builtin.lineinfile:
+    path: /etc/rc.local
+    line: "{{ item }}"
+    create: true
+    mode: '0755'
+  loop:
+    - "echo never > /sys/kernel/mm/transparent_hugepage/enabled"
+    - "echo never > /sys/kernel/mm/transparent_hugepage/defrag"
+  when: not dry_run
+
+- name: Configure system timezone
+  community.general.timezone:
+    name: "{{ sl1_setup_wizard.timezone }}"
+  when: not dry_run
+
+- name: Disable unnecessary services
+  ansible.builtin.service:
+    name: "{{ item }}"
+    state: stopped
+    enabled: false
+  loop:
+    - postfix
+    - cups
+  failed_when: false
+  when: not dry_run
+
+- name: System configuration summary
+  ansible.builtin.debug:
+    msg:
+      - "System configuration completed"
+      - "Hostname: {{ sl1_aio.hostname if sl1_install_mode == 'all_in_one' else sl1_db_server.hostname }}"
+      - "Timezone: {{ sl1_setup_wizard.timezone }}"

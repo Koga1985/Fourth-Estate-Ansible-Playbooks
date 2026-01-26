@@ -1,0 +1,58 @@
+# Splunk SmartStore Configuration
+# Fourth Estate Production Environment
+
+[default]
+repFactor = auto
+
+{% if splunk_smartstore_provider == 'aws' %}
+# AWS S3 Remote Storage
+[volume:remote_store]
+storageType = remote
+path = s3://{{ splunk_smartstore_s3_bucket }}/indexes
+remote.s3.access_key = {{ splunk_smartstore_s3_access_key }}
+remote.s3.secret_key = {{ splunk_smartstore_s3_secret_key }}
+remote.s3.endpoint = {{ splunk_smartstore_s3_endpoint }}
+remote.s3.auth_region = {{ splunk_smartstore_s3_region }}
+remote.s3.encryption = {{ splunk_smartstore_s3_server_side_encryption }}
+remote.s3.supports_versioning = true
+{% elif splunk_smartstore_provider == 'azure' %}
+# Azure Blob Storage
+[volume:remote_store]
+storageType = remote
+path = azure://{{ splunk_smartstore_azure_container }}/indexes
+remote.azure.account_name = {{ splunk_smartstore_azure_account }}
+remote.azure.account_key = {{ splunk_smartstore_azure_key }}
+remote.azure.endpoint = {{ splunk_smartstore_azure_endpoint }}
+{% elif splunk_smartstore_provider == 'gcp' %}
+# Google Cloud Storage
+[volume:remote_store]
+storageType = remote
+path = gs://{{ splunk_smartstore_gcs_bucket }}/indexes
+remote.gs.access_key = {{ splunk_smartstore_gcs_access_key }}
+remote.gs.secret_key = {{ splunk_smartstore_gcs_secret_key }}
+{% endif %}
+
+# Cache Settings
+[cachemanager]
+max_cache_size = {{ splunk_smartstore_max_cache_size }}
+eviction_policy = lru
+hotlist_recency_secs = {{ splunk_smartstore_hotlist_recency_secs }}
+max_concurrent_uploads = {{ splunk_max_concurrent_uploads }}
+max_concurrent_downloads = {{ splunk_max_concurrent_downloads }}
+upload_timeout = {{ splunk_upload_timeout }}
+download_timeout = {{ splunk_download_timeout }}
+
+{% for index in splunk_indexes %}
+# SmartStore enabled index: {{ index.name }}
+[{{ index.name }}]
+remotePath = volume:remote_store/$_index_name
+homePath = $SPLUNK_DB/{{ index.name }}/db
+coldPath = $SPLUNK_DB/{{ index.name }}/colddb
+thawedPath = $SPLUNK_DB/{{ index.name }}/thaweddb
+maxDataSize = {{ index.maxDataSize }}
+maxHotBuckets = {{ index.maxHotBuckets }}
+frozenTimePeriodInSecs = {{ index.frozenTimePeriodInSecs }}
+repFactor = {{ index.repFactor | default('auto') }}
+maxGlobalRawDataSizeMB = 5000000
+maxGlobalDataSizeMB = 1000000
+{% endfor %}

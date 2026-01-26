@@ -1,2 +1,116 @@
 ---
 # tasks file for cohesity_cluster_config
+
+- name: Display Cohesity cluster configuration banner
+  ansible.builtin.debug:
+    msg:
+      - "=========================================="
+      - "Cohesity Cluster Configuration"
+      - "Cluster VIP: {{ cohesity_cluster_vip }}"
+      - "=========================================="
+
+- name: Authenticate to Cohesity cluster
+  ansible.builtin.uri:
+    url: "{{ cohesity_api_protocol }}://{{ cohesity_cluster_vip }}/irisservices/api/v1/public/accessTokens"
+    method: POST
+    body_format: json
+    body:
+      username: "{{ cohesity_admin_username }}"
+      password: "{{ cohesity_admin_password }}"
+      domain: "LOCAL"
+    validate_certs: "{{ cohesity_api_verify_ssl }}"
+    status_code: 201
+  register: cohesity_auth
+  no_log: true
+
+- name: Set Cohesity API token fact
+  ansible.builtin.set_fact:
+    cohesity_api_token: "{{ cohesity_auth.json.accessToken }}"
+  no_log: true
+
+- name: Configure Active Directory integration
+  ansible.builtin.include_tasks: configure_ad.yml
+  when: cohesity_ad_enabled | bool
+
+- name: Configure LDAP integration
+  ansible.builtin.include_tasks: configure_ldap.yml
+  when: cohesity_ldap_enabled | bool
+
+- name: Configure Kerberos
+  ansible.builtin.include_tasks: configure_kerberos.yml
+  when: cohesity_kerberos_enabled | bool
+
+- name: Create local user accounts
+  ansible.builtin.include_tasks: create_users.yml
+  when: cohesity_local_users is defined and cohesity_local_users | length > 0
+
+- name: Configure RBAC with AD groups
+  ansible.builtin.include_tasks: configure_rbac.yml
+  when: cohesity_ad_groups is defined and cohesity_ad_groups | length > 0
+
+- name: Create custom roles
+  ansible.builtin.include_tasks: create_custom_roles.yml
+  when: cohesity_custom_roles is defined and cohesity_custom_roles | length > 0
+
+- name: Create storage domains
+  ansible.builtin.include_tasks: create_storage_domains.yml
+  when: cohesity_storage_domains is defined and cohesity_storage_domains | length > 0
+
+- name: Configure syslog forwarding
+  ansible.builtin.include_tasks: configure_syslog.yml
+  when: cohesity_syslog_enabled | bool
+
+- name: Configure SNMP
+  ansible.builtin.include_tasks: configure_snmp.yml
+  when: cohesity_snmp_enabled | bool
+
+- name: Configure SSL certificates
+  ansible.builtin.include_tasks: configure_certificates.yml
+  when: cohesity_ssl_certificate_enabled | bool
+
+- name: Configure security settings
+  ansible.builtin.include_tasks: configure_security.yml
+
+- name: Configure IP allowlist
+  ansible.builtin.include_tasks: configure_ip_allowlist.yml
+  when: cohesity_ip_allowlist_enabled | bool
+
+- name: Configure multi-tenancy
+  ansible.builtin.include_tasks: configure_multitenancy.yml
+  when: cohesity_multi_tenancy_enabled | bool
+
+- name: Configure global settings
+  ansible.builtin.include_tasks: configure_global_settings.yml
+
+- name: Configure email notifications
+  ansible.builtin.include_tasks: configure_notifications.yml
+  when: cohesity_email_notifications is defined
+
+- name: Configure ransomware protection
+  ansible.builtin.include_tasks: configure_ransomware_protection.yml
+
+- name: Configure compliance settings
+  ansible.builtin.include_tasks: configure_compliance.yml
+
+- name: Configure network interface groups
+  ansible.builtin.include_tasks: configure_network.yml
+  when: cohesity_network_interface_groups is defined
+
+- name: Configure QoS policies
+  ansible.builtin.include_tasks: configure_qos.yml
+  when: cohesity_qos_policies is defined
+
+- name: Configure maintenance windows
+  ansible.builtin.include_tasks: configure_maintenance.yml
+  when: cohesity_maintenance_windows is defined
+
+- name: Display configuration summary
+  ansible.builtin.debug:
+    msg:
+      - "=========================================="
+      - "Cohesity Cluster Configuration Complete"
+      - "Active Directory: {{ 'Enabled' if cohesity_ad_enabled else 'Disabled' }}"
+      - "Kerberos: {{ 'Enabled' if cohesity_kerberos_enabled else 'Disabled' }}"
+      - "Multi-tenancy: {{ 'Enabled' if cohesity_multi_tenancy_enabled else 'Disabled' }}"
+      - "Ransomware Protection: {{ 'Enabled' if cohesity_ransomware_protection.enable_datalock else 'Disabled' }}"
+      - "=========================================="

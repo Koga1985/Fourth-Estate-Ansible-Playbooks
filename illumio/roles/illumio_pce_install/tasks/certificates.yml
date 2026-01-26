@@ -1,0 +1,153 @@
+---
+# SSL/TLS certificate configuration for PCE
+
+- name: Create certificate directory
+  file:
+    path: "{{ illumio_pce_cert_dir }}"
+    state: directory
+    owner: "{{ illumio_pce_user }}"
+    group: "{{ illumio_pce_group }}"
+    mode: '0700'
+
+- name: Copy SSL certificate
+  copy:
+    src: "{{ illumio_pce_ssl_cert_file }}"
+    dest: "{{ illumio_pce_cert_dir }}/server.crt"
+    owner: "{{ illumio_pce_user }}"
+    group: "{{ illumio_pce_group }}"
+    mode: '0644'
+  when: illumio_pce_ssl_cert_file is defined
+  notify: restart illumio-pce
+
+- name: Copy SSL private key
+  copy:
+    src: "{{ illumio_pce_ssl_key_file }}"
+    dest: "{{ illumio_pce_cert_dir }}/server.key"
+    owner: "{{ illumio_pce_user }}"
+    group: "{{ illumio_pce_group }}"
+    mode: '0600'
+  when: illumio_pce_ssl_key_file is defined
+  no_log: true
+  notify: restart illumio-pce
+
+- name: Copy SSL CA certificate chain
+  copy:
+    src: "{{ illumio_pce_ssl_ca_file }}"
+    dest: "{{ illumio_pce_cert_dir }}/ca-bundle.crt"
+    owner: "{{ illumio_pce_user }}"
+    group: "{{ illumio_pce_group }}"
+    mode: '0644'
+  when: illumio_pce_ssl_ca_file is defined
+  notify: restart illumio-pce
+
+- name: Generate self-signed certificate (if no cert provided)
+  block:
+    - name: Install OpenSSL
+      package:
+        name: openssl
+        state: present
+
+    - name: Generate private key
+      openssl_privatekey:
+        path: "{{ illumio_pce_cert_dir }}/server.key"
+        size: 4096
+        owner: "{{ illumio_pce_user }}"
+        group: "{{ illumio_pce_group }}"
+        mode: '0600'
+
+    - name: Generate certificate signing request
+      openssl_csr:
+        path: "{{ illumio_pce_cert_dir }}/server.csr"
+        privatekey_path: "{{ illumio_pce_cert_dir }}/server.key"
+        common_name: "{{ illumio_pce_fqdn }}"
+        subject_alt_name:
+          - "DNS:{{ illumio_pce_fqdn }}"
+          - "DNS:{{ ansible_hostname }}"
+          - "IP:{{ ansible_default_ipv4.address }}"
+        organization_name: "{{ illumio_pce_org_name | default('Fourth Estate') }}"
+        country_name: "{{ illumio_pce_cert_country | default('US') }}"
+        state_or_province_name: "{{ illumio_pce_cert_state | default('DC') }}"
+        locality_name: "{{ illumio_pce_cert_locality | default('Washington') }}"
+
+    - name: Generate self-signed certificate
+      openssl_certificate:
+        path: "{{ illumio_pce_cert_dir }}/server.crt"
+        privatekey_path: "{{ illumio_pce_cert_dir }}/server.key"
+        csr_path: "{{ illumio_pce_cert_dir }}/server.csr"
+        provider: selfsigned
+        selfsigned_not_after: "+3650d"
+        owner: "{{ illumio_pce_user }}"
+        group: "{{ illumio_pce_group }}"
+        mode: '0644'
+
+    - name: Create CA bundle from self-signed cert
+      copy:
+        src: "{{ illumio_pce_cert_dir }}/server.crt"
+        dest: "{{ illumio_pce_cert_dir }}/ca-bundle.crt"
+        remote_src: yes
+        owner: "{{ illumio_pce_user }}"
+        group: "{{ illumio_pce_group }}"
+        mode: '0644'
+
+  when:
+    - illumio_pce_ssl_cert_file is not defined
+    - illumio_pce_generate_selfsigned_cert | bool
+
+- name: Validate certificate and key match
+  shell: |
+    cert_md5=$(openssl x509 -noout -modulus -in {{ illumio_pce_cert_dir }}/server.crt | openssl md5)
+    key_md5=$(openssl rsa -noout -modulus -in {{ illumio_pce_cert_dir }}/server.key | openssl md5)
+    if [ "$cert_md5" = "$key_md5" ]; then
+      echo "Certificate and key match"
+      exit 0
+    else
+      echo "Certificate and key do not match"
+      exit 1
+    fi
+  register: cert_validation
+  changed_when: false
+
+- name: Configure PCE to use certificates
+  blockinfile:
+    path: /etc/illumio-pce/runtime_env.yml
+    marker: "# {mark} ANSIBLE MANAGED - SSL CERTIFICATES"
+    block: |
+      ssl_certificate_file: {{ illumio_pce_cert_dir }}/server.crt
+      ssl_certificate_key_file: {{ illumio_pce_cert_dir }}/server.key
+      ssl_ca_certificate_file: {{ illumio_pce_cert_dir }}/ca-bundle.crt
+      ssl_protocols: "TLSv1.2 TLSv1.3"
+      ssl_ciphers: "ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES128-GCM-SHA256"
+    owner: "{{ illumio_pce_user }}"
+    group: "{{ illumio_pce_group }}"
+    mode: '0600'
+  notify: restart illumio-pce
+
+- name: Configure VEN certificate trust
+  copy:
+    src: "{{ illumio_pce_cert_dir }}/ca-bundle.crt"
+    dest: /etc/illumio-pce/ven-ca-bundle.crt
+    remote_src: yes
+    owner: "{{ illumio_pce_user }}"
+    group: "{{ illumio_pce_group }}"
+    mode: '0644'
+
+- name: Add PCE CA to system trust store (RHEL/CentOS)
+  copy:
+    src: "{{ illumio_pce_cert_dir }}/ca-bundle.crt"
+    dest: /etc/pki/ca-trust/source/anchors/illumio-pce-ca.crt
+    remote_src: yes
+    mode: '0644'
+  notify: update-ca-trust
+
+- name: Update CA trust store
+  command: update-ca-trust extract
+  when: ansible_os_family == "RedHat"
+
+- name: Set certificate expiration reminder
+  cron:
+    name: "Check PCE certificate expiration"
+    minute: "0"
+    hour: "8"
+    day: "1"
+    job: "openssl x509 -checkend 2592000 -noout -in {{ illumio_pce_cert_dir }}/server.crt || echo 'PCE certificate expires within 30 days' | mail -s 'PCE Certificate Expiration Warning' {{ illumio_pce_admin_email }}"
+  when: illumio_pce_admin_email is defined

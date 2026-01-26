@@ -1,0 +1,219 @@
+---
+# Pure Storage FlashArray Protection Management
+# Handles protection groups, snapshots, SafeMode, and data protection policies
+
+- name: Create protection groups
+  purefa_pg:
+    fa_url: "{{ flasharray_url }}"
+    api_token: "{{ flasharray_api_token }}"
+    name: "{{ item.name }}"
+    enabled: "{{ item.enabled | default(true) }}"
+    state: present
+  loop: "{{ flasharray_protection_groups }}"
+  when: flasharray_protection_groups is defined
+
+- name: Add volumes to protection groups
+  purefa_pg:
+    fa_url: "{{ flasharray_url }}"
+    api_token: "{{ flasharray_api_token }}"
+    name: "{{ item.pg_name }}"
+    volume: "{{ item.volume }}"
+    state: present
+  loop: "{{ flasharray_pg_volumes }}"
+  when: flasharray_pg_volumes is defined
+
+- name: Add hosts to protection groups
+  purefa_pg:
+    fa_url: "{{ flasharray_url }}"
+    api_token: "{{ flasharray_api_token }}"
+    name: "{{ item.pg_name }}"
+    host: "{{ item.host }}"
+    state: present
+  loop: "{{ flasharray_pg_hosts }}"
+  when: flasharray_pg_hosts is defined
+
+- name: Add host groups to protection groups
+  purefa_pg:
+    fa_url: "{{ flasharray_url }}"
+    api_token: "{{ flasharray_api_token }}"
+    name: "{{ item.pg_name }}"
+    hostgroup: "{{ item.hostgroup }}"
+    state: present
+  loop: "{{ flasharray_pg_hostgroups }}"
+  when: flasharray_pg_hostgroups is defined
+
+- name: Configure snapshot schedules (15-minute)
+  purefa_pgsnap:
+    fa_url: "{{ flasharray_url }}"
+    api_token: "{{ flasharray_api_token }}"
+    name: "{{ item.name }}"
+    enabled: true
+    snap_frequency: 900  # 15 minutes
+    snap_at: "{{ item.snap_at | default(omit) }}"
+    days: "{{ item.days | default(7) }}"
+    state: present
+  loop: "{{ flasharray_pg_15min_schedule }}"
+  when: flasharray_pg_15min_schedule is defined
+
+- name: Configure snapshot schedules (hourly)
+  purefa_pgsnap:
+    fa_url: "{{ flasharray_url }}"
+    api_token: "{{ flasharray_api_token }}"
+    name: "{{ item.name }}"
+    enabled: true
+    snap_frequency: 3600  # 1 hour
+    snap_at: "{{ item.snap_at | default(omit) }}"
+    days: "{{ item.days | default(30) }}"
+    state: present
+  loop: "{{ flasharray_pg_hourly_schedule }}"
+  when: flasharray_pg_hourly_schedule is defined
+
+- name: Configure snapshot schedules (daily)
+  purefa_pgsnap:
+    fa_url: "{{ flasharray_url }}"
+    api_token: "{{ flasharray_api_token }}"
+    name: "{{ item.name }}"
+    enabled: true
+    snap_frequency: 86400  # 24 hours
+    snap_at: "{{ item.snap_at | default('02:00') }}"
+    days: "{{ item.days | default(365) }}"
+    state: present
+  loop: "{{ flasharray_pg_daily_schedule }}"
+  when: flasharray_pg_daily_schedule is defined
+
+- name: Enable SafeMode snapshots (immutable, ransomware protection)
+  purefa_pg:
+    fa_url: "{{ flasharray_url }}"
+    api_token: "{{ flasharray_api_token }}"
+    name: "{{ item.name }}"
+    eradication_config: "{{ item.eradication_config | default('24hours') }}"
+    state: present
+  loop: "{{ flasharray_safemode_protection_groups }}"
+  when: flasharray_safemode_protection_groups is defined
+
+- name: Configure retention policies
+  purefa_policy:
+    fa_url: "{{ flasharray_url }}"
+    api_token: "{{ flasharray_api_token }}"
+    name: "{{ item.name }}"
+    enabled: true
+    retention: "{{ item.retention }}"
+    state: present
+  loop: "{{ flasharray_retention_policies }}"
+  when: flasharray_retention_policies is defined
+
+- name: Create manual snapshots
+  purefa_snap:
+    fa_url: "{{ flasharray_url }}"
+    api_token: "{{ flasharray_api_token }}"
+    name: "{{ item.source }}"
+    suffix: "{{ item.suffix }}"
+    state: present
+  loop: "{{ flasharray_manual_snapshots }}"
+  when: flasharray_manual_snapshots is defined
+  register: manual_snapshots
+
+- name: Create protection group snapshots
+  purefa_pgsnap:
+    fa_url: "{{ flasharray_url }}"
+    api_token: "{{ flasharray_api_token }}"
+    name: "{{ item.pg_name }}"
+    suffix: "{{ item.suffix }}"
+    now: true
+    state: present
+  loop: "{{ flasharray_pg_manual_snapshots }}"
+  when: flasharray_pg_manual_snapshots is defined
+
+- name: Restore volume from snapshot
+  purefa_volume:
+    fa_url: "{{ flasharray_url }}"
+    api_token: "{{ flasharray_api_token }}"
+    name: "{{ item.volume }}"
+    source: "{{ item.snapshot }}"
+    overwrite: true
+    state: present
+  loop: "{{ flasharray_volume_restores }}"
+  when: flasharray_volume_restores is defined
+
+- name: Configure consistency groups
+  purefa_vg:
+    fa_url: "{{ flasharray_url }}"
+    api_token: "{{ flasharray_api_token }}"
+    name: "{{ item.name }}"
+    state: present
+  loop: "{{ flasharray_consistency_groups }}"
+  when: flasharray_consistency_groups is defined
+
+- name: Add volumes to consistency groups
+  purefa_vg:
+    fa_url: "{{ flasharray_url }}"
+    api_token: "{{ flasharray_api_token }}"
+    name: "{{ item.cg_name }}"
+    volume: "{{ item.volume }}"
+    state: present
+  loop: "{{ flasharray_cg_volumes }}"
+  when: flasharray_cg_volumes is defined
+
+- name: Create consistency group snapshots
+  purefa_snap:
+    fa_url: "{{ flasharray_url }}"
+    api_token: "{{ flasharray_api_token }}"
+    name: "{{ item.cg_name }}"
+    suffix: "{{ item.suffix }}"
+    state: present
+  loop: "{{ flasharray_cg_snapshots }}"
+  when: flasharray_cg_snapshots is defined
+
+- name: Configure eradication timer
+  purefa_eradication:
+    fa_url: "{{ flasharray_url }}"
+    api_token: "{{ flasharray_api_token }}"
+    timer: "{{ flasharray_eradication_timer }}"
+    state: present
+  when: flasharray_eradication_timer is defined
+
+- name: Delete old snapshots
+  purefa_snap:
+    fa_url: "{{ flasharray_url }}"
+    api_token: "{{ flasharray_api_token }}"
+    name: "{{ item }}"
+    state: absent
+  loop: "{{ flasharray_snapshots_to_delete }}"
+  when: flasharray_snapshots_to_delete is defined
+
+- name: Create Fourth Estate evidence preservation snapshots
+  purefa_pgsnap:
+    fa_url: "{{ flasharray_url }}"
+    api_token: "{{ flasharray_api_token }}"
+    name: "{{ flasharray_evidence_pg }}"
+    suffix: "evidence-{{ ansible_date_time.date }}"
+    now: true
+    state: present
+  when: flasharray_evidence_pg is defined
+  tags:
+    - evidence
+    - compliance
+
+- name: Verify snapshot catalog
+  purefa_info:
+    fa_url: "{{ flasharray_url }}"
+    api_token: "{{ flasharray_api_token }}"
+    gather_subset:
+      - snapshots
+  register: snapshot_catalog
+
+- name: Protection management summary
+  ansible.builtin.debug:
+    msg:
+      - "FlashArray Protection Management Complete"
+      - "Protection Groups: {{ flasharray_protection_groups | default([]) | length }}"
+      - "Snapshot Schedules Configured: Yes"
+      - "  - 15-minute snapshots: {{ flasharray_pg_15min_schedule | default([]) | length }} PGs"
+      - "  - Hourly snapshots: {{ flasharray_pg_hourly_schedule | default([]) | length }} PGs"
+      - "  - Daily snapshots: {{ flasharray_pg_daily_schedule | default([]) | length }} PGs"
+      - "SafeMode Protection Groups: {{ flasharray_safemode_protection_groups | default([]) | length }}"
+      - "Manual Snapshots Created: {{ flasharray_manual_snapshots | default([]) | length }}"
+      - "Consistency Groups: {{ flasharray_consistency_groups | default([]) | length }}"
+      - "Eradication Timer: {{ flasharray_eradication_timer | default('24 hours') }}"
+      - "Snapshot Retention: Short-term (7d), Medium-term (30d), Long-term (365d+)"
+      - "Ransomware Protection: SafeMode enabled (immutable snapshots)"

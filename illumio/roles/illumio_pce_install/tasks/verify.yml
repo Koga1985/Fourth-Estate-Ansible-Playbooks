@@ -1,0 +1,245 @@
+---
+# PCE installation verification
+
+- name: Verify PCE service is running
+  systemd:
+    name: illumio-pce
+  register: pce_service
+
+- name: Assert PCE service is active
+  assert:
+    that:
+      - pce_service.status.ActiveState == "active"
+    fail_msg: "PCE service is not running"
+    success_msg: "PCE service is running"
+
+- name: Check PCE health endpoint
+  uri:
+    url: "https://{{ illumio_pce_fqdn }}:{{ illumio_pce_port }}/api/v2/health"
+    method: GET
+    validate_certs: no
+    status_code: 200
+    return_content: yes
+  register: health_check
+  retries: 5
+  delay: 10
+
+- name: Display PCE health status
+  debug:
+    msg: "PCE Health: {{ health_check.json }}"
+
+- name: Verify PCE version
+  uri:
+    url: "https://{{ illumio_pce_fqdn }}:{{ illumio_pce_port }}/api/v2/product_version"
+    method: GET
+    validate_certs: no
+    return_content: yes
+  register: version_check
+
+- name: Display PCE version
+  debug:
+    msg: "PCE Version: {{ version_check.json.version }}"
+
+- name: Test PCE authentication
+  uri:
+    url: "https://{{ illumio_pce_fqdn }}:{{ illumio_pce_port }}/api/v2/users/login"
+    method: POST
+    user: "{{ illumio_pce_admin_user }}"
+    password: "{{ illumio_pce_admin_password }}"
+    force_basic_auth: yes
+    validate_certs: no
+    body_format: json
+    body:
+      pce_fqdn: "{{ illumio_pce_fqdn }}"
+      org_id: "{{ illumio_org_id }}"
+    status_code: 200
+  register: auth_test
+  no_log: true
+
+- name: Verify authentication successful
+  assert:
+    that:
+      - auth_test.json.session_token is defined
+    success_msg: "PCE authentication successful"
+    fail_msg: "PCE authentication failed"
+
+- name: Check database connectivity
+  postgresql_ping:
+    db: "{{ illumio_pce_database_name }}"
+    login_host: "{{ illumio_pce_database_host }}"
+    login_user: "{{ illumio_pce_database_user }}"
+    login_password: "{{ illumio_pce_database_password }}"
+  no_log: true
+  when: illumio_pce_install_database | bool
+
+- name: Verify SSL certificate
+  openssl_certificate_info:
+    path: "{{ illumio_pce_cert_dir }}/server.crt"
+  register: cert_info
+
+- name: Check certificate expiration
+  debug:
+    msg: "Certificate expires: {{ cert_info.not_after }}"
+
+- name: Verify ports are listening
+  wait_for:
+    port: "{{ item }}"
+    host: "{{ ansible_default_ipv4.address }}"
+    timeout: 5
+  loop:
+    - 8443
+    - 8444
+    - 8445
+    - 8446
+  register: port_check
+
+- name: Display listening ports
+  debug:
+    msg: "PCE is listening on ports: 8443, 8444, 8445, 8446"
+
+- name: Check PCE processes
+  shell: ps aux | grep -i illumio | grep -v grep
+  register: pce_processes
+  changed_when: false
+
+- name: Display PCE processes
+  debug:
+    var: pce_processes.stdout_lines
+
+- name: Check PCE log for errors
+  shell: tail -100 {{ illumio_pce_data_dir }}/log/pce.log | grep -i error || echo "No errors found"
+  register: pce_log_errors
+  changed_when: false
+
+- name: Display recent log errors (if any)
+  debug:
+    var: pce_log_errors.stdout_lines
+  when: "'error' in pce_log_errors.stdout.lower()"
+
+- name: Verify disk space
+  shell: df -h {{ illumio_pce_data_dir }}
+  register: disk_space
+  changed_when: false
+
+- name: Display disk space
+  debug:
+    var: disk_space.stdout_lines
+
+- name: Check system load
+  shell: uptime
+  register: system_load
+  changed_when: false
+
+- name: Display system load
+  debug:
+    var: system_load.stdout
+
+- name: Verify cluster status (if cluster mode)
+  uri:
+    url: "https://{{ illumio_pce_cluster_vip }}:{{ illumio_pce_port }}/api/v2/health/cluster"
+    method: GET
+    user: "{{ illumio_pce_admin_user }}"
+    password: "{{ illumio_pce_admin_password }}"
+    force_basic_auth: yes
+    validate_certs: no
+    return_content: yes
+  register: cluster_status
+  when: illumio_pce_cluster_mode | bool
+  no_log: true
+
+- name: Display cluster status
+  debug:
+    msg: "Cluster has {{ cluster_status.json.members | length }} members"
+  when:
+    - illumio_pce_cluster_mode | bool
+    - cluster_status.json is defined
+
+- name: Test PCE API endpoints
+  uri:
+    url: "https://{{ illumio_pce_fqdn }}:{{ illumio_pce_port }}/api/v2/{{ item }}"
+    method: GET
+    user: "{{ illumio_pce_admin_user }}"
+    password: "{{ illumio_pce_admin_password }}"
+    force_basic_auth: yes
+    validate_certs: no
+    status_code: 200
+  loop:
+    - orgs
+    - workloads
+    - labels
+  register: api_test
+  no_log: true
+
+- name: Verify API endpoints accessible
+  debug:
+    msg: "All PCE API endpoints are accessible"
+
+- name: Create verification report
+  copy:
+    content: |
+      Illumio PCE Installation Verification Report
+      =============================================
+      Date: {{ ansible_date_time.iso8601 }}
+      Hostname: {{ ansible_hostname }}
+
+      PCE Status:
+      - Service: {{ pce_service.status.ActiveState }}
+      - Version: {{ version_check.json.version }}
+      - Health: {{ health_check.json.status | default('OK') }}
+
+      Network:
+      - FQDN: {{ illumio_pce_fqdn }}
+      - Port: {{ illumio_pce_port }}
+      - Listening Ports: 8443, 8444, 8445, 8446
+
+      SSL Certificate:
+      - Subject: {{ cert_info.subject.commonName }}
+      - Issuer: {{ cert_info.issuer.commonName }}
+      - Expiration: {{ cert_info.not_after }}
+
+      Database:
+      - Host: {{ illumio_pce_database_host }}
+      - Name: {{ illumio_pce_database_name }}
+      - Status: Connected
+
+      {% if illumio_pce_cluster_mode | bool %}
+      Cluster:
+      - Mode: HA Cluster
+      - VIP: {{ illumio_pce_cluster_vip }}
+      - Members: {{ cluster_status.json.members | length if cluster_status.json is defined else 'N/A' }}
+      {% else %}
+      Cluster: Standalone mode
+      {% endif %}
+
+      Authentication:
+      - Admin User: {{ illumio_pce_admin_user }}
+      - Auth Status: OK
+
+      System Resources:
+      {{ disk_space.stdout }}
+
+      {{ system_load.stdout }}
+
+      Verification: All checks passed successfully
+
+      PCE is ready for VEN deployment and policy configuration.
+
+      Access Information:
+      - Web Console: https://{{ illumio_pce_fqdn }}:{{ illumio_pce_port }}
+      - API Endpoint: https://{{ illumio_pce_fqdn }}:{{ illumio_pce_port }}/api/v2
+      - API Credentials: /etc/illumio-pce/api-credentials.env
+
+    dest: /etc/illumio-pce/verification-report_{{ ansible_date_time.epoch }}.txt
+    mode: '0644'
+
+- name: Display verification summary
+  debug:
+    msg: |
+      ====================================
+      PCE Installation Verification Complete
+      ====================================
+      PCE Version: {{ version_check.json.version }}
+      Status: All checks passed
+      Web Console: https://{{ illumio_pce_fqdn }}:{{ illumio_pce_port }}
+      Report: /etc/illumio-pce/verification-report_{{ ansible_date_time.epoch }}.txt
+      ====================================

@@ -1,0 +1,112 @@
+---
+# PCE cluster setup for High Availability
+
+- name: Validate cluster configuration
+  assert:
+    that:
+      - illumio_pce_cluster_nodes | length >= 2
+      - illumio_pce_cluster_vip is defined
+    fail_msg: "Cluster mode requires at least 2 nodes and a VIP"
+
+- name: Install keepalived for VIP management
+  package:
+    name:
+      - keepalived
+      - psmisc
+    state: present
+
+- name: Determine cluster node role
+  set_fact:
+    pce_cluster_role: "{{ 'master' if inventory_hostname == illumio_pce_cluster_nodes[0] else 'backup' }}"
+    pce_cluster_priority: "{{ 100 if inventory_hostname == illumio_pce_cluster_nodes[0] else 90 }}"
+
+- name: Configure keepalived for PCE cluster
+  template:
+    src: keepalived.conf.j2
+    dest: /etc/keepalived/keepalived.conf
+    mode: '0644'
+  notify: restart keepalived
+
+- name: Create keepalived check script
+  template:
+    src: check_pce_health.sh.j2
+    dest: /usr/local/bin/check_pce_health.sh
+    mode: '0755'
+
+- name: Enable and start keepalived
+  systemd:
+    name: keepalived
+    enabled: yes
+    state: started
+
+- name: Configure PCE cluster mode
+  lineinfile:
+    path: /etc/illumio-pce/runtime_env.yml
+    regexp: "^cluster_mode:"
+    line: "cluster_mode: true"
+    create: yes
+    owner: "{{ illumio_pce_user }}"
+    group: "{{ illumio_pce_group }}"
+    mode: '0600'
+
+- name: Configure cluster node ID
+  lineinfile:
+    path: /etc/illumio-pce/runtime_env.yml
+    regexp: "^node_id:"
+    line: "node_id: {{ groups['illumio_pce_cluster'].index(inventory_hostname) + 1 }}"
+    create: yes
+    owner: "{{ illumio_pce_user }}"
+    group: "{{ illumio_pce_group }}"
+    mode: '0600'
+
+- name: Configure cluster peers
+  template:
+    src: cluster_peers.yml.j2
+    dest: /etc/illumio-pce/cluster_peers.yml
+    owner: "{{ illumio_pce_user }}"
+    group: "{{ illumio_pce_group }}"
+    mode: '0600'
+
+- name: Configure cluster communication ports in firewall
+  firewalld:
+    port: "{{ item }}"
+    permanent: yes
+    state: enabled
+    immediate: yes
+  loop:
+    - 2380/tcp  # etcd peer
+    - 2379/tcp  # etcd client
+    - 7946/tcp  # gossip protocol
+    - 7946/udp  # gossip protocol
+  when: ansible_facts.services['firewalld.service'] is defined
+
+- name: Wait for cluster to form
+  uri:
+    url: "https://{{ illumio_pce_cluster_vip }}:{{ illumio_pce_port }}/api/v2/health"
+    method: GET
+    validate_certs: no
+    status_code: 200
+  register: cluster_health
+  until: cluster_health.status == 200
+  retries: 20
+  delay: 15
+  run_once: true
+  delegate_to: localhost
+
+- name: Verify cluster members
+  uri:
+    url: "https://{{ illumio_pce_cluster_vip }}:{{ illumio_pce_port }}/api/v2/health/cluster"
+    method: GET
+    validate_certs: no
+    user: "{{ illumio_pce_admin_user }}"
+    password: "{{ illumio_pce_admin_password }}"
+    force_basic_auth: yes
+    return_content: yes
+  register: cluster_members
+  run_once: true
+  delegate_to: localhost
+
+- name: Display cluster status
+  debug:
+    msg: "PCE cluster formed with {{ cluster_members.json.members | length }} members"
+  run_once: true

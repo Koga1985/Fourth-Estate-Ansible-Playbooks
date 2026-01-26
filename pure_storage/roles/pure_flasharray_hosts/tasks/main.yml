@@ -1,0 +1,194 @@
+---
+# Pure Storage FlashArray Host Management
+# Handles host objects, initiators, host groups, and volume mappings
+
+- name: Create host objects
+  purefa_host:
+    fa_url: "{{ flasharray_url }}"
+    api_token: "{{ flasharray_api_token }}"
+    name: "{{ item.name }}"
+    personality: "{{ item.personality | default('linux') }}"
+    iqn: "{{ item.iqn | default(omit) }}"
+    wwns: "{{ item.wwns | default(omit) }}"
+    nqn: "{{ item.nqn | default(omit) }}"
+    state: present
+  loop: "{{ flasharray_hosts }}"
+  when: flasharray_hosts is defined
+
+- name: Create host groups
+  purefa_hg:
+    fa_url: "{{ flasharray_url }}"
+    api_token: "{{ flasharray_api_token }}"
+    name: "{{ item.name }}"
+    state: present
+  loop: "{{ flasharray_host_groups }}"
+  when: flasharray_host_groups is defined
+
+- name: Add hosts to host groups
+  purefa_hg:
+    fa_url: "{{ flasharray_url }}"
+    api_token: "{{ flasharray_api_token }}"
+    name: "{{ item.hg_name }}"
+    host: "{{ item.host_name }}"
+    state: present
+  loop: "{{ flasharray_hg_members }}"
+  when: flasharray_hg_members is defined
+
+- name: Configure iSCSI hosts with IQN
+  purefa_host:
+    fa_url: "{{ flasharray_url }}"
+    api_token: "{{ flasharray_api_token }}"
+    name: "{{ item.name }}"
+    iqn: "{{ item.iqn }}"
+    personality: "{{ item.personality | default('linux') }}"
+    state: present
+  loop: "{{ flasharray_iscsi_hosts }}"
+  when: flasharray_iscsi_hosts is defined
+
+- name: Configure Fibre Channel hosts with WWNs
+  purefa_host:
+    fa_url: "{{ flasharray_url }}"
+    api_token: "{{ flasharray_api_token }}"
+    name: "{{ item.name }}"
+    wwns: "{{ item.wwns }}"
+    personality: "{{ item.personality | default('linux') }}"
+    state: present
+  loop: "{{ flasharray_fc_hosts }}"
+  when: flasharray_fc_hosts is defined
+
+- name: Configure NVMe-oF hosts with NQN
+  purefa_host:
+    fa_url: "{{ flasharray_url }}"
+    api_token: "{{ flasharray_api_token }}"
+    name: "{{ item.name }}"
+    nqn: "{{ item.nqn }}"
+    personality: "{{ item.personality | default('linux') }}"
+    state: present
+  loop: "{{ flasharray_nvme_hosts }}"
+  when: flasharray_nvme_hosts is defined
+
+- name: Configure ESXi hosts
+  purefa_host:
+    fa_url: "{{ flasharray_url }}"
+    api_token: "{{ flasharray_api_token }}"
+    name: "{{ item.name }}"
+    wwns: "{{ item.wwns | default(omit) }}"
+    iqn: "{{ item.iqn | default(omit) }}"
+    personality: "esxi"
+    state: present
+  loop: "{{ flasharray_esxi_hosts }}"
+  when: flasharray_esxi_hosts is defined
+
+- name: Configure Windows hosts
+  purefa_host:
+    fa_url: "{{ flasharray_url }}"
+    api_token: "{{ flasharray_api_token }}"
+    name: "{{ item.name }}"
+    wwns: "{{ item.wwns | default(omit) }}"
+    iqn: "{{ item.iqn | default(omit) }}"
+    personality: "windows"
+    state: present
+  loop: "{{ flasharray_windows_hosts }}"
+  when: flasharray_windows_hosts is defined
+
+- name: Enable CHAP authentication for iSCSI hosts
+  purefa_host:
+    fa_url: "{{ flasharray_url }}"
+    api_token: "{{ flasharray_api_token }}"
+    name: "{{ item.name }}"
+    iqn: "{{ item.iqn }}"
+    target_user: "{{ item.chap_user }}"
+    target_password: "{{ item.chap_password }}"
+    state: present
+  loop: "{{ flasharray_iscsi_chap_hosts }}"
+  when: flasharray_iscsi_chap_hosts is defined
+  no_log: true
+
+- name: Map volumes to hosts
+  purefa_connect:
+    fa_url: "{{ flasharray_url }}"
+    api_token: "{{ flasharray_api_token }}"
+    host: "{{ item.host }}"
+    volume: "{{ item.volume }}"
+    lun: "{{ item.lun | default(omit) }}"
+    state: present
+  loop: "{{ flasharray_host_volumes }}"
+  when: flasharray_host_volumes is defined
+
+- name: Map volumes to host groups
+  purefa_connect:
+    fa_url: "{{ flasharray_url }}"
+    api_token: "{{ flasharray_api_token }}"
+    hostgroup: "{{ item.hostgroup }}"
+    volume: "{{ item.volume }}"
+    lun: "{{ item.lun | default(omit) }}"
+    state: present
+  loop: "{{ flasharray_hostgroup_volumes }}"
+  when: flasharray_hostgroup_volumes is defined
+
+- name: Set preferred arrays for hosts
+  purefa_host:
+    fa_url: "{{ flasharray_url }}"
+    api_token: "{{ flasharray_api_token }}"
+    name: "{{ item.name }}"
+    preferred_array: "{{ item.preferred_array }}"
+    state: present
+  loop: "{{ flasharray_host_preferred_arrays }}"
+  when: flasharray_host_preferred_arrays is defined
+
+- name: Remove host volume connections
+  purefa_connect:
+    fa_url: "{{ flasharray_url }}"
+    api_token: "{{ flasharray_api_token }}"
+    host: "{{ item.host }}"
+    volume: "{{ item.volume }}"
+    state: absent
+  loop: "{{ flasharray_disconnect_volumes }}"
+  when: flasharray_disconnect_volumes is defined
+
+- name: Delete host objects
+  purefa_host:
+    fa_url: "{{ flasharray_url }}"
+    api_token: "{{ flasharray_api_token }}"
+    name: "{{ item }}"
+    state: absent
+  loop: "{{ flasharray_hosts_to_delete }}"
+  when: flasharray_hosts_to_delete is defined
+
+- name: Create VMware cluster host group
+  purefa_hg:
+    fa_url: "{{ flasharray_url }}"
+    api_token: "{{ flasharray_api_token }}"
+    name: "{{ flasharray_vmware_cluster_name }}"
+    state: present
+  when: flasharray_vmware_cluster_name is defined
+
+- name: Create Kubernetes cluster host group
+  purefa_hg:
+    fa_url: "{{ flasharray_url }}"
+    api_token: "{{ flasharray_api_token }}"
+    name: "{{ flasharray_k8s_cluster_name }}"
+    state: present
+  when: flasharray_k8s_cluster_name is defined
+
+- name: Verify multipath configuration
+  purefa_info:
+    fa_url: "{{ flasharray_url }}"
+    api_token: "{{ flasharray_api_token }}"
+    gather_subset:
+      - hosts
+  register: host_info
+
+- name: Host management summary
+  ansible.builtin.debug:
+    msg:
+      - "FlashArray Host Management Complete"
+      - "Hosts Created: {{ flasharray_hosts | default([]) | length }}"
+      - "Host Groups Created: {{ flasharray_host_groups | default([]) | length }}"
+      - "iSCSI Hosts: {{ flasharray_iscsi_hosts | default([]) | length }}"
+      - "Fibre Channel Hosts: {{ flasharray_fc_hosts | default([]) | length }}"
+      - "NVMe-oF Hosts: {{ flasharray_nvme_hosts | default([]) | length }}"
+      - "ESXi Hosts: {{ flasharray_esxi_hosts | default([]) | length }}"
+      - "Volume Mappings: {{ flasharray_host_volumes | default([]) | length }}"
+      - "CHAP Authentication: {{ flasharray_iscsi_chap_hosts | default([]) | length }} hosts"
+      - "Multipath: Enabled (verify on hosts)"
