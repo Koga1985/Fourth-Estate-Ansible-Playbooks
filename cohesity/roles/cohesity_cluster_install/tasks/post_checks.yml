@@ -1,0 +1,187 @@
+---
+# Post-installation validation checks
+
+- name: Authenticate for post-checks
+  ansible.builtin.uri:
+    url: "{{ cohesity_api_protocol }}://{{ cohesity_cluster_vips[0] }}/irisservices/api/v1/public/accessTokens"
+    method: POST
+    body_format: json
+    body:
+      username: "{{ cohesity_admin_username }}"
+      password: "{{ cohesity_admin_password }}"
+      domain: "LOCAL"
+    validate_certs: "{{ cohesity_api_verify_ssl }}"
+    status_code: 201
+  register: auth_check
+  no_log: true
+
+- name: Set API token for post-checks
+  ansible.builtin.set_fact:
+    post_check_token: "{{ auth_check.json.accessToken }}"
+  no_log: true
+
+- name: Verify cluster health
+  ansible.builtin.uri:
+    url: "{{ cohesity_api_protocol }}://{{ cohesity_cluster_vips[0] }}/irisservices/api/v1/public/cluster"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ post_check_token }}"
+    validate_certs: "{{ cohesity_api_verify_ssl }}"
+    status_code: 200
+  register: cluster_health
+
+- name: Display cluster health status
+  ansible.builtin.debug:
+    msg:
+      - "Cluster Health: {{ cluster_health.json.clusterState | default('Unknown') }}"
+      - "Software Version: {{ cluster_health.json.clusterSoftwareVersion | default('Unknown') }}"
+      - "Cluster ID: {{ cluster_health.json.id | default('Unknown') }}"
+
+- name: Verify all nodes are online
+  ansible.builtin.uri:
+    url: "{{ cohesity_api_protocol }}://{{ cohesity_cluster_vips[0] }}/irisservices/api/v1/public/nodes"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ post_check_token }}"
+    validate_certs: "{{ cohesity_api_verify_ssl }}"
+    status_code: 200
+  register: nodes_status
+
+- name: Check individual node status
+  ansible.builtin.assert:
+    that:
+      - item.nodeIncarnationId is defined
+      - item.nodeStatus is defined
+    fail_msg: "Node {{ item.id }} status check failed"
+    success_msg: "Node {{ item.id }} is online"
+  loop: "{{ nodes_status.json }}"
+  loop_control:
+    label: "Node {{ item.id }}"
+
+- name: Verify storage domain exists
+  ansible.builtin.uri:
+    url: "{{ cohesity_api_protocol }}://{{ cohesity_cluster_vips[0] }}/irisservices/api/v1/public/viewBoxes"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ post_check_token }}"
+    validate_certs: "{{ cohesity_api_verify_ssl }}"
+    status_code: 200
+  register: storage_domains
+
+- name: Validate storage domain configuration
+  ansible.builtin.assert:
+    that:
+      - storage_domains.json | length > 0
+    fail_msg: "No storage domains found"
+    success_msg: "Storage domain created successfully"
+
+- name: Check cluster capacity
+  ansible.builtin.uri:
+    url: "{{ cohesity_api_protocol }}://{{ cohesity_cluster_vips[0] }}/irisservices/api/v1/public/statistics/storage"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ post_check_token }}"
+    validate_certs: "{{ cohesity_api_verify_ssl }}"
+    status_code: 200
+  register: storage_stats
+
+- name: Display storage capacity
+  ansible.builtin.debug:
+    msg:
+      - "Total Capacity: {{ (storage_stats.json.physicalCapacityBytes | default(0) / 1024 / 1024 / 1024) | round(2) }} GB"
+      - "Used Capacity: {{ (storage_stats.json.physicalUsedBytes | default(0) / 1024 / 1024 / 1024) | round(2) }} GB"
+      - "Available: {{ ((storage_stats.json.physicalCapacityBytes | default(0) - storage_stats.json.physicalUsedBytes | default(0)) / 1024 / 1024 / 1024) | round(2) }} GB"
+  when: storage_stats.json is defined
+
+- name: Verify encryption status
+  ansible.builtin.uri:
+    url: "{{ cohesity_api_protocol }}://{{ cohesity_cluster_vips[0] }}/irisservices/api/v1/public/cluster/encryption"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ post_check_token }}"
+    validate_certs: "{{ cohesity_api_verify_ssl }}"
+    status_code: 200
+  register: encryption_status
+  when: cohesity_encryption_enabled | bool
+
+- name: Validate encryption is enabled
+  ansible.builtin.assert:
+    that:
+      - encryption_status.json.encryptionEnabled is defined
+      - encryption_status.json.encryptionEnabled == true
+    fail_msg: "Encryption is not enabled"
+    success_msg: "Encryption at rest is enabled"
+  when:
+    - cohesity_encryption_enabled | bool
+    - encryption_status.json is defined
+
+- name: Check NTP synchronization
+  ansible.builtin.uri:
+    url: "{{ cohesity_api_protocol }}://{{ cohesity_cluster_vips[0] }}/irisservices/api/v1/public/network/ntpServers"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ post_check_token }}"
+    validate_certs: "{{ cohesity_api_verify_ssl }}"
+    status_code: 200
+  register: ntp_config
+
+- name: Verify NTP servers are configured
+  ansible.builtin.assert:
+    that:
+      - ntp_config.json | length > 0
+    fail_msg: "NTP servers not configured"
+    success_msg: "NTP servers configured: {{ ntp_config.json | length }}"
+
+- name: Check DNS configuration
+  ansible.builtin.uri:
+    url: "{{ cohesity_api_protocol }}://{{ cohesity_cluster_vips[0] }}/irisservices/api/v1/public/network/nameServers"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ post_check_token }}"
+    validate_certs: "{{ cohesity_api_verify_ssl }}"
+    status_code: 200
+  register: dns_config
+
+- name: Verify DNS servers are configured
+  ansible.builtin.assert:
+    that:
+      - dns_config.json | length > 0
+    fail_msg: "DNS servers not configured"
+    success_msg: "DNS servers configured: {{ dns_config.json | length }}"
+
+- name: Test SMTP configuration
+  ansible.builtin.uri:
+    url: "{{ cohesity_api_protocol }}://{{ cohesity_cluster_vips[0] }}/irisservices/api/v1/public/smtpServer/test"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ post_check_token }}"
+    body_format: json
+    body:
+      emailTo: "{{ cohesity_admin_email }}"
+      subject: "Cohesity Cluster Installation Complete"
+      message: "Cluster {{ cohesity_cluster_name }} has been successfully installed and configured."
+    validate_certs: "{{ cohesity_api_verify_ssl }}"
+    status_code: [200, 204]
+  ignore_errors: yes
+  register: smtp_test
+
+- name: Display SMTP test result
+  ansible.builtin.debug:
+    msg: "SMTP test {{ 'succeeded' if smtp_test.status in [200, 204] else 'failed' }}"
+
+- name: Generate post-installation report
+  ansible.builtin.template:
+    src: post-install-report.j2
+    dest: "/tmp/cohesity-install-report-{{ ansible_date_time.date }}.txt"
+    mode: '0644'
+  delegate_to: localhost
+
+- name: Display post-check summary
+  ansible.builtin.debug:
+    msg:
+      - "=========================================="
+      - "Post-Installation Checks Complete"
+      - "All validation checks passed successfully"
+      - "Cluster is ready for production use"
+      - "Report saved: /tmp/cohesity-install-report-{{ ansible_date_time.date }}.txt"
+      - "=========================================="

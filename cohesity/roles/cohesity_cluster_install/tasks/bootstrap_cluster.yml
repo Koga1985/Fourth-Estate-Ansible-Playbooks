@@ -1,0 +1,136 @@
+---
+# Bootstrap Cohesity cluster
+
+- name: Check if cluster is already bootstrapped
+  ansible.builtin.uri:
+    url: "{{ cohesity_api_protocol }}://{{ cohesity_cluster_vips[0] }}/irisservices/api/v1/public/basicClusterInfo"
+    method: GET
+    validate_certs: "{{ cohesity_api_verify_ssl }}"
+    status_code: [200, 404, -1]
+  register: cluster_check
+  ignore_errors: yes
+  delegate_to: localhost
+
+- name: Skip bootstrap if cluster already exists
+  ansible.builtin.debug:
+    msg: "Cluster already bootstrapped, skipping cluster creation"
+  when: cluster_check.status == 200
+
+- name: Bootstrap cluster from first node
+  when: cluster_check.status != 200
+  block:
+    - name: Prepare cluster bootstrap configuration
+      ansible.builtin.set_fact:
+        cluster_bootstrap_config:
+          clusterName: "{{ cohesity_cluster_name }}"
+          nodes:
+            "{{ cohesity_nodes | map(attribute='ip_address') | list }}"
+          vips: "{{ cohesity_cluster_vips }}"
+          gateway: "{{ cohesity_cluster_gateway }}"
+          subnetMask: "{{ cohesity_cluster_subnet_mask }}"
+          dnsServers: "{{ cohesity_cluster_dns_servers }}"
+          ntpServers: "{{ cohesity_cluster_ntp_servers }}"
+          clusterDomain: "{{ cohesity_cluster_domain }}"
+          networkConfig:
+            dataVlanId: "{{ cohesity_network_config.data_vlan_id }}"
+            managementVlanId: "{{ cohesity_network_config.management_vlan_id }}"
+            mtuBytes: "{{ cohesity_network_config.mtu_size }}"
+          enableEncryption: "{{ cohesity_encryption_enabled }}"
+          enableFipsMode: "{{ cohesity_fips_mode_enabled }}"
+          metadata:
+            faultToleranceLevel: "{{ cohesity_disk_config.metadata_fault_tolerance }}"
+          data:
+            faultToleranceLevel: "{{ cohesity_disk_config.data_fault_tolerance }}"
+
+    - name: Generate cluster bootstrap script
+      ansible.builtin.template:
+        src: cluster-bootstrap.sh.j2
+        dest: /tmp/cluster-bootstrap.sh
+        mode: '0700'
+      delegate_to: localhost
+
+    - name: Copy bootstrap script to first node
+      ansible.builtin.copy:
+        src: /tmp/cluster-bootstrap.sh
+        dest: /tmp/cluster-bootstrap.sh
+        mode: '0700'
+      delegate_to: "{{ cohesity_nodes[0].ip_address }}"
+
+    - name: Execute cluster bootstrap on first node
+      ansible.builtin.shell: |
+        /tmp/cluster-bootstrap.sh
+      register: bootstrap_result
+      delegate_to: "{{ cohesity_nodes[0].ip_address }}"
+      async: 1800
+      poll: 0
+
+    - name: Wait for bootstrap to complete
+      ansible.builtin.async_status:
+        jid: "{{ bootstrap_result.ansible_job_id }}"
+      register: bootstrap_job
+      until: bootstrap_job.finished
+      retries: 60
+      delay: 30
+      delegate_to: "{{ cohesity_nodes[0].ip_address }}"
+
+    - name: Display bootstrap output
+      ansible.builtin.debug:
+        var: bootstrap_job.stdout_lines
+      when: bootstrap_job.stdout_lines is defined
+
+    - name: Wait for cluster VIP to become active
+      ansible.builtin.wait_for:
+        host: "{{ cohesity_cluster_vips[0] }}"
+        port: 443
+        state: started
+        delay: 60
+        timeout: "{{ cohesity_cluster_bootstrap_wait_time }}"
+
+    - name: Verify cluster is accessible via VIP
+      ansible.builtin.uri:
+        url: "{{ cohesity_api_protocol }}://{{ cohesity_cluster_vips[0] }}/irisservices/api/v1/public/basicClusterInfo"
+        method: GET
+        validate_certs: "{{ cohesity_api_verify_ssl }}"
+        status_code: 200
+        timeout: "{{ cohesity_api_timeout }}"
+      register: cluster_info
+      until: cluster_info.status == 200
+      retries: 30
+      delay: "{{ cohesity_cluster_bootstrap_check_interval }}"
+
+    - name: Display cluster information
+      ansible.builtin.debug:
+        msg:
+          - "Cluster Name: {{ cluster_info.json.clusterName | default('N/A') }}"
+          - "Cluster ID: {{ cluster_info.json.clusterId | default('N/A') }}"
+          - "Cluster Software Version: {{ cluster_info.json.clusterSoftwareVersion | default('N/A') }}"
+          - "Node Count: {{ cluster_info.json.nodeCount | default('N/A') }}"
+      when: cluster_info.json is defined
+
+- name: Verify all nodes are part of cluster
+  ansible.builtin.uri:
+    url: "{{ cohesity_api_protocol }}://{{ cohesity_cluster_vips[0] }}/irisservices/api/v1/public/nodes"
+    method: GET
+    user: "{{ cohesity_admin_username }}"
+    password: "{{ cohesity_admin_password }}"
+    force_basic_auth: yes
+    validate_certs: "{{ cohesity_api_verify_ssl }}"
+    status_code: 200
+  register: cluster_nodes
+
+- name: Validate node count
+  ansible.builtin.assert:
+    that:
+      - cluster_nodes.json | length == cohesity_nodes | length
+    fail_msg: "Expected {{ cohesity_nodes | length }} nodes, found {{ cluster_nodes.json | length }}"
+    success_msg: "All {{ cohesity_nodes | length }} nodes successfully joined the cluster"
+
+- name: Display cluster bootstrap summary
+  ansible.builtin.debug:
+    msg:
+      - "=========================================="
+      - "Cluster Bootstrap Complete"
+      - "Cluster Name: {{ cohesity_cluster_name }}"
+      - "Cluster VIP: {{ cohesity_cluster_vips[0] }}"
+      - "Nodes: {{ cohesity_nodes | length }}"
+      - "=========================================="

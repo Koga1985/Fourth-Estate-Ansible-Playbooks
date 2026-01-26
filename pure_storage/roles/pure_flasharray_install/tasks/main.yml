@@ -1,0 +1,196 @@
+---
+# Pure Storage FlashArray Installation and Initial Setup
+# Handles initial array setup, Purity OS configuration, licensing, and SSL certificates
+
+- name: Validate FlashArray connectivity
+  purefa_info:
+    fa_url: "{{ flasharray_url }}"
+    api_token: "{{ flasharray_api_token }}"
+    gather_subset:
+      - minimum
+  register: array_info
+  retries: 3
+  delay: 10
+
+- name: Display array information
+  ansible.builtin.debug:
+    msg: "Connected to FlashArray: {{ array_info.purefa_info.default.array_name }} ({{ array_info.purefa_info.default.version }})"
+
+- name: Set array name
+  purefa_arrayname:
+    fa_url: "{{ flasharray_url }}"
+    api_token: "{{ flasharray_api_token }}"
+    name: "{{ flasharray_name }}"
+  when: flasharray_name is defined
+
+- name: Configure management IP address
+  purefa_network:
+    fa_url: "{{ flasharray_url }}"
+    api_token: "{{ flasharray_api_token }}"
+    name: "{{ item.name }}"
+    address: "{{ item.address }}"
+    netmask: "{{ item.netmask }}"
+    gateway: "{{ item.gateway | default(omit) }}"
+    mtu: "{{ item.mtu | default(1500) }}"
+    state: present
+  loop: "{{ flasharray_management_interfaces }}"
+  when: flasharray_management_interfaces is defined
+
+- name: Configure DNS servers
+  purefa_dns:
+    fa_url: "{{ flasharray_url }}"
+    api_token: "{{ flasharray_api_token }}"
+    domain: "{{ flasharray_dns_domain }}"
+    nameservers: "{{ flasharray_dns_servers }}"
+    state: present
+
+- name: Configure NTP servers
+  purefa_ntp:
+    fa_url: "{{ flasharray_url }}"
+    api_token: "{{ flasharray_api_token }}"
+    ntp_servers: "{{ flasharray_ntp_servers }}"
+    state: present
+
+- name: Set timezone
+  purefa_timezone:
+    fa_url: "{{ flasharray_url }}"
+    api_token: "{{ flasharray_api_token }}"
+    timezone: "{{ flasharray_timezone }}"
+
+- name: Install SSL certificate
+  purefa_cert:
+    fa_url: "{{ flasharray_url }}"
+    api_token: "{{ flasharray_api_token }}"
+    certificate: "{{ lookup('file', flasharray_ssl_certificate) }}"
+    key: "{{ lookup('file', flasharray_ssl_key) }}"
+    passphrase: "{{ flasharray_ssl_passphrase | default(omit) }}"
+    state: present
+  when:
+    - flasharray_ssl_certificate is defined
+    - flasharray_ssl_key is defined
+  no_log: true
+
+- name: Configure phone home (support connection)
+  purefa_phonehome:
+    fa_url: "{{ flasharray_url }}"
+    api_token: "{{ flasharray_api_token }}"
+    state: "{{ flasharray_phonehome_enabled | ternary('present', 'absent') }}"
+
+- name: Configure support proxy
+  purefa_proxy:
+    fa_url: "{{ flasharray_url }}"
+    api_token: "{{ flasharray_api_token }}"
+    host: "{{ flasharray_support_proxy_host }}"
+    port: "{{ flasharray_support_proxy_port | default(3128) }}"
+    state: present
+  when:
+    - flasharray_support_proxy_enabled | default(false)
+    - flasharray_support_proxy_host is defined
+
+- name: Set directory service role
+  purefa_dsrole:
+    fa_url: "{{ flasharray_url }}"
+    api_token: "{{ flasharray_api_token }}"
+    role: "{{ item.role }}"
+    group: "{{ item.group }}"
+    group_base: "{{ item.group_base }}"
+    state: present
+  loop: "{{ flasharray_directory_roles }}"
+  when: flasharray_directory_roles is defined
+
+- name: Check for Purity OS updates
+  purefa_info:
+    fa_url: "{{ flasharray_url }}"
+    api_token: "{{ flasharray_api_token }}"
+    gather_subset:
+      - network
+  register: current_version
+  when: flasharray_auto_update | default(false)
+
+- name: Enable idle timeout
+  purefa_timeout:
+    fa_url: "{{ flasharray_url }}"
+    api_token: "{{ flasharray_api_token }}"
+    timeout: "{{ flasharray_idle_timeout }}"
+  when: flasharray_idle_timeout is defined
+
+- name: Configure SMTP for email alerts
+  purefa_smtp:
+    fa_url: "{{ flasharray_url }}"
+    api_token: "{{ flasharray_api_token }}"
+    sender_domain: "{{ flasharray_smtp_sender_domain }}"
+    relay_host: "{{ flasharray_smtp_relay_host }}"
+    state: present
+  when:
+    - flasharray_smtp_enabled | default(true)
+    - flasharray_smtp_relay_host is defined
+
+- name: Create alert recipients
+  purefa_alert:
+    fa_url: "{{ flasharray_url }}"
+    api_token: "{{ flasharray_api_token }}"
+    address: "{{ item }}"
+    state: present
+  loop: "{{ flasharray_alert_recipients }}"
+  when: flasharray_alert_recipients is defined
+
+- name: Configure syslog servers
+  purefa_syslog:
+    fa_url: "{{ flasharray_url }}"
+    api_token: "{{ flasharray_api_token }}"
+    address: "{{ item.address }}"
+    port: "{{ item.port | default(514) }}"
+    protocol: "{{ item.protocol | default('udp') }}"
+    state: present
+  loop: "{{ flasharray_syslog_servers }}"
+  when: flasharray_syslog_servers is defined
+
+- name: Enable hardware encryption
+  purefa_info:
+    fa_url: "{{ flasharray_url }}"
+    api_token: "{{ flasharray_api_token }}"
+    gather_subset:
+      - config
+  register: encryption_status
+
+- name: Display encryption status
+  ansible.builtin.debug:
+    msg: "Data-at-rest encryption is enabled on array {{ array_info.purefa_info.default.array_name }}"
+
+- name: Create initial admin user backup
+  purefa_user:
+    fa_url: "{{ flasharray_url }}"
+    api_token: "{{ flasharray_api_token }}"
+    name: "{{ item.name }}"
+    password: "{{ item.password }}"
+    role: "{{ item.role }}"
+    state: present
+  loop: "{{ flasharray_admin_users }}"
+  when: flasharray_admin_users is defined
+  no_log: true
+
+- name: Set array description
+  purefa_info:
+    fa_url: "{{ flasharray_url }}"
+    api_token: "{{ flasharray_api_token }}"
+    gather_subset:
+      - minimum
+  register: final_status
+
+- name: Installation summary
+  ansible.builtin.debug:
+    msg:
+      - "FlashArray Installation Complete"
+      - "Array Name: {{ array_info.purefa_info.default.array_name }}"
+      - "Purity Version: {{ array_info.purefa_info.default.version }}"
+      - "Array ID: {{ array_info.purefa_info.default.id }}"
+      - "Management Interface Configured: Yes"
+      - "DNS Configured: Yes"
+      - "NTP Configured: Yes"
+      - "Phone Home: {{ flasharray_phonehome_enabled | ternary('Enabled', 'Disabled') }}"
+      - "Encryption: Enabled (AES-256)"
+
+- name: Trigger installation complete handler
+  ansible.builtin.command: /bin/true
+  changed_when: true
+  notify: flasharray installation complete

@@ -1,0 +1,162 @@
+---
+# System configuration for PCE installation
+
+- name: Install required system packages
+  package:
+    name: "{{ illumio_pce_system_packages }}"
+    state: present
+  retries: 3
+  delay: 10
+
+- name: Configure kernel parameters for PCE
+  sysctl:
+    name: "{{ item.name }}"
+    value: "{{ item.value }}"
+    sysctl_file: /etc/sysctl.d/99-illumio-pce.conf
+    reload: yes
+    state: present
+  loop:
+    - { name: 'net.ipv4.ip_forward', value: '1' }
+    - { name: 'net.ipv4.ip_nonlocal_bind', value: '1' }
+    - { name: 'net.core.somaxconn', value: '4096' }
+    - { name: 'net.ipv4.tcp_max_syn_backlog', value: '4096' }
+    - { name: 'net.core.netdev_max_backlog', value: '5000' }
+    - { name: 'net.ipv4.tcp_fin_timeout', value: '30' }
+    - { name: 'net.ipv4.tcp_keepalive_time', value: '300' }
+    - { name: 'net.ipv4.tcp_keepalive_probes', value: '5' }
+    - { name: 'net.ipv4.tcp_keepalive_intvl', value: '15' }
+    - { name: 'vm.swappiness', value: '10' }
+    - { name: 'fs.file-max', value: '2097152' }
+
+- name: Configure system limits for PCE
+  pam_limits:
+    domain: "{{ item.domain }}"
+    limit_type: "{{ item.type }}"
+    limit_item: "{{ item.item }}"
+    value: "{{ item.value }}"
+  loop:
+    - { domain: '*', type: 'soft', item: 'nofile', value: '65536' }
+    - { domain: '*', type: 'hard', item: 'nofile', value: '65536' }
+    - { domain: '*', type: 'soft', item: 'nproc', value: '65536' }
+    - { domain: '*', type: 'hard', item: 'nproc', value: '65536' }
+
+- name: Create Illumio system user
+  user:
+    name: "{{ illumio_pce_user }}"
+    comment: "Illumio PCE Service Account"
+    system: yes
+    shell: /bin/bash
+    home: "{{ illumio_pce_data_dir }}"
+    createhome: no
+
+- name: Create PCE directory structure
+  file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ illumio_pce_user }}"
+    group: "{{ illumio_pce_group }}"
+    mode: '0755'
+  loop:
+    - "{{ illumio_pce_data_dir }}"
+    - "{{ illumio_pce_data_dir }}/data"
+    - "{{ illumio_pce_data_dir }}/log"
+    - "{{ illumio_pce_data_dir }}/runtime"
+    - "{{ illumio_pce_data_dir }}/tmp"
+    - "{{ illumio_pce_config_dir }}"
+    - /opt/illumio-pce
+
+- name: Configure transparent huge pages (disable for better performance)
+  copy:
+    content: |
+      #!/bin/bash
+      if test -f /sys/kernel/mm/transparent_hugepage/enabled; then
+        echo never > /sys/kernel/mm/transparent_hugepage/enabled
+      fi
+      if test -f /sys/kernel/mm/transparent_hugepage/defrag; then
+        echo never > /sys/kernel/mm/transparent_hugepage/defrag
+      fi
+    dest: /etc/rc.d/init.d/disable-thp
+    mode: '0755'
+  when: ansible_distribution_major_version == "7"
+
+- name: Create systemd service for transparent huge pages (RHEL 8/9)
+  copy:
+    content: |
+      [Unit]
+      Description=Disable Transparent Huge Pages
+      DefaultDependencies=no
+      After=sysinit.target local-fs.target
+      Before=basic.target
+
+      [Service]
+      Type=oneshot
+      ExecStart=/bin/sh -c 'echo never | tee /sys/kernel/mm/transparent_hugepage/enabled /sys/kernel/mm/transparent_hugepage/defrag'
+
+      [Install]
+      WantedBy=basic.target
+    dest: /etc/systemd/system/disable-thp.service
+    mode: '0644'
+  when: ansible_distribution_major_version in ["8", "9"]
+
+- name: Enable disable-thp service
+  systemd:
+    name: disable-thp
+    enabled: yes
+    state: started
+    daemon_reload: yes
+  when: ansible_distribution_major_version in ["8", "9"]
+
+- name: Disable and stop firewalld (if using iptables)
+  systemd:
+    name: firewalld
+    enabled: no
+    state: stopped
+  when:
+    - illumio_pce_use_iptables | bool
+    - ansible_distribution_major_version in ["7", "8", "9"]
+  failed_when: false
+
+- name: Configure NTP/Chrony for time synchronization
+  package:
+    name: "{{ 'chrony' if ansible_distribution_major_version in ['8', '9'] else 'ntp' }}"
+    state: present
+
+- name: Start and enable time synchronization service
+  systemd:
+    name: "{{ 'chronyd' if ansible_distribution_major_version in ['8', '9'] else 'ntpd' }}"
+    enabled: yes
+    state: started
+
+- name: Configure hostname
+  hostname:
+    name: "{{ illumio_pce_fqdn | default(ansible_fqdn) }}"
+  when: illumio_pce_fqdn is defined
+
+- name: Update /etc/hosts with PCE hostname
+  lineinfile:
+    path: /etc/hosts
+    line: "{{ ansible_default_ipv4.address }} {{ illumio_pce_fqdn | default(ansible_fqdn) }} {{ ansible_hostname }}"
+    regexp: "^{{ ansible_default_ipv4.address }}"
+    state: present
+
+- name: Disable SELinux temporarily (will configure later)
+  selinux:
+    policy: targeted
+    state: permissive
+  when:
+    - ansible_selinux.status == "enabled"
+    - not illumio_pce_selinux_enforcing | bool
+
+- name: Create PCE environment file
+  template:
+    src: pce_environment.j2
+    dest: /etc/illumio-pce/environment
+    owner: "{{ illumio_pce_user }}"
+    group: "{{ illumio_pce_group }}"
+    mode: '0600'
+
+- name: Configure log rotation for PCE
+  template:
+    src: logrotate.j2
+    dest: /etc/logrotate.d/illumio-pce
+    mode: '0644'

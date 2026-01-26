@@ -1,0 +1,107 @@
+---
+# Configure Cohesity physical appliance nodes
+
+- name: Power on physical nodes via IPMI
+  community.general.ipmi_power:
+    name: "{{ item.ip_address }}"
+    user: "{{ cohesity_physical_ipmi_user }}"
+    password: "{{ cohesity_physical_ipmi_password }}"
+    state: on
+  loop: "{{ cohesity_nodes }}"
+  loop_control:
+    label: "{{ item.hostname }}"
+  delegate_to: localhost
+  ignore_errors: yes
+
+- name: Wait for physical nodes to boot
+  ansible.builtin.wait_for:
+    host: "{{ item.ip_address }}"
+    port: 22
+    delay: 60
+    timeout: 600
+    state: started
+  loop: "{{ cohesity_nodes }}"
+  loop_control:
+    label: "{{ item.hostname }}"
+
+- name: Verify node hardware specifications
+  ansible.builtin.shell: |
+    lscpu | grep "^CPU(s):" | awk '{print $2}'
+  register: cpu_count
+  delegate_to: "{{ item.ip_address }}"
+  loop: "{{ cohesity_nodes }}"
+  loop_control:
+    label: "{{ item.hostname }}"
+  changed_when: false
+
+- name: Check memory on physical nodes
+  ansible.builtin.shell: |
+    free -g | grep "^Mem:" | awk '{print $2}'
+  register: memory_gb
+  delegate_to: "{{ item.ip_address }}"
+  loop: "{{ cohesity_nodes }}"
+  loop_control:
+    label: "{{ item.hostname }}"
+  changed_when: false
+
+- name: Validate hardware requirements
+  ansible.builtin.assert:
+    that:
+      - cpu_count.results[idx].stdout | int >= 8
+      - memory_gb.results[idx].stdout | int >= 16
+    fail_msg: "Node {{ item.hostname }} does not meet minimum hardware requirements"
+    success_msg: "Node {{ item.hostname }} hardware validation passed"
+  loop: "{{ cohesity_nodes }}"
+  loop_control:
+    label: "{{ item.hostname }}"
+    index_var: idx
+
+- name: Configure network bonding on physical nodes
+  ansible.builtin.template:
+    src: network-bond.conf.j2
+    dest: "/etc/network/interfaces.d/bond0"
+    mode: '0644'
+  delegate_to: "{{ item.ip_address }}"
+  loop: "{{ cohesity_nodes }}"
+  loop_control:
+    label: "{{ item.hostname }}"
+  notify: restart networking
+
+- name: List available disks on physical nodes
+  ansible.builtin.shell: |
+    lsblk -dpno NAME,SIZE,TYPE | grep disk | awk '{print $1,$2}'
+  register: available_disks
+  delegate_to: "{{ item.ip_address }}"
+  loop: "{{ cohesity_nodes }}"
+  loop_control:
+    label: "{{ item.hostname }}"
+  changed_when: false
+
+- name: Display available disks
+  ansible.builtin.debug:
+    msg: "Node {{ item.item.hostname }}: {{ item.stdout_lines }}"
+  loop: "{{ available_disks.results }}"
+  loop_control:
+    label: "{{ item.item.hostname }}"
+
+- name: Configure RAID on physical appliances
+  ansible.builtin.debug:
+    msg: "RAID configuration should be done via hardware controller before cluster creation"
+
+- name: Enable NTP on physical nodes
+  ansible.builtin.template:
+    src: ntp.conf.j2
+    dest: /etc/ntp.conf
+    mode: '0644'
+  delegate_to: "{{ item.ip_address }}"
+  loop: "{{ cohesity_nodes }}"
+  loop_control:
+    label: "{{ item.hostname }}"
+  notify: restart ntp
+
+- name: Display physical appliance configuration summary
+  ansible.builtin.debug:
+    msg:
+      - "Physical appliance configuration completed"
+      - "Nodes configured: {{ cohesity_nodes | length }}"
+      - "All nodes are ready for cluster bootstrapping"

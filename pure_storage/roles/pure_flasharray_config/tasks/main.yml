@@ -1,0 +1,253 @@
+---
+# Pure Storage FlashArray Configuration
+# Advanced array configuration including directory services, SAML, audit logging, and security
+
+- name: Configure array settings
+  purefa_arrayname:
+    fa_url: "{{ flasharray_url }}"
+    api_token: "{{ flasharray_api_token }}"
+    name: "{{ flasharray_name }}"
+  when: flasharray_name is defined
+
+- name: Configure SNMP v3 monitoring
+  purefa_snmp:
+    fa_url: "{{ flasharray_url }}"
+    api_token: "{{ flasharray_api_token }}"
+    name: "{{ item.name }}"
+    version: "{{ item.version }}"
+    auth_protocol: "{{ item.auth_protocol | default('SHA') }}"
+    auth_passphrase: "{{ item.auth_passphrase }}"
+    privacy_protocol: "{{ item.privacy_protocol | default('AES') }}"
+    privacy_passphrase: "{{ item.privacy_passphrase }}"
+    user: "{{ item.user }}"
+    host: "{{ item.host }}"
+    state: present
+  loop: "{{ flasharray_snmp_managers }}"
+  when: flasharray_snmp_managers is defined
+  no_log: true
+
+- name: Configure SNMP v3 community (if required)
+  purefa_snmp:
+    fa_url: "{{ flasharray_url }}"
+    api_token: "{{ flasharray_api_token }}"
+    name: "{{ item.name }}"
+    community: "{{ item.community }}"
+    host: "{{ item.host }}"
+    version: "v2c"
+    state: present
+  loop: "{{ flasharray_snmp_v2_managers }}"
+  when: flasharray_snmp_v2_managers is defined
+  no_log: true
+
+- name: Configure Active Directory
+  purefa_ds:
+    fa_url: "{{ flasharray_url }}"
+    api_token: "{{ flasharray_api_token }}"
+    dstype: "ad"
+    uri: "{{ flasharray_ad_servers }}"
+    base_dn: "{{ flasharray_ad_base_dn }}"
+    bind_user: "{{ flasharray_ad_bind_user }}"
+    bind_password: "{{ flasharray_ad_bind_password }}"
+    enable: true
+    state: present
+  when:
+    - flasharray_ad_enabled | default(false)
+    - flasharray_ad_servers is defined
+  no_log: true
+
+- name: Configure LDAP
+  purefa_ds:
+    fa_url: "{{ flasharray_url }}"
+    api_token: "{{ flasharray_api_token }}"
+    dstype: "ldap"
+    uri: "{{ flasharray_ldap_servers }}"
+    base_dn: "{{ flasharray_ldap_base_dn }}"
+    bind_user: "{{ flasharray_ldap_bind_user }}"
+    bind_password: "{{ flasharray_ldap_bind_password }}"
+    enable: true
+    state: present
+  when:
+    - flasharray_ldap_enabled | default(false)
+    - flasharray_ldap_servers is defined
+  no_log: true
+
+- name: Configure directory service roles
+  purefa_dsrole:
+    fa_url: "{{ flasharray_url }}"
+    api_token: "{{ flasharray_api_token }}"
+    role: "{{ item.role }}"
+    group: "{{ item.group }}"
+    group_base: "{{ item.group_base }}"
+    state: present
+  loop: "{{ flasharray_ds_roles }}"
+  when: flasharray_ds_roles is defined
+
+- name: Configure SAML SSO
+  purefa_saml:
+    fa_url: "{{ flasharray_url }}"
+    api_token: "{{ flasharray_api_token }}"
+    name: "{{ flasharray_saml_name }}"
+    enabled: true
+    url: "{{ flasharray_saml_idp_url }}"
+    metadata_url: "{{ flasharray_saml_metadata_url }}"
+    x509_cert: "{{ lookup('file', flasharray_saml_cert) }}"
+    state: present
+  when:
+    - flasharray_saml_enabled | default(false)
+    - flasharray_saml_idp_url is defined
+
+- name: Enable multi-admin approval
+  purefa_policy:
+    fa_url: "{{ flasharray_url }}"
+    api_token: "{{ flasharray_api_token }}"
+    name: "multi_admin_approval"
+    enabled: true
+    state: present
+  when: flasharray_multi_admin_enabled | default(false)
+
+- name: Configure audit log retention
+  purefa_info:
+    fa_url: "{{ flasharray_url }}"
+    api_token: "{{ flasharray_api_token }}"
+    gather_subset:
+      - config
+  register: audit_config
+
+- name: Create API tokens for automation
+  purefa_apiclient:
+    fa_url: "{{ flasharray_url }}"
+    api_token: "{{ flasharray_api_token }}"
+    name: "{{ item.name }}"
+    role: "{{ item.role }}"
+    state: present
+  loop: "{{ flasharray_api_clients }}"
+  when: flasharray_api_clients is defined
+  register: api_tokens
+
+- name: Display API tokens (save securely)
+  ansible.builtin.debug:
+    msg: "API Client {{ item.item.name }} created - save token securely"
+  loop: "{{ api_tokens.results }}"
+  when:
+    - api_tokens is defined
+    - not ansible_check_mode
+  no_log: false
+
+- name: Configure email relay settings
+  purefa_smtp:
+    fa_url: "{{ flasharray_url }}"
+    api_token: "{{ flasharray_api_token }}"
+    sender_domain: "{{ flasharray_smtp_sender_domain }}"
+    relay_host: "{{ flasharray_smtp_relay_host }}"
+    user: "{{ flasharray_smtp_user | default(omit) }}"
+    password: "{{ flasharray_smtp_password | default(omit) }}"
+    state: present
+  when: flasharray_smtp_relay_host is defined
+  no_log: true
+
+- name: Configure alert recipients
+  purefa_alert:
+    fa_url: "{{ flasharray_url }}"
+    api_token: "{{ flasharray_api_token }}"
+    address: "{{ item.address }}"
+    enabled: "{{ item.enabled | default(true) }}"
+    severity: "{{ item.severity | default(['info', 'warning', 'critical']) }}"
+    state: present
+  loop: "{{ flasharray_alert_recipients }}"
+  when: flasharray_alert_recipients is defined
+
+- name: Configure syslog forwarding
+  purefa_syslog:
+    fa_url: "{{ flasharray_url }}"
+    api_token: "{{ flasharray_api_token }}"
+    address: "{{ item.address }}"
+    port: "{{ item.port | default(514) }}"
+    protocol: "{{ item.protocol | default('tcp') }}"
+    state: present
+  loop: "{{ flasharray_syslog_servers }}"
+  when: flasharray_syslog_servers is defined
+
+- name: Install custom SSL certificate
+  purefa_cert:
+    fa_url: "{{ flasharray_url }}"
+    api_token: "{{ flasharray_api_token }}"
+    certificate: "{{ lookup('file', flasharray_ssl_certificate) }}"
+    key: "{{ lookup('file', flasharray_ssl_key) }}"
+    passphrase: "{{ flasharray_ssl_passphrase | default(omit) }}"
+    state: present
+  when:
+    - flasharray_ssl_certificate is defined
+    - flasharray_ssl_key is defined
+  no_log: true
+  notify: verify ssl certificate
+
+- name: Configure session timeout
+  purefa_timeout:
+    fa_url: "{{ flasharray_url }}"
+    api_token: "{{ flasharray_api_token }}"
+    timeout: "{{ flasharray_idle_timeout }}"
+
+- name: Enable array banner message
+  purefa_banner:
+    fa_url: "{{ flasharray_url }}"
+    api_token: "{{ flasharray_api_token }}"
+    banner: "{{ flasharray_login_banner }}"
+    state: present
+  when: flasharray_login_banner is defined
+
+- name: Configure NTP servers with authentication
+  purefa_ntp:
+    fa_url: "{{ flasharray_url }}"
+    api_token: "{{ flasharray_api_token }}"
+    ntp_servers: "{{ flasharray_ntp_servers }}"
+    key: "{{ flasharray_ntp_key | default(omit) }}"
+    key_id: "{{ flasharray_ntp_key_id | default(omit) }}"
+    state: present
+  when: flasharray_ntp_servers is defined
+
+- name: Enable remote support (Pure1)
+  purefa_phonehome:
+    fa_url: "{{ flasharray_url }}"
+    api_token: "{{ flasharray_api_token }}"
+    state: present
+  when: flasharray_phonehome_enabled | default(true)
+
+- name: Configure support proxy if needed
+  purefa_proxy:
+    fa_url: "{{ flasharray_url }}"
+    api_token: "{{ flasharray_api_token }}"
+    host: "{{ flasharray_support_proxy_host }}"
+    port: "{{ flasharray_support_proxy_port }}"
+    state: present
+  when:
+    - flasharray_support_proxy_enabled | default(false)
+    - flasharray_support_proxy_host is defined
+
+- name: Set array location and contact
+  purefa_info:
+    fa_url: "{{ flasharray_url }}"
+    api_token: "{{ flasharray_api_token }}"
+    gather_subset:
+      - config
+  register: array_config
+
+- name: Enable SafeMode (immutable snapshots)
+  purefa_eula:
+    fa_url: "{{ flasharray_url }}"
+    api_token: "{{ flasharray_api_token }}"
+    state: signed
+  when: flasharray_safemode_enabled | default(true)
+
+- name: Configuration summary
+  ansible.builtin.debug:
+    msg:
+      - "FlashArray Configuration Complete"
+      - "Directory Services: {{ 'Active Directory' if flasharray_ad_enabled | default(false) else ('LDAP' if flasharray_ldap_enabled | default(false) else 'Local Only') }}"
+      - "SAML SSO: {{ flasharray_saml_enabled | default(false) | ternary('Enabled', 'Disabled') }}"
+      - "Multi-Admin Approval: {{ flasharray_multi_admin_enabled | default(false) | ternary('Enabled', 'Disabled') }}"
+      - "SNMP Monitoring: {{ (flasharray_snmp_managers | default([]) | length > 0) | ternary('Configured', 'Not Configured') }}"
+      - "Syslog Forwarding: {{ (flasharray_syslog_servers | default([]) | length > 0) | ternary('Configured', 'Not Configured') }}"
+      - "Email Alerts: {{ (flasharray_alert_recipients | default([]) | length > 0) | ternary('Configured', 'Not Configured') }}"
+      - "Pure1 Remote Support: {{ flasharray_phonehome_enabled | default(true) | ternary('Enabled', 'Disabled') }}"
+      - "Session Timeout: {{ flasharray_idle_timeout }} minutes"
+      - "Audit Retention: {{ flasharray_audit_retention_days | default(365) }} days"

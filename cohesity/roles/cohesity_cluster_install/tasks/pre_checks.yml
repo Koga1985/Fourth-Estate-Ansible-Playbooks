@@ -1,0 +1,101 @@
+---
+# Pre-installation checks for Cohesity cluster
+
+- name: Check required variables are defined
+  ansible.builtin.assert:
+    that:
+      - cohesity_cluster_name is defined
+      - cohesity_cluster_vips is defined
+      - cohesity_nodes is defined
+      - cohesity_admin_password is defined
+    fail_msg: "Required variables are not defined. Please check your configuration."
+    success_msg: "All required variables are defined."
+
+- name: Validate minimum node count
+  ansible.builtin.assert:
+    that:
+      - cohesity_nodes | length >= 3
+    fail_msg: "Cohesity cluster requires minimum 3 nodes. Current: {{ cohesity_nodes | length }}"
+    success_msg: "Node count validation passed: {{ cohesity_nodes | length }} nodes"
+
+- name: Check VIP addresses are not in use
+  ansible.builtin.wait_for:
+    host: "{{ item }}"
+    port: 22
+    state: stopped
+    timeout: 5
+  loop: "{{ cohesity_cluster_vips }}"
+  ignore_errors: yes
+  register: vip_check
+
+- name: Validate VIP availability
+  ansible.builtin.assert:
+    that:
+      - vip_check.results | selectattr('failed', 'equalto', false) | list | length == cohesity_cluster_vips | length
+    fail_msg: "One or more VIP addresses are already in use"
+    success_msg: "All VIP addresses are available"
+  when: vip_check is defined
+
+- name: Check if license key is provided for production deployment
+  ansible.builtin.debug:
+    msg: "WARNING: No license key provided. Cluster will run in trial mode."
+  when: cohesity_license_key is not defined or cohesity_license_key == ""
+
+- name: Validate network configuration
+  ansible.builtin.assert:
+    that:
+      - cohesity_cluster_gateway is defined
+      - cohesity_cluster_subnet_mask is defined
+      - cohesity_cluster_dns_servers | length >= 1
+      - cohesity_cluster_ntp_servers | length >= 1
+    fail_msg: "Network configuration is incomplete"
+    success_msg: "Network configuration validation passed"
+
+- name: Check disk space for Virtual Edition deployment
+  ansible.builtin.shell: |
+    df -BG {{ cohesity_ve_ova_path | dirname }} | tail -1 | awk '{print $4}' | sed 's/G//'
+  register: disk_space
+  changed_when: false
+  when: cohesity_deployment_type == "ve" and cohesity_ve_platform == "vmware"
+
+- name: Validate sufficient disk space
+  ansible.builtin.assert:
+    that:
+      - disk_space.stdout | int >= 100
+    fail_msg: "Insufficient disk space. Required: 100GB, Available: {{ disk_space.stdout }}GB"
+    success_msg: "Sufficient disk space available: {{ disk_space.stdout }}GB"
+  when:
+    - cohesity_deployment_type == "ve"
+    - disk_space is defined
+    - disk_space.stdout is defined
+
+- name: Verify vCenter connectivity for VE deployment
+  community.vmware.vmware_about_info:
+    hostname: "{{ cohesity_ve_vcenter_host }}"
+    username: "{{ cohesity_ve_vcenter_username }}"
+    password: "{{ cohesity_ve_vcenter_password }}"
+    validate_certs: no
+  delegate_to: localhost
+  register: vcenter_info
+  when: cohesity_deployment_type == "ve" and cohesity_ve_platform == "vmware"
+
+- name: Display vCenter version
+  ansible.builtin.debug:
+    msg: "vCenter version: {{ vcenter_info.about_info.version }}"
+  when: vcenter_info is defined and vcenter_info.about_info is defined
+
+- name: Check if encryption keys directory exists
+  ansible.builtin.file:
+    path: /etc/cohesity/encryption
+    state: directory
+    mode: '0700'
+  when: cohesity_encryption_enabled | bool
+
+- name: Display pre-check summary
+  ansible.builtin.debug:
+    msg:
+      - "Pre-installation checks completed successfully"
+      - "Deployment Type: {{ cohesity_deployment_type }}"
+      - "Node Count: {{ cohesity_nodes | length }}"
+      - "Encryption: {{ 'Enabled' if cohesity_encryption_enabled else 'Disabled' }}"
+      - "FIPS Mode: {{ 'Enabled' if cohesity_fips_mode_enabled else 'Disabled' }}"
