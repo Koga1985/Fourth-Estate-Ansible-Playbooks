@@ -1,0 +1,90 @@
+---
+# Configure Dragos sensor monitoring interfaces for industrial protocols
+
+- name: Configure monitoring interface packet capture
+  ansible.builtin.uri:
+    url: "{{ dragos_base_url }}/api/sensors/{{ item.id }}/capture"
+    method: PUT
+    headers:
+      Authorization: "Bearer {{ dragos_token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      enabled: true
+      snapshot_length: "{{ snapshot_length }}"
+      buffer_size: "{{ capture_buffer_size }}"
+      pcap_filter: "{{ item.pcap_filter | default(default_pcap_filter) }}"
+    status_code: [200, 201]
+    validate_certs: "{{ dragos_verify_ssl }}"
+  loop: "{{ sensors }}"
+  loop_control:
+    label: "{{ item.name }} - Packet Capture"
+  when: not dry_run
+  register: sensor_capture
+
+- name: Enable industrial protocol parsers
+  ansible.builtin.uri:
+    url: "{{ dragos_base_url }}/api/sensors/{{ item.id }}/protocols"
+    method: PUT
+    headers:
+      Authorization: "Bearer {{ dragos_token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      protocols: "{{ ot_protocols }}"
+      deep_inspection: "{{ deep_protocol_inspection }}"
+      metadata_extraction: true
+    status_code: [200, 201]
+    validate_certs: "{{ dragos_verify_ssl }}"
+  loop: "{{ sensors }}"
+  loop_control:
+    label: "{{ item.name }} - Protocol Parsers"
+  when: not dry_run
+  register: sensor_protocols
+
+- name: Configure traffic sampling
+  ansible.builtin.uri:
+    url: "{{ dragos_base_url }}/api/sensors/{{ item.id }}/sampling"
+    method: PUT
+    headers:
+      Authorization: "Bearer {{ dragos_token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      sampling_enabled: "{{ enable_sampling }}"
+      sampling_rate: "{{ sampling_rate }}"
+      sample_all_ics: true
+    status_code: [200, 201]
+    validate_certs: "{{ dragos_verify_ssl }}"
+  loop: "{{ sensors }}"
+  loop_control:
+    label: "{{ item.name }} - Traffic Sampling"
+  when: not dry_run and enable_sampling
+  register: sensor_sampling
+
+- name: Configure flow export
+  ansible.builtin.uri:
+    url: "{{ dragos_base_url }}/api/sensors/{{ item.id }}/flow_export"
+    method: PUT
+    headers:
+      Authorization: "Bearer {{ dragos_token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      enabled: "{{ export_flows }}"
+      flow_timeout: "{{ flow_timeout }}"
+      active_timeout: "{{ active_flow_timeout }}"
+    status_code: [200, 201]
+    validate_certs: "{{ dragos_verify_ssl }}"
+  loop: "{{ sensors }}"
+  loop_control:
+    label: "{{ item.name }} - Flow Export"
+  when: not dry_run and export_flows
+  register: sensor_flows
+
+- name: Save monitoring configuration
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/sensor_monitoring_{{ ansible_date_time.iso8601_basic_short }}.json"
+    content: "{{ {'capture': sensor_capture, 'protocols': sensor_protocols, 'sampling': sensor_sampling, 'flows': sensor_flows} | to_nice_json }}"
+    mode: "0644"
+  when: sensor_capture is defined

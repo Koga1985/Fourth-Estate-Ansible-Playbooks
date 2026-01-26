@@ -1,4 +1,6 @@
 ---
+# Dragos Platform Sensor Operations for Fourth Estate
+# Purpose-built for OT/ICS threat detection and response
 
 - name: Ensure artifacts directory exists
   ansible.builtin.file:
@@ -8,7 +10,53 @@
 
 - name: Export sensor inventory
   ansible.builtin.include_tasks: sensor_inventory.yml
+  tags: [inventory, always]
 
-- name: Deploy/register sensors (optional)
-  when: sensors | length > 0
+- name: Deploy/register sensors
+  when: sensor_operation == 'deploy' and sensors | length > 0
   ansible.builtin.include_tasks: sensor_deploy.yml
+  tags: [deploy]
+
+- name: Configure sensor networking
+  when: sensor_operation in ['deploy', 'configure'] and configure_networking
+  ansible.builtin.include_tasks: sensor_networking.yml
+  tags: [networking, configure]
+
+- name: Configure sensor monitoring interfaces
+  when: sensor_operation in ['deploy', 'configure'] and monitor_interfaces | length > 0
+  ansible.builtin.include_tasks: sensor_monitoring.yml
+  tags: [monitoring, configure]
+
+- name: Perform sensor health check
+  when: sensor_operation in ['health', 'monitor']
+  ansible.builtin.include_tasks: sensor_health.yml
+  tags: [health, monitor]
+
+- name: Update sensor software
+  when: sensor_operation == 'update' and sensor_update_version is defined
+  ansible.builtin.include_tasks: sensor_update.yml
+  tags: [update, maintenance]
+
+- name: Configure sensor storage
+  when: sensor_operation in ['deploy', 'configure'] and configure_storage
+  ansible.builtin.include_tasks: sensor_storage.yml
+  tags: [storage, configure]
+
+- name: Optimize sensor performance
+  when: sensor_operation == 'optimize' or performance_tuning
+  ansible.builtin.include_tasks: sensor_performance.yml
+  tags: [performance, optimize]
+
+- name: Configure sensor high availability
+  when: sensor_operation in ['deploy', 'configure'] and enable_ha
+  ansible.builtin.include_tasks: sensor_ha.yml
+  tags: [ha, configure]
+
+- name: Backup sensor configuration
+  when: sensor_operation == 'backup'
+  ansible.builtin.include_tasks: sensor_backup.yml
+  tags: [backup]
+
+- name: Generate sensor operations report
+  ansible.builtin.include_tasks: sensor_report.yml
+  tags: [report, always]

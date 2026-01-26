@@ -1,8 +1,122 @@
 ---
-- name: Register (when present)
-  when: state | default('present') == 'present'
-  ansible.builtin.include_tasks: includes/register.yml
+# OT Asset Lifecycle Management - Main Tasks
 
-- name: Decommission (when absent)
-  when: state | default('present') == 'absent'
+- name: Validate required variables
+  ansible.builtin.assert:
+    that:
+      - ot_asset_api_url is defined
+      - ot_asset_api_url | length > 0
+      - ot_asset_operation in ['register', 'update', 'decommission', 'dispose', 'commission', 'maintain']
+    fail_msg: "Required variables not properly configured"
+    success_msg: "Configuration validation passed"
+
+- name: Create required directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: '0750'
+    owner: root
+    group: root
+  loop:
+    - "{{ ot_asset_artifacts_dir }}"
+    - "{{ ot_asset_log_dir }}"
+    - "{{ ot_asset_backup_dir }}"
+    - "{{ ot_asset_report_destination }}"
+
+- name: Include asset registration workflow
+  ansible.builtin.include_tasks: includes/register.yml
+  when: ot_asset_operation == 'register'
+
+- name: Include asset commissioning workflow
+  ansible.builtin.include_tasks: includes/commission.yml
+  when: ot_asset_operation == 'commission'
+
+- name: Include asset update workflow
+  ansible.builtin.include_tasks: includes/update.yml
+  when: ot_asset_operation == 'update'
+
+- name: Include maintenance scheduling workflow
+  ansible.builtin.include_tasks: includes/maintenance.yml
+  when: ot_asset_operation == 'maintain'
+
+- name: Include asset decommissioning workflow
   ansible.builtin.include_tasks: includes/decommission.yml
+  when: ot_asset_operation == 'decommission'
+
+- name: Include asset disposal workflow
+  ansible.builtin.include_tasks: includes/dispose.yml
+  when: ot_asset_operation == 'dispose'
+
+- name: Include warranty and support tracking
+  ansible.builtin.include_tasks: includes/warranty_tracking.yml
+  when: ot_asset_operation in ['register', 'update']
+
+- name: Include end-of-life tracking
+  ansible.builtin.include_tasks: includes/eol_tracking.yml
+  when: ot_asset_operation in ['register', 'update']
+
+- name: Sync to CMDB
+  ansible.builtin.uri:
+    url: "{{ ot_asset_api_url }}/assets/{{ ot_asset_id | default('') }}"
+    method: "{{ 'POST' if ot_asset_operation == 'register' else 'PUT' }}"
+    headers:
+      Authorization: "Bearer {{ ot_asset_api_token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      asset_id: "{{ ot_asset_id }}"
+      name: "{{ ot_asset_name }}"
+      type: "{{ ot_asset_type }}"
+      vendor: "{{ ot_asset_vendor }}"
+      model: "{{ ot_asset_model }}"
+      serial_number: "{{ ot_asset_serial_number }}"
+      firmware_version: "{{ ot_asset_firmware_version }}"
+      ip_address: "{{ ot_asset_ip_address }}"
+      mac_address: "{{ ot_asset_mac_address }}"
+      criticality: "{{ ot_asset_criticality }}"
+      purdue_level: "{{ ot_asset_purdue_level }}"
+      zone: "{{ ot_asset_zone }}"
+      protocols: "{{ ot_asset_protocols }}"
+      owner: "{{ ot_asset_owner }}"
+      custodian: "{{ ot_asset_custodian }}"
+      facility: "{{ ot_asset_facility }}"
+      building: "{{ ot_asset_building }}"
+      room: "{{ ot_asset_room }}"
+      state: "{{ ot_asset_state }}"
+      commission_date: "{{ ot_asset_commission_date }}"
+      warranty_expiry: "{{ ot_asset_warranty_expiry }}"
+      eol_date: "{{ ot_asset_eol_date }}"
+    validate_certs: "{{ ot_asset_verify_ssl }}"
+    timeout: "{{ ot_asset_api_timeout }}"
+    status_code: [200, 201]
+  when:
+    - ot_asset_cmdb_sync
+    - not ot_asset_dry_run
+    - ot_asset_api_token | length > 0
+  register: cmdb_sync_result
+
+- name: Generate asset lifecycle report
+  ansible.builtin.template:
+    src: "asset_report.{{ ot_asset_report_format }}.j2"
+    dest: "{{ ot_asset_report_destination }}/asset_{{ ot_asset_id }}_{{ ansible_date_time.iso8601_basic_short }}.{{ ot_asset_report_format }}"
+    mode: '0640'
+  when: ot_asset_generate_reports
+
+- name: Send notification to stakeholders
+  ansible.builtin.debug:
+    msg: |
+      Asset Lifecycle Event:
+      Operation: {{ ot_asset_operation }}
+      Asset ID: {{ ot_asset_id }}
+      Asset Name: {{ ot_asset_name }}
+      Type: {{ ot_asset_type }}
+      Criticality: {{ ot_asset_criticality }}
+      Status: Completed
+  when: ot_asset_notification_recipients | length > 0
+
+- name: Log asset lifecycle event
+  ansible.builtin.lineinfile:
+    path: "{{ ot_asset_log_dir }}/asset_lifecycle.log"
+    line: "{{ ansible_date_time.iso8601 }} | {{ ot_asset_operation | upper }} | {{ ot_asset_id }} | {{ ot_asset_name }} | {{ ot_asset_state }}"
+    create: yes
+    mode: '0640'

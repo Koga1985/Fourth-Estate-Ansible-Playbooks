@@ -1,42 +1,372 @@
 ---
-- name: Ensure artifacts dir
-  ansible.builtin.file: { path: "{{ artifacts_dir }}", state: directory, mode: "0755" }
+# Claroty xDome Secure Remote Access - User/Vendor Onboarding Tasks
+# Fourth Estate OT/ICS Cybersecurity
 
-- name: Onboard users/vendors
+- name: Ensure directories exist
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0755"
+  loop:
+    - "{{ artifacts_dir }}"
+    - "{{ log_dir }}"
+
+- name: Validate API connectivity
+  ansible.builtin.uri:
+    url: "{{ claroty.base_url }}/v1/health"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ claroty.token }}"
+    return_content: true
+    status_code: 200
+    validate_certs: "{{ claroty.verify_ssl }}"
+    timeout: "{{ claroty.timeout }}"
+  register: health_check
+  failed_when: health_check.status != 200
+
+- name: Log API health check
+  ansible.builtin.copy:
+    dest: "{{ log_dir }}/api_health_{{ ansible_date_time.iso8601_basic_short }}.log"
+    content: |
+      Timestamp: {{ ansible_date_time.iso8601 }}
+      API Status: {{ health_check.json.status | default('unknown') }}
+      Version: {{ health_check.json.version | default('unknown') }}
+    mode: "0644"
+
+# User Onboarding
+- name: Check if users already exist
+  ansible.builtin.uri:
+    url: "{{ claroty.base_url }}/v1/secure-access/users?email={{ item.email }}"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ claroty.token }}"
+      Content-Type: "application/json"
+    return_content: true
+    status_code: [200, 404]
+    validate_certs: "{{ claroty.verify_ssl }}"
+  loop: "{{ users }}"
+  loop_control:
+    label: "{{ item.email }}"
+  register: existing_users
+
+- name: Create new users
   ansible.builtin.uri:
     url: "{{ claroty.base_url }}/v1/secure-access/users"
     method: POST
-    headers: { Authorization: "Bearer {{ claroty.token }}", Content-Type: "application/json" }
+    headers:
+      Authorization: "Bearer {{ claroty.token }}"
+      Content-Type: "application/json"
     body_format: json
-    body: "{{ item }}"
-    status_code: [200,201]
-    validate_certs: "{{ claroty.verify_ssl | default(true) }}"
+    body:
+      email: "{{ item.item.email }}"
+      name: "{{ item.item.name }}"
+      user_type: "{{ item.item.user_type | default('vendor') }}"
+      roles: "{{ item.item.roles | default(['remote_access_user']) }}"
+      groups: "{{ item.item.groups | default([]) }}"
+      mfa_required: "{{ item.item.mfa_required | default(true) }}"
+      certificate_auth: "{{ item.item.certificate_auth | default(false) }}"
+      expiration_date: "{{ item.item.expiration_date | default(omit) }}"
+      session_policy: "{{ item.item.session_policy | default('default') }}"
+      access_scope: "{{ item.item.access_scope | default({}) }}"
+      time_windows: "{{ item.item.time_windows | default([]) }}"
+      ip_allowlist: "{{ item.item.ip_allowlist | default([]) }}"
+      notification_email: "{{ item.item.notification_email | default(true) }}"
+      metadata:
+        onboarded_by: "{{ ansible_user_id }}"
+        onboarded_at: "{{ ansible_date_time.iso8601 }}"
+        playbook_run_id: "{{ ansible_run_tags | join(',') }}"
+    status_code: [200, 201]
+    validate_certs: "{{ claroty.verify_ssl }}"
     return_content: true
-  loop: "{{ users }}"
-  loop_control: { label: "{{ item.email | default(item.name) }}" }
+  loop: "{{ existing_users.results }}"
+  loop_control:
+    label: "{{ item.item.email }}"
+  when: item.status == 404
+  register: created_users
 
-- name: Create/Update access policies
+- name: Update existing users
+  ansible.builtin.uri:
+    url: "{{ claroty.base_url }}/v1/secure-access/users/{{ item.json.id }}"
+    method: PUT
+    headers:
+      Authorization: "Bearer {{ claroty.token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      name: "{{ item.item.name }}"
+      roles: "{{ item.item.roles | default(['remote_access_user']) }}"
+      groups: "{{ item.item.groups | default([]) }}"
+      mfa_required: "{{ item.item.mfa_required | default(true) }}"
+      expiration_date: "{{ item.item.expiration_date | default(omit) }}"
+      session_policy: "{{ item.item.session_policy | default('default') }}"
+      access_scope: "{{ item.item.access_scope | default({}) }}"
+      time_windows: "{{ item.item.time_windows | default([]) }}"
+      ip_allowlist: "{{ item.item.ip_allowlist | default([]) }}"
+      account_locked: "{{ item.item.account_locked | default(false) }}"
+      metadata:
+        updated_by: "{{ ansible_user_id }}"
+        updated_at: "{{ ansible_date_time.iso8601 }}"
+    status_code: [200]
+    validate_certs: "{{ claroty.verify_ssl }}"
+    return_content: true
+  loop: "{{ existing_users.results }}"
+  loop_control:
+    label: "{{ item.item.email }}"
+  when: item.status == 200
+  register: updated_users
+
+# Access Policies Configuration
+- name: Create or update access policies (JIT, Approval Workflows)
   ansible.builtin.uri:
     url: "{{ claroty.base_url }}/v1/secure-access/policies"
     method: POST
-    headers: { Authorization: "Bearer {{ claroty.token }}", Content-Type: "application/json" }
+    headers:
+      Authorization: "Bearer {{ claroty.token }}"
+      Content-Type: "application/json"
     body_format: json
-    body: "{{ item }}"
-    status_code: [200,201]
-    validate_certs: "{{ claroty.verify_ssl | default(true) }}"
+    body:
+      name: "{{ item.name }}"
+      description: "{{ item.description | default('') }}"
+      enabled: "{{ item.enabled | default(true) }}"
+      approval_required: "{{ item.approval_required | default(false) }}"
+      approvers: "{{ item.approvers | default([]) }}"
+      approval_timeout_hours: "{{ item.approval_timeout_hours | default(24) }}"
+      auto_approval_rules: "{{ item.auto_approval_rules | default([]) }}"
+      max_session_duration_minutes: "{{ item.max_session_duration_minutes | default(480) }}"
+      session_extension_allowed: "{{ item.session_extension_allowed | default(false) }}"
+      max_extensions: "{{ item.max_extensions | default(0) }}"
+      access_scope: "{{ item.access_scope | default({}) }}"
+      protocols_allowed: "{{ item.protocols_allowed | default(['rdp', 'ssh']) }}"
+      time_restrictions: "{{ item.time_restrictions | default({}) }}"
+      created_by: "{{ ansible_user_id }}"
+      created_at: "{{ ansible_date_time.iso8601 }}"
+    status_code: [200, 201]
+    validate_certs: "{{ claroty.verify_ssl }}"
     return_content: true
   loop: "{{ access_policies }}"
-  loop_control: { label: "{{ item.name }}" }
+  loop_control:
+    label: "{{ item.name }}"
+  register: created_policies
 
-- name: Create/Update access profiles
+# Access Profiles Configuration
+- name: Create or update access profiles (Session Policies)
   ansible.builtin.uri:
     url: "{{ claroty.base_url }}/v1/secure-access/profiles"
     method: POST
-    headers: { Authorization: "Bearer {{ claroty.token }}", Content-Type: "application/json" }
+    headers:
+      Authorization: "Bearer {{ claroty.token }}"
+      Content-Type: "application/json"
     body_format: json
-    body: "{{ item }}"
-    status_code: [200,201]
-    validate_certs: "{{ claroty.verify_ssl | default(true) }}"
+    body:
+      name: "{{ item.name }}"
+      description: "{{ item.description | default('') }}"
+      mfa_enforcement: "{{ item.mfa_enforcement | default('required') }}"
+      mfa_methods: "{{ item.mfa_methods | default(['totp', 'webauthn']) }}"
+      certificate_based_auth: "{{ item.certificate_based_auth | default(false) }}"
+      session_recording: "{{ item.session_recording | default(true) }}"
+      session_recording_type: "{{ item.session_recording_type | default('full') }}"
+      file_transfer: "{{ item.file_transfer | default('deny') }}"
+      clipboard: "{{ item.clipboard | default('deny') }}"
+      printing: "{{ item.printing | default('deny') }}"
+      screenshot_capture: "{{ item.screenshot_capture | default('deny') }}"
+      watermark_enabled: "{{ item.watermark_enabled | default(true) }}"
+      watermark_text: "{{ item.watermark_text | default('CONTROLLED') }}"
+      idle_timeout_minutes: "{{ item.idle_timeout_minutes | default(15) }}"
+      session_timeout_minutes: "{{ item.session_timeout_minutes | default(240) }}"
+      concurrent_sessions_max: "{{ item.concurrent_sessions_max | default(1) }}"
+      protocol_restrictions: "{{ item.protocol_restrictions | default({}) }}"
+    status_code: [200, 201]
+    validate_certs: "{{ claroty.verify_ssl }}"
     return_content: true
-  loop: "{{ profiles }}"
-  loop_control: { label: "{{ item.name }}" }
+  loop: "{{ access_profiles }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: created_profiles
+
+# MFA Enrollment
+- name: Trigger MFA enrollment for new users
+  ansible.builtin.uri:
+    url: "{{ claroty.base_url }}/v1/secure-access/users/{{ item.json.id }}/mfa/enroll"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ claroty.token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      methods: "{{ item.item.item.mfa_methods | default(['totp', 'webauthn']) }}"
+      send_enrollment_email: true
+    status_code: [200, 201]
+    validate_certs: "{{ claroty.verify_ssl }}"
+  loop: "{{ created_users.results | default([]) }}"
+  loop_control:
+    label: "{{ item.item.item.email }}"
+  when:
+    - created_users.results is defined
+    - item.json is defined
+    - item.item.item.mfa_required | default(true)
+
+# Access Request Workflow Integration
+- name: Create ServiceNow access request tickets
+  ansible.builtin.uri:
+    url: "https://{{ integrations.servicenow.instance }}/api/now/table/{{ integrations.servicenow.table }}"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ integrations.servicenow.token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      short_description: "Remote Access Request - {{ item.item.name }}"
+      description: |
+        User: {{ item.item.email }}
+        Type: {{ item.item.user_type | default('vendor') }}
+        Expiration: {{ item.item.expiration_date | default('N/A') }}
+        Scope: {{ item.item.access_scope | default({}) | to_json }}
+        Onboarded by: {{ ansible_user_id }}
+      requested_for: "{{ item.item.email }}"
+      category: "Remote Access"
+      subcategory: "OT/ICS Access"
+      priority: "2"
+      state: "1"
+      u_claroty_user_id: "{{ item.json.id | default('') }}"
+    status_code: [200, 201]
+    validate_certs: true
+    return_content: true
+  loop: "{{ created_users.results | default([]) }}"
+  loop_control:
+    label: "{{ item.item.item.email }}"
+  when:
+    - integrations.servicenow.enabled | default(false)
+    - integrations.servicenow.create_access_request_tickets | default(false)
+    - created_users.results is defined
+
+# Credential Management
+- name: Set credential rotation policy
+  ansible.builtin.uri:
+    url: "{{ claroty.base_url }}/v1/secure-access/credential-policies"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ claroty.token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      rotation_interval_days: "{{ credential_rotation.rotation_interval_days }}"
+      notify_before_expiration_days: "{{ credential_rotation.notify_before_expiration_days }}"
+      force_change_on_first_login: "{{ credential_rotation.force_change_on_first_login }}"
+    status_code: [200, 201]
+    validate_certs: "{{ claroty.verify_ssl }}"
+  when: credential_rotation.enabled | default(true)
+
+# Notifications
+- name: Send onboarding notification emails
+  community.general.mail:
+    host: "{{ notifications.smtp_server }}"
+    port: "{{ notifications.smtp_port }}"
+    from: "{{ notifications.from_address }}"
+    to: "{{ item.item.item.email }}"
+    subject: "Claroty xDome Remote Access - Account Created"
+    body: |
+      Your remote access account has been created in Claroty xDome.
+
+      Email: {{ item.item.item.email }}
+      Name: {{ item.item.item.name }}
+      Type: {{ item.item.item.user_type | default('vendor') }}
+      Expiration: {{ item.item.item.expiration_date | default('No expiration') }}
+
+      Please complete MFA enrollment at: https://xdome.claroty.com/mfa/enroll
+
+      Access Scope:
+      {{ item.item.item.access_scope | default({}) | to_nice_yaml }}
+
+      For support, contact: {{ notifications.notification_recipients | join(', ') }}
+  loop: "{{ created_users.results | default([]) }}"
+  loop_control:
+    label: "{{ item.item.item.email }}"
+  when:
+    - notifications.enabled | default(true)
+    - notifications.notify_on_user_created | default(true)
+    - created_users.results is defined
+    - item.item.item.notification_email | default(true)
+
+- name: Send notification to security team
+  community.general.mail:
+    host: "{{ notifications.smtp_server }}"
+    port: "{{ notifications.smtp_port }}"
+    from: "{{ notifications.from_address }}"
+    to: "{{ notifications.notification_recipients }}"
+    subject: "Claroty xDome - User Onboarding Summary"
+    body: |
+      User onboarding completed successfully.
+
+      Created Users: {{ created_users.results | default([]) | length }}
+      Updated Users: {{ updated_users.results | default([]) | length }}
+      Created Policies: {{ created_policies.results | default([]) | length }}
+      Created Profiles: {{ created_profiles.results | default([]) | length }}
+
+      Timestamp: {{ ansible_date_time.iso8601 }}
+      Operator: {{ ansible_user_id }}
+  when:
+    - notifications.enabled | default(true)
+    - notifications.notify_on_user_created | default(true)
+
+# Reporting
+- name: Generate onboarding summary report
+  ansible.builtin.template:
+    src: onboarding_summary.html.j2
+    dest: "{{ artifacts_dir }}/onboarding_summary_{{ ansible_date_time.iso8601_basic_short }}.html"
+    mode: "0644"
+  when: reporting.enabled | default(true)
+
+- name: Export user list to CSV
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/onboarded_users_{{ ansible_date_time.iso8601_basic_short }}.csv"
+    mode: "0644"
+    content: |
+      email,name,user_type,roles,groups,mfa_required,expiration_date,created_at,status
+      {% for result in created_users.results | default([]) %}
+      {{ result.item.item.email }},{{ result.item.item.name }},{{ result.item.item.user_type | default('vendor') }},"{{ result.item.item.roles | default([]) | join(';') }}","{{ result.item.item.groups | default([]) | join(';') }}",{{ result.item.item.mfa_required | default(true) }},{{ result.item.item.expiration_date | default('N/A') }},{{ ansible_date_time.iso8601 }},created
+      {% endfor %}
+      {% for result in updated_users.results | default([]) %}
+      {{ result.item.item.email }},{{ result.item.item.name }},{{ result.item.item.user_type | default('vendor') }},"{{ result.item.item.roles | default([]) | join(';') }}","{{ result.item.item.groups | default([]) | join(';') }}",{{ result.item.item.mfa_required | default(true) }},{{ result.item.item.expiration_date | default('N/A') }},{{ ansible_date_time.iso8601 }},updated
+      {% endfor %}
+
+- name: Log onboarding actions for compliance
+  ansible.builtin.copy:
+    dest: "{{ log_dir }}/onboarding_audit_{{ ansible_date_time.iso8601_basic_short }}.log"
+    mode: "0644"
+    content: |
+      === Claroty xDome User Onboarding Audit Log ===
+      Timestamp: {{ ansible_date_time.iso8601 }}
+      Operator: {{ ansible_user_id }}
+      Hostname: {{ ansible_hostname }}
+
+      Created Users ({{ created_users.results | default([]) | length }}):
+      {% for result in created_users.results | default([]) %}
+      - {{ result.item.item.email }} ({{ result.item.item.name }}) - Type: {{ result.item.item.user_type | default('vendor') }}
+      {% endfor %}
+
+      Updated Users ({{ updated_users.results | default([]) | length }}):
+      {% for result in updated_users.results | default([]) %}
+      - {{ result.item.item.email }} ({{ result.item.item.name }}) - Type: {{ result.item.item.user_type | default('vendor') }}
+      {% endfor %}
+
+      Access Policies Created ({{ created_policies.results | default([]) | length }}):
+      {% for result in created_policies.results | default([]) %}
+      - {{ result.item.name }} - Approval Required: {{ result.item.approval_required | default(false) }}
+      {% endfor %}
+
+      Access Profiles Created ({{ created_profiles.results | default([]) | length }}):
+      {% for result in created_profiles.results | default([]) %}
+      - {{ result.item.name }} - MFA: {{ result.item.mfa_enforcement | default('required') }}, Recording: {{ result.item.session_recording | default(true) }}
+      {% endfor %}
+  when: compliance.log_all_onboarding_actions | default(true)
+
+- name: Display onboarding summary
+  ansible.builtin.debug:
+    msg:
+      - "=== Claroty xDome User Onboarding Complete ==="
+      - "Created Users: {{ created_users.results | default([]) | length }}"
+      - "Updated Users: {{ updated_users.results | default([]) | length }}"
+      - "Access Policies: {{ created_policies.results | default([]) | length }}"
+      - "Access Profiles: {{ created_profiles.results | default([]) | length }}"
+      - "Audit Log: {{ log_dir }}/onboarding_audit_{{ ansible_date_time.iso8601_basic_short }}.log"
+      - "User CSV: {{ artifacts_dir }}/onboarded_users_{{ ansible_date_time.iso8601_basic_short }}.csv"

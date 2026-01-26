@@ -1,0 +1,106 @@
+---
+# Monitor Dragos sensor health and performance metrics
+
+- name: Retrieve sensor health status
+  ansible.builtin.uri:
+    url: "{{ dragos_base_url }}/api/sensors/{{ item.id }}/health"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ dragos_token }}"
+    return_content: true
+    status_code: 200
+    validate_certs: "{{ dragos_verify_ssl }}"
+  loop: "{{ sensors }}"
+  loop_control:
+    label: "{{ item.name }} - Health Check"
+  register: sensor_health
+
+- name: Check sensor connectivity to platform
+  ansible.builtin.uri:
+    url: "{{ dragos_base_url }}/api/sensors/{{ item.id }}/connectivity"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ dragos_token }}"
+    return_content: true
+    status_code: 200
+    validate_certs: "{{ dragos_verify_ssl }}"
+  loop: "{{ sensors }}"
+  loop_control:
+    label: "{{ item.name }} - Connectivity"
+  register: sensor_connectivity
+
+- name: Retrieve sensor resource utilization
+  ansible.builtin.uri:
+    url: "{{ dragos_base_url }}/api/sensors/{{ item.id }}/metrics"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ dragos_token }}"
+    return_content: true
+    status_code: 200
+    validate_certs: "{{ dragos_verify_ssl }}"
+  loop: "{{ sensors }}"
+  loop_control:
+    label: "{{ item.name }} - Metrics"
+  register: sensor_metrics
+
+- name: Check sensor packet capture statistics
+  ansible.builtin.uri:
+    url: "{{ dragos_base_url }}/api/sensors/{{ item.id }}/capture/stats"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ dragos_token }}"
+    return_content: true
+    status_code: 200
+    validate_certs: "{{ dragos_verify_ssl }}"
+  loop: "{{ sensors }}"
+  loop_control:
+    label: "{{ item.name }} - Capture Stats"
+  register: sensor_capture_stats
+
+- name: Check sensor storage utilization
+  ansible.builtin.uri:
+    url: "{{ dragos_base_url }}/api/sensors/{{ item.id }}/storage"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ dragos_token }}"
+    return_content: true
+    status_code: 200
+    validate_certs: "{{ dragos_verify_ssl }}"
+  loop: "{{ sensors }}"
+  loop_control:
+    label: "{{ item.name }} - Storage"
+  register: sensor_storage_stats
+
+- name: Identify unhealthy sensors
+  ansible.builtin.set_fact:
+    unhealthy_sensors: "{{ sensor_health.results | selectattr('json.status', 'ne', 'healthy') | map(attribute='json.sensor_name') | list }}"
+
+- name: Alert on unhealthy sensors
+  ansible.builtin.debug:
+    msg: "WARNING: Unhealthy sensors detected: {{ unhealthy_sensors | join(', ') }}"
+  when: unhealthy_sensors | length > 0
+  changed_when: true
+  notify: Alert on sensor health issues
+
+- name: Identify sensors with high packet drop rate
+  ansible.builtin.set_fact:
+    high_drop_sensors: "{{ sensor_capture_stats.results | selectattr('json.drop_rate', '>', packet_drop_threshold) | map(attribute='json.sensor_name') | list }}"
+
+- name: Alert on high packet drop
+  ansible.builtin.debug:
+    msg: "WARNING: High packet drop rate on sensors: {{ high_drop_sensors | join(', ') }}"
+  when: high_drop_sensors | length > 0
+  changed_when: true
+  notify: Alert on packet drop
+
+- name: Generate sensor health report
+  ansible.builtin.template:
+    src: sensor_health_report.j2
+    dest: "{{ artifacts_dir }}/sensor_health_report_{{ ansible_date_time.iso8601_basic_short }}.html"
+    mode: "0644"
+
+- name: Save sensor health data
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/sensor_health_{{ ansible_date_time.iso8601_basic_short }}.json"
+    content: "{{ {'health': sensor_health, 'connectivity': sensor_connectivity, 'metrics': sensor_metrics, 'capture_stats': sensor_capture_stats, 'storage': sensor_storage_stats} | to_nice_json }}"
+    mode: "0644"

@@ -1,0 +1,297 @@
+---
+# Elasticsearch Installation Tasks
+
+- name: Include OS-specific variables
+  include_vars: "{{ ansible_os_family }}.yml"
+  when: ansible_os_family in ['RedHat', 'Debian']
+
+- name: Validate Elasticsearch configuration
+  assert:
+    that:
+      - elasticsearch_heap_size is defined
+      - elasticsearch_version is defined
+      - elasticsearch_data_dir is defined
+    fail_msg: "Required Elasticsearch variables are not defined"
+    success_msg: "Elasticsearch configuration validated"
+
+- name: Create Elasticsearch group
+  group:
+    name: "{{ elasticsearch_group }}"
+    state: present
+    system: yes
+
+- name: Create Elasticsearch user
+  user:
+    name: "{{ elasticsearch_user }}"
+    group: "{{ elasticsearch_group }}"
+    home: "{{ elasticsearch_home }}"
+    shell: /bin/bash
+    system: yes
+    create_home: no
+
+- name: Install prerequisites
+  package:
+    name:
+      - apt-transport-https
+      - gnupg2
+      - curl
+      - wget
+    state: present
+  when: ansible_os_family == 'Debian'
+
+- name: Install prerequisites (RedHat)
+  package:
+    name:
+      - curl
+      - wget
+    state: present
+  when: ansible_os_family == 'RedHat'
+
+- name: Add Elasticsearch GPG key
+  apt_key:
+    url: "{{ elasticsearch_repo_gpg_key }}"
+    state: present
+  when:
+    - ansible_os_family == 'Debian'
+    - elasticsearch_use_official_repo | bool
+
+- name: Add Elasticsearch repository (Debian)
+  apt_repository:
+    repo: "deb https://artifacts.elastic.co/packages/{{ elasticsearch_major_version }}/apt stable main"
+    state: present
+    filename: elasticsearch
+  when:
+    - ansible_os_family == 'Debian'
+    - elasticsearch_use_official_repo | bool
+
+- name: Add Elasticsearch repository (RedHat)
+  yum_repository:
+    name: elasticsearch
+    description: "Elasticsearch repository for {{ elasticsearch_major_version }} packages"
+    baseurl: "https://artifacts.elastic.co/packages/{{ elasticsearch_major_version }}/yum"
+    gpgkey: "{{ elasticsearch_repo_gpg_key }}"
+    gpgcheck: yes
+    enabled: yes
+  when:
+    - ansible_os_family == 'RedHat'
+    - elasticsearch_use_official_repo | bool
+
+- name: Install Elasticsearch package
+  package:
+    name: "elasticsearch{% if elasticsearch_version is defined and elasticsearch_version != '' %}={{ elasticsearch_version }}{% endif %}"
+    state: present
+    update_cache: yes
+  when: elasticsearch_install_method == 'package'
+  notify: restart elasticsearch
+
+- name: Hold Elasticsearch package version (Debian)
+  dpkg_selections:
+    name: elasticsearch
+    selection: hold
+  when:
+    - ansible_os_family == 'Debian'
+    - elasticsearch_install_method == 'package'
+
+- name: Create Elasticsearch directories
+  file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ elasticsearch_user }}"
+    group: "{{ elasticsearch_group }}"
+    mode: '0755'
+  loop:
+    - "{{ elasticsearch_config_dir }}"
+    - "{{ elasticsearch_log_dir }}"
+    - "{{ elasticsearch_pid_dir }}"
+    - "{{ elasticsearch_backup_dir }}"
+    - "{{ elasticsearch_data_dir }}/tmp"
+
+- name: Create multiple data directories
+  file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ elasticsearch_user }}"
+    group: "{{ elasticsearch_group }}"
+    mode: '0755'
+  loop: "{{ elasticsearch_data_paths }}"
+  when: elasticsearch_data_paths | length > 1
+
+- name: Create snapshot directory
+  file:
+    path: "{{ elasticsearch_snapshot_dir }}"
+    state: directory
+    owner: "{{ elasticsearch_user }}"
+    group: "{{ elasticsearch_group }}"
+    mode: '0755'
+  when: elasticsearch_snapshot_dir is defined
+
+- name: Configure system limits for Elasticsearch
+  pam_limits:
+    domain: "{{ elasticsearch_user }}"
+    limit_type: "{{ item.limit_type }}"
+    limit_item: "{{ item.limit_item }}"
+    value: "{{ item.value }}"
+  loop:
+    - { limit_type: 'soft', limit_item: 'nofile', value: "{{ elasticsearch_max_open_files }}" }
+    - { limit_type: 'hard', limit_item: 'nofile', value: "{{ elasticsearch_max_open_files }}" }
+    - { limit_type: 'soft', limit_item: 'memlock', value: "{{ elasticsearch_max_locked_memory }}" }
+    - { limit_type: 'hard', limit_item: 'memlock', value: "{{ elasticsearch_max_locked_memory }}" }
+    - { limit_type: 'soft', limit_item: 'nproc', value: "{{ elasticsearch_max_threads }}" }
+    - { limit_type: 'hard', limit_item: 'nproc', value: "{{ elasticsearch_max_threads }}" }
+
+- name: Set vm.max_map_count for Elasticsearch
+  sysctl:
+    name: vm.max_map_count
+    value: "{{ elasticsearch_max_map_count }}"
+    state: present
+    sysctl_set: yes
+    reload: yes
+
+- name: Disable swap
+  command: swapoff -a
+  when: elasticsearch_disable_swap | bool
+  changed_when: false
+  ignore_errors: yes
+
+- name: Disable swap permanently
+  replace:
+    path: /etc/fstab
+    regexp: '^([^#].*?\sswap\s+sw\s+.*)$'
+    replace: '# \1'
+  when: elasticsearch_disable_swap | bool
+
+- name: Configure JVM options
+  template:
+    src: jvm.options.j2
+    dest: "{{ elasticsearch_config_dir }}/jvm.options"
+    owner: root
+    group: "{{ elasticsearch_group }}"
+    mode: '0660'
+  notify: restart elasticsearch
+
+- name: Configure Elasticsearch environment
+  template:
+    src: elasticsearch.env.j2
+    dest: /etc/default/elasticsearch
+    owner: root
+    group: root
+    mode: '0644'
+  notify: restart elasticsearch
+
+- name: Configure systemd service
+  template:
+    src: elasticsearch.service.j2
+    dest: /etc/systemd/system/elasticsearch.service
+    owner: root
+    group: root
+    mode: '0644'
+  notify:
+    - reload systemd
+    - restart elasticsearch
+
+- name: Create systemd override directory
+  file:
+    path: /etc/systemd/system/elasticsearch.service.d
+    state: directory
+    mode: '0755'
+
+- name: Configure systemd overrides
+  template:
+    src: elasticsearch.service.override.j2
+    dest: /etc/systemd/system/elasticsearch.service.d/override.conf
+    owner: root
+    group: root
+    mode: '0644'
+  notify:
+    - reload systemd
+    - restart elasticsearch
+
+- name: Configure firewall for Elasticsearch HTTP
+  firewalld:
+    port: "{{ elasticsearch_http_port }}/tcp"
+    permanent: yes
+    state: enabled
+    zone: "{{ elasticsearch_firewall_zone }}"
+    immediate: yes
+  when:
+    - elasticsearch_configure_firewall | bool
+    - ansible_os_family == 'RedHat'
+  ignore_errors: yes
+
+- name: Configure firewall for Elasticsearch transport
+  firewalld:
+    port: "{{ elasticsearch_transport_port }}/tcp"
+    permanent: yes
+    state: enabled
+    zone: "{{ elasticsearch_firewall_zone }}"
+    immediate: yes
+  when:
+    - elasticsearch_configure_firewall | bool
+    - ansible_os_family == 'RedHat'
+  ignore_errors: yes
+
+- name: Configure firewall (UFW)
+  ufw:
+    rule: allow
+    port: "{{ item }}"
+    proto: tcp
+  loop:
+    - "{{ elasticsearch_http_port }}"
+    - "{{ elasticsearch_transport_port }}"
+  when:
+    - elasticsearch_configure_firewall | bool
+    - ansible_os_family == 'Debian'
+  ignore_errors: yes
+
+- name: Install Elasticsearch plugins
+  elasticsearch_plugin:
+    name: "{{ item.name }}"
+    state: "{{ item.state | default('present') }}"
+  loop: "{{ elasticsearch_plugins }}"
+  when: elasticsearch_plugins | length > 0
+  notify: restart elasticsearch
+
+- name: Enable Elasticsearch service
+  systemd:
+    name: elasticsearch
+    enabled: "{{ elasticsearch_service_enabled }}"
+    daemon_reload: yes
+
+- name: Start Elasticsearch service
+  systemd:
+    name: elasticsearch
+    state: "{{ elasticsearch_service_state }}"
+  when: elasticsearch_service_state is defined
+
+- name: Wait for Elasticsearch to start
+  wait_for:
+    host: localhost
+    port: "{{ elasticsearch_http_port }}"
+    delay: 10
+    timeout: 300
+  when: elasticsearch_service_state == 'started'
+
+- name: Check Elasticsearch cluster health
+  uri:
+    url: "http://localhost:{{ elasticsearch_http_port }}/_cluster/health"
+    method: GET
+    status_code: [200, 401]
+  register: elasticsearch_health
+  until: elasticsearch_health.status in [200, 401]
+  retries: 5
+  delay: 10
+  when: elasticsearch_service_state == 'started'
+  ignore_errors: yes
+
+- name: Display Elasticsearch version
+  uri:
+    url: "http://localhost:{{ elasticsearch_http_port }}"
+    method: GET
+    status_code: [200, 401]
+  register: elasticsearch_version_info
+  when: elasticsearch_service_state == 'started'
+  ignore_errors: yes
+
+- name: Show Elasticsearch installation status
+  debug:
+    msg: "Elasticsearch {{ elasticsearch_version }} installed successfully"

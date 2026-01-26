@@ -1,9 +1,174 @@
 ---
+# Claroty xDome Secure Remote Access - User/Vendor Onboarding
+# Fourth Estate OT/ICS Security Configuration
+
 artifacts_dir: "/tmp/claroty-artifacts"
+log_dir: "/var/log/claroty"
 
-# Users/vendors to onboard
-users: []   # [{ email, name, roles: ['vendor','ops'], expires: '2025-12-31', groups: ['vendor-acme'] }]
+# Claroty xDome API Configuration
+claroty:
+  base_url: "https://xdome.claroty.com/api"
+  token: "{{ lookup('env', 'CLAROTY_API_TOKEN') }}"
+  verify_ssl: true
+  timeout: 30
 
-# Access policies/profiles to assign (idempotent creates/updates)
-access_policies: []  # [{ name, description, scopes: ['site:A','zone:Purdue-L2'], approval_required: true, max_duration_minutes: 240 }]
-profiles: []         # [{ name, mfa: true, clipboarding: false, file_transfer: 'deny' }]
+# User Onboarding Configuration
+users: []
+# Example user onboarding:
+# - email: "vendor@acme.com"
+#   name: "John Vendor"
+#   user_type: "vendor"              # vendor, contractor, employee
+#   roles: ["remote_access_user"]
+#   groups: ["vendor-acme", "ot-access"]
+#   mfa_required: true
+#   certificate_auth: false
+#   expiration_date: "2026-12-31"
+#   approval_required: true
+#   approvers: ["admin@agency.gov"]
+#   session_policy: "vendor-restricted"
+#   access_scope:
+#     sites: ["site-hq", "site-datacenter"]
+#     zones: ["Purdue-L2", "Purdue-L3"]
+#     asset_groups: ["scada-systems"]
+#   time_windows:
+#     - days: ["monday", "tuesday", "wednesday", "thursday", "friday"]
+#       start_time: "08:00"
+#       end_time: "17:00"
+#       timezone: "America/New_York"
+#   ip_allowlist:
+#     - "203.0.113.0/24"
+#     - "198.51.100.50"
+#   notification_email: true
+#   account_locked: false
+
+# Access Policies (Just-in-Time Access, Approval Workflows)
+access_policies: []
+# Example policy:
+# - name: "vendor-jit-access"
+#   description: "Just-in-Time access for vendors requiring approval"
+#   enabled: true
+#   approval_required: true
+#   approvers:
+#     - "ot-security-team@agency.gov"
+#     - "ops-manager@agency.gov"
+#   approval_timeout_hours: 4
+#   auto_approval_rules:
+#     - condition: "risk_score < 3"
+#       action: "auto_approve"
+#   max_session_duration_minutes: 240
+#   session_extension_allowed: true
+#   max_extensions: 2
+#   access_scope:
+#     sites: ["site-hq"]
+#     zones: ["Purdue-L2", "Purdue-L3"]
+#   protocols_allowed: ["rdp", "ssh", "vnc"]
+#   time_restrictions:
+#     business_hours_only: true
+#     blackout_periods:
+#       - start: "2026-12-24"
+#         end: "2026-12-26"
+#         reason: "Holiday freeze"
+
+# Access Profiles (Session Policies Assignment)
+access_profiles: []
+# Example profile:
+# - name: "vendor-restricted-profile"
+#   description: "Restricted profile for vendor access with full monitoring"
+#   mfa_enforcement: "required"       # required, optional, disabled
+#   mfa_methods: ["totp", "webauthn", "sms"]
+#   certificate_based_auth: false
+#   session_recording: true
+#   session_recording_type: "full"    # full, keystrokes, commands
+#   file_transfer: "deny"             # allow, deny, approval_required
+#   clipboard: "deny"                 # allow, deny, one_way_in, one_way_out
+#   printing: "deny"
+#   screenshot_capture: "deny"
+#   watermark_enabled: true
+#   watermark_text: "CONTROLLED - {{ user_email }} - {{ session_id }}"
+#   idle_timeout_minutes: 15
+#   session_timeout_minutes: 240
+#   concurrent_sessions_max: 1
+#   protocol_restrictions:
+#     rdp:
+#       enabled: true
+#       clipboard: "deny"
+#       file_transfer: "deny"
+#       printer_redirection: false
+#       audio_redirection: false
+#     ssh:
+#       enabled: true
+#       sftp: "deny"
+#       port_forwarding: false
+#       x11_forwarding: false
+#     vnc:
+#       enabled: true
+#       clipboard: "deny"
+
+# Credential Management
+credential_rotation:
+  enabled: true
+  rotation_interval_days: 90
+  notify_before_expiration_days: 14
+  force_change_on_first_login: true
+
+# Access Request Workflow
+access_request_workflow:
+  enabled: true
+  self_service_portal: true
+  request_template_required: true
+  business_justification_required: true
+  manager_approval_required: true
+  security_team_approval_required: true
+  auto_provision_on_approval: true
+
+# Compliance and Audit
+compliance:
+  log_all_onboarding_actions: true
+  require_background_check: true
+  require_nda_acceptance: true
+  require_security_training: true
+  periodic_access_review_days: 90
+
+# Notifications
+notifications:
+  enabled: true
+  smtp_server: "smtp.agency.gov"
+  smtp_port: 587
+  from_address: "claroty-security@agency.gov"
+  notify_on_user_created: true
+  notify_on_access_granted: true
+  notify_on_access_expired: true
+  notify_on_policy_violation: true
+  notification_recipients:
+    - "ot-security@agency.gov"
+
+# Integration with External Systems
+integrations:
+  active_directory:
+    enabled: false
+    domain: "agency.gov"
+    ldap_url: "ldaps://dc.agency.gov:636"
+    base_dn: "DC=agency,DC=gov"
+    sync_groups: true
+  servicenow:
+    enabled: false
+    instance: "agency.service-now.com"
+    token: "{{ lookup('env', 'SERVICENOW_TOKEN') }}"
+    create_access_request_tickets: true
+    table: "u_remote_access_requests"
+  okta:
+    enabled: false
+    domain: "agency.okta.com"
+    api_token: "{{ lookup('env', 'OKTA_API_TOKEN') }}"
+    sso_enabled: true
+
+# Reporting
+reporting:
+  enabled: true
+  onboarding_summary_report: true
+  active_users_report: true
+  expiring_access_report: true
+  compliance_report: true
+  report_schedule: "weekly"
+  report_recipients:
+    - "ot-management@agency.gov"

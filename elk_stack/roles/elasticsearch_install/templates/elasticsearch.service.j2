@@ -1,0 +1,69 @@
+[Unit]
+Description=Elasticsearch
+Documentation=https://www.elastic.co
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=notify
+RuntimeDirectory=elasticsearch
+PrivateTmp=true
+Environment=ES_HOME={{ elasticsearch_home }}
+Environment=ES_PATH_CONF={{ elasticsearch_config_dir }}
+Environment=PID_DIR={{ elasticsearch_pid_dir }}
+Environment=ES_SD_NOTIFY=true
+EnvironmentFile=-/etc/default/elasticsearch
+
+WorkingDirectory={{ elasticsearch_home }}
+
+User={{ elasticsearch_user }}
+Group={{ elasticsearch_group }}
+
+ExecStart={{ elasticsearch_home }}/bin/systemd-entrypoint -p ${PID_DIR}/elasticsearch.pid --quiet
+
+# StandardOutput is configured to redirect to journalctl since
+# some error messages may be logged in standard output before
+# elasticsearch logging system is initialized. Elasticsearch
+# stores its logs in /var/log/elasticsearch and does not use
+# journalctl by default. If you also want to enable journalctl
+# logging, you can simply remove the "quiet" option from ExecStart.
+StandardOutput=journal
+StandardError=inherit
+
+# Specifies the maximum file descriptor number that can be opened by this process
+LimitNOFILE={{ elasticsearch_max_open_files }}
+
+# Specifies the maximum number of processes
+LimitNPROC={{ elasticsearch_max_threads }}
+
+# Specifies the maximum size of virtual memory
+LimitAS=infinity
+
+# Specifies the maximum file size
+LimitFSIZE=infinity
+
+# Disable timeout logic and wait until process is stopped
+TimeoutStopSec=0
+
+# SIGTERM signal is used to stop the Java process
+KillSignal=SIGTERM
+
+# Send the signal only to the JVM rather than its control group
+KillMode=process
+
+# Java process is never killed
+SendSIGKILL=no
+
+# When a JVM receives a SIGTERM signal it exits with code 143
+SuccessExitStatus=143
+
+# Allow a slow startup before the systemd notifier module kicks in to extend the timeout
+TimeoutStartSec=900
+
+{% if elasticsearch_bootstrap_memory_lock %}
+# Allow elasticsearch to lock memory
+LimitMEMLOCK=infinity
+{% endif %}
+
+[Install]
+WantedBy=multi-user.target

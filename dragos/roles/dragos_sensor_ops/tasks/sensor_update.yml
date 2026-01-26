@@ -1,0 +1,114 @@
+---
+# Update Dragos sensor software for security and feature enhancements
+
+- name: Check current sensor versions
+  ansible.builtin.uri:
+    url: "{{ dragos_base_url }}/api/sensors/{{ item.id }}/version"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ dragos_token }}"
+    return_content: true
+    status_code: 200
+    validate_certs: "{{ dragos_verify_ssl }}"
+  loop: "{{ sensors }}"
+  loop_control:
+    label: "{{ item.name }} - Version Check"
+  register: sensor_versions
+
+- name: Retrieve available updates
+  ansible.builtin.uri:
+    url: "{{ dragos_base_url }}/api/sensors/updates/available"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ dragos_token }}"
+    return_content: true
+    status_code: 200
+    validate_certs: "{{ dragos_verify_ssl }}"
+  register: available_updates
+
+- name: Validate update version exists
+  ansible.builtin.assert:
+    that:
+      - sensor_update_version in (available_updates.json.versions | map(attribute='version') | list)
+    fail_msg: "Update version {{ sensor_update_version }} is not available"
+    success_msg: "Update version {{ sensor_update_version }} is available"
+
+- name: Create sensor backup before update
+  ansible.builtin.uri:
+    url: "{{ dragos_base_url }}/api/sensors/{{ item.id }}/backup"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ dragos_token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      backup_type: "pre_update"
+      description: "Backup before update to {{ sensor_update_version }}"
+    status_code: [200, 201]
+    validate_certs: "{{ dragos_verify_ssl }}"
+  loop: "{{ sensors }}"
+  loop_control:
+    label: "{{ item.name }} - Backup"
+  when: not dry_run and backup_before_update
+  register: sensor_backups
+
+- name: Schedule sensor updates
+  ansible.builtin.uri:
+    url: "{{ dragos_base_url }}/api/sensors/{{ item.id }}/update"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ dragos_token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      target_version: "{{ sensor_update_version }}"
+      schedule_time: "{{ item.update_schedule | default(update_schedule) }}"
+      maintenance_window: "{{ maintenance_window }}"
+      rollback_on_failure: "{{ auto_rollback }}"
+    status_code: [200, 201, 202]
+    validate_certs: "{{ dragos_verify_ssl }}"
+  loop: "{{ sensors }}"
+  loop_control:
+    label: "{{ item.name }} - Schedule Update"
+  when: not dry_run
+  register: sensor_update_jobs
+
+- name: Monitor update progress
+  ansible.builtin.uri:
+    url: "{{ dragos_base_url }}/api/sensors/{{ item.id }}/update/status"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ dragos_token }}"
+    return_content: true
+    status_code: 200
+    validate_certs: "{{ dragos_verify_ssl }}"
+  loop: "{{ sensors }}"
+  loop_control:
+    label: "{{ item.name }} - Update Status"
+  register: update_status
+  until: update_status.json.status in ['completed', 'failed']
+  retries: "{{ update_max_retries }}"
+  delay: "{{ update_check_interval }}"
+  when: not dry_run and wait_for_completion
+
+- name: Verify sensor versions after update
+  ansible.builtin.uri:
+    url: "{{ dragos_base_url }}/api/sensors/{{ item.id }}/version"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ dragos_token }}"
+    return_content: true
+    status_code: 200
+    validate_certs: "{{ dragos_verify_ssl }}"
+  loop: "{{ sensors }}"
+  loop_control:
+    label: "{{ item.name }} - Post-Update Version"
+  register: sensor_versions_post
+  when: not dry_run and wait_for_completion
+
+- name: Generate update report
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/sensor_update_report_{{ ansible_date_time.iso8601_basic_short }}.json"
+    content: "{{ {'pre_versions': sensor_versions, 'update_jobs': sensor_update_jobs, 'post_versions': sensor_versions_post, 'status': update_status} | to_nice_json }}"
+    mode: "0644"
+  when: sensor_update_jobs is defined
