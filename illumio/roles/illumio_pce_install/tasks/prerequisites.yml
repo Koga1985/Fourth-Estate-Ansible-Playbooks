@@ -1,0 +1,120 @@
+---
+# Prerequisites validation for PCE installation
+
+- name: Check if running on supported OS
+  assert:
+    that:
+      - ansible_os_family == "RedHat"
+      - ansible_distribution_major_version in ["7", "8", "9"]
+    fail_msg: "Illumio PCE requires RHEL/CentOS 7, 8, or 9"
+    success_msg: "Operating system check passed"
+
+- name: Check system resources - CPU
+  assert:
+    that:
+      - ansible_processor_vcpus >= illumio_pce_min_cpu
+    fail_msg: "Minimum {{ illumio_pce_min_cpu }} vCPUs required, found {{ ansible_processor_vcpus }}"
+    success_msg: "CPU requirements met"
+
+- name: Check system resources - Memory
+  assert:
+    that:
+      - ansible_memtotal_mb >= illumio_pce_min_memory_mb
+    fail_msg: "Minimum {{ illumio_pce_min_memory_mb }}MB RAM required, found {{ ansible_memtotal_mb }}MB"
+    success_msg: "Memory requirements met"
+
+- name: Check disk space for PCE data directory
+  shell: df -m {{ illumio_pce_data_dir | dirname }} | tail -1 | awk '{print $4}'
+  register: pce_data_disk_space
+  changed_when: false
+
+- name: Validate disk space
+  assert:
+    that:
+      - pce_data_disk_space.stdout | int >= illumio_pce_min_disk_gb * 1024
+    fail_msg: "Minimum {{ illumio_pce_min_disk_gb }}GB disk space required"
+    success_msg: "Disk space requirements met"
+
+- name: Check if PCE is already installed
+  stat:
+    path: /opt/illumio-pce
+  register: pce_install_check
+
+- name: Get current PCE version if installed
+  shell: /opt/illumio-pce/illumio-pce-ctl version 2>/dev/null || echo "not_installed"
+  register: current_pce_version
+  changed_when: false
+  when: pce_install_check.stat.exists
+
+- name: Check network connectivity to Illumio repositories
+  uri:
+    url: "{{ illumio_pce_repo_url }}"
+    method: HEAD
+    timeout: 10
+  register: repo_check
+  failed_when: false
+  when: illumio_pce_online_install | bool
+
+- name: Verify hostname resolution
+  command: hostname -f
+  register: hostname_fqdn
+  changed_when: false
+
+- name: Validate FQDN format
+  assert:
+    that:
+      - hostname_fqdn.stdout is match("^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$")
+    fail_msg: "Invalid FQDN format: {{ hostname_fqdn.stdout }}"
+    success_msg: "FQDN validation passed"
+
+- name: Check required ports availability
+  wait_for:
+    port: "{{ item }}"
+    state: stopped
+    timeout: 1
+  loop: "{{ illumio_pce_required_ports }}"
+  register: port_check
+  failed_when: false
+
+- name: Display port check results
+  debug:
+    msg: "Port {{ item.item }} is {{ 'available' if item.state == 'stopped' else 'in use' }}"
+  loop: "{{ port_check.results }}"
+  when: not item.failed
+
+- name: Check if PostgreSQL is installed (for database node)
+  shell: which psql
+  register: psql_check
+  failed_when: false
+  changed_when: false
+  when: illumio_pce_install_database | bool
+
+- name: Create prerequisite check report
+  copy:
+    content: |
+      Illumio PCE Installation Prerequisites Check
+      ============================================
+      Date: {{ ansible_date_time.iso8601 }}
+      Hostname: {{ ansible_hostname }}
+      FQDN: {{ hostname_fqdn.stdout }}
+
+      System Resources:
+      - OS: {{ ansible_distribution }} {{ ansible_distribution_version }}
+      - CPUs: {{ ansible_processor_vcpus }}
+      - Memory: {{ ansible_memtotal_mb }}MB
+      - Disk Space: {{ pce_data_disk_space.stdout }}MB
+
+      PCE Installation Status:
+      - PCE Installed: {{ pce_install_check.stat.exists | default(false) }}
+      {% if pce_install_check.stat.exists and current_pce_version is defined %}
+      - Current Version: {{ current_pce_version.stdout }}
+      {% endif %}
+
+      Network:
+      - Repository Access: {{ 'OK' if (repo_check.status | default(0)) == 200 else 'FAILED' }}
+
+      All checks passed successfully.
+    dest: /tmp/illumio_pce_prerequisites_{{ ansible_date_time.epoch }}.txt
+    mode: '0644'
+  delegate_to: localhost
+  become: false

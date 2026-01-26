@@ -1,0 +1,138 @@
+---
+# Deploy Cohesity Virtual Edition nodes
+
+- name: Deploy Cohesity VE nodes on VMware
+  when: cohesity_ve_platform == "vmware"
+  block:
+    - name: Check if OVA file exists
+      ansible.builtin.stat:
+        path: "{{ cohesity_ve_ova_path }}"
+      register: ova_file
+      delegate_to: localhost
+
+    - name: Fail if OVA file not found
+      ansible.builtin.fail:
+        msg: "OVA file not found at {{ cohesity_ve_ova_path }}"
+      when: not ova_file.stat.exists
+
+    - name: Deploy Cohesity VE from OVA
+      community.vmware.vmware_deploy_ovf:
+        hostname: "{{ cohesity_ve_vcenter_host }}"
+        username: "{{ cohesity_ve_vcenter_username }}"
+        password: "{{ cohesity_ve_vcenter_password }}"
+        datacenter: "{{ cohesity_ve_datacenter }}"
+        cluster: "{{ cohesity_ve_cluster }}"
+        datastore: "{{ cohesity_ve_datastore }}"
+        name: "{{ cohesity_ve_vm_name_prefix }}-{{ item.node_id }}"
+        networks:
+          "VM Network": "{{ cohesity_ve_network }}"
+        ovf: "{{ cohesity_ve_ova_path }}"
+        power_on: false
+        validate_certs: no
+        wait: yes
+        wait_for_ip_address: false
+        properties:
+          vami.hostname: "{{ item.hostname }}"
+          vami.ip0.eth0: "{{ item.ip_address }}"
+          vami.netmask0.eth0: "{{ cohesity_cluster_subnet_mask }}"
+          vami.gateway.eth0: "{{ cohesity_cluster_gateway }}"
+          vami.DNS.eth0: "{{ cohesity_cluster_dns_servers[0] }}"
+      loop: "{{ cohesity_nodes }}"
+      loop_control:
+        label: "{{ item.hostname }}"
+      delegate_to: localhost
+      register: vm_deploy
+
+    - name: Configure VM CPU and memory settings
+      community.vmware.vmware_guest:
+        hostname: "{{ cohesity_ve_vcenter_host }}"
+        username: "{{ cohesity_ve_vcenter_username }}"
+        password: "{{ cohesity_ve_vcenter_password }}"
+        datacenter: "{{ cohesity_ve_datacenter }}"
+        name: "{{ cohesity_ve_vm_name_prefix }}-{{ item.node_id }}"
+        state: present
+        hardware:
+          memory_mb: 16384
+          num_cpus: 8
+          num_cpu_cores_per_socket: 4
+        validate_certs: no
+      loop: "{{ cohesity_nodes }}"
+      loop_control:
+        label: "{{ item.hostname }}"
+      delegate_to: localhost
+
+    - name: Add data disks to VE nodes
+      community.vmware.vmware_guest_disk:
+        hostname: "{{ cohesity_ve_vcenter_host }}"
+        username: "{{ cohesity_ve_vcenter_username }}"
+        password: "{{ cohesity_ve_vcenter_password }}"
+        datacenter: "{{ cohesity_ve_datacenter }}"
+        name: "{{ cohesity_ve_vm_name_prefix }}-{{ item.0.node_id }}"
+        disk:
+          - size_gb: 500
+            type: thin
+            datastore: "{{ cohesity_ve_datastore }}"
+            controller_type: 'paravirtual'
+            controller_number: 1
+            unit_number: "{{ item.1 }}"
+        validate_certs: no
+      loop: "{{ cohesity_nodes | product(range(0, cohesity_disk_config.data_disk_count)) | list }}"
+      loop_control:
+        label: "{{ item.0.hostname }} - Disk {{ item.1 }}"
+      delegate_to: localhost
+
+    - name: Power on VE nodes
+      community.vmware.vmware_guest_powerstate:
+        hostname: "{{ cohesity_ve_vcenter_host }}"
+        username: "{{ cohesity_ve_vcenter_username }}"
+        password: "{{ cohesity_ve_vcenter_password }}"
+        name: "{{ cohesity_ve_vm_name_prefix }}-{{ item.node_id }}"
+        state: powered-on
+        validate_certs: no
+      loop: "{{ cohesity_nodes }}"
+      loop_control:
+        label: "{{ item.hostname }}"
+      delegate_to: localhost
+
+    - name: Wait for VE nodes to boot
+      ansible.builtin.pause:
+        seconds: 120
+
+- name: Deploy Cohesity VE on Azure
+  when: cohesity_ve_platform == "azure"
+  block:
+    - name: Create Azure resource group
+      azure.azcollection.azure_rm_resourcegroup:
+        name: "rg-cohesity-{{ cohesity_cluster_name }}"
+        location: eastus
+      delegate_to: localhost
+
+    - name: Deploy Cohesity VE VMs on Azure
+      azure.azcollection.azure_rm_virtualmachine:
+        resource_group: "rg-cohesity-{{ cohesity_cluster_name }}"
+        name: "{{ item.hostname }}"
+        vm_size: Standard_D8s_v3
+        admin_username: admin
+        admin_password: "{{ cohesity_admin_password }}"
+        network_interfaces: "{{ item.hostname }}-nic"
+        image:
+          offer: cohesity-dataplatform
+          publisher: cohesity
+          sku: cohesity-6_6
+          version: latest
+        data_disks:
+          - lun: 0
+            disk_size_gb: 500
+            managed_disk_type: Premium_LRS
+      loop: "{{ cohesity_nodes }}"
+      loop_control:
+        label: "{{ item.hostname }}"
+      delegate_to: localhost
+
+- name: Display VE deployment summary
+  ansible.builtin.debug:
+    msg:
+      - "Virtual Edition deployment completed"
+      - "Platform: {{ cohesity_ve_platform }}"
+      - "Nodes deployed: {{ cohesity_nodes | length }}"
+      - "Waiting for nodes to become accessible..."

@@ -1,0 +1,247 @@
+---
+# tasks file for cohesity_cluster_install
+
+- name: Display Cohesity cluster installation banner
+  ansible.builtin.debug:
+    msg:
+      - "=========================================="
+      - "Cohesity Cluster Installation"
+      - "Cluster Name: {{ cohesity_cluster_name }}"
+      - "Deployment Type: {{ cohesity_deployment_type }}"
+      - "=========================================="
+
+- name: Validate installation prerequisites
+  ansible.builtin.include_tasks: pre_checks.yml
+  when: cohesity_pre_checks_enabled | bool
+
+- name: Deploy Virtual Edition nodes
+  ansible.builtin.include_tasks: deploy_ve.yml
+  when: cohesity_deployment_type == "ve"
+
+- name: Configure physical appliance nodes
+  ansible.builtin.include_tasks: configure_physical.yml
+  when: cohesity_deployment_type == "physical"
+
+- name: Wait for nodes to become accessible
+  ansible.builtin.wait_for:
+    host: "{{ item.ip_address }}"
+    port: 22
+    state: started
+    delay: 30
+    timeout: 600
+  loop: "{{ cohesity_nodes }}"
+  loop_control:
+    label: "{{ item.hostname }}"
+
+- name: Bootstrap Cohesity cluster
+  ansible.builtin.include_tasks: bootstrap_cluster.yml
+
+- name: Wait for cluster services to be ready
+  ansible.builtin.uri:
+    url: "{{ cohesity_api_protocol }}://{{ cohesity_cluster_vips[0] }}/irisservices/api/v1/public/basicClusterInfo"
+    method: GET
+    validate_certs: "{{ cohesity_api_verify_ssl }}"
+    status_code: 200
+    timeout: "{{ cohesity_api_timeout }}"
+  register: cluster_ready
+  until: cluster_ready.status == 200
+  retries: 30
+  delay: 60
+  ignore_errors: yes
+
+- name: Authenticate to Cohesity cluster
+  ansible.builtin.uri:
+    url: "{{ cohesity_api_protocol }}://{{ cohesity_cluster_vips[0] }}/irisservices/api/v1/public/accessTokens"
+    method: POST
+    body_format: json
+    body:
+      username: "{{ cohesity_admin_username }}"
+      password: "{{ cohesity_admin_password }}"
+      domain: "LOCAL"
+    validate_certs: "{{ cohesity_api_verify_ssl }}"
+    status_code: 201
+  register: cohesity_auth
+  no_log: true
+
+- name: Set Cohesity API token fact
+  ansible.builtin.set_fact:
+    cohesity_api_token: "{{ cohesity_auth.json.accessToken }}"
+  no_log: true
+
+- name: Configure cluster network settings
+  ansible.builtin.uri:
+    url: "{{ cohesity_api_protocol }}://{{ cohesity_cluster_vips[0] }}/irisservices/api/v1/public/clusterPartitions"
+    method: PUT
+    headers:
+      Authorization: "Bearer {{ cohesity_api_token }}"
+    body_format: json
+    body:
+      clusterPartitionName: "{{ cohesity_cluster_name }}"
+      vips: "{{ cohesity_cluster_vips }}"
+      gateway: "{{ cohesity_cluster_gateway }}"
+      subnetMask: "{{ cohesity_cluster_subnet_mask }}"
+      mtuBytes: "{{ cohesity_network_config.mtu_size }}"
+    validate_certs: "{{ cohesity_api_verify_ssl }}"
+    status_code: [200, 201]
+  register: network_config
+
+- name: Configure DNS servers
+  ansible.builtin.uri:
+    url: "{{ cohesity_api_protocol }}://{{ cohesity_cluster_vips[0] }}/irisservices/api/v1/public/network/nameServers"
+    method: PUT
+    headers:
+      Authorization: "Bearer {{ cohesity_api_token }}"
+    body_format: json
+    body:
+      nameServers: "{{ cohesity_cluster_dns_servers }}"
+    validate_certs: "{{ cohesity_api_verify_ssl }}"
+    status_code: 200
+
+- name: Configure NTP servers
+  ansible.builtin.uri:
+    url: "{{ cohesity_api_protocol }}://{{ cohesity_cluster_vips[0] }}/irisservices/api/v1/public/network/ntpServers"
+    method: PUT
+    headers:
+      Authorization: "Bearer {{ cohesity_api_token }}"
+    body_format: json
+    body:
+      ntpServers: "{{ cohesity_cluster_ntp_servers }}"
+    validate_certs: "{{ cohesity_api_verify_ssl }}"
+    status_code: 200
+
+- name: Configure timezone
+  ansible.builtin.uri:
+    url: "{{ cohesity_api_protocol }}://{{ cohesity_cluster_vips[0] }}/irisservices/api/v1/public/cluster"
+    method: PUT
+    headers:
+      Authorization: "Bearer {{ cohesity_api_token }}"
+    body_format: json
+    body:
+      timezone: "{{ cohesity_timezone }}"
+    validate_certs: "{{ cohesity_api_verify_ssl }}"
+    status_code: 200
+
+- name: Apply Cohesity license
+  ansible.builtin.uri:
+    url: "{{ cohesity_api_protocol }}://{{ cohesity_cluster_vips[0] }}/irisservices/api/v1/public/licenseAgreement"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ cohesity_api_token }}"
+    body_format: json
+    body:
+      licenseKey: "{{ cohesity_license_key }}"
+      signedVersion: 1
+      signedByUser: "{{ cohesity_admin_username }}"
+      signedTime: "{{ ansible_date_time.epoch }}"
+    validate_certs: "{{ cohesity_api_verify_ssl }}"
+    status_code: [200, 201]
+  no_log: true
+  when: cohesity_license_key is defined
+
+- name: Configure SMTP settings
+  ansible.builtin.uri:
+    url: "{{ cohesity_api_protocol }}://{{ cohesity_cluster_vips[0] }}/irisservices/api/v1/public/smtpServer"
+    method: PUT
+    headers:
+      Authorization: "Bearer {{ cohesity_api_token }}"
+    body_format: json
+    body:
+      server: "{{ cohesity_smtp_server }}"
+      port: "{{ cohesity_smtp_port }}"
+      username: "{{ cohesity_smtp_username }}"
+      password: "{{ cohesity_smtp_password }}"
+      useTls: "{{ cohesity_smtp_use_tls }}"
+      fromAddress: "{{ cohesity_smtp_from_address }}"
+    validate_certs: "{{ cohesity_api_verify_ssl }}"
+    status_code: 200
+  no_log: true
+
+- name: Enable encryption at rest
+  ansible.builtin.uri:
+    url: "{{ cohesity_api_protocol }}://{{ cohesity_cluster_vips[0] }}/irisservices/api/v1/public/cluster/encryption"
+    method: PUT
+    headers:
+      Authorization: "Bearer {{ cohesity_api_token }}"
+    body_format: json
+    body:
+      enableEncryption: "{{ cohesity_encryption_enabled }}"
+      enableFipsMode: "{{ cohesity_fips_mode_enabled }}"
+      rotationPeriodDays: "{{ cohesity_encryption_key_rotation_days }}"
+    validate_certs: "{{ cohesity_api_verify_ssl }}"
+    status_code: 200
+  when: cohesity_encryption_enabled | bool
+
+- name: Create default storage domain
+  ansible.builtin.uri:
+    url: "{{ cohesity_api_protocol }}://{{ cohesity_cluster_vips[0] }}/irisservices/api/v1/public/viewBoxes"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ cohesity_api_token }}"
+    body_format: json
+    body:
+      name: "{{ cohesity_storage_domain_name }}"
+      compressionPolicy: "{{ 'kCompressionLow' if cohesity_storage_domain_compression else 'kCompressionNone' }}"
+      deduplicationEnabled: "{{ cohesity_storage_domain_deduplication }}"
+      encryptionPolicy: "{{ 'kEncryptionStrong' if cohesity_storage_domain_encryption else 'kEncryptionNone' }}"
+      storagePolicy:
+        deduplicationEnabled: "{{ cohesity_storage_domain_deduplication }}"
+        compressionEnabled: "{{ cohesity_storage_domain_compression }}"
+        encryptionEnabled: "{{ cohesity_storage_domain_encryption }}"
+        numFailuresTolerated: "{{ cohesity_disk_config.data_fault_tolerance }}"
+    validate_certs: "{{ cohesity_api_verify_ssl }}"
+    status_code: [200, 201]
+  register: storage_domain
+
+- name: Configure cluster audit logging
+  ansible.builtin.uri:
+    url: "{{ cohesity_api_protocol }}://{{ cohesity_cluster_vips[0] }}/irisservices/api/v1/public/auditLog"
+    method: PUT
+    headers:
+      Authorization: "Bearer {{ cohesity_api_token }}"
+    body_format: json
+    body:
+      enabled: true
+      retentionDays: 365
+      logLevel: "kInfo"
+    validate_certs: "{{ cohesity_api_verify_ssl }}"
+    status_code: 200
+
+- name: Configure support settings
+  ansible.builtin.uri:
+    url: "{{ cohesity_api_protocol }}://{{ cohesity_cluster_vips[0] }}/irisservices/api/v1/public/cluster/support"
+    method: PUT
+    headers:
+      Authorization: "Bearer {{ cohesity_api_token }}"
+    body_format: json
+    body:
+      enabled: "{{ cohesity_support_enabled }}"
+      enablePhoneHome: "{{ cohesity_phone_home_enabled }}"
+    validate_certs: "{{ cohesity_api_verify_ssl }}"
+    status_code: 200
+
+- name: Add cluster nodes to inventory
+  ansible.builtin.add_host:
+    name: "{{ item.hostname }}"
+    groups: cohesity_cluster
+    ansible_host: "{{ item.ip_address }}"
+  loop: "{{ cohesity_nodes }}"
+  loop_control:
+    label: "{{ item.hostname }}"
+  changed_when: false
+
+- name: Run post-installation checks
+  ansible.builtin.include_tasks: post_checks.yml
+  when: cohesity_post_checks_enabled | bool
+
+- name: Display installation summary
+  ansible.builtin.debug:
+    msg:
+      - "=========================================="
+      - "Cohesity Cluster Installation Complete"
+      - "Cluster Name: {{ cohesity_cluster_name }}"
+      - "Cluster VIP: {{ cohesity_cluster_vips[0] }}"
+      - "Web Interface: {{ cohesity_api_protocol }}://{{ cohesity_cluster_vips[0] }}"
+      - "Admin Username: {{ cohesity_admin_username }}"
+      - "Storage Domain: {{ cohesity_storage_domain_name }}"
+      - "Encryption: {{ 'Enabled' if cohesity_encryption_enabled else 'Disabled' }}"
+      - "=========================================="

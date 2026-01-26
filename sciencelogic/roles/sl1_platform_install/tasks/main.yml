@@ -1,0 +1,60 @@
+---
+- name: Ensure artifacts directory exists
+  ansible.builtin.file:
+    path: "{{ artifacts_dir }}"
+    state: directory
+    mode: "0755"
+
+- name: Pre-installation validation
+  import_tasks: tasks/10_pre_install_checks.yml
+
+- name: Install prerequisites
+  import_tasks: tasks/20_prerequisites.yml
+  when: sl1_install_options.install_prerequisites
+
+- name: Configure system settings
+  import_tasks: tasks/30_system_config.yml
+
+- name: Install SL1 Database Server
+  import_tasks: tasks/40_database_server.yml
+  when: sl1_install_mode in ['database_server', 'all_in_one'] and sl1_db_server.install
+
+- name: Configure Database Cluster
+  import_tasks: tasks/45_database_cluster.yml
+  when: sl1_db_cluster.enabled
+
+- name: Install SL1 All-In-One Appliance
+  import_tasks: tasks/50_all_in_one.yml
+  when: sl1_install_mode == 'all_in_one' and sl1_aio.install
+
+- name: Install Message Collectors
+  import_tasks: tasks/60_message_collectors.yml
+  when: sl1_message_collectors | selectattr('install', 'equalto', true) | list | length > 0
+
+- name: Install Data Collectors
+  import_tasks: tasks/70_data_collectors.yml
+  when: sl1_data_collectors | selectattr('install', 'equalto', true) | list | length > 0
+
+- name: Configure High Availability
+  import_tasks: tasks/75_high_availability.yml
+  when: sl1_ha.enabled
+
+- name: Configure Network Settings
+  import_tasks: tasks/80_network_config.yml
+  when: sl1_network.configure
+
+- name: Install SSL/TLS Certificates
+  import_tasks: tasks/85_ssl_certificates.yml
+  when: sl1_ssl.enabled
+
+- name: Activate License
+  import_tasks: tasks/90_license_activation.yml
+  when: sl1_license.activate
+
+- name: Run Initial Setup Wizard
+  import_tasks: tasks/95_setup_wizard.yml
+  when: sl1_setup_wizard.run
+
+- name: Post-installation tasks
+  import_tasks: tasks/99_post_install.yml
+  when: sl1_post_install.restart_services
