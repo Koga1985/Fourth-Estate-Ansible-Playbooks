@@ -1,0 +1,90 @@
+---
+# Configure Dragos sensor storage for PCAP and metadata retention
+
+- name: Configure PCAP storage settings
+  ansible.builtin.uri:
+    url: "{{ dragos_base_url }}/api/sensors/{{ item.id }}/storage/pcap"
+    method: PUT
+    headers:
+      Authorization: "Bearer {{ dragos_token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      retention_days: "{{ item.pcap_retention_days | default(pcap_retention_days) }}"
+      max_storage_gb: "{{ item.pcap_max_storage_gb | default(pcap_max_storage_gb) }}"
+      compression_enabled: "{{ pcap_compression }}"
+      rotation_policy: "{{ pcap_rotation_policy }}"
+    status_code: [200, 201]
+    validate_certs: "{{ dragos_verify_ssl }}"
+  loop: "{{ sensors }}"
+  loop_control:
+    label: "{{ item.name }} - PCAP Storage"
+  when: not dry_run
+  register: sensor_pcap_storage
+
+- name: Configure metadata storage settings
+  ansible.builtin.uri:
+    url: "{{ dragos_base_url }}/api/sensors/{{ item.id }}/storage/metadata"
+    method: PUT
+    headers:
+      Authorization: "Bearer {{ dragos_token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      retention_days: "{{ item.metadata_retention_days | default(metadata_retention_days) }}"
+      max_storage_gb: "{{ item.metadata_max_storage_gb | default(metadata_max_storage_gb) }}"
+      indexing_enabled: true
+    status_code: [200, 201]
+    validate_certs: "{{ dragos_verify_ssl }}"
+  loop: "{{ sensors }}"
+  loop_control:
+    label: "{{ item.name }} - Metadata Storage"
+  when: not dry_run
+  register: sensor_metadata_storage
+
+- name: Configure storage cleanup policies
+  ansible.builtin.uri:
+    url: "{{ dragos_base_url }}/api/sensors/{{ item.id }}/storage/cleanup"
+    method: PUT
+    headers:
+      Authorization: "Bearer {{ dragos_token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      auto_cleanup_enabled: true
+      disk_threshold_percent: "{{ disk_threshold_percent }}"
+      cleanup_priority: "{{ cleanup_priority }}"
+    status_code: [200, 201]
+    validate_certs: "{{ dragos_verify_ssl }}"
+  loop: "{{ sensors }}"
+  loop_control:
+    label: "{{ item.name }} - Cleanup Policy"
+  when: not dry_run
+  register: sensor_cleanup
+
+- name: Configure storage alerting thresholds
+  ansible.builtin.uri:
+    url: "{{ dragos_base_url }}/api/sensors/{{ item.id }}/storage/alerts"
+    method: PUT
+    headers:
+      Authorization: "Bearer {{ dragos_token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      warning_threshold_percent: "{{ storage_warning_threshold }}"
+      critical_threshold_percent: "{{ storage_critical_threshold }}"
+      alert_frequency: "{{ storage_alert_frequency }}"
+    status_code: [200, 201]
+    validate_certs: "{{ dragos_verify_ssl }}"
+  loop: "{{ sensors }}"
+  loop_control:
+    label: "{{ item.name }} - Storage Alerts"
+  when: not dry_run
+  register: sensor_storage_alerts
+
+- name: Save storage configuration
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/sensor_storage_{{ ansible_date_time.iso8601_basic_short }}.json"
+    content: "{{ {'pcap': sensor_pcap_storage, 'metadata': sensor_metadata_storage, 'cleanup': sensor_cleanup, 'alerts': sensor_storage_alerts} | to_nice_json }}"
+    mode: "0644"
+  when: sensor_pcap_storage is defined

@@ -1,0 +1,97 @@
+---
+# Configure Dragos sensor networking for OT/ICS environments
+
+- name: Configure management network interface
+  ansible.builtin.uri:
+    url: "{{ dragos_base_url }}/api/sensors/{{ item.id }}/network/management"
+    method: PUT
+    headers:
+      Authorization: "Bearer {{ dragos_token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      interface: "{{ item.mgmt_interface | default('eth0') }}"
+      ip_address: "{{ item.mgmt_ip }}"
+      netmask: "{{ item.mgmt_netmask }}"
+      gateway: "{{ item.mgmt_gateway }}"
+      dns_servers: "{{ item.dns_servers | default(dns_servers) }}"
+      ntp_servers: "{{ item.ntp_servers | default(ntp_servers) }}"
+    status_code: [200, 201]
+    validate_certs: "{{ dragos_verify_ssl }}"
+  loop: "{{ sensors }}"
+  loop_control:
+    label: "{{ item.name }} - Management Network"
+  when: not dry_run and item.mgmt_ip is defined
+  register: sensor_mgmt_network
+
+- name: Configure SPAN/TAP monitoring ports
+  ansible.builtin.uri:
+    url: "{{ dragos_base_url }}/api/sensors/{{ item.0.id }}/network/monitor"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ dragos_token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      interface: "{{ item.1.interface }}"
+      description: "{{ item.1.description | default(omit) }}"
+      zone: "{{ item.1.zone | default(omit) }}"
+      vlan_id: "{{ item.1.vlan_id | default(omit) }}"
+      promiscuous_mode: true
+      mtu: "{{ item.1.mtu | default(9000) }}"
+    status_code: [200, 201]
+    validate_certs: "{{ dragos_verify_ssl }}"
+  loop: "{{ sensors | subelements('monitor_interfaces', skip_missing=True) }}"
+  loop_control:
+    label: "{{ item.0.name }} - {{ item.1.interface }}"
+  when: not dry_run
+  register: sensor_monitor_ports
+
+- name: Configure network packet buffer settings
+  ansible.builtin.uri:
+    url: "{{ dragos_base_url }}/api/sensors/{{ item.id }}/network/buffers"
+    method: PUT
+    headers:
+      Authorization: "Bearer {{ dragos_token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      rx_buffer_size: "{{ item.rx_buffer_size | default(packet_buffer_size) }}"
+      tx_buffer_size: "{{ item.tx_buffer_size | default(packet_buffer_size) }}"
+      ring_buffer_size: "{{ item.ring_buffer_size | default(ring_buffer_size) }}"
+    status_code: [200, 201]
+    validate_certs: "{{ dragos_verify_ssl }}"
+  loop: "{{ sensors }}"
+  loop_control:
+    label: "{{ item.name }} - Packet Buffers"
+  when: not dry_run
+  register: sensor_buffers
+
+- name: Configure network offload settings
+  ansible.builtin.uri:
+    url: "{{ dragos_base_url }}/api/sensors/{{ item.id }}/network/offload"
+    method: PUT
+    headers:
+      Authorization: "Bearer {{ dragos_token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      tcp_offload: false
+      gro_offload: false
+      gso_offload: false
+      tso_offload: false
+      lro_offload: false
+    status_code: [200, 201]
+    validate_certs: "{{ dragos_verify_ssl }}"
+  loop: "{{ sensors }}"
+  loop_control:
+    label: "{{ item.name }} - Network Offload"
+  when: not dry_run and disable_offload
+  register: sensor_offload
+
+- name: Save networking configuration report
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/sensor_networking_{{ ansible_date_time.iso8601_basic_short }}.json"
+    content: "{{ {'management': sensor_mgmt_network, 'monitoring': sensor_monitor_ports, 'buffers': sensor_buffers, 'offload': sensor_offload} | to_nice_json }}"
+    mode: "0644"
+  when: sensor_mgmt_network is defined

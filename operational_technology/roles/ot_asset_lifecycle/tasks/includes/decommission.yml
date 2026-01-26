@@ -1,19 +1,133 @@
 ---
-- name: Ensure artifacts dir
-  ansible.builtin.file:
-    path: "{{ artifacts_dir | default('/tmp/ot-artifacts') }}"
-    state: directory
-    mode: "0755"
+# Asset Decommissioning Workflow
 
-- name: Guard dry-run
+- name: Validate decommissioning requirements
   ansible.builtin.assert:
-    that: [ not (dry_run | default(true) | bool) ]
-    fail_msg: "dry_run=true: refusing destructive action."
-- name: Decommission asset
+    that:
+      - ot_asset_id is defined and ot_asset_id | length > 0
+      - ot_asset_decommission_reason is defined and ot_asset_decommission_reason | length > 0
+      - not ot_asset_dry_run
+    fail_msg: "Decommissioning requires asset_id, reason, and dry_run must be false"
+
+- name: Retrieve asset details before decommissioning
   ansible.builtin.uri:
-    url: "{{ api.url }}{{ api.paths.asset_delete | default('/assets/delete') }}"
+    url: "{{ ot_asset_api_url }}/assets/{{ ot_asset_id }}"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ ot_asset_api_token }}"
+    validate_certs: "{{ ot_asset_verify_ssl }}"
+    timeout: "{{ ot_asset_api_timeout }}"
+    status_code: [200]
+  register: asset_details
+  when: ot_asset_api_token | length > 0
+
+- name: Check for asset dependencies
+  ansible.builtin.uri:
+    url: "{{ ot_asset_api_url }}/assets/{{ ot_asset_id }}/dependencies"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ ot_asset_api_token }}"
+    validate_certs: "{{ ot_asset_verify_ssl }}"
+    timeout: "{{ ot_asset_api_timeout }}"
+    status_code: [200, 404]
+  register: asset_dependencies
+  when: ot_asset_api_token | length > 0
+  failed_when: false
+
+- name: Warn if asset has dependencies
+  ansible.builtin.debug:
+    msg: "WARNING: Asset {{ ot_asset_id }} has {{ asset_dependencies.json.dependencies | default([]) | length }} dependencies"
+  when:
+    - asset_dependencies is defined
+    - asset_dependencies.json.dependencies | default([]) | length > 0
+
+- name: Backup asset configuration before decommissioning
+  ansible.builtin.copy:
+    content: "{{ asset_details.json | to_nice_json }}"
+    dest: "{{ ot_asset_backup_dir }}/{{ ot_asset_id }}_decommission_{{ ansible_date_time.iso8601_basic_short }}.json"
+    mode: '0640'
+  when: asset_details is defined
+
+- name: Disable monitoring for asset
+  ansible.builtin.uri:
+    url: "{{ ot_asset_api_url }}/monitoring/disable"
     method: POST
-    headers: { "Authorization": "{{ api.token }}", "Content-Type": "application/json" }
+    headers:
+      Authorization: "Bearer {{ ot_asset_api_token }}"
+      Content-Type: "application/json"
     body_format: json
-    body: "{{ {'id': asset_id, 'note': audit_note | default('decom via Ansible')} }}"
-    status_code: 200,202,204
+    body:
+      asset_id: "{{ ot_asset_id }}"
+    validate_certs: "{{ ot_asset_verify_ssl }}"
+    timeout: "{{ ot_asset_api_timeout }}"
+    status_code: [200, 204]
+  when: ot_asset_api_token | length > 0
+  failed_when: false
+
+- name: Remove from active alerting
+  ansible.builtin.uri:
+    url: "{{ ot_asset_api_url }}/alerts/remove-asset"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ ot_asset_api_token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      asset_id: "{{ ot_asset_id }}"
+    validate_certs: "{{ ot_asset_verify_ssl }}"
+    timeout: "{{ ot_asset_api_timeout }}"
+    status_code: [200, 204]
+  when: ot_asset_api_token | length > 0
+  failed_when: false
+
+- name: Create decommissioning record
+  ansible.builtin.set_fact:
+    decommission_record:
+      asset_id: "{{ ot_asset_id }}"
+      decommission_date: "{{ ansible_date_time.iso8601 }}"
+      decommission_reason: "{{ ot_asset_decommission_reason }}"
+      decommissioned_by: "{{ ansible_user_id }}"
+      asset_snapshot: "{{ asset_details.json | default({}) }}"
+      data_sanitization_required: "{{ ot_asset_data_sanitization_required }}"
+      disposal_method: "{{ ot_asset_disposal_method }}"
+
+- name: Save decommissioning record
+  ansible.builtin.copy:
+    content: "{{ decommission_record | to_nice_json }}"
+    dest: "{{ ot_asset_artifacts_dir }}/decommission_{{ ot_asset_id }}_{{ ansible_date_time.iso8601_basic_short }}.json"
+    mode: '0640'
+
+- name: Update asset state to decommissioned
+  ansible.builtin.uri:
+    url: "{{ ot_asset_api_url }}/assets/{{ ot_asset_id }}"
+    method: PATCH
+    headers:
+      Authorization: "Bearer {{ ot_asset_api_token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      state: "decommissioned"
+      decommission_date: "{{ ansible_date_time.iso8601 }}"
+      decommission_reason: "{{ ot_asset_decommission_reason }}"
+      decommissioned_by: "{{ ansible_user_id }}"
+    validate_certs: "{{ ot_asset_verify_ssl }}"
+    timeout: "{{ ot_asset_api_timeout }}"
+    status_code: [200, 204]
+  when: ot_asset_api_token | length > 0
+
+- name: Log decommissioning event
+  ansible.builtin.lineinfile:
+    path: "{{ ot_asset_log_dir }}/decommissions.log"
+    line: "{{ ansible_date_time.iso8601 }} | DECOMMISSION | {{ ot_asset_id }} | {{ ot_asset_decommission_reason }}"
+    create: yes
+    mode: '0640'
+
+- name: Display decommissioning summary
+  ansible.builtin.debug:
+    msg:
+      - "Asset Decommissioning Completed"
+      - "Asset ID: {{ ot_asset_id }}"
+      - "Reason: {{ ot_asset_decommission_reason }}"
+      - "Date: {{ ansible_date_time.iso8601 }}"
+      - "Data Sanitization Required: {{ ot_asset_data_sanitization_required }}"
+      - "Disposal Method: {{ ot_asset_disposal_method }}"

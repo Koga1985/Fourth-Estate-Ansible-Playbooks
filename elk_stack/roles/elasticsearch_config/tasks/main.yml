@@ -1,0 +1,206 @@
+---
+# Elasticsearch Configuration Tasks
+
+- name: Ensure Elasticsearch is installed
+  stat:
+    path: /usr/share/elasticsearch/bin/elasticsearch
+  register: elasticsearch_binary
+  failed_when: not elasticsearch_binary.stat.exists
+
+- name: Backup existing elasticsearch.yml
+  copy:
+    src: /etc/elasticsearch/elasticsearch.yml
+    dest: "/etc/elasticsearch/elasticsearch.yml.backup.{{ ansible_date_time.epoch }}"
+    remote_src: yes
+  when: elasticsearch_binary.stat.exists
+  ignore_errors: yes
+
+- name: Configure elasticsearch.yml
+  template:
+    src: elasticsearch.yml.j2
+    dest: /etc/elasticsearch/elasticsearch.yml
+    owner: root
+    group: elasticsearch
+    mode: '0660'
+    backup: yes
+  notify: restart elasticsearch
+
+- name: Configure log4j2.properties
+  template:
+    src: log4j2.properties.j2
+    dest: /etc/elasticsearch/log4j2.properties
+    owner: root
+    group: elasticsearch
+    mode: '0660'
+  notify: restart elasticsearch
+
+- name: Create custom dictionary directory
+  file:
+    path: /etc/elasticsearch/dictionaries
+    state: directory
+    owner: root
+    group: elasticsearch
+    mode: '0755'
+
+- name: Configure role mappings
+  template:
+    src: role_mapping.yml.j2
+    dest: /etc/elasticsearch/role_mapping.yml
+    owner: root
+    group: elasticsearch
+    mode: '0660'
+  when: elasticsearch_fourth_estate_mode | bool
+  notify: restart elasticsearch
+
+- name: Wait for Elasticsearch to be ready
+  wait_for:
+    host: localhost
+    port: "{{ elasticsearch_http_port }}"
+    delay: 5
+    timeout: 300
+  when: elasticsearch_service_state is defined and elasticsearch_service_state == 'started'
+
+- name: Configure ILM policies
+  uri:
+    url: "http://localhost:{{ elasticsearch_http_port }}/_ilm/policy/{{ item.name }}"
+    method: PUT
+    body: "{{ lookup('template', 'ilm_policy.json.j2') }}"
+    body_format: json
+    status_code: [200, 201]
+  loop: "{{ elasticsearch_ilm_policies }}"
+  when:
+    - elasticsearch_ilm_enabled | bool
+    - elasticsearch_ilm_policies | length > 0
+  register: ilm_result
+  until: ilm_result is succeeded
+  retries: 5
+  delay: 10
+  ignore_errors: yes
+
+- name: Configure index templates
+  uri:
+    url: "http://localhost:{{ elasticsearch_http_port }}/_index_template/{{ item.name }}"
+    method: PUT
+    body: "{{ item | to_json }}"
+    body_format: json
+    status_code: [200, 201]
+  loop: "{{ elasticsearch_index_templates }}"
+  when: elasticsearch_index_templates | length > 0
+  register: template_result
+  until: template_result is succeeded
+  retries: 5
+  delay: 10
+  ignore_errors: yes
+
+- name: Configure snapshot repositories
+  uri:
+    url: "http://localhost:{{ elasticsearch_http_port }}/_snapshot/{{ item.name }}"
+    method: PUT
+    body:
+      type: "{{ item.type }}"
+      settings: "{{ item.settings }}"
+    body_format: json
+    status_code: [200, 201]
+  loop: "{{ elasticsearch_snapshot_repositories }}"
+  when: elasticsearch_snapshot_repositories | length > 0
+  register: snapshot_result
+  until: snapshot_result is succeeded
+  retries: 5
+  delay: 10
+  ignore_errors: yes
+
+- name: Configure remote clusters
+  uri:
+    url: "http://localhost:{{ elasticsearch_http_port }}/_cluster/settings"
+    method: PUT
+    body:
+      persistent:
+        cluster:
+          remote: "{{ elasticsearch_remote_clusters | items2dict(key_name='name', value_name='seeds') }}"
+    body_format: json
+    status_code: [200]
+  when: elasticsearch_remote_clusters | length > 0
+  register: remote_cluster_result
+  until: remote_cluster_result is succeeded
+  retries: 5
+  delay: 10
+  ignore_errors: yes
+
+- name: Configure cluster settings
+  uri:
+    url: "http://localhost:{{ elasticsearch_http_port }}/_cluster/settings"
+    method: PUT
+    body: "{{ lookup('template', 'cluster_settings.json.j2') }}"
+    body_format: json
+    status_code: [200]
+  register: cluster_settings_result
+  until: cluster_settings_result is succeeded
+  retries: 5
+  delay: 10
+  ignore_errors: yes
+
+- name: Create Fourth Estate specific index aliases
+  uri:
+    url: "http://localhost:{{ elasticsearch_http_port }}/_aliases"
+    method: POST
+    body:
+      actions:
+        - add:
+            index: "logs-*"
+            alias: "all-logs"
+        - add:
+            index: "filebeat-*"
+            alias: "filebeat-logs"
+        - add:
+            index: "metricbeat-*"
+            alias: "system-metrics"
+    body_format: json
+    status_code: [200, 404]
+  when: elasticsearch_fourth_estate_mode | bool
+  ignore_errors: yes
+
+- name: Configure index lifecycle settings
+  uri:
+    url: "http://localhost:{{ elasticsearch_http_port }}/_all/_settings"
+    method: PUT
+    body:
+      index:
+        lifecycle:
+          parse_origination_date: true
+    body_format: json
+    status_code: [200]
+  when: elasticsearch_ilm_enabled | bool
+  ignore_errors: yes
+
+- name: Create monitoring indices
+  uri:
+    url: "http://localhost:{{ elasticsearch_http_port }}/.monitoring-es-*"
+    method: PUT
+    status_code: [200, 400]
+  when: elasticsearch_monitoring_enabled | bool
+  ignore_errors: yes
+
+- name: Display cluster health
+  uri:
+    url: "http://localhost:{{ elasticsearch_http_port }}/_cluster/health"
+    method: GET
+    return_content: yes
+  register: cluster_health
+  ignore_errors: yes
+
+- name: Show cluster health
+  debug:
+    var: cluster_health.json
+  when: cluster_health is succeeded
+
+- name: Display cluster stats
+  uri:
+    url: "http://localhost:{{ elasticsearch_http_port }}/_cluster/stats"
+    method: GET
+    return_content: yes
+  register: cluster_stats
+  ignore_errors: yes
+
+- name: Show node roles
+  debug:
+    msg: "Node {{ elasticsearch_node_name }} configured with roles: master={{ elasticsearch_node_master }}, data={{ elasticsearch_node_data }}, ingest={{ elasticsearch_node_ingest }}"

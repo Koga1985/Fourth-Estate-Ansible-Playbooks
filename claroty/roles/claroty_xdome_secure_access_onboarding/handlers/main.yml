@@ -1,0 +1,38 @@
+---
+# Claroty xDome Secure Remote Access - Handlers
+
+- name: Restart claroty agent
+  ansible.builtin.service:
+    name: claroty-agent
+    state: restarted
+  when: ansible_service_mgr == "systemd"
+
+- name: Reload claroty configuration
+  ansible.builtin.service:
+    name: claroty-agent
+    state: reloaded
+  when: ansible_service_mgr == "systemd"
+
+- name: Notify security team of user changes
+  community.general.mail:
+    host: "{{ notifications.smtp_server | default('localhost') }}"
+    port: "{{ notifications.smtp_port | default(25) }}"
+    from: "{{ notifications.from_address | default('claroty@agency.gov') }}"
+    to: "{{ notifications.notification_recipients | default(['security@agency.gov']) }}"
+    subject: "Claroty xDome - User Configuration Changed"
+    body: |
+      User configuration has been modified in Claroty xDome.
+
+      Timestamp: {{ ansible_date_time.iso8601 }}
+      Operator: {{ ansible_user_id }}
+      Hostname: {{ ansible_hostname }}
+
+      Please review the audit logs for details.
+  when: notifications.enabled | default(true)
+
+- name: Generate compliance audit report
+  ansible.builtin.template:
+    src: compliance_audit.html.j2
+    dest: "{{ artifacts_dir }}/compliance_audit_{{ ansible_date_time.iso8601_basic_short }}.html"
+    mode: "0644"
+  when: compliance.log_all_onboarding_actions | default(true)

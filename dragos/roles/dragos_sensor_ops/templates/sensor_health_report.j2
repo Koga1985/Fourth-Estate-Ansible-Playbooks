@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Dragos Sensor Health Report - Fourth Estate</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; background-color: #f5f5f5; }
+        .header { background-color: #003366; color: white; padding: 20px; text-align: center; }
+        .classification { background-color: #ffd700; color: #000; padding: 10px; text-align: center; font-weight: bold; }
+        .summary { background-color: white; padding: 20px; margin: 20px 0; border-radius: 5px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+        .sensor-table { width: 100%; border-collapse: collapse; margin: 20px 0; background-color: white; }
+        .sensor-table th { background-color: #003366; color: white; padding: 12px; text-align: left; }
+        .sensor-table td { padding: 10px; border-bottom: 1px solid #ddd; }
+        .sensor-table tr:hover { background-color: #f5f5f5; }
+        .status-healthy { color: #28a745; font-weight: bold; }
+        .status-unhealthy { color: #dc3545; font-weight: bold; }
+        .status-warning { color: #ffc107; font-weight: bold; }
+        .metric { display: inline-block; margin: 10px 20px; }
+        .metric-value { font-size: 24px; font-weight: bold; color: #003366; }
+        .metric-label { font-size: 14px; color: #666; }
+        .footer { text-align: center; padding: 20px; color: #666; font-size: 12px; }
+    </style>
+</head>
+<body>
+    <div class="classification">
+        UNCLASSIFIED // FOR OFFICIAL USE ONLY
+    </div>
+
+    <div class="header">
+        <h1>Dragos Sensor Health Report</h1>
+        <h2>Fourth Estate OT/ICS Security Monitoring</h2>
+        <p>Generated: {{ ansible_date_time.iso8601 }}</p>
+    </div>
+
+    <div class="summary">
+        <h2>Executive Summary</h2>
+        <div class="metric">
+            <div class="metric-value">{{ sensor_health.results | length }}</div>
+            <div class="metric-label">Total Sensors</div>
+        </div>
+        <div class="metric">
+            <div class="metric-value status-healthy">{{ sensor_health.results | selectattr('json.status', 'equalto', 'healthy') | list | length }}</div>
+            <div class="metric-label">Healthy</div>
+        </div>
+        <div class="metric">
+            <div class="metric-value status-unhealthy">{{ sensor_health.results | rejectattr('json.status', 'equalto', 'healthy') | list | length }}</div>
+            <div class="metric-label">Unhealthy</div>
+        </div>
+        <div class="metric">
+            <div class="metric-value">{{ (sensor_capture_stats.results | map(attribute='json.packets_captured') | sum / 1000000) | round(2) }}M</div>
+            <div class="metric-label">Packets Captured</div>
+        </div>
+    </div>
+
+    <h2>Sensor Health Details</h2>
+    <table class="sensor-table">
+        <thead>
+            <tr>
+                <th>Sensor Name</th>
+                <th>Site</th>
+                <th>Status</th>
+                <th>CPU Usage</th>
+                <th>Memory Usage</th>
+                <th>Storage Usage</th>
+                <th>Packet Drop Rate</th>
+                <th>Last Seen</th>
+            </tr>
+        </thead>
+        <tbody>
+        {% for result in sensor_health.results %}
+            <tr>
+                <td>{{ result.json.sensor_name }}</td>
+                <td>{{ result.json.site | default('N/A') }}</td>
+                <td class="status-{{ result.json.status }}">{{ result.json.status | upper }}</td>
+                <td>{{ sensor_metrics.results[loop.index0].json.cpu_usage | default('N/A') }}%</td>
+                <td>{{ sensor_metrics.results[loop.index0].json.memory_usage | default('N/A') }}%</td>
+                <td>{{ sensor_storage_stats.results[loop.index0].json.storage_usage | default('N/A') }}%</td>
+                <td>{{ sensor_capture_stats.results[loop.index0].json.drop_rate | default('N/A') }}%</td>
+                <td>{{ sensor_connectivity.results[loop.index0].json.last_seen | default('N/A') }}</td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+
+    <h2>Performance Metrics</h2>
+    <table class="sensor-table">
+        <thead>
+            <tr>
+                <th>Sensor Name</th>
+                <th>Packets/sec</th>
+                <th>Bytes/sec</th>
+                <th>Flows Active</th>
+                <th>Assets Monitored</th>
+                <th>Protocols Detected</th>
+            </tr>
+        </thead>
+        <tbody>
+        {% for result in sensor_capture_stats.results %}
+            <tr>
+                <td>{{ result.json.sensor_name }}</td>
+                <td>{{ result.json.packets_per_second | default('N/A') }}</td>
+                <td>{{ (result.json.bytes_per_second / 1048576) | round(2) | default('N/A') }} MB/s</td>
+                <td>{{ result.json.active_flows | default('N/A') }}</td>
+                <td>{{ result.json.assets_monitored | default('N/A') }}</td>
+                <td>{{ result.json.protocols_detected | length | default('N/A') }}</td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+
+    <div class="footer">
+        <p>This report contains sensitive operational technology security information</p>
+        <p>Dragos Platform Sensor Operations - Fourth Estate</p>
+        <p class="classification">UNCLASSIFIED // FOR OFFICIAL USE ONLY</p>
+    </div>
+</body>
+</html>
