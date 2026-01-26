@@ -1,0 +1,62 @@
+---
+# Dragos Sensor Operations Handlers
+
+- name: Alert on sensor health issues
+  ansible.builtin.uri:
+    url: "{{ alert_webhook_url }}"
+    method: POST
+    headers:
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      severity: "high"
+      title: "Dragos Sensor Health Alert"
+      description: "Unhealthy sensors detected in OT environment"
+      sensors: "{{ unhealthy_sensors }}"
+      timestamp: "{{ ansible_date_time.iso8601 }}"
+    status_code: [200, 201, 202]
+    validate_certs: true
+  when: alert_webhook_url is defined
+
+- name: Alert on packet drop
+  ansible.builtin.uri:
+    url: "{{ alert_webhook_url }}"
+    method: POST
+    headers:
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      severity: "critical"
+      title: "Dragos Sensor Packet Drop Alert"
+      description: "High packet drop rate detected - potential missed threats"
+      sensors: "{{ high_drop_sensors }}"
+      threshold: "{{ packet_drop_threshold }}"
+      timestamp: "{{ ansible_date_time.iso8601 }}"
+    status_code: [200, 201, 202]
+    validate_certs: true
+  when: alert_webhook_url is defined
+
+- name: Restart sensor service
+  ansible.builtin.uri:
+    url: "{{ dragos_base_url }}/api/sensors/{{ sensor_id }}/restart"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ dragos_token }}"
+    status_code: [200, 202]
+    validate_certs: "{{ dragos_verify_ssl }}"
+  when: sensor_id is defined
+
+- name: Notify sensor configuration change
+  ansible.builtin.uri:
+    url: "{{ notification_webhook_url }}"
+    method: POST
+    headers:
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      event_type: "sensor_configuration_change"
+      description: "Dragos sensor configuration has been updated"
+      timestamp: "{{ ansible_date_time.iso8601 }}"
+    status_code: [200, 201, 202]
+    validate_certs: true
+  when: notification_webhook_url is defined

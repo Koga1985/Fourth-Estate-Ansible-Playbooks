@@ -1,15 +1,111 @@
 ---
-- name: Ensure artifacts dir
-  ansible.builtin.file:
-    path: "{{ artifacts_dir | default('/tmp/ot-artifacts') }}"
-    state: directory
-    mode: "0755"
+# Asset Registration Workflow
 
-- name: Register asset
+- name: Validate asset registration data
+  ansible.builtin.assert:
+    that:
+      - ot_asset_name is defined and ot_asset_name | length > 0
+      - ot_asset_type is defined and ot_asset_type | length > 0
+      - ot_asset_vendor is defined and ot_asset_vendor | length > 0
+      - ot_asset_model is defined and ot_asset_model | length > 0
+      - (not ot_asset_require_serial_number) or (ot_asset_serial_number is defined and ot_asset_serial_number | length > 0)
+      - (not ot_asset_require_ip_address) or (ot_asset_ip_address is defined and ot_asset_ip_address | length > 0)
+      - (not ot_asset_require_purdue_level) or (ot_asset_purdue_level is defined and ot_asset_purdue_level | length > 0)
+      - (not ot_asset_require_criticality) or (ot_asset_criticality is defined)
+    fail_msg: "Required asset registration data is missing"
+
+- name: Generate unique asset ID if not provided
+  ansible.builtin.set_fact:
+    ot_asset_id: "{{ ot_asset_type | upper }}-{{ ot_asset_serial_number | default(ansible_date_time.epoch) }}"
+  when: ot_asset_id is not defined or ot_asset_id | length == 0
+
+- name: Check if asset already exists
   ansible.builtin.uri:
-    url: "{{ api.url }}{{ api.paths.assets | default('/assets') }}"
-    method: POST
-    headers: { "Authorization": "{{ api.token }}", "Content-Type": "application/json" }
-    body_format: json
-    body: "{{ asset | default({}) }}"
-    status_code: 200,201,409
+    url: "{{ ot_asset_api_url }}/assets/{{ ot_asset_id }}"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ ot_asset_api_token }}"
+    validate_certs: "{{ ot_asset_verify_ssl }}"
+    timeout: "{{ ot_asset_api_timeout }}"
+    status_code: [200, 404]
+  register: asset_check
+  when:
+    - not ot_asset_dry_run
+    - ot_asset_api_token | length > 0
+  failed_when: false
+
+- name: Fail if asset already exists
+  ansible.builtin.fail:
+    msg: "Asset {{ ot_asset_id }} already exists. Use update operation instead."
+  when:
+    - asset_check is defined
+    - asset_check.status == 200
+
+- name: Validate criticality rating
+  ansible.builtin.assert:
+    that:
+      - ot_asset_criticality in ['critical', 'high', 'medium', 'low']
+    fail_msg: "Invalid criticality rating: {{ ot_asset_criticality }}"
+
+- name: Validate Purdue level
+  ansible.builtin.assert:
+    that:
+      - ot_asset_purdue_level in ['level_0', 'level_1', 'level_2', 'level_3', 'level_4', 'level_5', '']
+    fail_msg: "Invalid Purdue level: {{ ot_asset_purdue_level }}"
+  when: ot_asset_purdue_level is defined and ot_asset_purdue_level | length > 0
+
+- name: Create asset registration payload
+  ansible.builtin.set_fact:
+    asset_registration_payload:
+      asset_id: "{{ ot_asset_id }}"
+      name: "{{ ot_asset_name }}"
+      type: "{{ ot_asset_type }}"
+      vendor: "{{ ot_asset_vendor }}"
+      model: "{{ ot_asset_model }}"
+      serial_number: "{{ ot_asset_serial_number }}"
+      firmware_version: "{{ ot_asset_firmware_version }}"
+      ip_address: "{{ ot_asset_ip_address }}"
+      mac_address: "{{ ot_asset_mac_address }}"
+      criticality: "{{ ot_asset_criticality }}"
+      purdue_level: "{{ ot_asset_purdue_level }}"
+      zone: "{{ ot_asset_zone }}"
+      function: "{{ ot_asset_function }}"
+      protocols: "{{ ot_asset_protocols }}"
+      owner: "{{ ot_asset_owner }}"
+      custodian: "{{ ot_asset_custodian }}"
+      support_contact: "{{ ot_asset_support_contact }}"
+      facility: "{{ ot_asset_facility }}"
+      building: "{{ ot_asset_building }}"
+      room: "{{ ot_asset_room }}"
+      rack: "{{ ot_asset_rack }}"
+      purchase_date: "{{ ot_asset_purchase_date }}"
+      install_date: "{{ ot_asset_install_date }}"
+      state: "registered"
+      registered_by: "{{ ansible_user_id }}"
+      registered_at: "{{ ansible_date_time.iso8601 }}"
+
+- name: Save asset registration locally
+  ansible.builtin.copy:
+    content: "{{ asset_registration_payload | to_nice_json }}"
+    dest: "{{ ot_asset_artifacts_dir }}/{{ ot_asset_id }}_registration.json"
+    mode: '0640'
+
+- name: Log asset registration
+  ansible.builtin.lineinfile:
+    path: "{{ ot_asset_log_dir }}/registrations.log"
+    line: "{{ ansible_date_time.iso8601 }} | REGISTER | {{ ot_asset_id }} | {{ ot_asset_name }} | {{ ot_asset_type }} | {{ ot_asset_criticality }}"
+    create: yes
+    mode: '0640'
+
+- name: Display registration summary
+  ansible.builtin.debug:
+    msg:
+      - "Asset Registration Completed"
+      - "Asset ID: {{ ot_asset_id }}"
+      - "Name: {{ ot_asset_name }}"
+      - "Type: {{ ot_asset_type }}"
+      - "Vendor: {{ ot_asset_vendor }}"
+      - "Model: {{ ot_asset_model }}"
+      - "Criticality: {{ ot_asset_criticality }}"
+      - "Purdue Level: {{ ot_asset_purdue_level }}"
+      - "IP Address: {{ ot_asset_ip_address }}"

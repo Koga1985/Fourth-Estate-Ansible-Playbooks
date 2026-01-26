@@ -1,0 +1,110 @@
+---
+# Configure Dragos sensor high availability for mission-critical OT monitoring
+
+- name: Configure sensor clustering
+  ansible.builtin.uri:
+    url: "{{ dragos_base_url }}/api/sensors/{{ item.id }}/ha/cluster"
+    method: PUT
+    headers:
+      Authorization: "Bearer {{ dragos_token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      cluster_enabled: true
+      cluster_id: "{{ item.cluster_id }}"
+      node_role: "{{ item.node_role | default('active') }}"
+      peer_sensors: "{{ item.peer_sensors | default([]) }}"
+      heartbeat_interval: "{{ ha_heartbeat_interval }}"
+      failover_timeout: "{{ ha_failover_timeout }}"
+    status_code: [200, 201]
+    validate_certs: "{{ dragos_verify_ssl }}"
+  loop: "{{ sensors }}"
+  loop_control:
+    label: "{{ item.name }} - HA Clustering"
+  when: not dry_run and item.cluster_id is defined
+  register: sensor_clustering
+
+- name: Configure state synchronization
+  ansible.builtin.uri:
+    url: "{{ dragos_base_url }}/api/sensors/{{ item.id }}/ha/sync"
+    method: PUT
+    headers:
+      Authorization: "Bearer {{ dragos_token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      sync_enabled: true
+      sync_interval: "{{ state_sync_interval }}"
+      sync_components:
+        - flows
+        - assets
+        - alerts
+        - configuration
+    status_code: [200, 201]
+    validate_certs: "{{ dragos_verify_ssl }}"
+  loop: "{{ sensors }}"
+  loop_control:
+    label: "{{ item.name }} - State Sync"
+  when: not dry_run and item.cluster_id is defined
+  register: sensor_state_sync
+
+- name: Configure automatic failover
+  ansible.builtin.uri:
+    url: "{{ dragos_base_url }}/api/sensors/{{ item.id }}/ha/failover"
+    method: PUT
+    headers:
+      Authorization: "Bearer {{ dragos_token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      auto_failover_enabled: true
+      failback_enabled: "{{ auto_failback }}"
+      health_check_interval: "{{ health_check_interval }}"
+      failure_threshold: "{{ failure_threshold }}"
+    status_code: [200, 201]
+    validate_certs: "{{ dragos_verify_ssl }}"
+  loop: "{{ sensors }}"
+  loop_control:
+    label: "{{ item.name }} - Auto Failover"
+  when: not dry_run and item.cluster_id is defined
+  register: sensor_failover
+
+- name: Configure virtual IP for HA
+  ansible.builtin.uri:
+    url: "{{ dragos_base_url }}/api/sensors/{{ item.id }}/ha/vip"
+    method: PUT
+    headers:
+      Authorization: "Bearer {{ dragos_token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      virtual_ip: "{{ item.virtual_ip }}"
+      vip_interface: "{{ item.vip_interface | default('eth0') }}"
+    status_code: [200, 201]
+    validate_certs: "{{ dragos_verify_ssl }}"
+  loop: "{{ sensors }}"
+  loop_control:
+    label: "{{ item.name }} - Virtual IP"
+  when: not dry_run and item.virtual_ip is defined
+  register: sensor_vip
+
+- name: Verify HA cluster status
+  ansible.builtin.uri:
+    url: "{{ dragos_base_url }}/api/sensors/clusters/{{ item.cluster_id }}/status"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ dragos_token }}"
+    return_content: true
+    status_code: 200
+    validate_certs: "{{ dragos_verify_ssl }}"
+  loop: "{{ sensors | selectattr('cluster_id', 'defined') | unique(attribute='cluster_id') | list }}"
+  loop_control:
+    label: "Cluster {{ item.cluster_id }}"
+  register: cluster_status
+
+- name: Save HA configuration
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/sensor_ha_{{ ansible_date_time.iso8601_basic_short }}.json"
+    content: "{{ {'clustering': sensor_clustering, 'state_sync': sensor_state_sync, 'failover': sensor_failover, 'vip': sensor_vip, 'cluster_status': cluster_status} | to_nice_json }}"
+    mode: "0644"
+  when: sensor_clustering is defined

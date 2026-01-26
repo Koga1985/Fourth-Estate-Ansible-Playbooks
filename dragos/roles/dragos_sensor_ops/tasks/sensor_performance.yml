@@ -1,0 +1,111 @@
+---
+# Optimize Dragos sensor performance for high-traffic OT environments
+
+- name: Configure CPU affinity for packet processing
+  ansible.builtin.uri:
+    url: "{{ dragos_base_url }}/api/sensors/{{ item.id }}/performance/cpu"
+    method: PUT
+    headers:
+      Authorization: "Bearer {{ dragos_token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      cpu_affinity_enabled: true
+      capture_cpus: "{{ item.capture_cpus | default(capture_cpu_cores) }}"
+      analysis_cpus: "{{ item.analysis_cpus | default(analysis_cpu_cores) }}"
+      numa_aware: "{{ numa_aware_processing }}"
+    status_code: [200, 201]
+    validate_certs: "{{ dragos_verify_ssl }}"
+  loop: "{{ sensors }}"
+  loop_control:
+    label: "{{ item.name }} - CPU Affinity"
+  when: not dry_run
+  register: sensor_cpu_config
+
+- name: Configure memory allocation
+  ansible.builtin.uri:
+    url: "{{ dragos_base_url }}/api/sensors/{{ item.id }}/performance/memory"
+    method: PUT
+    headers:
+      Authorization: "Bearer {{ dragos_token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      packet_buffer_mb: "{{ item.packet_buffer_mb | default(packet_buffer_mb) }}"
+      flow_cache_mb: "{{ item.flow_cache_mb | default(flow_cache_mb) }}"
+      asset_cache_mb: "{{ item.asset_cache_mb | default(asset_cache_mb) }}"
+      protocol_cache_mb: "{{ item.protocol_cache_mb | default(protocol_cache_mb) }}"
+    status_code: [200, 201]
+    validate_certs: "{{ dragos_verify_ssl }}"
+  loop: "{{ sensors }}"
+  loop_control:
+    label: "{{ item.name }} - Memory Allocation"
+  when: not dry_run
+  register: sensor_memory_config
+
+- name: Configure packet processing threads
+  ansible.builtin.uri:
+    url: "{{ dragos_base_url }}/api/sensors/{{ item.id }}/performance/threads"
+    method: PUT
+    headers:
+      Authorization: "Bearer {{ dragos_token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      capture_threads: "{{ item.capture_threads | default(capture_threads) }}"
+      worker_threads: "{{ item.worker_threads | default(worker_threads) }}"
+      analysis_threads: "{{ item.analysis_threads | default(analysis_threads) }}"
+    status_code: [200, 201]
+    validate_certs: "{{ dragos_verify_ssl }}"
+  loop: "{{ sensors }}"
+  loop_control:
+    label: "{{ item.name }} - Thread Config"
+  when: not dry_run
+  register: sensor_thread_config
+
+- name: Enable kernel bypass for high-performance capture
+  ansible.builtin.uri:
+    url: "{{ dragos_base_url }}/api/sensors/{{ item.id }}/performance/kernel_bypass"
+    method: PUT
+    headers:
+      Authorization: "Bearer {{ dragos_token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      enabled: "{{ kernel_bypass_enabled }}"
+      method: "{{ kernel_bypass_method }}"
+    status_code: [200, 201]
+    validate_certs: "{{ dragos_verify_ssl }}"
+  loop: "{{ sensors }}"
+  loop_control:
+    label: "{{ item.name }} - Kernel Bypass"
+  when: not dry_run and kernel_bypass_enabled
+  register: sensor_kernel_bypass
+
+- name: Configure flow timeouts for OT protocols
+  ansible.builtin.uri:
+    url: "{{ dragos_base_url }}/api/sensors/{{ item.id }}/performance/flow_timeouts"
+    method: PUT
+    headers:
+      Authorization: "Bearer {{ dragos_token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      tcp_timeout: "{{ tcp_flow_timeout }}"
+      udp_timeout: "{{ udp_flow_timeout }}"
+      icmp_timeout: "{{ icmp_flow_timeout }}"
+      ot_protocol_timeout: "{{ ot_protocol_timeout }}"
+    status_code: [200, 201]
+    validate_certs: "{{ dragos_verify_ssl }}"
+  loop: "{{ sensors }}"
+  loop_control:
+    label: "{{ item.name }} - Flow Timeouts"
+  when: not dry_run
+  register: sensor_flow_timeouts
+
+- name: Save performance configuration
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/sensor_performance_{{ ansible_date_time.iso8601_basic_short }}.json"
+    content: "{{ {'cpu': sensor_cpu_config, 'memory': sensor_memory_config, 'threads': sensor_thread_config, 'kernel_bypass': sensor_kernel_bypass, 'flow_timeouts': sensor_flow_timeouts} | to_nice_json }}"
+    mode: "0644"
+  when: sensor_cpu_config is defined

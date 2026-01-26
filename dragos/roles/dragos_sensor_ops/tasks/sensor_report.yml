@@ -1,0 +1,52 @@
+---
+# Generate comprehensive sensor operations report for Fourth Estate
+
+- name: Retrieve complete sensor inventory
+  ansible.builtin.uri:
+    url: "{{ dragos_base_url }}/api/sensors?limit={{ page_size }}"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ dragos_token }}"
+    return_content: true
+    status_code: 200
+    validate_certs: "{{ dragos_verify_ssl }}"
+  register: complete_sensor_inventory
+
+- name: Generate sensor operations summary
+  ansible.builtin.set_fact:
+    sensor_summary:
+      total_sensors: "{{ (complete_sensor_inventory.json.items | default(complete_sensor_inventory.json.data | default([]))).| length }}"
+      healthy_sensors: "{{ (complete_sensor_inventory.json.items | default(complete_sensor_inventory.json.data | default([]))).| selectattr('status', 'equalto', 'healthy') | list | length }}"
+      unhealthy_sensors: "{{ (complete_sensor_inventory.json.items | default(complete_sensor_inventory.json.data | default([]))).| rejectattr('status', 'equalto', 'healthy') | list | length }}"
+      virtual_sensors: "{{ (complete_sensor_inventory.json.items | default(complete_sensor_inventory.json.data | default([]))).| selectattr('type', 'equalto', 'virtual') | list | length }}"
+      physical_sensors: "{{ (complete_sensor_inventory.json.items | default(complete_sensor_inventory.json.data | default([]))).| selectattr('type', 'equalto', 'physical') | list | length }}"
+
+- name: Generate HTML sensor report
+  ansible.builtin.template:
+    src: sensor_operations_report.j2
+    dest: "{{ artifacts_dir }}/sensor_operations_report_{{ ansible_date_time.iso8601_basic_short }}.html"
+    mode: "0644"
+
+- name: Generate CSV sensor inventory
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/sensor_inventory_{{ ansible_date_time.iso8601_basic_short }}.csv"
+    mode: "0644"
+    content: |
+      id,name,type,version,site,zone,status,health_score,packet_drop_rate,cpu_usage,memory_usage,storage_usage
+      {% set items = (complete_sensor_inventory.json.items if complete_sensor_inventory.json.items is defined else complete_sensor_inventory.json.data | default([])) %}
+      {% for s in items %}
+      {{ s.id | default('') }},{{ s.name | default('') }},{{ s.type | default('') }},{{ s.version | default('') }},{{ s.site | default('') }},{{ s.zone | default('') }},{{ s.status | default('') }},{{ s.health_score | default('') }},{{ s.packet_drop_rate | default('') }},{{ s.cpu_usage | default('') }},{{ s.memory_usage | default('') }},{{ s.storage_usage | default('') }}
+      {% endfor %}
+
+- name: Display sensor operations summary
+  ansible.builtin.debug:
+    msg: |
+      ===== Dragos Sensor Operations Summary =====
+      Total Sensors: {{ sensor_summary.total_sensors }}
+      Healthy: {{ sensor_summary.healthy_sensors }}
+      Unhealthy: {{ sensor_summary.unhealthy_sensors }}
+      Virtual Sensors: {{ sensor_summary.virtual_sensors }}
+      Physical Sensors: {{ sensor_summary.physical_sensors }}
+
+      Reports saved to: {{ artifacts_dir }}
+      ============================================

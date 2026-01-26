@@ -1,0 +1,92 @@
+---
+# Backup Dragos sensor configurations for disaster recovery
+
+- name: Create sensor configuration backup
+  ansible.builtin.uri:
+    url: "{{ dragos_base_url }}/api/sensors/{{ item.id }}/backup"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ dragos_token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      backup_type: "full"
+      description: "{{ backup_description | default('Scheduled backup') }}"
+      include_pcap: "{{ backup_include_pcap }}"
+      include_logs: "{{ backup_include_logs }}"
+    status_code: [200, 201]
+    validate_certs: "{{ dragos_verify_ssl }}"
+  loop: "{{ sensors }}"
+  loop_control:
+    label: "{{ item.name }} - Create Backup"
+  when: not dry_run
+  register: sensor_backup_jobs
+
+- name: Wait for backup completion
+  ansible.builtin.uri:
+    url: "{{ dragos_base_url }}/api/sensors/backups/{{ item.json.backup_id }}/status"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ dragos_token }}"
+    return_content: true
+    status_code: 200
+    validate_certs: "{{ dragos_verify_ssl }}"
+  loop: "{{ sensor_backup_jobs.results }}"
+  loop_control:
+    label: "{{ item.item.name }} - Backup Status"
+  register: backup_status
+  until: backup_status.json.status in ['completed', 'failed']
+  retries: 30
+  delay: 10
+  when: not dry_run and wait_for_backup
+
+- name: Download sensor backups
+  ansible.builtin.uri:
+    url: "{{ dragos_base_url }}/api/sensors/backups/{{ item.json.backup_id }}/download"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ dragos_token }}"
+    dest: "{{ artifacts_dir }}/sensor_backup_{{ item.item.name }}_{{ ansible_date_time.iso8601_basic_short }}.tar.gz"
+    status_code: 200
+    validate_certs: "{{ dragos_verify_ssl }}"
+  loop: "{{ sensor_backup_jobs.results }}"
+  loop_control:
+    label: "{{ item.item.name }} - Download Backup"
+  when: not dry_run and download_backups
+
+- name: List existing backups
+  ansible.builtin.uri:
+    url: "{{ dragos_base_url }}/api/sensors/{{ item.id }}/backups"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ dragos_token }}"
+    return_content: true
+    status_code: 200
+    validate_certs: "{{ dragos_verify_ssl }}"
+  loop: "{{ sensors }}"
+  loop_control:
+    label: "{{ item.name }} - List Backups"
+  register: existing_backups
+
+- name: Cleanup old backups
+  ansible.builtin.uri:
+    url: "{{ dragos_base_url }}/api/sensors/backups/{{ item.1.id }}"
+    method: DELETE
+    headers:
+      Authorization: "Bearer {{ dragos_token }}"
+    status_code: [200, 204]
+    validate_certs: "{{ dragos_verify_ssl }}"
+  loop: "{{ existing_backups.results | subelements('json.backups', skip_missing=True) }}"
+  loop_control:
+    label: "{{ item.0.item.name }} - Delete backup {{ item.1.id }}"
+  when:
+    - not dry_run
+    - cleanup_old_backups
+    - item.1.created_at < (ansible_date_time.epoch | int - (backup_retention_days * 86400)) | string
+
+- name: Save backup report
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/sensor_backup_report_{{ ansible_date_time.iso8601_basic_short }}.json"
+    content: "{{ {'backup_jobs': sensor_backup_jobs, 'backup_status': backup_status, 'existing_backups': existing_backups} | to_nice_json }}"
+    mode: "0644"
+  when: sensor_backup_jobs is defined

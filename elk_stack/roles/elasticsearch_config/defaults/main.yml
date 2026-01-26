@@ -1,0 +1,231 @@
+---
+# Elasticsearch Configuration Defaults
+
+# Cluster configuration
+elasticsearch_cluster_name: "fourth-estate-logging"
+elasticsearch_node_name: "{{ ansible_hostname }}"
+elasticsearch_node_attr_rack: "{{ ansible_hostname.split('-')[0] | default('rack1') }}"
+elasticsearch_node_attr_zone: "{{ ansible_hostname.split('-')[1] | default('zone1') }}"
+
+# Node roles
+elasticsearch_node_master: true
+elasticsearch_node_data: true
+elasticsearch_node_data_content: true
+elasticsearch_node_data_hot: true
+elasticsearch_node_data_warm: false
+elasticsearch_node_data_cold: false
+elasticsearch_node_data_frozen: false
+elasticsearch_node_ingest: true
+elasticsearch_node_ml: false
+elasticsearch_node_remote_cluster_client: false
+elasticsearch_node_transform: false
+
+# Network settings
+elasticsearch_network_host: "0.0.0.0"
+elasticsearch_http_host: "0.0.0.0"
+elasticsearch_http_port: 9200
+elasticsearch_transport_host: "0.0.0.0"
+elasticsearch_transport_port: 9300
+elasticsearch_publish_host: "{{ ansible_default_ipv4.address }}"
+
+# Discovery and cluster formation
+elasticsearch_discovery_seed_hosts: []
+# Example:
+# elasticsearch_discovery_seed_hosts:
+#   - "es-master-01:9300"
+#   - "es-master-02:9300"
+#   - "es-master-03:9300"
+
+elasticsearch_cluster_initial_master_nodes: []
+# Example (only for cluster bootstrap):
+# elasticsearch_cluster_initial_master_nodes:
+#   - "es-master-01"
+#   - "es-master-02"
+#   - "es-master-03"
+
+# Path configuration
+elasticsearch_path_data: "/var/lib/elasticsearch"
+elasticsearch_path_logs: "/var/log/elasticsearch"
+elasticsearch_path_repo: "/mnt/elasticsearch/snapshots"
+
+# Memory
+elasticsearch_bootstrap_memory_lock: true
+
+# Gateway and recovery
+elasticsearch_gateway_expected_nodes: 3
+elasticsearch_gateway_expected_master_nodes: 3
+elasticsearch_gateway_expected_data_nodes: 3
+elasticsearch_gateway_recover_after_time: "5m"
+elasticsearch_gateway_recover_after_nodes: 2
+elasticsearch_gateway_recover_after_master_nodes: 2
+elasticsearch_gateway_recover_after_data_nodes: 2
+
+# Cluster-level routing
+elasticsearch_cluster_routing_allocation_enable: "all"
+elasticsearch_cluster_routing_allocation_awareness_attributes: ["rack", "zone"]
+elasticsearch_cluster_routing_allocation_disk_threshold_enabled: true
+elasticsearch_cluster_routing_allocation_disk_watermark_low: "85%"
+elasticsearch_cluster_routing_allocation_disk_watermark_high: "90%"
+elasticsearch_cluster_routing_allocation_disk_watermark_flood_stage: "95%"
+
+# Shard allocation
+elasticsearch_cluster_max_shards_per_node: 1000
+elasticsearch_cluster_routing_allocation_node_concurrent_recoveries: 2
+elasticsearch_cluster_routing_allocation_node_initial_primaries_recoveries: 4
+elasticsearch_indices_recovery_max_bytes_per_sec: "100mb"
+
+# Thread pools
+elasticsearch_thread_pool_write_queue_size: 1000
+elasticsearch_thread_pool_search_queue_size: 1000
+elasticsearch_thread_pool_get_queue_size: 1000
+
+# Circuit breakers
+elasticsearch_indices_breaker_total_limit: "95%"
+elasticsearch_indices_breaker_fielddata_limit: "40%"
+elasticsearch_indices_breaker_request_limit: "60%"
+
+# Index settings
+elasticsearch_action_auto_create_index: true
+elasticsearch_action_destructive_requires_name: true
+
+# Default index settings
+elasticsearch_index_number_of_shards: 1
+elasticsearch_index_number_of_replicas: 1
+elasticsearch_index_refresh_interval: "1s"
+elasticsearch_index_max_result_window: 10000
+
+# Index lifecycle management
+elasticsearch_ilm_enabled: true
+elasticsearch_ilm_policies:
+  - name: "fourth-estate-logs-policy"
+    hot_phase:
+      actions:
+        rollover:
+          max_size: "50gb"
+          max_age: "7d"
+        set_priority:
+          priority: 100
+    warm_phase:
+      min_age: "7d"
+      actions:
+        shrink:
+          number_of_shards: 1
+        forcemerge:
+          max_num_segments: 1
+        set_priority:
+          priority: 50
+    cold_phase:
+      min_age: "30d"
+      actions:
+        set_priority:
+          priority: 0
+        freeze: {}
+    delete_phase:
+      min_age: "365d"
+      actions:
+        delete: {}
+
+  - name: "fourth-estate-metrics-policy"
+    hot_phase:
+      actions:
+        rollover:
+          max_size: "30gb"
+          max_age: "3d"
+    warm_phase:
+      min_age: "3d"
+      actions:
+        forcemerge:
+          max_num_segments: 1
+    delete_phase:
+      min_age: "90d"
+      actions:
+        delete: {}
+
+# Index templates
+elasticsearch_index_templates:
+  - name: "fourth-estate-logs"
+    index_patterns:
+      - "logs-*"
+      - "filebeat-*"
+    priority: 100
+    settings:
+      number_of_shards: 1
+      number_of_replicas: 1
+      index.lifecycle.name: "fourth-estate-logs-policy"
+      index.lifecycle.rollover_alias: "logs"
+    mappings:
+      properties:
+        "@timestamp":
+          type: "date"
+        message:
+          type: "text"
+        log.level:
+          type: "keyword"
+        source.ip:
+          type: "ip"
+        user.name:
+          type: "keyword"
+
+  - name: "fourth-estate-metrics"
+    index_patterns:
+      - "metrics-*"
+      - "metricbeat-*"
+    priority: 100
+    settings:
+      number_of_shards: 1
+      number_of_replicas: 1
+      index.lifecycle.name: "fourth-estate-metrics-policy"
+
+# Hot-warm-cold architecture
+elasticsearch_hot_warm_enabled: false
+elasticsearch_node_temperature: "hot"  # hot, warm, cold, frozen
+
+# Snapshot repositories
+elasticsearch_snapshot_repositories:
+  - name: "backup-repo"
+    type: "fs"
+    settings:
+      location: "/mnt/elasticsearch/snapshots"
+      compress: true
+      max_snapshot_bytes_per_sec: "100mb"
+      max_restore_bytes_per_sec: "100mb"
+
+# Cross-cluster search
+elasticsearch_remote_clusters: []
+# Example:
+# elasticsearch_remote_clusters:
+#   - name: "cluster2"
+#     seeds:
+#       - "cluster2-es-01:9300"
+#       - "cluster2-es-02:9300"
+
+# Monitoring
+elasticsearch_monitoring_enabled: true
+elasticsearch_monitoring_collection_enabled: true
+elasticsearch_monitoring_collection_interval: "10s"
+
+# Watcher (alerting)
+elasticsearch_watcher_enabled: true
+
+# Machine Learning
+elasticsearch_ml_enabled: false
+elasticsearch_max_ml_node_size: 0
+
+# SQL
+elasticsearch_sql_enabled: true
+
+# Logging
+elasticsearch_log_level: "info"
+elasticsearch_slowlog_threshold_query_warn: "10s"
+elasticsearch_slowlog_threshold_query_info: "5s"
+elasticsearch_slowlog_threshold_fetch_warn: "1s"
+elasticsearch_slowlog_threshold_fetch_info: "800ms"
+elasticsearch_slowlog_threshold_index_warn: "10s"
+elasticsearch_slowlog_threshold_index_info: "5s"
+
+# Fourth Estate specific
+elasticsearch_fourth_estate_mode: true
+elasticsearch_retention_days: 365
+elasticsearch_compliance_mode: true
+elasticsearch_journalist_logging: true
+elasticsearch_source_protection: true
