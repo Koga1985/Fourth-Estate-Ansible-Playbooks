@@ -1,0 +1,120 @@
+---
+# handlers file for veeam_repositories
+
+- name: Rescan backup repositories
+  ansible.windows.win_powershell:
+    script: |
+      Import-Module Veeam.Backup.PowerShell
+      Get-VBRBackupRepository | ForEach-Object {
+        Write-Output "Rescanning repository: $($_.Name)"
+        Sync-VBRBackupRepository -Repository $_
+      }
+  listen: rescan repositories
+
+- name: Update repository cache
+  ansible.windows.win_powershell:
+    script: |
+      Import-Module Veeam.Backup.PowerShell
+      Update-VBRBackupRepository
+      Write-Output "Repository cache updated"
+  listen: update repository cache
+
+- name: Compact repository storage
+  ansible.windows.win_powershell:
+    script: |
+      Import-Module Veeam.Backup.PowerShell
+      $repos = Get-VBRBackupRepository
+      foreach ($repo in $repos) {
+        Write-Output "Compacting repository: $($repo.Name)"
+        Invoke-VBRRepositoryCompact -Repository $repo -Confirm:$false
+      }
+  listen: compact repositories
+
+- name: Verify repository integrity
+  ansible.windows.win_powershell:
+    script: |
+      Import-Module Veeam.Backup.PowerShell
+      $repos = Get-VBRBackupRepository
+      foreach ($repo in $repos) {
+        Write-Output "Verifying repository: $($repo.Name)"
+        $backups = Get-VBRBackup | Where-Object { $_.RepositoryId -eq $repo.Id }
+        foreach ($backup in $backups) {
+          Test-VBRBackup -Backup $backup
+        }
+      }
+  listen: verify repository integrity
+
+- name: Refresh SOBR configuration
+  ansible.windows.win_powershell:
+    script: |
+      Import-Module Veeam.Backup.PowerShell
+      $sobrs = Get-VBRBackupRepository -ScaleOut
+      foreach ($sobr in $sobrs) {
+        Write-Output "Refreshing SOBR: $($sobr.Name)"
+        Update-VBRBackupRepository -Repository $sobr
+      }
+  listen: refresh sobr
+
+- name: Synchronize capacity tier
+  ansible.windows.win_powershell:
+    script: |
+      Import-Module Veeam.Backup.PowerShell
+      $sobrs = Get-VBRBackupRepository -ScaleOut
+      foreach ($sobr in $sobrs) {
+        if ($sobr.CapacityExtent) {
+          Write-Output "Synchronizing capacity tier for: $($sobr.Name)"
+          Sync-VBRCapacityTier -Repository $sobr
+        }
+      }
+  listen: sync capacity tier
+
+- name: Update repository quotas
+  ansible.windows.win_powershell:
+    script: |
+      Import-Module Veeam.Backup.PowerShell
+      Get-VBRBackupRepository | ForEach-Object {
+        Write-Output "Updating quota for: $($_.Name)"
+        $_.UpdateQuota()
+      }
+  listen: update quotas
+
+- name: Clear repository cache
+  ansible.windows.win_powershell:
+    script: |
+      Import-Module Veeam.Backup.PowerShell
+      $cacheDir = "C:\ProgramData\Veeam\Backup\Cache"
+      if (Test-Path $cacheDir) {
+        Get-ChildItem -Path $cacheDir -Recurse | Remove-Item -Force -Recurse
+        Write-Output "Repository cache cleared"
+      }
+  listen: clear cache
+
+- name: Restart Veeam Backup Service
+  ansible.windows.win_service:
+    name: VeeamBackupSvc
+    state: restarted
+  listen: restart veeam service
+
+- name: Generate repository report
+  ansible.windows.win_powershell:
+    script: |
+      Import-Module Veeam.Backup.PowerShell
+      $repos = Get-VBRBackupRepository
+      $report = @()
+      foreach ($repo in $repos) {
+        $container = $repo.GetContainer()
+        $report += [PSCustomObject]@{
+          Name = $repo.Name
+          Type = $repo.Type
+          Path = $repo.Path
+          TotalSpaceGB = [math]::Round($container.CachedTotalSpace.InGigabytes, 2)
+          FreeSpaceGB = [math]::Round($container.CachedFreeSpace.InGigabytes, 2)
+          UsedSpaceGB = [math]::Round(($container.CachedTotalSpace.InGigabytes - $container.CachedFreeSpace.InGigabytes), 2)
+          UsedPercent = [math]::Round((($container.CachedTotalSpace.InGigabytes - $container.CachedFreeSpace.InGigabytes) / $container.CachedTotalSpace.InGigabytes) * 100, 2)
+          Status = $repo.IsUnavailable ? "Unavailable" : "Available"
+        }
+      }
+      $reportPath = "C:\VeeamConfig\Reports\repository_status_$(Get-Date -Format 'yyyyMMdd_HHmmss').csv"
+      $report | Export-Csv -Path $reportPath -NoTypeInformation
+      Write-Output "Report generated: $reportPath"
+  listen: generate repository report

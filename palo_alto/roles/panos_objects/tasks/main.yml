@@ -1,0 +1,513 @@
+---
+# tasks file for panos_objects
+# Comprehensive object management for Palo Alto Networks firewalls
+# Fourth Estate object catalog
+
+- name: Create address objects (IP addresses)
+  paloaltonetworks.panos.panos_address_object:
+    provider: "{{ panos_provider }}"
+    name: "{{ item.name }}"
+    value: "{{ item.value }}"
+    address_type: "{{ item.type | default('ip-netmask') }}"
+    description: "{{ item.description | default(omit) }}"
+    tag: "{{ item.tags | default([]) }}"
+    state: present
+  loop: "{{ panos_address_objects }}"
+  notify: commit panos configuration
+  tags:
+    - objects
+    - addresses
+  when: panos_address_objects is defined
+
+- name: Create FQDN address objects
+  paloaltonetworks.panos.panos_address_object:
+    provider: "{{ panos_provider }}"
+    name: "{{ item.name }}"
+    value: "{{ item.fqdn }}"
+    address_type: "fqdn"
+    description: "{{ item.description | default(omit) }}"
+    tag: "{{ item.tags | default([]) }}"
+    state: present
+  loop: "{{ panos_fqdn_objects }}"
+  notify: commit panos configuration
+  tags:
+    - objects
+    - addresses
+    - fqdn
+  when: panos_fqdn_objects is defined
+
+- name: Create IP range address objects
+  paloaltonetworks.panos.panos_address_object:
+    provider: "{{ panos_provider }}"
+    name: "{{ item.name }}"
+    value: "{{ item.range }}"
+    address_type: "ip-range"
+    description: "{{ item.description | default(omit) }}"
+    tag: "{{ item.tags | default([]) }}"
+    state: present
+  loop: "{{ panos_ip_range_objects }}"
+  notify: commit panos configuration
+  tags:
+    - objects
+    - addresses
+    - range
+  when: panos_ip_range_objects is defined
+
+- name: Create IP wildcard address objects
+  paloaltonetworks.panos.panos_address_object:
+    provider: "{{ panos_provider }}"
+    name: "{{ item.name }}"
+    value: "{{ item.wildcard }}"
+    address_type: "ip-wildcard"
+    description: "{{ item.description | default(omit) }}"
+    tag: "{{ item.tags | default([]) }}"
+    state: present
+  loop: "{{ panos_ip_wildcard_objects }}"
+  notify: commit panos configuration
+  tags:
+    - objects
+    - addresses
+    - wildcard
+  when: panos_ip_wildcard_objects is defined
+
+- name: Create static address groups
+  paloaltonetworks.panos.panos_address_group:
+    provider: "{{ panos_provider }}"
+    name: "{{ item.name }}"
+    static_value: "{{ item.members }}"
+    description: "{{ item.description | default(omit) }}"
+    tag: "{{ item.tags | default([]) }}"
+    state: present
+  loop: "{{ panos_static_address_groups }}"
+  notify: commit panos configuration
+  tags:
+    - objects
+    - address_groups
+    - static
+  when: panos_static_address_groups is defined
+
+- name: Create dynamic address groups
+  paloaltonetworks.panos.panos_address_group:
+    provider: "{{ panos_provider }}"
+    name: "{{ item.name }}"
+    dynamic_value: "{{ item.filter }}"
+    description: "{{ item.description | default(omit) }}"
+    tag: "{{ item.tags | default([]) }}"
+    state: present
+  loop: "{{ panos_dynamic_address_groups }}"
+  notify: commit panos configuration
+  tags:
+    - objects
+    - address_groups
+    - dynamic
+  when: panos_dynamic_address_groups is defined
+
+- name: Create service objects (TCP)
+  paloaltonetworks.panos.panos_service_object:
+    provider: "{{ panos_provider }}"
+    name: "{{ item.name }}"
+    protocol: "tcp"
+    destination_port: "{{ item.port }}"
+    source_port: "{{ item.source_port | default(omit) }}"
+    description: "{{ item.description | default(omit) }}"
+    tag: "{{ item.tags | default([]) }}"
+    state: present
+  loop: "{{ panos_tcp_service_objects }}"
+  notify: commit panos configuration
+  tags:
+    - objects
+    - services
+    - tcp
+  when: panos_tcp_service_objects is defined
+
+- name: Create service objects (UDP)
+  paloaltonetworks.panos.panos_service_object:
+    provider: "{{ panos_provider }}"
+    name: "{{ item.name }}"
+    protocol: "udp"
+    destination_port: "{{ item.port }}"
+    source_port: "{{ item.source_port | default(omit) }}"
+    description: "{{ item.description | default(omit) }}"
+    tag: "{{ item.tags | default([]) }}"
+    state: present
+  loop: "{{ panos_udp_service_objects }}"
+  notify: commit panos configuration
+  tags:
+    - objects
+    - services
+    - udp
+  when: panos_udp_service_objects is defined
+
+- name: Create service groups
+  paloaltonetworks.panos.panos_service_group:
+    provider: "{{ panos_provider }}"
+    name: "{{ item.name }}"
+    value: "{{ item.members }}"
+    tag: "{{ item.tags | default([]) }}"
+    state: present
+  loop: "{{ panos_service_groups }}"
+  notify: commit panos configuration
+  tags:
+    - objects
+    - service_groups
+  when: panos_service_groups is defined
+
+- name: Create custom application objects
+  paloaltonetworks.panos.panos_config_element:
+    provider: "{{ panos_provider }}"
+    xpath: "/config/devices/entry[@name='localhost.localdomain']/vsys/entry[@name='vsys1']/application"
+    element: |
+      <entry name="{{ item.name }}">
+        <category>{{ item.category | default('general-internet') }}</category>
+        <subcategory>{{ item.subcategory | default('internet-utility') }}</subcategory>
+        <technology>{{ item.technology | default('client-server') }}</technology>
+        <risk>{{ item.risk | default('3') }}</risk>
+        <default>
+          <port>
+            {% for port in item.ports %}
+            <member>{{ port }}</member>
+            {% endfor %}
+          </port>
+        </default>
+        <description>{{ item.description | default('') }}</description>
+        {% if item.signature is defined %}
+        <signature>
+          <entry name="{{ item.signature.name }}">
+            <scope>{{ item.signature.scope | default('transaction') }}</scope>
+            <order-free>{{ item.signature.order_free | default('no') }}</order-free>
+            <and-condition>
+              <entry name="{{ item.signature.condition_name | default('And Condition 1') }}">
+                <or-condition>
+                  <entry name="{{ item.signature.or_condition_name | default('Or Condition 1') }}">
+                    <operator>
+                      <pattern-match>
+                        <pattern>{{ item.signature.pattern }}</pattern>
+                        <context>{{ item.signature.context | default('http-req-uri-path') }}</context>
+                      </pattern-match>
+                    </operator>
+                  </entry>
+                </or-condition>
+              </entry>
+            </and-condition>
+          </entry>
+        </signature>
+        {% endif %}
+      </entry>
+  loop: "{{ panos_custom_applications }}"
+  notify: commit panos configuration
+  tags:
+    - objects
+    - applications
+  when: panos_custom_applications is defined
+
+- name: Create application groups
+  paloaltonetworks.panos.panos_config_element:
+    provider: "{{ panos_provider }}"
+    xpath: "/config/devices/entry[@name='localhost.localdomain']/vsys/entry[@name='vsys1']/application-group"
+    element: |
+      <entry name="{{ item.name }}">
+        <members>
+          {% for member in item.members %}
+          <member>{{ member }}</member>
+          {% endfor %}
+        </members>
+      </entry>
+  loop: "{{ panos_application_groups }}"
+  notify: commit panos configuration
+  tags:
+    - objects
+    - application_groups
+  when: panos_application_groups is defined
+
+- name: Create application filters
+  paloaltonetworks.panos.panos_config_element:
+    provider: "{{ panos_provider }}"
+    xpath: "/config/devices/entry[@name='localhost.localdomain']/vsys/entry[@name='vsys1']/application-filter"
+    element: |
+      <entry name="{{ item.name }}">
+        <category>
+          {% for category in item.categories | default([]) %}
+          <member>{{ category }}</member>
+          {% endfor %}
+        </category>
+        <subcategory>
+          {% for subcategory in item.subcategories | default([]) %}
+          <member>{{ subcategory }}</member>
+          {% endfor %}
+        </subcategory>
+        <technology>
+          {% for tech in item.technologies | default([]) %}
+          <member>{{ tech }}</member>
+          {% endfor %}
+        </technology>
+        <risk>
+          {% for risk in item.risk_levels | default([]) %}
+          <member>{{ risk }}</member>
+          {% endfor %}
+        </risk>
+        <evasive>{{ 'yes' if item.evasive | default(false) else 'no' }}</evasive>
+        <excessive-bandwidth-use>{{ 'yes' if item.excessive_bandwidth | default(false) else 'no' }}</excessive-bandwidth-use>
+        <prone-to-misuse>{{ 'yes' if item.prone_to_misuse | default(false) else 'no' }}</prone-to-misuse>
+        <is-saas>{{ 'yes' if item.is_saas | default(false) else 'no' }}</is-saas>
+        <transfers-files>{{ 'yes' if item.transfers_files | default(false) else 'no' }}</transfers-files>
+        <tunnels-other-apps>{{ 'yes' if item.tunnels_other_apps | default(false) else 'no' }}</tunnels-other-apps>
+        <used-by-malware>{{ 'yes' if item.used_by_malware | default(false) else 'no' }}</used-by-malware>
+        <has-known-vulnerabilities>{{ 'yes' if item.has_known_vulnerabilities | default(false) else 'no' }}</has-known-vulnerabilities>
+      </entry>
+  loop: "{{ panos_application_filters }}"
+  notify: commit panos configuration
+  tags:
+    - objects
+    - application_filters
+  when: panos_application_filters is defined
+
+- name: Create tags for object categorization
+  paloaltonetworks.panos.panos_tag_object:
+    provider: "{{ panos_provider }}"
+    name: "{{ item.name }}"
+    color: "{{ item.color | default('color1') }}"
+    comments: "{{ item.comments | default(omit) }}"
+    state: present
+  loop: "{{ panos_tags }}"
+  notify: commit panos configuration
+  tags:
+    - objects
+    - tags
+  when: panos_tags is defined
+
+- name: Create external dynamic lists (IP)
+  paloaltonetworks.panos.panos_config_element:
+    provider: "{{ panos_provider }}"
+    xpath: "/config/devices/entry[@name='localhost.localdomain']/vsys/entry[@name='vsys1']/external-list"
+    element: |
+      <entry name="{{ item.name }}">
+        <type>
+          <ip>
+            <recurring>
+              <{{ item.frequency | default('hourly') }}>
+                <at>{{ item.at | default('00') }}</at>
+              </{{ item.frequency | default('hourly') }}>
+            </recurring>
+            <url>{{ item.url }}</url>
+            <description>{{ item.description | default('') }}</description>
+            {% if item.certificate_profile is defined %}
+            <certificate-profile>{{ item.certificate_profile }}</certificate-profile>
+            {% endif %}
+            {% if item.auth is defined %}
+            <auth>
+              <username>{{ item.auth.username }}</username>
+              <password>{{ item.auth.password }}</password>
+            </auth>
+            {% endif %}
+          </ip>
+        </type>
+      </entry>
+  loop: "{{ panos_edl_ip_lists }}"
+  no_log: "{{ item.auth is defined }}"
+  notify: commit panos configuration
+  tags:
+    - objects
+    - edl
+    - ip
+  when: panos_edl_ip_lists is defined
+
+- name: Create external dynamic lists (URL)
+  paloaltonetworks.panos.panos_config_element:
+    provider: "{{ panos_provider }}"
+    xpath: "/config/devices/entry[@name='localhost.localdomain']/vsys/entry[@name='vsys1']/external-list"
+    element: |
+      <entry name="{{ item.name }}">
+        <type>
+          <url>
+            <recurring>
+              <{{ item.frequency | default('hourly') }}>
+                <at>{{ item.at | default('00') }}</at>
+              </{{ item.frequency | default('hourly') }}>
+            </recurring>
+            <url>{{ item.url }}</url>
+            <description>{{ item.description | default('') }}</description>
+            {% if item.certificate_profile is defined %}
+            <certificate-profile>{{ item.certificate_profile }}</certificate-profile>
+            {% endif %}
+          </url>
+        </type>
+      </entry>
+  loop: "{{ panos_edl_url_lists }}"
+  notify: commit panos configuration
+  tags:
+    - objects
+    - edl
+    - url
+  when: panos_edl_url_lists is defined
+
+- name: Create external dynamic lists (Domain)
+  paloaltonetworks.panos.panos_config_element:
+    provider: "{{ panos_provider }}"
+    xpath: "/config/devices/entry[@name='localhost.localdomain']/vsys/entry[@name='vsys1']/external-list"
+    element: |
+      <entry name="{{ item.name }}">
+        <type>
+          <domain>
+            <recurring>
+              <{{ item.frequency | default('hourly') }}>
+                <at>{{ item.at | default('00') }}</at>
+              </{{ item.frequency | default('hourly') }}>
+            </recurring>
+            <url>{{ item.url }}</url>
+            <description>{{ item.description | default('') }}</description>
+            <expand-domain>{{ 'yes' if item.expand_domain | default(true) else 'no' }}</expand-domain>
+            {% if item.certificate_profile is defined %}
+            <certificate-profile>{{ item.certificate_profile }}</certificate-profile>
+            {% endif %}
+          </domain>
+        </type>
+      </entry>
+  loop: "{{ panos_edl_domain_lists }}"
+  notify: commit panos configuration
+  tags:
+    - objects
+    - edl
+    - domain
+  when: panos_edl_domain_lists is defined
+
+- name: Create custom URL categories
+  paloaltonetworks.panos.panos_config_element:
+    provider: "{{ panos_provider }}"
+    xpath: "/config/devices/entry[@name='localhost.localdomain']/vsys/entry[@name='vsys1']/profiles/custom-url-category"
+    element: |
+      <entry name="{{ item.name }}">
+        <list>
+          {% for url in item.urls %}
+          <member>{{ url }}</member>
+          {% endfor %}
+        </list>
+        <type>{{ item.type | default('URL List') }}</type>
+        <description>{{ item.description | default('') }}</description>
+      </entry>
+  loop: "{{ panos_custom_url_categories }}"
+  notify: commit panos configuration
+  tags:
+    - objects
+    - url_categories
+  when: panos_custom_url_categories is defined
+
+- name: Create schedule objects
+  paloaltonetworks.panos.panos_config_element:
+    provider: "{{ panos_provider }}"
+    xpath: "/config/devices/entry[@name='localhost.localdomain']/vsys/entry[@name='vsys1']/schedule"
+    element: |
+      <entry name="{{ item.name }}">
+        {% if item.type == 'recurring' %}
+        <schedule-type>
+          <recurring>
+            {% if item.recurring.type == 'daily' %}
+            <daily>
+              <member>{{ item.recurring.time_range }}</member>
+            </daily>
+            {% elif item.recurring.type == 'weekly' %}
+            <weekly>
+              {% for day in item.recurring.days %}
+              <{{ day }}>
+                <member>{{ item.recurring.time_range }}</member>
+              </{{ day }}>
+              {% endfor %}
+            </weekly>
+            {% endif %}
+          </recurring>
+        </schedule-type>
+        {% else %}
+        <schedule-type>
+          <non-recurring>
+            <member>{{ item.time_range }}</member>
+          </non-recurring>
+        </schedule-type>
+        {% endif %}
+      </entry>
+  loop: "{{ panos_schedules }}"
+  notify: commit panos configuration
+  tags:
+    - objects
+    - schedules
+  when: panos_schedules is defined
+
+- name: Create region objects
+  paloaltonetworks.panos.panos_registered_ip:
+    provider: "{{ panos_provider }}"
+    ip_address: "{{ item.ip }}"
+    tags: "{{ item.tags }}"
+  loop: "{{ panos_registered_ips }}"
+  notify: commit panos configuration
+  tags:
+    - objects
+    - regions
+    - registered_ips
+  when: panos_registered_ips is defined
+
+- name: Create security zones
+  paloaltonetworks.panos.panos_zone:
+    provider: "{{ panos_provider }}"
+    zone: "{{ item.name }}"
+    mode: "{{ item.mode | default('layer3') }}"
+    enable_userid: "{{ item.userid | default(false) }}"
+    enable_device_identification: "{{ item.device_id | default(true) }}"
+    zone_profile: "{{ item.zone_profile | default(omit) }}"
+    log_setting: "{{ item.log_setting | default(omit) }}"
+    state: present
+  loop: "{{ panos_security_zones }}"
+  notify: commit panos configuration
+  tags:
+    - objects
+    - zones
+  when: panos_security_zones is defined
+
+- name: Create log forwarding profiles
+  paloaltonetworks.panos.panos_config_element:
+    provider: "{{ panos_provider }}"
+    xpath: "/config/devices/entry[@name='localhost.localdomain']/vsys/entry[@name='vsys1']/log-settings/profiles"
+    element: |
+      <entry name="{{ item.name }}">
+        <enhanced-logging>{{ 'yes' if item.enhanced_logging | default(false) else 'no' }}</enhanced-logging>
+        <match-list>
+          {% for match in item.match_list %}
+          <entry name="{{ match.name }}">
+            <log-type>{{ match.log_type }}</log-type>
+            <filter>{{ match.filter | default('All Logs') }}</filter>
+            <send-to-panorama>{{ 'yes' if match.send_to_panorama | default(true) else 'no' }}</send-to-panorama>
+            {% if match.syslog_profiles is defined %}
+            <send-syslog>
+              {% for profile in match.syslog_profiles %}
+              <member>{{ profile }}</member>
+              {% endfor %}
+            </send-syslog>
+            {% endif %}
+            {% if match.email_profiles is defined %}
+            <send-email>
+              {% for profile in match.email_profiles %}
+              <member>{{ profile }}</member>
+              {% endfor %}
+            </send-email>
+            {% endif %}
+            {% if match.snmptrap_profiles is defined %}
+            <send-snmptrap>
+              {% for profile in match.snmptrap_profiles %}
+              <member>{{ profile }}</member>
+              {% endfor %}
+            </send-snmptrap>
+            {% endif %}
+            {% if match.http_profiles is defined %}
+            <send-http>
+              {% for profile in match.http_profiles %}
+              <member>{{ profile }}</member>
+              {% endfor %}
+            </send-http>
+            {% endif %}
+          </entry>
+          {% endfor %}
+        </match-list>
+      </entry>
+  loop: "{{ panos_log_forwarding_profiles }}"
+  notify: commit panos configuration
+  tags:
+    - objects
+    - log_forwarding
+  when: panos_log_forwarding_profiles is defined

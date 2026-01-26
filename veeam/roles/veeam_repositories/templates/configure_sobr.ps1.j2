@@ -1,0 +1,142 @@
+#Requires -Modules Veeam.Backup.PowerShell
+# Configure Scale-Out Backup Repository (SOBR) with Capacity and Archive Tiers
+
+param(
+    [Parameter(Mandatory=$true)]
+    [string]$SOBRName,
+
+    [string]$Description = "Scale-Out Backup Repository",
+
+    [Parameter(Mandatory=$true)]
+    [string]$PerformanceTier,  # JSON array of repository names
+
+    [string]$PolicyType = "DataLocality",  # DataLocality or PerformanceTier
+
+    [bool]$EnableCapacityTier = $false,
+    [string]$CapacityTierType = "",  # AzureBlob, S3Compatible, S3, GoogleCloud
+    [int]$OperationalRestorePeriod = 7,
+    [bool]$OverrideTransferPolicy = $false,
+    [bool]$ImmediateCapacityTierCopy = $false,
+
+    [bool]$EnableArchiveTier = $false,
+    [string]$ArchiveTierType = "",
+    [int]$ArchivePeriod = 365
+)
+
+try {
+    Import-Module Veeam.Backup.PowerShell -ErrorAction Stop
+
+    # Check if SOBR already exists
+    $existingSOBR = Get-VBRBackupRepository -ScaleOut -Name $SOBRName -ErrorAction SilentlyContinue
+
+    if ($existingSOBR) {
+        Write-Output "SOBR '$SOBRName' already exists"
+        $existingSOBR | ConvertTo-Json -Depth 3
+        return
+    }
+
+    Write-Output "Creating Scale-Out Backup Repository '$SOBRName'..."
+
+    # Parse performance tier repositories
+    $performanceTierRepos = $PerformanceTier | ConvertFrom-Json
+    $extents = @()
+
+    foreach ($repoName in $performanceTierRepos) {
+        $repo = Get-VBRBackupRepository -Name $repoName -ErrorAction SilentlyContinue
+        if ($repo) {
+            $extents += $repo
+            Write-Output "Added extent: $repoName"
+        } else {
+            Write-Warning "Repository '$repoName' not found"
+        }
+    }
+
+    if ($extents.Count -eq 0) {
+        throw "No valid repositories found for SOBR performance tier"
+    }
+
+    # Determine placement policy
+    $placementPolicy = switch ($PolicyType) {
+        "DataLocality" { [Veeam.Backup.Model.EScaleOutPlacementPolicy]::DataLocality }
+        "PerformanceTier" { [Veeam.Backup.Model.EScaleOutPlacementPolicy]::PerformanceTier }
+        default { [Veeam.Backup.Model.EScaleOutPlacementPolicy]::DataLocality }
+    }
+
+    # Create SOBR
+    $sobrParams = @{
+        Name = $SOBRName
+        Extent = $extents
+        PlacementPolicy = $placementPolicy
+        Description = $Description
+    }
+
+    $sobr = Add-VBRBackupRepository -ScaleOut @sobrParams -ErrorAction Stop
+
+    Write-Output "SOBR '$SOBRName' created successfully"
+
+    # Configure Capacity Tier if enabled
+    if ($EnableCapacityTier -and $CapacityTierType) {
+        Write-Output "Configuring capacity tier ($CapacityTierType)..."
+
+        # Get object storage repository for capacity tier
+        $capacityRepo = Get-VBRObjectStorageRepository | Where-Object { $_.Type -match $CapacityTierType } | Select-Object -First 1
+
+        if ($capacityRepo) {
+            # Enable capacity tier
+            $capacityTierParams = @{
+                Repository = $sobr
+                ObjectStorageRepository = $capacityRepo
+                OperationalRestorePeriod = $OperationalRestorePeriod
+                OverrideTransferPolicy = $OverrideTransferPolicy
+                ImmediateCapacityTierCopy = $ImmediateCapacityTierCopy
+            }
+
+            Set-VBRCapacityTier @capacityTierParams -ErrorAction Stop
+
+            Write-Output "Capacity tier configured: Operational restore period = $OperationalRestorePeriod days"
+        } else {
+            Write-Warning "No object storage repository found for capacity tier type: $CapacityTierType"
+        }
+    }
+
+    # Configure Archive Tier if enabled
+    if ($EnableArchiveTier -and $ArchiveTierType) {
+        Write-Output "Configuring archive tier ($ArchiveTierType)..."
+
+        # Get archive object storage
+        $archiveRepo = Get-VBRObjectStorageRepository | Where-Object { $_.Type -match $ArchiveTierType } | Select-Object -First 1
+
+        if ($archiveRepo) {
+            # Enable archive tier
+            $archiveTierParams = @{
+                Repository = $sobr
+                ArchiveRepository = $archiveRepo
+                ArchivePeriod = $ArchivePeriod
+                CostOptimized = $true
+            }
+
+            Set-VBRArchiveTier @archiveTierParams -ErrorAction Stop
+
+            Write-Output "Archive tier configured: Archive after $ArchivePeriod days"
+        } else {
+            Write-Warning "No archive storage repository found for type: $ArchiveTierType"
+        }
+    }
+
+    # Output SOBR details
+    $sobrInfo = @{
+        Name = $sobr.Name
+        Type = "ScaleOut"
+        Extents = $extents | ForEach-Object { $_.Name }
+        PlacementPolicy = $PolicyType
+        CapacityTierEnabled = $EnableCapacityTier
+        ArchiveTierEnabled = $EnableArchiveTier
+        Status = "Created"
+    }
+
+    $sobrInfo | ConvertTo-Json -Depth 3
+
+} catch {
+    Write-Error "Error configuring SOBR: $_"
+    throw
+}

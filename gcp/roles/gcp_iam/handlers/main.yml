@@ -1,0 +1,53 @@
+---
+# handlers file for gcp_iam
+
+- name: Rotate service account keys
+  ansible.builtin.command:
+    cmd: >
+      gcloud iam service-accounts keys list
+      --iam-account={{ item }}@{{ gcp_project_id }}.iam.gserviceaccount.com
+      --filter="validAfterTime<-P{{ gcp_iam_key_rotation_days }}D"
+      --format="value(name)"
+  loop: "{{ gcp_iam_service_accounts | map(attribute='name') | list }}"
+  register: old_keys
+  changed_when: false
+  when: gcp_iam_enable_key_rotation | bool
+
+- name: Delete old service account keys
+  ansible.builtin.command:
+    cmd: >
+      gcloud iam service-accounts keys delete {{ item.1 }}
+      --iam-account={{ item.0 }}@{{ gcp_project_id }}.iam.gserviceaccount.com
+      --quiet
+  loop: "{{ old_keys.results | subelements('stdout_lines', skip_missing=True) }}"
+  when:
+    - gcp_iam_enable_key_rotation | bool
+    - old_keys is defined
+    - item.1 | length > 0
+  changed_when: true
+
+- name: Audit IAM policy changes
+  ansible.builtin.command:
+    cmd: >
+      gcloud logging read
+      "protoPayload.serviceName=cloudresourcemanager.googleapis.com AND
+       protoPayload.methodName=SetIamPolicy"
+      --limit=50
+      --format=json
+      --project={{ gcp_project_id }}
+  register: iam_changes
+  changed_when: false
+
+- name: Send IAM audit report
+  ansible.builtin.copy:
+    content: "{{ iam_changes.stdout }}"
+    dest: "{{ gcp_iam_artifacts_dir }}/iam_changes_{{ ansible_date_time.epoch }}.json"
+    mode: '0644'
+  when:
+    - gcp_iam_artifacts_dir is defined
+    - iam_changes.stdout is defined
+
+- name: Notify security team of IAM changes
+  ansible.builtin.debug:
+    msg: "IAM policy changes detected. Review audit report at {{ gcp_iam_artifacts_dir }}/iam_changes_{{ ansible_date_time.epoch }}.json"
+  when: iam_changes.stdout is defined and iam_changes.stdout | length > 0

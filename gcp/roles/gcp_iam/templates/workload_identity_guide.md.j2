@@ -1,0 +1,65 @@
+# Workload Identity Configuration Guide
+
+## Project: {{ gcp_project_id }}
+
+## Overview
+This document describes the Workload Identity configuration for GKE clusters in the Fourth Estate infrastructure.
+
+## Workload Identity Bindings
+
+{% for binding in gcp_iam_workload_identity_bindings %}
+### {{ binding.gcp_service_account }}
+
+- **GCP Service Account**: `{{ binding.gcp_service_account }}@{{ gcp_project_id }}.iam.gserviceaccount.com`
+- **Kubernetes Namespace**: `{{ binding.k8s_namespace }}`
+- **Kubernetes Service Account**: `{{ binding.k8s_service_account }}`
+
+#### Configuration Applied:
+```bash
+gcloud iam service-accounts add-iam-policy-binding \
+  {{ binding.gcp_service_account }}@{{ gcp_project_id }}.iam.gserviceaccount.com \
+  --role=roles/iam.workloadIdentityUser \
+  --member="serviceAccount:{{ gcp_project_id }}.svc.id.goog[{{ binding.k8s_namespace }}/{{ binding.k8s_service_account }}]"
+```
+
+#### Kubernetes Service Account Annotation:
+```yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ binding.k8s_service_account }}
+  namespace: {{ binding.k8s_namespace }}
+  annotations:
+    iam.gke.io/gcp-service-account: {{ binding.gcp_service_account }}@{{ gcp_project_id }}.iam.gserviceaccount.com
+```
+
+{% endfor %}
+
+## Security Considerations for Fourth Estate
+
+1. **Source Protection**: All journalist workspace pods must use Workload Identity with dedicated service accounts
+2. **Audit Logging**: All service account access is logged for FedRAMP compliance
+3. **Least Privilege**: Each workload has minimal required permissions
+4. **Key Rotation**: No service account keys are used; Workload Identity provides automatic credential rotation
+
+## Verification
+
+Test Workload Identity from within a pod:
+
+```bash
+# From inside a pod
+curl -H "Metadata-Flavor: Google" \
+  http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/email
+```
+
+## Troubleshooting
+
+If Workload Identity is not working:
+
+1. Verify GKE cluster has Workload Identity enabled
+2. Check service account annotation on Kubernetes SA
+3. Verify IAM binding with: `gcloud iam service-accounts get-iam-policy`
+4. Check pod logs for authentication errors
+
+---
+Generated: {{ ansible_date_time.iso8601 }}

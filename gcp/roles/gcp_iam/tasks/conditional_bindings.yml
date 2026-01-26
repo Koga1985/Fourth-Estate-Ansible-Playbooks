@@ -1,0 +1,24 @@
+---
+# Conditional IAM policy bindings for attribute-based and time-based access control
+
+- name: Create conditional IAM bindings configuration
+  ansible.builtin.template:
+    src: conditional_binding.json.j2
+    dest: "{{ gcp_iam_artifacts_dir }}/conditional_binding_{{ item.name }}.json"
+    mode: '0644'
+  loop: "{{ gcp_iam_conditional_bindings }}"
+  when: gcp_iam_artifacts_dir is defined
+
+- name: Apply conditional IAM bindings
+  ansible.builtin.command:
+    cmd: >
+      gcloud projects add-iam-policy-binding {{ gcp_project_id }}
+      --member={{ item.member }}
+      --role={{ item.role }}
+      --condition={{ item.condition | to_json | quote }}
+  loop: "{{ gcp_iam_conditional_bindings }}"
+  register: conditional_binding_result
+  changed_when: "'Updated IAM policy' in conditional_binding_result.stdout"
+  failed_when:
+    - conditional_binding_result.rc != 0
+    - "'already exists' not in conditional_binding_result.stderr"

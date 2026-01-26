@@ -1,0 +1,154 @@
+---
+# Main tasks file for k8s_pod_security role
+# Pod Security Standards and Admission Control
+
+- name: Validate Kubernetes version for Pod Security Admission
+  ansible.builtin.assert:
+    that:
+      - k8s_version is version('1.23', '>=')
+    fail_msg: "Pod Security Admission requires Kubernetes 1.23 or higher"
+  when: k8s_version is defined
+  tags:
+    - preflight
+
+- name: Create Pod Security Admission configuration
+  kubernetes.core.k8s:
+    state: present
+    definition: "{{ lookup('template', 'pod-security-admission-config.yaml.j2') }}"
+  when: k8s_pod_security_admission_enabled | bool
+  tags:
+    - pod-security-admission
+
+- name: Apply Pod Security Standards to namespaces
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: "{{ item.namespace }}"
+        labels:
+          pod-security.kubernetes.io/enforce: "{{ item.enforce | default(k8s_pod_security_default_enforce) }}"
+          pod-security.kubernetes.io/enforce-version: "{{ item.enforce_version | default('latest') }}"
+          pod-security.kubernetes.io/audit: "{{ item.audit | default(k8s_pod_security_default_audit) }}"
+          pod-security.kubernetes.io/warn: "{{ item.warn | default(k8s_pod_security_default_warn) }}"
+  loop: "{{ k8s_pod_security_namespaces }}"
+  tags:
+    - pod-security-standards
+    - namespaces
+
+- name: Create restricted Pod Security Policy template
+  kubernetes.core.k8s:
+    state: present
+    definition: "{{ lookup('template', 'psp-restricted.yaml.j2') }}"
+  when:
+    - k8s_pod_security_psp_enabled | bool
+    - k8s_version is version('1.25', '<')  # PSP deprecated in 1.25
+  tags:
+    - pod-security-policy
+    - restricted
+
+- name: Create baseline Pod Security Policy template
+  kubernetes.core.k8s:
+    state: present
+    definition: "{{ lookup('template', 'psp-baseline.yaml.j2') }}"
+  when:
+    - k8s_pod_security_psp_enabled | bool
+    - k8s_version is version('1.25', '<')
+  tags:
+    - pod-security-policy
+    - baseline
+
+- name: Deploy Security Context Constraints
+  kubernetes.core.k8s:
+    state: present
+    definition: "{{ lookup('template', 'security-context-template.yaml.j2') }}"
+    namespace: "{{ item }}"
+  loop: "{{ k8s_pod_security_namespaces | map(attribute='namespace') | list }}"
+  tags:
+    - security-context
+
+- name: Create AppArmor profiles ConfigMap
+  kubernetes.core.k8s:
+    state: present
+    definition: "{{ lookup('template', 'apparmor-profiles.yaml.j2') }}"
+  when: k8s_pod_security_apparmor_enabled | bool
+  tags:
+    - apparmor
+
+- name: Deploy seccomp profiles
+  kubernetes.core.k8s:
+    state: present
+    definition: "{{ lookup('template', 'seccomp-profiles.yaml.j2') }}"
+  when: k8s_pod_security_seccomp_enabled | bool
+  tags:
+    - seccomp
+
+- name: Configure SELinux contexts
+  kubernetes.core.k8s:
+    state: present
+    definition: "{{ lookup('template', 'selinux-context.yaml.j2') }}"
+  when: k8s_pod_security_selinux_enabled | bool
+  tags:
+    - selinux
+
+- name: Create RuntimeClass configurations
+  kubernetes.core.k8s:
+    state: present
+    definition: "{{ lookup('template', 'runtime-class.yaml.j2') }}"
+  loop: "{{ k8s_pod_security_runtime_classes }}"
+  when: k8s_pod_security_runtime_classes is defined
+  tags:
+    - runtime-class
+
+- name: Deploy Pod Security webhook
+  kubernetes.core.k8s:
+    state: present
+    definition: "{{ lookup('template', 'pod-security-webhook.yaml.j2') }}"
+  when: k8s_pod_security_webhook_enabled | bool
+  tags:
+    - webhook
+
+- name: Create capability drop policies
+  kubernetes.core.k8s:
+    state: present
+    definition: "{{ lookup('template', 'capability-policies.yaml.j2') }}"
+  tags:
+    - capabilities
+
+- name: Apply non-root enforcement policies
+  kubernetes.core.k8s:
+    state: present
+    definition: "{{ lookup('template', 'non-root-enforcement.yaml.j2') }}"
+  when: k8s_pod_security_enforce_non_root | bool
+  tags:
+    - non-root
+
+- name: Configure read-only root filesystem
+  kubernetes.core.k8s:
+    state: present
+    definition: "{{ lookup('template', 'readonly-rootfs.yaml.j2') }}"
+  when: k8s_pod_security_readonly_rootfs | bool
+  tags:
+    - readonly-rootfs
+
+- name: Validate Pod Security configurations
+  kubernetes.core.k8s_info:
+    kind: Namespace
+    label_selectors:
+      - "pod-security.kubernetes.io/enforce"
+  register: pod_security_validation
+  tags:
+    - validation
+
+- name: Display Pod Security summary
+  ansible.builtin.debug:
+    msg:
+      - "Pod Security Standards Applied"
+      - "Default Enforce Level: {{ k8s_pod_security_default_enforce }}"
+      - "Default Audit Level: {{ k8s_pod_security_default_audit }}"
+      - "Namespaces Configured: {{ pod_security_validation.resources | length }}"
+      - "Non-root Enforcement: {{ k8s_pod_security_enforce_non_root }}"
+      - "Read-only Root FS: {{ k8s_pod_security_readonly_rootfs }}"
+  tags:
+    - always

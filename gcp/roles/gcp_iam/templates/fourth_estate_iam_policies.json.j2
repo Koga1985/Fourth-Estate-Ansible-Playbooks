@@ -1,0 +1,84 @@
+{
+  "fourth_estate_iam_policies": {
+    "project_id": "{{ gcp_project_id }}",
+    "compliance_mode": {
+      "fedramp": {{ gcp_iam_fedramp_mode | lower }},
+      "cjis": {{ gcp_iam_cjis_mode | lower }},
+      "source_protection": {{ gcp_iam_source_protection_mode | lower }}
+    },
+    "role_definitions": {
+      "editorial_staff": {
+        "description": "Editorial staff with content management access",
+        "permissions": [
+          "storage.buckets.get",
+          "storage.objects.create",
+          "storage.objects.get",
+          "storage.objects.list",
+          "pubsub.topics.publish",
+          "cloudkms.cryptoKeyVersions.useToEncrypt"
+        ],
+        "conditions": {
+          "ip_allowlist": "{{ gcp_iam_editorial_ip_range | default('0.0.0.0/0') }}",
+          "time_based": true,
+          "business_hours_only": true
+        }
+      },
+      "publishing_system": {
+        "description": "Automated publishing system service account",
+        "permissions": [
+          "storage.buckets.get",
+          "storage.objects.create",
+          "storage.objects.delete",
+          "storage.objects.get",
+          "storage.objects.list",
+          "storage.objects.update",
+          "pubsub.topics.publish",
+          "pubsub.subscriptions.consume",
+          "cdn.cacheInvalidations.create"
+        ],
+        "workload_identity_enabled": true
+      },
+      "security_team": {
+        "description": "Security team with monitoring and audit access",
+        "permissions": [
+          "securitycenter.findings.list",
+          "securitycenter.sources.get",
+          "logging.logEntries.list",
+          "logging.logs.list",
+          "monitoring.timeSeries.list",
+          "iam.serviceAccounts.list",
+          "iam.roles.list"
+        ],
+        "audit_exempt": false
+      },
+      "journalist_workspace": {
+        "description": "Journalist secure workspace access",
+        "permissions": [
+          "storage.buckets.get",
+          "storage.objects.create",
+          "storage.objects.get",
+          "cloudkms.cryptoKeyVersions.useToEncrypt",
+          "cloudkms.cryptoKeyVersions.useToDecrypt",
+          "secretmanager.versions.access"
+        ],
+        "conditions": {
+          "source_protection_enabled": true,
+          "encryption_required": true,
+          "audit_all_access": true
+        }
+      }
+    },
+    "organization_policies": {
+      "domain_restriction": "{{ gcp_iam_domain_restriction }}",
+      "external_access_allowed": false,
+      "service_account_key_creation": "restricted",
+      "mfa_required": true
+    },
+    "audit_configuration": {
+      "retention_days": {{ gcp_iam_audit_retention_days }},
+      "log_all_access": true,
+      "data_access_logs_enabled": true,
+      "export_to_siem": true
+    }
+  }
+}

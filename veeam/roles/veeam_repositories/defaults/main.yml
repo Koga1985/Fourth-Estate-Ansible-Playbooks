@@ -1,0 +1,233 @@
+---
+# defaults file for veeam_repositories
+# Veeam Backup & Replication repository configuration for Fourth Estate agencies
+
+# General settings
+veeam_debug: false
+veeam_no_log: true
+veeam_generate_documentation: true
+veeam_documentation_path: "C:\\VeeamConfig\\Docs"
+
+# Capacity planning alerts
+veeam_enable_capacity_alerts: true
+veeam_capacity_warning_threshold: 80
+veeam_capacity_critical_threshold: 90
+veeam_capacity_alert_email: "backup-admin@news-agency.example.com"
+
+# Standard backup repositories
+veeam_repositories:
+  - name: "Production-Backup-Repository"
+    type: windows
+    path: "E:\\VeeamBackup\\Production"
+    description: "Primary backup repository for production systems"
+    max_concurrent_tasks: 8
+    per_vm_backup_files: true
+    enable_deduplication: false
+    compression_level: 5
+    rotate_vbk_monthly: true
+    enable_maintenance: true
+    compact_full_backup: true
+    compact_schedule_enabled: true
+    compact_schedule_time: "22:00"
+    remove_deleted_items_days: 7
+    health_check_enabled: true
+    health_check_schedule: "Weekly"
+    test_connectivity: true
+    state: present
+
+  - name: "Editorial-Backup-Repository"
+    type: windows
+    path: "F:\\VeeamBackup\\Editorial"
+    description: "Backup repository for editorial systems and journalist workspaces"
+    max_concurrent_tasks: 6
+    per_vm_backup_files: true
+    enable_deduplication: false
+    compression_level: 6
+    rotate_vbk_monthly: true
+    encryption_enabled: true
+    encryption_password: "{{ vault_veeam_editorial_encryption_password }}"
+    encryption_description: "AES-256 encryption for editorial content"
+    enable_maintenance: true
+    compact_full_backup: true
+    health_check_enabled: true
+    state: present
+
+  - name: "Database-Backup-Repository"
+    type: windows
+    path: "G:\\VeeamBackup\\Database"
+    description: "Backup repository for SQL Server, PostgreSQL, and MySQL databases"
+    max_concurrent_tasks: 4
+    per_vm_backup_files: true
+    enable_deduplication: false
+    compression_level: 4
+    rotate_vbk_monthly: false
+    encryption_enabled: true
+    encryption_password: "{{ vault_veeam_database_encryption_password }}"
+    enable_maintenance: true
+    compact_full_backup: true
+    health_check_enabled: true
+    state: present
+
+  - name: "Hardened-Linux-Repository"
+    type: linux
+    host: "veeam-hardened-repo01.news-agency.example.com"
+    path: "/backup/veeam/immutable"
+    username: "veeambackup"
+    password: "{{ vault_veeam_linux_repo_password }}"
+    description: "Immutable Linux repository for ransomware protection"
+    max_concurrent_tasks: 8
+    immutable: true
+    immutability_period_days: 14
+    encryption_enabled: true
+    encryption_password: "{{ vault_veeam_immutable_encryption_password }}"
+    state: present
+
+  - name: "Archive-Repository"
+    type: windows
+    path: "H:\\VeeamBackup\\Archive"
+    description: "Long-term archive repository for compliance (365+ days)"
+    max_concurrent_tasks: 2
+    per_vm_backup_files: true
+    enable_deduplication: true
+    compression_level: 9
+    rotate_vbk_monthly: true
+    enable_maintenance: true
+    compact_full_backup: false
+    remove_deleted_items_days: 730
+    state: present
+
+# Scale-Out Backup Repository (SOBR) configurations
+veeam_sobr_repositories:
+  - name: "Enterprise-SOBR"
+    description: "Scale-Out Backup Repository with cloud capacity tier"
+    performance_tier_repos:
+      - "Production-Backup-Repository"
+      - "Editorial-Backup-Repository"
+      - "Database-Backup-Repository"
+    policy_type: "DataLocality"  # DataLocality or PerformanceTier
+    enable_capacity_tier: true
+    capacity_tier_type: "AzureBlob"  # AzureBlob, S3Compatible, S3, GoogleCloud
+    operational_restore_days: 14
+    override_transfer_policy: true
+    immediate_capacity_copy: false
+    enable_archive_tier: true
+    archive_tier_type: "AzureArchive"
+    archive_period_days: 365
+    state: present
+
+  - name: "Source-Protection-SOBR"
+    description: "SOBR for source protection and investigative journalism data"
+    performance_tier_repos:
+      - "Editorial-Backup-Repository"
+      - "Hardened-Linux-Repository"
+    policy_type: "DataLocality"
+    enable_capacity_tier: true
+    capacity_tier_type: "S3Compatible"
+    operational_restore_days: 30
+    override_transfer_policy: false
+    immediate_capacity_copy: false
+    enable_archive_tier: true
+    archive_tier_type: "S3Glacier"
+    archive_period_days: 730
+    state: present
+
+# Object storage repositories
+veeam_object_storage_repositories:
+  - name: "Azure-Blob-Capacity-Tier"
+    storage_type: "AzureBlob"
+    service_point: "https://newsagencystorage.blob.core.windows.net"
+    region: "eastus"
+    bucket_name: "veeam-capacity-tier"
+    access_key: "{{ vault_azure_storage_account_name }}"
+    secret_key: "{{ vault_azure_storage_account_key }}"
+    folder_path: "/capacity-tier"
+    description: "Azure Blob Storage for SOBR capacity tier"
+    size_limit_gb: 0
+    immutable: true
+    immutability_period_days: 14
+    state: present
+
+  - name: "S3-Compatible-Archive"
+    storage_type: "S3Compatible"
+    service_point: "https://s3.us-east-1.wasabisys.com"
+    region: "us-east-1"
+    bucket_name: "news-agency-veeam-archive"
+    access_key: "{{ vault_s3_access_key }}"
+    secret_key: "{{ vault_s3_secret_key }}"
+    folder_path: "/archive"
+    description: "S3-compatible storage for long-term archive"
+    size_limit_gb: 0
+    immutable: true
+    immutability_period_days: 30
+    state: present
+
+  - name: "GCS-DR-Repository"
+    storage_type: "GoogleCloud"
+    service_point: "https://storage.googleapis.com"
+    region: "us-east1"
+    bucket_name: "news-agency-veeam-dr"
+    access_key: "{{ vault_gcs_access_key }}"
+    secret_key: "{{ vault_gcs_secret_key }}"
+    folder_path: "/dr-backups"
+    description: "Google Cloud Storage for disaster recovery"
+    size_limit_gb: 0
+    immutable: false
+    state: present
+
+# Fourth Estate specific repository settings
+veeam_fourth_estate_retention_days: 365
+veeam_source_protection_retention_days: 730
+veeam_compliance_retention_years: 7
+
+# Repository performance tuning
+veeam_repository_block_size: "1024KB"  # 1MB, 512KB, 256KB, 128KB
+veeam_repository_cache_size_gb: 4
+
+# Immutability settings for ransomware protection
+veeam_default_immutability_enabled: true
+veeam_default_immutability_period_days: 14
+veeam_immutability_compliance_mode: false  # Set to true for SEC compliance
+
+# Deduplication settings
+veeam_enable_storage_optimization: true
+veeam_deduplication_block_size: "1024KB"
+
+# Encryption defaults
+veeam_default_encryption_enabled: true
+veeam_encryption_algorithm: "AES256"
+
+# Maintenance windows
+veeam_maintenance_window_start: "22:00"
+veeam_maintenance_window_end: "06:00"
+veeam_maintenance_days: ["Saturday", "Sunday"]
+
+# Monitoring thresholds
+veeam_repository_monitor_enabled: true
+veeam_repository_latency_threshold_ms: 100
+veeam_repository_iops_threshold: 1000
+
+# Backup file settings
+veeam_use_per_vm_backup_files: true
+veeam_enable_inline_deduplication: false
+veeam_enable_inline_compression: true
+veeam_default_compression_level: 5  # 0 (None) to 9 (Extreme)
+
+# Repository rotation
+veeam_enable_repository_rotation: true
+veeam_rotation_schedule: "Monthly"
+
+# Health check settings
+veeam_health_check_enabled: true
+veeam_health_check_schedule: "Weekly"
+veeam_health_check_day: "Sunday"
+veeam_health_check_time: "03:00"
+
+# Capacity tier offload settings
+veeam_capacity_tier_offload_window_hours: 168  # 7 days
+veeam_capacity_tier_transfer_window_start: "20:00"
+veeam_capacity_tier_transfer_window_end: "08:00"
+
+# Archive tier settings
+veeam_archive_tier_enabled: true
+veeam_archive_tier_after_days: 365
+veeam_archive_tier_cost_optimized: true

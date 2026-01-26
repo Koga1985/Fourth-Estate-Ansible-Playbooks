@@ -1,0 +1,29 @@
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ item.name }}
+  namespace: {{ item.namespace }}
+  labels:
+    app.kubernetes.io/managed-by: ansible
+    security.fourth-estate.io/policy-type: pod-to-pod
+spec:
+  podSelector:
+    matchLabels:
+      {{ item.pod_selector | to_nice_yaml | indent(6) }}
+  policyTypes:
+    - Egress
+  egress:
+{% for rule in item.allow_to %}
+    - to:
+        - podSelector:
+            matchLabels:
+              {{ rule.pod_selector | to_nice_yaml | indent(14) }}
+{% if rule.ports is defined %}
+      ports:
+{% for port in rule.ports %}
+        - protocol: {{ port.protocol }}
+          port: {{ port.port }}
+{% endfor %}
+{% endif %}
+{% endfor %}

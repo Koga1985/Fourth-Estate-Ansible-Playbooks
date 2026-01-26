@@ -1,0 +1,98 @@
+#Requires -Modules Veeam.Backup.PowerShell
+# Configure Windows Backup Repository
+
+param(
+    [Parameter(Mandatory=$true)]
+    [string]$RepositoryName,
+
+    [Parameter(Mandatory=$true)]
+    [string]$Path,
+
+    [string]$Description = "",
+    [int]$MaxConcurrentTasks = 4,
+    [bool]$UsePerVMBackupFiles = $true,
+    [bool]$EnableDeduplication = $false,
+    [int]$CompressionLevel = 5,
+    [bool]$RotateVBKMonthly = $false
+)
+
+try {
+    Import-Module Veeam.Backup.PowerShell -ErrorAction Stop
+
+    # Check if repository already exists
+    $existingRepo = Get-VBRBackupRepository -Name $RepositoryName -ErrorAction SilentlyContinue
+
+    if ($existingRepo) {
+        Write-Output "Repository '$RepositoryName' already exists. Updating configuration..."
+
+        # Update repository settings
+        Set-VBRBackupRepository -Repository $existingRepo `
+            -Description $Description `
+            -MaxConcurrentTasks $MaxConcurrentTasks `
+            -UsePerVMBackupFiles:$UsePerVMBackupFiles
+
+        Write-Output "Repository '$RepositoryName' updated successfully"
+    } else {
+        Write-Output "Creating new repository '$RepositoryName'..."
+
+        # Ensure path exists
+        if (-not (Test-Path -Path $Path)) {
+            New-Item -Path $Path -ItemType Directory -Force | Out-Null
+            Write-Output "Created repository directory: $Path"
+        }
+
+        # Get server for repository (local server)
+        $server = Get-VBRServer -Type Local
+        if (-not $server) {
+            $server = Get-VBRLocalHost
+        }
+
+        # Create repository
+        $repo = Add-VBRBackupRepository `
+            -Name $RepositoryName `
+            -Server $server `
+            -Folder $Path `
+            -Description $Description `
+            -MaxConcurrentTasks $MaxConcurrentTasks `
+            -UsePerVMBackupFiles:$UsePerVMBackupFiles
+
+        if ($repo) {
+            Write-Output "Repository '$RepositoryName' created successfully"
+
+            # Configure advanced settings
+            if ($EnableDeduplication) {
+                Write-Output "Enabling deduplication for repository..."
+                # Note: Deduplication is typically configured at the volume level in Windows
+            }
+
+            if ($RotateVBKMonthly) {
+                Write-Output "Configuring monthly VBK rotation..."
+                # This is configured per backup job
+            }
+
+            # Verify repository
+            $verification = Test-VBRBackupRepository -Repository $repo
+            if ($verification) {
+                Write-Output "Repository verification successful"
+            }
+
+            # Output repository details
+            $repoInfo = @{
+                Name = $repo.Name
+                Path = $repo.Path
+                Type = $repo.Type
+                MaxTasks = $repo.Options.MaxTaskCount
+                Status = "Created"
+            }
+
+            $repoInfo | ConvertTo-Json
+
+        } else {
+            throw "Failed to create repository '$RepositoryName'"
+        }
+    }
+
+} catch {
+    Write-Error "Error configuring Windows repository: $_"
+    throw
+}

@@ -1,0 +1,199 @@
+---
+# tasks file for gcp_iam
+# Fourth Estate GCP IAM Management
+# Manages service accounts, IAM policies, custom roles, and Workload Identity
+
+- name: Validate required variables
+  ansible.builtin.assert:
+    that:
+      - gcp_project_id is defined
+      - gcp_iam_service_accounts is defined or gcp_iam_custom_roles is defined or gcp_iam_policy_bindings is defined
+    fail_msg: "Required variables missing: gcp_project_id and at least one IAM configuration"
+    quiet: true
+
+- name: Create service accounts
+  google.cloud.gcp_iam_service_account:
+    name: "{{ item.name }}"
+    display_name: "{{ item.display_name | default(item.name) }}"
+    description: "{{ item.description | default(omit) }}"
+    project: "{{ gcp_project_id }}"
+    state: present
+    auth_kind: "{{ gcp_auth_kind }}"
+    service_account_file: "{{ gcp_service_account_file | default(omit) }}"
+  loop: "{{ gcp_iam_service_accounts }}"
+  register: gcp_service_accounts_created
+  when: gcp_iam_service_accounts | length > 0
+
+- name: Create service account keys
+  ansible.builtin.command:
+    cmd: >
+      gcloud iam service-accounts keys create
+      {{ gcp_iam_keys_output_dir }}/{{ item.name }}-key.json
+      --iam-account={{ item.name }}@{{ gcp_project_id }}.iam.gserviceaccount.com
+      --project={{ gcp_project_id }}
+  loop: "{{ gcp_iam_service_accounts }}"
+  when:
+    - gcp_iam_service_accounts | length > 0
+    - item.create_key | default(false)
+    - gcp_iam_keys_output_dir is defined
+  register: sa_key_creation
+  changed_when: "'created key' in sa_key_creation.stdout"
+  failed_when:
+    - sa_key_creation.rc != 0
+    - "'already exists' not in sa_key_creation.stderr"
+
+- name: Set service account key permissions
+  ansible.builtin.file:
+    path: "{{ gcp_iam_keys_output_dir }}/{{ item.name }}-key.json"
+    mode: '0600'
+  loop: "{{ gcp_iam_service_accounts }}"
+  when:
+    - gcp_iam_service_accounts | length > 0
+    - item.create_key | default(false)
+    - gcp_iam_keys_output_dir is defined
+
+- name: Create custom IAM roles
+  ansible.builtin.command:
+    cmd: >
+      gcloud iam roles create {{ item.role_id }}
+      --project={{ gcp_project_id }}
+      --title="{{ item.title }}"
+      --description="{{ item.description }}"
+      --permissions={{ item.permissions | join(',') }}
+      --stage={{ item.stage | default('GA') }}
+  loop: "{{ gcp_iam_custom_roles }}"
+  when: gcp_iam_custom_roles | length > 0
+  register: custom_role_creation
+  changed_when: "'Created role' in custom_role_creation.stdout"
+  failed_when:
+    - custom_role_creation.rc != 0
+    - "'already exists' not in custom_role_creation.stderr"
+
+- name: Update existing custom IAM roles
+  ansible.builtin.command:
+    cmd: >
+      gcloud iam roles update {{ item.role_id }}
+      --project={{ gcp_project_id }}
+      --permissions={{ item.permissions | join(',') }}
+  loop: "{{ gcp_iam_custom_roles }}"
+  when:
+    - gcp_iam_custom_roles | length > 0
+    - item.update_if_exists | default(true)
+  register: custom_role_update
+  changed_when: "'Updated role' in custom_role_update.stdout"
+  failed_when:
+    - custom_role_update.rc != 0
+    - "'does not exist' not in custom_role_update.stderr"
+
+- name: Apply IAM policy bindings at project level
+  google.cloud.gcp_resourcemanager_project_iam_member:
+    project: "{{ gcp_project_id }}"
+    role: "{{ item.role }}"
+    member: "{{ item.member }}"
+    state: present
+    auth_kind: "{{ gcp_auth_kind }}"
+    service_account_file: "{{ gcp_service_account_file | default(omit) }}"
+  loop: "{{ gcp_iam_policy_bindings }}"
+  when: gcp_iam_policy_bindings | length > 0
+
+- name: Apply conditional IAM policy bindings
+  ansible.builtin.include_tasks: conditional_bindings.yml
+  when:
+    - gcp_iam_conditional_bindings is defined
+    - gcp_iam_conditional_bindings | length > 0
+
+- name: Configure Workload Identity for GKE
+  ansible.builtin.include_tasks: workload_identity.yml
+  when:
+    - gcp_iam_enable_workload_identity | bool
+    - gcp_iam_workload_identity_bindings is defined
+
+- name: Grant service account impersonation permissions
+  ansible.builtin.command:
+    cmd: >
+      gcloud iam service-accounts add-iam-policy-binding
+      {{ item.service_account }}@{{ gcp_project_id }}.iam.gserviceaccount.com
+      --member={{ item.member }}
+      --role=roles/iam.serviceAccountTokenCreator
+      --project={{ gcp_project_id }}
+  loop: "{{ gcp_iam_impersonation_bindings }}"
+  when: gcp_iam_impersonation_bindings | length > 0
+  register: impersonation_binding
+  changed_when: "'Updated IAM policy' in impersonation_binding.stdout"
+
+- name: Configure organization-level IAM policies
+  ansible.builtin.include_tasks: organization_policies.yml
+  when:
+    - gcp_organization_id is defined
+    - gcp_iam_org_policy_bindings is defined
+    - gcp_iam_org_policy_bindings | length > 0
+
+- name: Configure folder-level IAM policies
+  ansible.builtin.include_tasks: folder_policies.yml
+  when:
+    - gcp_iam_folder_policy_bindings is defined
+    - gcp_iam_folder_policy_bindings | length > 0
+
+- name: Enable service account key rotation policy
+  ansible.builtin.template:
+    src: key_rotation_policy.json.j2
+    dest: "{{ gcp_iam_artifacts_dir }}/key_rotation_policy.json"
+    mode: '0644'
+  when:
+    - gcp_iam_enable_key_rotation | bool
+    - gcp_iam_artifacts_dir is defined
+
+- name: Audit IAM policy inheritance
+  ansible.builtin.command:
+    cmd: >
+      gcloud projects get-iam-policy {{ gcp_project_id }}
+      --flatten="bindings[].members"
+      --format="table(bindings.role,bindings.members)"
+  register: iam_audit
+  changed_when: false
+  when: gcp_iam_enable_audit | bool
+
+- name: Save IAM audit report
+  ansible.builtin.copy:
+    content: "{{ iam_audit.stdout }}"
+    dest: "{{ gcp_iam_artifacts_dir }}/iam_audit_{{ ansible_date_time.date }}.txt"
+    mode: '0644'
+  when:
+    - gcp_iam_enable_audit | bool
+    - gcp_iam_artifacts_dir is defined
+    - iam_audit.stdout is defined
+
+- name: Configure IAM audit logging
+  ansible.builtin.template:
+    src: audit_config.json.j2
+    dest: "{{ gcp_iam_artifacts_dir }}/audit_config.json"
+    mode: '0644'
+  when: gcp_iam_artifacts_dir is defined
+
+- name: Apply audit logging configuration
+  ansible.builtin.command:
+    cmd: >
+      gcloud projects set-iam-policy {{ gcp_project_id }}
+      {{ gcp_iam_artifacts_dir }}/audit_config.json
+  when:
+    - gcp_iam_enable_audit_logging | bool
+    - gcp_iam_artifacts_dir is defined
+  register: audit_config_apply
+  changed_when: "'Updated IAM policy' in audit_config_apply.stdout"
+
+- name: Create Fourth Estate compliance IAM policies
+  ansible.builtin.template:
+    src: fourth_estate_iam_policies.json.j2
+    dest: "{{ gcp_iam_artifacts_dir }}/fourth_estate_policies.json"
+    mode: '0644'
+  when: gcp_iam_artifacts_dir is defined
+
+- name: Display IAM configuration summary
+  ansible.builtin.debug:
+    msg:
+      - "GCP IAM configuration completed"
+      - "Service Accounts Created: {{ gcp_service_accounts_created.results | length if gcp_service_accounts_created.results is defined else 0 }}"
+      - "Custom Roles Created: {{ gcp_iam_custom_roles | length }}"
+      - "Policy Bindings Applied: {{ gcp_iam_policy_bindings | length }}"
+      - "Workload Identity: {{ gcp_iam_enable_workload_identity }}"
+      - "Audit Logging: {{ gcp_iam_enable_audit_logging }}"

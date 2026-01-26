@@ -1,0 +1,34 @@
+---
+# Handlers for k8s_network_policies role
+
+- name: Validate network policies
+  kubernetes.core.k8s_info:
+    kind: NetworkPolicy
+    namespace: "{{ item }}"
+  loop: "{{ k8s_network_policy_namespaces }}"
+  register: validated_policies
+
+- name: Restart network policy controller
+  kubernetes.core.k8s:
+    state: restarted
+    kind: Deployment
+    namespace: kube-system
+    name: "{{ k8s_network_policy_controller_name | default('calico-kube-controllers') }}"
+  when: k8s_network_policy_controller_name is defined
+
+- name: Log network policy changes
+  ansible.builtin.debug:
+    msg: "Network policies updated at {{ ansible_date_time.iso8601 }}"
+
+- name: Notify monitoring system
+  ansible.builtin.uri:
+    url: "{{ k8s_network_policy_webhook_url }}"
+    method: POST
+    body_format: json
+    body:
+      event: network_policy_updated
+      timestamp: "{{ ansible_date_time.iso8601 }}"
+      namespaces: "{{ k8s_network_policy_namespaces }}"
+    status_code: [200, 201, 202]
+  when: k8s_network_policy_webhook_url is defined
+  ignore_errors: true
