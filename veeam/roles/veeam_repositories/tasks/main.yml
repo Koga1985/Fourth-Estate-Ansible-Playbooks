@@ -1,0 +1,227 @@
+---
+# tasks file for veeam_repositories
+# Manages Veeam Backup & Replication repositories including SOBR, object storage, and immutable backups
+
+- name: Import Veeam PowerShell module
+  ansible.windows.win_powershell:
+    script: |
+      Import-Module Veeam.Backup.PowerShell -ErrorAction SilentlyContinue
+      if (-not (Get-Module Veeam.Backup.PowerShell)) {
+        throw "Veeam PowerShell module not loaded"
+      }
+  tags: [veeam, repositories]
+
+- name: Create backup repository directories
+  ansible.windows.win_file:
+    path: "{{ item.path }}"
+    state: directory
+  loop: "{{ veeam_repositories }}"
+  when:
+    - item.type == 'windows'
+    - item.path is defined
+  tags: [veeam, repositories]
+
+- name: Configure Windows backup repositories
+  ansible.windows.win_powershell:
+    script: "{{ lookup('template', 'configure_windows_repository.ps1.j2') }}"
+    parameters:
+      RepositoryName: "{{ item.name }}"
+      Path: "{{ item.path }}"
+      Description: "{{ item.description | default('Backup repository for ' + item.name) }}"
+      MaxConcurrentTasks: "{{ item.max_concurrent_tasks | default(4) }}"
+      UsePerVMBackupFiles: "{{ item.per_vm_backup_files | default(true) }}"
+      EnableDeduplication: "{{ item.enable_deduplication | default(false) }}"
+      CompressionLevel: "{{ item.compression_level | default(5) }}"
+      RotateVBKMonthly: "{{ item.rotate_vbk_monthly | default(false) }}"
+  loop: "{{ veeam_repositories }}"
+  when:
+    - item.type == 'windows'
+    - item.state | default('present') == 'present'
+  register: windows_repo_result
+  tags: [veeam, repositories]
+
+- name: Configure Linux backup repositories
+  ansible.windows.win_powershell:
+    script: "{{ lookup('template', 'configure_linux_repository.ps1.j2') }}"
+    parameters:
+      RepositoryName: "{{ item.name }}"
+      HostName: "{{ item.host }}"
+      Path: "{{ item.path }}"
+      Username: "{{ item.username }}"
+      Password: "{{ item.password }}"
+      Description: "{{ item.description | default('Linux backup repository') }}"
+      MaxConcurrentTasks: "{{ item.max_concurrent_tasks | default(4) }}"
+      UseImmutability: "{{ item.immutable | default(true) }}"
+      ImmutabilityPeriod: "{{ item.immutability_period_days | default(14) }}"
+  loop: "{{ veeam_repositories }}"
+  when:
+    - item.type == 'linux'
+    - item.state | default('present') == 'present'
+  no_log: "{{ veeam_no_log | default(true) }}"
+  register: linux_repo_result
+  tags: [veeam, repositories, hardened]
+
+- name: Configure Scale-Out Backup Repository (SOBR)
+  ansible.windows.win_powershell:
+    script: "{{ lookup('template', 'configure_sobr.ps1.j2') }}"
+    parameters:
+      SOBRName: "{{ item.name }}"
+      Description: "{{ item.description | default('Scale-Out Backup Repository') }}"
+      PerformanceTier: "{{ item.performance_tier_repos | to_json }}"
+      PolicyType: "{{ item.policy_type | default('DataLocality') }}"
+      EnableCapacityTier: "{{ item.enable_capacity_tier | default(false) }}"
+      CapacityTierType: "{{ item.capacity_tier_type | default('') }}"
+      OperationalRestorePeriod: "{{ item.operational_restore_days | default(7) }}"
+      OverrideTransferPolicy: "{{ item.override_transfer_policy | default(false) }}"
+      ImmediateCapacityTierCopy: "{{ item.immediate_capacity_copy | default(false) }}"
+      EnableArchiveTier: "{{ item.enable_archive_tier | default(false) }}"
+      ArchiveTierType: "{{ item.archive_tier_type | default('') }}"
+      ArchivePeriod: "{{ item.archive_period_days | default(365) }}"
+  loop: "{{ veeam_sobr_repositories }}"
+  when:
+    - veeam_sobr_repositories is defined
+    - item.state | default('present') == 'present'
+  register: sobr_result
+  tags: [veeam, repositories, sobr]
+
+- name: Configure object storage repositories (S3/Azure/GCS)
+  ansible.windows.win_powershell:
+    script: "{{ lookup('template', 'configure_object_storage.ps1.j2') }}"
+    parameters:
+      RepositoryName: "{{ item.name }}"
+      StorageType: "{{ item.storage_type }}"
+      ServicePoint: "{{ item.service_point }}"
+      Region: "{{ item.region | default('') }}"
+      BucketName: "{{ item.bucket_name }}"
+      AccessKey: "{{ item.access_key }}"
+      SecretKey: "{{ item.secret_key }}"
+      FolderPath: "{{ item.folder_path | default('/') }}"
+      Description: "{{ item.description | default('Object storage repository') }}"
+      SizeLimit: "{{ item.size_limit_gb | default(0) }}"
+      EnableImmutability: "{{ item.immutable | default(false) }}"
+      ImmutabilityPeriod: "{{ item.immutability_period_days | default(14) }}"
+  loop: "{{ veeam_object_storage_repositories }}"
+  when:
+    - veeam_object_storage_repositories is defined
+    - item.state | default('present') == 'present'
+  no_log: "{{ veeam_no_log | default(true) }}"
+  register: object_storage_result
+  tags: [veeam, repositories, object-storage]
+
+- name: Configure repository encryption
+  ansible.windows.win_powershell:
+    script: "{{ lookup('template', 'configure_repository_encryption.ps1.j2') }}"
+    parameters:
+      RepositoryName: "{{ item.name }}"
+      EnableEncryption: "{{ item.encryption_enabled | default(true) }}"
+      EncryptionPassword: "{{ item.encryption_password }}"
+      Description: "{{ item.encryption_description | default('AES-256 encryption') }}"
+  loop: "{{ veeam_repositories + (veeam_object_storage_repositories | default([])) }}"
+  when:
+    - item.encryption_enabled | default(false)
+    - item.encryption_password is defined
+    - item.state | default('present') == 'present'
+  no_log: "{{ veeam_no_log | default(true) }}"
+  tags: [veeam, repositories, encryption]
+
+- name: Configure repository maintenance settings
+  ansible.windows.win_powershell:
+    script: "{{ lookup('template', 'configure_repository_maintenance.ps1.j2') }}"
+    parameters:
+      RepositoryName: "{{ item.name }}"
+      EnableCompactFullBackup: "{{ item.compact_full_backup | default(true) }}"
+      CompactScheduleEnabled: "{{ item.compact_schedule_enabled | default(true) }}"
+      CompactScheduleTime: "{{ item.compact_schedule_time | default('22:00') }}"
+      RemoveDeletedItemsAfterDays: "{{ item.remove_deleted_items_days | default(7) }}"
+      HealthCheckEnabled: "{{ item.health_check_enabled | default(true) }}"
+      HealthCheckSchedule: "{{ item.health_check_schedule | default('Weekly') }}"
+  loop: "{{ veeam_repositories }}"
+  when:
+    - item.enable_maintenance | default(true)
+    - item.state | default('present') == 'present'
+  tags: [veeam, repositories, maintenance]
+
+- name: Verify repository capacity and status
+  ansible.windows.win_powershell:
+    script: |
+      Import-Module Veeam.Backup.PowerShell
+      $repos = Get-VBRBackupRepository
+      $results = @()
+      foreach ($repo in $repos) {
+        $results += [PSCustomObject]@{
+          Name = $repo.Name
+          Type = $repo.Type
+          Path = $repo.Path
+          TotalSpaceGB = [math]::Round($repo.GetContainer().CachedTotalSpace.InGigabytes, 2)
+          FreeSpaceGB = [math]::Round($repo.GetContainer().CachedFreeSpace.InGigabytes, 2)
+          UsedSpacePercent = [math]::Round((($repo.GetContainer().CachedTotalSpace.InGigabytes - $repo.GetContainer().CachedFreeSpace.InGigabytes) / $repo.GetContainer().CachedTotalSpace.InGigabytes) * 100, 2)
+        }
+      }
+      $results | ConvertTo-Json -Depth 3
+  register: repository_status
+  changed_when: false
+  tags: [veeam, repositories, verify]
+
+- name: Display repository status
+  ansible.builtin.debug:
+    msg: "{{ repository_status.output | from_json }}"
+  when: veeam_debug | default(false)
+  tags: [veeam, repositories, verify]
+
+- name: Configure capacity planning alerts
+  ansible.windows.win_powershell:
+    script: "{{ lookup('template', 'configure_capacity_alerts.ps1.j2') }}"
+    parameters:
+      WarningThresholdPercent: "{{ veeam_capacity_warning_threshold | default(80) }}"
+      CriticalThresholdPercent: "{{ veeam_capacity_critical_threshold | default(90) }}"
+      EmailNotification: "{{ veeam_capacity_alert_email | default('') }}"
+  when: veeam_enable_capacity_alerts | default(true)
+  tags: [veeam, repositories, alerts]
+
+- name: Configure immutable backup storage (hardened repository)
+  ansible.windows.win_powershell:
+    script: "{{ lookup('template', 'configure_immutable_storage.ps1.j2') }}"
+    parameters:
+      RepositoryName: "{{ item.name }}"
+      ImmutabilityEnabled: true
+      ImmutabilityPeriodDays: "{{ item.immutability_period_days | default(14) }}"
+      EnableCompliance: "{{ item.compliance_mode | default(false) }}"
+  loop: "{{ veeam_repositories }}"
+  when:
+    - item.type == 'linux'
+    - item.immutable | default(false)
+    - item.state | default('present') == 'present'
+  register: immutable_config
+  tags: [veeam, repositories, immutable, ransomware-protection]
+
+- name: Test repository connectivity and permissions
+  ansible.windows.win_powershell:
+    script: |
+      Import-Module Veeam.Backup.PowerShell
+      $repo = Get-VBRBackupRepository -Name "{{ item.name }}"
+      if ($repo) {
+        try {
+          $testFile = Join-Path $repo.Path "veeam_connectivity_test_$(Get-Date -Format 'yyyyMMddHHmmss').tmp"
+          "Test" | Out-File -FilePath $testFile -Force
+          Remove-Item -Path $testFile -Force
+          Write-Output "SUCCESS: Repository {{ item.name }} is accessible and writable"
+        } catch {
+          Write-Error "FAILED: Repository {{ item.name }} connectivity test failed: $_"
+        }
+      } else {
+        Write-Error "Repository {{ item.name }} not found"
+      }
+  loop: "{{ veeam_repositories }}"
+  when:
+    - item.type == 'windows'
+    - item.test_connectivity | default(true)
+  register: connectivity_test
+  failed_when: "'FAILED' in connectivity_test.error"
+  tags: [veeam, repositories, test]
+
+- name: Generate repository documentation
+  ansible.windows.win_copy:
+    content: "{{ lookup('template', 'repository_documentation.md.j2') }}"
+    dest: "{{ veeam_documentation_path | default('C:\\VeeamConfig\\Docs') }}\\repositories_{{ ansible_date_time.date }}.md"
+  when: veeam_generate_documentation | default(true)
+  tags: [veeam, repositories, documentation]

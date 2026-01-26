@@ -1,0 +1,32 @@
+---
+# Handlers for k8s_pod_security role
+
+- name: Restart API server
+  ansible.builtin.systemd:
+    name: kube-apiserver
+    state: restarted
+  when: k8s_pod_security_restart_apiserver | default(false)
+
+- name: Validate Pod Security Admission
+  kubernetes.core.k8s_info:
+    kind: Namespace
+    label_selectors:
+      - "pod-security.kubernetes.io/enforce"
+  register: psa_validation
+
+- name: Log Pod Security changes
+  ansible.builtin.debug:
+    msg: "Pod Security configurations updated at {{ ansible_date_time.iso8601 }}"
+
+- name: Notify security team
+  ansible.builtin.uri:
+    url: "{{ k8s_pod_security_notification_url }}"
+    method: POST
+    body_format: json
+    body:
+      event: pod_security_updated
+      timestamp: "{{ ansible_date_time.iso8601 }}"
+      enforce_level: "{{ k8s_pod_security_default_enforce }}"
+    status_code: [200, 201, 202]
+  when: k8s_pod_security_notification_url is defined
+  ignore_errors: true

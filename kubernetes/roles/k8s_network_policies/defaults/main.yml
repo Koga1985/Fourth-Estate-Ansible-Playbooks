@@ -1,0 +1,172 @@
+---
+# Default variables for k8s_network_policies role
+# Fourth Estate Kubernetes Network Policy Management
+
+# General Settings
+k8s_network_policy_namespaces:
+  - default
+  - news-production
+  - news-development
+  - journalist-workspace
+  - source-protection
+  - publication-system
+  - content-management
+
+# Pod Security Standard
+k8s_pod_security_standard: restricted
+
+# Default Deny Policies
+k8s_network_policy_default_deny_ingress: true
+k8s_network_policy_default_deny_egress: true
+
+# Allow DNS Traffic
+k8s_network_policy_allow_dns: true
+k8s_network_policy_dns_namespace: kube-system
+k8s_network_policy_dns_selector:
+  k8s-app: kube-dns
+
+# Allow Monitoring Access
+k8s_network_policy_allow_monitoring: true
+k8s_network_policy_monitoring_namespace: monitoring
+k8s_network_policy_monitoring_selector:
+  app: prometheus
+
+# Allow Ingress Controller
+k8s_network_policy_allow_ingress_controller: true
+k8s_network_policy_ingress_namespace: ingress-nginx
+k8s_network_policy_ingress_selector:
+  app.kubernetes.io/name: ingress-nginx
+
+# Fourth Estate Specific Policies
+k8s_network_policy_fourth_estate_enabled: true
+
+# Namespace Isolation Configuration
+k8s_network_policy_namespace_isolation:
+  - namespace: source-protection
+    allow_namespaces:
+      - journalist-workspace
+    deny_all_other: true
+  - namespace: publication-system
+    allow_namespaces:
+      - news-production
+      - content-management
+    deny_all_other: true
+  - namespace: journalist-workspace
+    allow_namespaces:
+      - news-production
+      - news-development
+    deny_all_other: true
+
+# Pod-to-Pod Communication Rules
+k8s_network_policy_pod_to_pod:
+  - name: allow-frontend-to-backend
+    namespace: news-production
+    pod_selector:
+      app: frontend
+    allow_to:
+      - pod_selector:
+          app: backend
+        ports:
+          - protocol: TCP
+            port: 8080
+  - name: allow-backend-to-database
+    namespace: news-production
+    pod_selector:
+      app: backend
+    allow_to:
+      - pod_selector:
+          app: database
+        ports:
+          - protocol: TCP
+            port: 5432
+
+# External Service Access
+k8s_network_policy_external_services:
+  - name: allow-external-apis
+    namespace: news-production
+    pod_selector:
+      app: api-gateway
+    egress_rules:
+      - to:
+          - ipBlock:
+              cidr: 0.0.0.0/0
+              except:
+                - 169.254.169.254/32  # Block AWS metadata
+                - 10.0.0.0/8
+                - 172.16.0.0/12
+                - 192.168.0.0/16
+        ports:
+          - protocol: TCP
+            port: 443
+          - protocol: TCP
+            port: 80
+
+# CIDR-Based Rules
+k8s_network_policy_cidr_rules:
+  - name: allow-office-network
+    namespace: default
+    pod_selector:
+      environment: production
+    ingress_rules:
+      - from:
+          - ipBlock:
+              cidr: 10.100.0.0/16  # Corporate office network
+        ports:
+          - protocol: TCP
+            port: 443
+
+# Custom Network Policies
+k8s_network_policy_custom: []
+
+# Network Policy Provider Settings
+k8s_network_policy_provider: calico  # Options: calico, cilium, weave, antrea
+
+# Logging and Monitoring
+k8s_network_policy_enable_logging: true
+k8s_network_policy_log_level: info
+
+# Compliance Settings
+k8s_network_policy_compliance_mode: strict  # Options: strict, permissive
+k8s_network_policy_audit_logging: true
+
+# Fourth Estate Division Isolation
+k8s_network_policy_divisions:
+  - name: news-division
+    namespaces:
+      - news-production
+      - news-development
+    allow_cross_division: false
+  - name: investigative-journalism
+    namespaces:
+      - journalist-workspace
+      - source-protection
+    allow_cross_division: false
+    strict_isolation: true
+
+# Source Protection Workload Isolation
+k8s_network_policy_source_protection:
+  enabled: true
+  namespace: source-protection
+  deny_all_ingress: true
+  allow_only:
+    - namespace: journalist-workspace
+      pod_selector:
+        security-clearance: high
+        role: investigative-journalist
+
+# Web Property Deployment
+k8s_network_policy_web_properties:
+  - name: main-website
+    namespace: news-production
+    allow_internet_access: true
+    cdn_cidrs:
+      - 104.16.0.0/12  # Cloudflare
+      - 172.64.0.0/13  # Cloudflare
+
+# Rate Limiting (if supported by CNI)
+k8s_network_policy_rate_limiting:
+  enabled: false
+  default_rate: 100  # requests per second
+
+# Encryption Requirements
+k8s_network_policy_require_mtls: false  # Set true when service mesh is deployed

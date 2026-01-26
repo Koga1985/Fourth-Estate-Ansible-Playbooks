@@ -1,0 +1,115 @@
+#Requires -Modules Veeam.Backup.PowerShell
+# Configure Linux Hardened Repository with Immutability
+
+param(
+    [Parameter(Mandatory=$true)]
+    [string]$RepositoryName,
+
+    [Parameter(Mandatory=$true)]
+    [string]$HostName,
+
+    [Parameter(Mandatory=$true)]
+    [string]$Path,
+
+    [Parameter(Mandatory=$true)]
+    [string]$Username,
+
+    [Parameter(Mandatory=$true)]
+    [string]$Password,
+
+    [string]$Description = "Linux Hardened Repository",
+    [int]$MaxConcurrentTasks = 4,
+    [bool]$UseImmutability = $true,
+    [int]$ImmutabilityPeriod = 14
+)
+
+try {
+    Import-Module Veeam.Backup.PowerShell -ErrorAction Stop
+
+    # Check if repository already exists
+    $existingRepo = Get-VBRBackupRepository -Name $RepositoryName -ErrorAction SilentlyContinue
+
+    if ($existingRepo) {
+        Write-Output "Repository '$RepositoryName' already exists"
+        $existingRepo | ConvertTo-Json
+        return
+    }
+
+    Write-Output "Creating Linux hardened repository '$RepositoryName'..."
+
+    # Create credentials
+    $securePassword = ConvertTo-SecureString -String $Password -AsPlainText -Force
+    $credential = New-Object System.Management.Automation.PSCredential($Username, $securePassword)
+
+    # Check if Linux server is already added
+    $linuxServer = Get-VBRServer -Name $HostName -ErrorAction SilentlyContinue
+
+    if (-not $linuxServer) {
+        Write-Output "Adding Linux server '$HostName'..."
+
+        # Add Linux server
+        $linuxServer = Add-VBRLinux `
+            -Name $HostName `
+            -Credentials $credential `
+            -Description "Hardened repository server" `
+            -ErrorAction Stop
+
+        Write-Output "Linux server '$HostName' added successfully"
+    }
+
+    # Create Linux repository
+    Write-Output "Creating repository on Linux server..."
+
+    $repo = Add-VBRBackupRepository `
+        -Name $RepositoryName `
+        -Server $linuxServer `
+        -Folder $Path `
+        -Description $Description `
+        -MaxConcurrentTasks $MaxConcurrentTasks
+
+    if (-not $repo) {
+        throw "Failed to create Linux repository"
+    }
+
+    Write-Output "Repository created successfully"
+
+    # Configure immutability if enabled
+    if ($UseImmutability) {
+        Write-Output "Configuring immutability (ransomware protection)..."
+
+        # Enable immutability
+        Set-VBRBackupRepository -Repository $repo `
+            -MakeImmutable `
+            -ImmutabilityPeriodDays $ImmutabilityPeriod
+
+        Write-Output "Immutability enabled: $ImmutabilityPeriod days"
+    }
+
+    # Verify repository connection
+    Write-Output "Verifying repository connection..."
+    $testResult = Test-VBRBackupRepository -Repository $repo
+
+    if ($testResult) {
+        Write-Output "Repository verification successful"
+    } else {
+        Write-Warning "Repository verification failed"
+    }
+
+    # Output repository details
+    $repoInfo = @{
+        Name = $repo.Name
+        Type = "LinuxLocal"
+        Host = $HostName
+        Path = $Path
+        MaxTasks = $MaxConcurrentTasks
+        Immutable = $UseImmutability
+        ImmutabilityDays = $ImmutabilityPeriod
+        Status = "Created"
+    }
+
+    $repoInfo | ConvertTo-Json
+
+} catch {
+    Write-Error "Error configuring Linux repository: $_"
+    throw
+}

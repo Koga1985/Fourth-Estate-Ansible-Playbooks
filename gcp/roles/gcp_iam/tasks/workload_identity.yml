@@ -1,0 +1,29 @@
+---
+# Workload Identity configuration for GKE pods to assume GCP service accounts
+
+- name: Enable Workload Identity on service accounts
+  ansible.builtin.command:
+    cmd: >
+      gcloud iam service-accounts add-iam-policy-binding
+      {{ item.gcp_service_account }}@{{ gcp_project_id }}.iam.gserviceaccount.com
+      --role=roles/iam.workloadIdentityUser
+      --member="serviceAccount:{{ gcp_project_id }}.svc.id.goog[{{ item.k8s_namespace }}/{{ item.k8s_service_account }}]"
+      --project={{ gcp_project_id }}
+  loop: "{{ gcp_iam_workload_identity_bindings }}"
+  register: workload_identity_result
+  changed_when: "'Updated IAM policy' in workload_identity_result.stdout"
+
+- name: Create Workload Identity configuration documentation
+  ansible.builtin.template:
+    src: workload_identity_guide.md.j2
+    dest: "{{ gcp_iam_artifacts_dir }}/workload_identity_configuration.md"
+    mode: '0644'
+  when: gcp_iam_artifacts_dir is defined
+
+- name: Create Kubernetes service account annotation manifest
+  ansible.builtin.template:
+    src: k8s_service_account.yaml.j2
+    dest: "{{ gcp_iam_artifacts_dir }}/k8s_service_account_{{ item.k8s_service_account }}.yaml"
+    mode: '0644'
+  loop: "{{ gcp_iam_workload_identity_bindings }}"
+  when: gcp_iam_artifacts_dir is defined

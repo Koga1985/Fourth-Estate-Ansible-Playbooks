@@ -1,0 +1,222 @@
+#Requires -Modules Veeam.Backup.PowerShell
+# Configure Object Storage Repository (S3, Azure Blob, Google Cloud Storage)
+
+param(
+    [Parameter(Mandatory=$true)]
+    [string]$RepositoryName,
+
+    [Parameter(Mandatory=$true)]
+    [ValidateSet('AzureBlob', 'S3Compatible', 'S3', 'GoogleCloud')]
+    [string]$StorageType,
+
+    [Parameter(Mandatory=$true)]
+    [string]$ServicePoint,
+
+    [string]$Region = "",
+
+    [Parameter(Mandatory=$true)]
+    [string]$BucketName,
+
+    [Parameter(Mandatory=$true)]
+    [string]$AccessKey,
+
+    [Parameter(Mandatory=$true)]
+    [string]$SecretKey,
+
+    [string]$FolderPath = "/",
+    [string]$Description = "Object Storage Repository",
+    [int]$SizeLimit = 0,  # 0 = unlimited
+    [bool]$EnableImmutability = $false,
+    [int]$ImmutabilityPeriod = 14
+)
+
+try {
+    Import-Module Veeam.Backup.PowerShell -ErrorAction Stop
+
+    # Check if repository already exists
+    $existingRepo = Get-VBRObjectStorageRepository -Name $RepositoryName -ErrorAction SilentlyContinue
+
+    if ($existingRepo) {
+        Write-Output "Object storage repository '$RepositoryName' already exists"
+        $existingRepo | ConvertTo-Json -Depth 3
+        return
+    }
+
+    Write-Output "Creating object storage repository '$RepositoryName' (Type: $StorageType)..."
+
+    # Configure based on storage type
+    switch ($StorageType) {
+        'AzureBlob' {
+            Write-Output "Configuring Azure Blob Storage..."
+
+            # Create Azure credentials
+            $account = Add-VBRAzureAccount `
+                -Name "$RepositoryName-Account" `
+                -AccountName $AccessKey `
+                -SharedKey $SecretKey `
+                -ErrorAction Stop
+
+            # Add Azure Blob container
+            $container = Add-VBRAzureBlobContainer `
+                -Account $account `
+                -Container $BucketName `
+                -Name "$RepositoryName-Container" `
+                -ErrorAction Stop
+
+            # Create object storage repository
+            $repo = Add-VBRObjectStorageRepository `
+                -Name $RepositoryName `
+                -AzureBlobStorage $container `
+                -Folder $FolderPath `
+                -Description $Description `
+                -ErrorAction Stop
+
+            if ($SizeLimit -gt 0) {
+                Set-VBRObjectStorageRepository -Repository $repo -LimitSize $SizeLimit
+            }
+
+            Write-Output "Azure Blob repository created successfully"
+        }
+
+        'S3Compatible' {
+            Write-Output "Configuring S3-compatible storage..."
+
+            # Create S3-compatible credentials
+            $secureSecret = ConvertTo-SecureString -String $SecretKey -AsPlainText -Force
+            $credential = New-Object System.Management.Automation.PSCredential($AccessKey, $secureSecret)
+
+            # Add S3-compatible service
+            $s3Service = Add-VBRAmazonS3Service `
+                -ServicePoint $ServicePoint `
+                -Credential $credential `
+                -RegionName $Region `
+                -UseHttp:$false `
+                -ErrorAction Stop
+
+            # Add S3 bucket
+            $bucket = Add-VBRAmazonS3Bucket `
+                -Service $s3Service `
+                -Name $BucketName `
+                -Folder $FolderPath `
+                -Description $Description `
+                -ErrorAction Stop
+
+            # Create object storage repository
+            $repo = Add-VBRObjectStorageRepository `
+                -Name $RepositoryName `
+                -AmazonS3 $bucket `
+                -Description $Description `
+                -ErrorAction Stop
+
+            if ($SizeLimit -gt 0) {
+                Set-VBRObjectStorageRepository -Repository $repo -LimitSize $SizeLimit
+            }
+
+            Write-Output "S3-compatible repository created successfully"
+        }
+
+        'S3' {
+            Write-Output "Configuring AWS S3..."
+
+            # Create AWS credentials
+            $secureSecret = ConvertTo-SecureString -String $SecretKey -AsPlainText -Force
+            $credential = New-Object System.Management.Automation.PSCredential($AccessKey, $secureSecret)
+
+            # Add AWS account
+            $awsAccount = Add-VBRAmazonAccount `
+                -AccessKey $AccessKey `
+                -SecretKey $SecretKey `
+                -Description "AWS Account for $RepositoryName" `
+                -ErrorAction Stop
+
+            # Add S3 bucket
+            $bucket = Add-VBRAmazonS3Bucket `
+                -Account $awsAccount `
+                -Name $BucketName `
+                -Folder $FolderPath `
+                -Region $Region `
+                -Description $Description `
+                -ErrorAction Stop
+
+            # Create object storage repository
+            $repo = Add-VBRObjectStorageRepository `
+                -Name $RepositoryName `
+                -AmazonS3 $bucket `
+                -Description $Description `
+                -ErrorAction Stop
+
+            if ($SizeLimit -gt 0) {
+                Set-VBRObjectStorageRepository -Repository $repo -LimitSize $SizeLimit
+            }
+
+            Write-Output "AWS S3 repository created successfully"
+        }
+
+        'GoogleCloud' {
+            Write-Output "Configuring Google Cloud Storage..."
+
+            # Create Google Cloud credentials
+            $gcpAccount = Add-VBRGoogleCloudAccount `
+                -AccessKey $AccessKey `
+                -SecretKey $SecretKey `
+                -Description "GCP Account for $RepositoryName" `
+                -ErrorAction Stop
+
+            # Add Google Cloud bucket
+            $bucket = Add-VBRGoogleCloudBucket `
+                -Account $gcpAccount `
+                -Name $BucketName `
+                -Folder $FolderPath `
+                -Region $Region `
+                -Description $Description `
+                -ErrorAction Stop
+
+            # Create object storage repository
+            $repo = Add-VBRObjectStorageRepository `
+                -Name $RepositoryName `
+                -GoogleCloudStorage $bucket `
+                -Description $Description `
+                -ErrorAction Stop
+
+            if ($SizeLimit -gt 0) {
+                Set-VBRObjectStorageRepository -Repository $repo -LimitSize $SizeLimit
+            }
+
+            Write-Output "Google Cloud Storage repository created successfully"
+        }
+    }
+
+    # Configure immutability if supported and enabled
+    if ($EnableImmutability) {
+        Write-Output "Configuring immutability for ransomware protection..."
+
+        try {
+            Set-VBRObjectStorageRepository -Repository $repo `
+                -EnableImmutability `
+                -ImmutabilityPeriodDays $ImmutabilityPeriod `
+                -ErrorAction Stop
+
+            Write-Output "Immutability enabled: $ImmutabilityPeriod days"
+        } catch {
+            Write-Warning "Immutability configuration failed (may not be supported): $_"
+        }
+    }
+
+    # Output repository details
+    $repoInfo = @{
+        Name = $repo.Name
+        Type = $StorageType
+        ServicePoint = $ServicePoint
+        Bucket = $BucketName
+        Folder = $FolderPath
+        Immutable = $EnableImmutability
+        ImmutabilityDays = $ImmutabilityPeriod
+        Status = "Created"
+    }
+
+    $repoInfo | ConvertTo-Json -Depth 3
+
+} catch {
+    Write-Error "Error configuring object storage repository: $_"
+    throw
+}

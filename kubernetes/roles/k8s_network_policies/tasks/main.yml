@@ -1,0 +1,173 @@
+---
+# Main tasks file for k8s_network_policies role
+# Fourth Estate compliant network isolation and segmentation
+
+- name: Validate kubernetes.core collection is available
+  ansible.builtin.assert:
+    that:
+      - "lookup('ansible.builtin.pipe', 'ansible-galaxy collection list') is search('kubernetes.core')"
+    fail_msg: "kubernetes.core collection is required. Install with: ansible-galaxy collection install kubernetes.core"
+  tags:
+    - preflight
+    - validation
+
+- name: Create network policy namespace if not exists
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: "{{ item }}"
+        labels:
+          pod-security.kubernetes.io/enforce: "{{ k8s_pod_security_standard }}"
+          pod-security.kubernetes.io/audit: "{{ k8s_pod_security_standard }}"
+          pod-security.kubernetes.io/warn: "{{ k8s_pod_security_standard }}"
+  loop: "{{ k8s_network_policy_namespaces }}"
+  when: k8s_network_policy_namespaces is defined
+  tags:
+    - namespaces
+
+- name: Apply default deny-all ingress network policy
+  kubernetes.core.k8s:
+    state: present
+    definition: "{{ lookup('template', 'default-deny-all-ingress.yaml.j2') }}"
+    namespace: "{{ item }}"
+  loop: "{{ k8s_network_policy_namespaces }}"
+  when:
+    - k8s_network_policy_default_deny_ingress | bool
+    - k8s_network_policy_namespaces is defined
+  tags:
+    - network-policy
+    - deny-ingress
+
+- name: Apply default deny-all egress network policy
+  kubernetes.core.k8s:
+    state: present
+    definition: "{{ lookup('template', 'default-deny-all-egress.yaml.j2') }}"
+    namespace: "{{ item }}"
+  loop: "{{ k8s_network_policy_namespaces }}"
+  when:
+    - k8s_network_policy_default_deny_egress | bool
+    - k8s_network_policy_namespaces is defined
+  tags:
+    - network-policy
+    - deny-egress
+
+- name: Allow DNS traffic network policy
+  kubernetes.core.k8s:
+    state: present
+    definition: "{{ lookup('template', 'allow-dns-traffic.yaml.j2') }}"
+    namespace: "{{ item }}"
+  loop: "{{ k8s_network_policy_namespaces }}"
+  when: k8s_network_policy_allow_dns | bool
+  tags:
+    - network-policy
+    - dns
+
+- name: Allow kube-system monitoring access
+  kubernetes.core.k8s:
+    state: present
+    definition: "{{ lookup('template', 'allow-monitoring-access.yaml.j2') }}"
+    namespace: "{{ item }}"
+  loop: "{{ k8s_network_policy_namespaces }}"
+  when: k8s_network_policy_allow_monitoring | bool
+  tags:
+    - network-policy
+    - monitoring
+
+- name: Apply ingress controller access policy
+  kubernetes.core.k8s:
+    state: present
+    definition: "{{ lookup('template', 'allow-ingress-controller.yaml.j2') }}"
+    namespace: "{{ item }}"
+  loop: "{{ k8s_network_policy_namespaces }}"
+  when: k8s_network_policy_allow_ingress_controller | bool
+  tags:
+    - network-policy
+    - ingress
+
+- name: Apply namespace isolation policies
+  kubernetes.core.k8s:
+    state: present
+    definition: "{{ lookup('template', 'namespace-isolation.yaml.j2') }}"
+    namespace: "{{ item.namespace }}"
+  loop: "{{ k8s_network_policy_namespace_isolation }}"
+  when: k8s_network_policy_namespace_isolation is defined
+  tags:
+    - network-policy
+    - isolation
+
+- name: Apply pod-to-pod communication policies
+  kubernetes.core.k8s:
+    state: present
+    definition: "{{ lookup('template', 'pod-to-pod-policy.yaml.j2') }}"
+  loop: "{{ k8s_network_policy_pod_to_pod }}"
+  when: k8s_network_policy_pod_to_pod is defined
+  tags:
+    - network-policy
+    - pod-communication
+
+- name: Apply external service access policies
+  kubernetes.core.k8s:
+    state: present
+    definition: "{{ lookup('template', 'external-service-access.yaml.j2') }}"
+    namespace: "{{ item.namespace }}"
+  loop: "{{ k8s_network_policy_external_services }}"
+  when: k8s_network_policy_external_services is defined
+  tags:
+    - network-policy
+    - external-access
+
+- name: Apply Fourth Estate specific policies
+  kubernetes.core.k8s:
+    state: present
+    definition: "{{ lookup('template', 'fourth-estate-policies.yaml.j2') }}"
+  when: k8s_network_policy_fourth_estate_enabled | bool
+  tags:
+    - network-policy
+    - fourth-estate
+
+- name: Apply CIDR-based policies
+  kubernetes.core.k8s:
+    state: present
+    definition: "{{ lookup('template', 'cidr-based-policy.yaml.j2') }}"
+    namespace: "{{ item.namespace }}"
+  loop: "{{ k8s_network_policy_cidr_rules }}"
+  when: k8s_network_policy_cidr_rules is defined
+  tags:
+    - network-policy
+    - cidr
+
+- name: Apply custom network policies
+  kubernetes.core.k8s:
+    state: present
+    definition: "{{ item.definition }}"
+    namespace: "{{ item.namespace | default('default') }}"
+  loop: "{{ k8s_network_policy_custom }}"
+  when: k8s_network_policy_custom is defined
+  tags:
+    - network-policy
+    - custom
+
+- name: Validate network policies
+  kubernetes.core.k8s_info:
+    kind: NetworkPolicy
+    namespace: "{{ item }}"
+  loop: "{{ k8s_network_policy_namespaces }}"
+  register: network_policies_validation
+  tags:
+    - validation
+
+- name: Display network policy summary
+  ansible.builtin.debug:
+    msg:
+      - "Network Policies Applied Successfully"
+      - "Namespaces: {{ k8s_network_policy_namespaces | join(', ') }}"
+      - "Default Deny Ingress: {{ k8s_network_policy_default_deny_ingress }}"
+      - "Default Deny Egress: {{ k8s_network_policy_default_deny_egress }}"
+      - "DNS Allowed: {{ k8s_network_policy_allow_dns }}"
+      - "Monitoring Allowed: {{ k8s_network_policy_allow_monitoring }}"
+      - "Total Policies: {{ network_policies_validation.results | map(attribute='resources') | flatten | length }}"
+  tags:
+    - always

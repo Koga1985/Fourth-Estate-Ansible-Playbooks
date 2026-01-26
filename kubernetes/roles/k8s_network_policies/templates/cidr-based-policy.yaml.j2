@@ -1,0 +1,36 @@
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ item.name }}
+  namespace: {{ item.namespace }}
+  labels:
+    app.kubernetes.io/managed-by: ansible
+    security.fourth-estate.io/policy-type: cidr-based
+spec:
+  podSelector:
+    matchLabels:
+      {{ item.pod_selector | to_nice_yaml | indent(6) }}
+  policyTypes:
+    - Ingress
+  ingress:
+{% for rule in item.ingress_rules %}
+    - from:
+{% for from in rule.from %}
+        - ipBlock:
+            cidr: {{ from.ipBlock.cidr }}
+{% if from.ipBlock.except is defined %}
+            except:
+{% for except in from.ipBlock.except %}
+              - {{ except }}
+{% endfor %}
+{% endif %}
+{% endfor %}
+{% if rule.ports is defined %}
+      ports:
+{% for port in rule.ports %}
+        - protocol: {{ port.protocol }}
+          port: {{ port.port }}
+{% endfor %}
+{% endif %}
+{% endfor %}
