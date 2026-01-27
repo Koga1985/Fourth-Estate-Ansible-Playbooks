@@ -1,0 +1,296 @@
+---
+# Operational Technology (OT) Deployment Playbook
+# Entry point for OT/ICS infrastructure automation
+#
+# Usage:
+#   ansible-galaxy collection install -r requirements.yml
+#   ansible-playbook -i inventory site.yml --ask-vault-pass
+#
+# Tags:
+#   - inventory: Asset inventory
+#   - network: Network configuration
+#   - security: Security hardening
+#   - backup: Backup operations
+#   - compliance: Compliance checks
+#   - patching: Windows HMI patching
+
+- name: OT Infrastructure - Pre-Flight Checks
+  hosts: localhost
+  connection: local
+  gather_facts: true
+
+  tasks:
+    - name: Check for emergency freeze
+      ansible.builtin.fail:
+        msg: "EMERGENCY FREEZE ACTIVE - All OT changes are halted. Set ot_emergency_freeze=false to proceed."
+      when: ot_emergency_freeze | default(false) | bool
+      tags: ['always']
+
+    - name: Verify change window
+      ansible.builtin.include_role:
+        name: ot_change_window_guard
+      when: ot_change_window_enabled | default(true) | bool
+      tags: ['always']
+
+
+- name: OT Zone Model & Inventory
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    deploy_zone_model: true
+    deploy_inventory: true
+    deploy_topology: true
+
+  tasks:
+    # =========================================
+    # Phase 1: Zone Model
+    # =========================================
+    - name: Phase 1 - Zone Model Definition
+      ansible.builtin.include_role:
+        name: ot_zone_model
+      when: deploy_zone_model | bool
+      tags: ['zones', 'phase1']
+
+    # =========================================
+    # Phase 2: Asset Inventory
+    # =========================================
+    - name: Phase 2 - Inventory Model
+      ansible.builtin.include_role:
+        name: ot_inventory_model
+      when: deploy_inventory | bool
+      tags: ['inventory', 'phase2']
+
+    - name: Phase 2 - Asset Lifecycle
+      ansible.builtin.include_role:
+        name: ot_asset_lifecycle
+      when: deploy_inventory | bool
+      tags: ['inventory', 'phase2']
+
+    - name: Phase 2 - Firmware Register
+      ansible.builtin.include_role:
+        name: ot_firmware_register
+      when: deploy_inventory | bool
+      tags: ['inventory', 'firmware', 'phase2']
+
+    # =========================================
+    # Phase 3: Network Topology
+    # =========================================
+    - name: Phase 3 - Topology Baseline
+      ansible.builtin.include_role:
+        name: ot_topology_baseline
+      when: deploy_topology | bool
+      tags: ['topology', 'phase3']
+
+
+- name: OT Network Infrastructure
+  hosts: ot_network_devices
+  gather_facts: false
+
+  vars:
+    deploy_network_backup: true
+    deploy_timesync: true
+
+  tasks:
+    # =========================================
+    # Phase 4: Network Operations
+    # =========================================
+    - name: Phase 4 - Network Backup
+      ansible.builtin.include_role:
+        name: ot_network_backup
+      when: deploy_network_backup | bool
+      tags: ['network', 'backup', 'phase4']
+
+    - name: Phase 4 - Time Sync Baseline
+      ansible.builtin.include_role:
+        name: ot_timesync_baseline
+      when: deploy_timesync | bool
+      tags: ['network', 'timesync', 'phase4']
+
+
+- name: OT Firewall Configuration
+  hosts: ot_firewalls
+  gather_facts: false
+
+  vars:
+    deploy_firewall_backup: true
+    deploy_firewall_policy: true
+
+  tasks:
+    # =========================================
+    # Phase 5: Firewall Operations
+    # =========================================
+    - name: Phase 5 - Firewall Backup
+      ansible.builtin.include_role:
+        name: ot_firewall_backup
+      when: deploy_firewall_backup | bool
+      tags: ['firewall', 'backup', 'phase5']
+
+    - name: Phase 5 - Firewall Policy (Palo Alto)
+      ansible.builtin.include_role:
+        name: ot_firewall_policy_panos
+      when: deploy_firewall_policy | bool and (vendor | default('') == 'paloalto')
+      tags: ['firewall', 'policy', 'phase5']
+
+    - name: Phase 5 - Firewall Policy (Check Point)
+      ansible.builtin.include_role:
+        name: ot_firewall_policy_checkpoint
+      when: deploy_firewall_policy | bool and (vendor | default('') == 'checkpoint')
+      tags: ['firewall', 'policy', 'phase5']
+
+
+- name: OT Security Monitoring
+  hosts: ot_security_monitoring
+  become: true
+  gather_facts: true
+
+  vars:
+    deploy_sensors: true
+    deploy_idps: true
+    deploy_logging: true
+
+  tasks:
+    # =========================================
+    # Phase 6: Security Monitoring
+    # =========================================
+    - name: Phase 6 - Sensor Operations
+      ansible.builtin.include_role:
+        name: ot_sensor_ops
+      when: deploy_sensors | bool
+      tags: ['security', 'sensors', 'phase6']
+
+    - name: Phase 6 - IDPS Baseline
+      ansible.builtin.include_role:
+        name: ot_idps_baseline
+      when: deploy_idps | bool
+      tags: ['security', 'idps', 'phase6']
+
+    - name: Phase 6 - Logging Pipeline
+      ansible.builtin.include_role:
+        name: ot_logging_pipeline
+      when: deploy_logging | bool
+      tags: ['security', 'logging', 'phase6']
+
+
+- name: OT Windows Systems (HMI/Historians)
+  hosts: ot_windows_hosts
+  gather_facts: true
+
+  vars:
+    deploy_hmi_patching: true
+    deploy_historian_backup: true
+
+  tasks:
+    # =========================================
+    # Phase 7: Windows Systems
+    # =========================================
+    - name: Phase 7 - Windows HMI Patching
+      ansible.builtin.include_role:
+        name: ot_windows_hmi_patching
+      when: deploy_hmi_patching | bool
+      tags: ['windows', 'patching', 'phase7']
+
+    - name: Phase 7 - SCADA/Historian Backup
+      ansible.builtin.include_role:
+        name: ot_scada_historians_backup
+      when: deploy_historian_backup | bool
+      tags: ['windows', 'backup', 'phase7']
+
+
+- name: OT Remote Access & PKI
+  hosts: ot_dmz
+  become: true
+  gather_facts: true
+
+  vars:
+    deploy_bastion: true
+    deploy_pki: true
+    deploy_nac: true
+
+  tasks:
+    # =========================================
+    # Phase 8: Access Control
+    # =========================================
+    - name: Phase 8 - Remote Access Bastion
+      ansible.builtin.include_role:
+        name: ot_remote_access_bastion
+      when: deploy_bastion | bool and (device_type | default('') == 'bastion')
+      tags: ['access', 'bastion', 'phase8']
+
+    - name: Phase 8 - PKI Trust
+      ansible.builtin.include_role:
+        name: ot_pki_trust
+      when: deploy_pki | bool
+      tags: ['access', 'pki', 'phase8']
+
+    - name: Phase 8 - NAC Visibility
+      ansible.builtin.include_role:
+        name: ot_nac_visibility
+      when: deploy_nac | bool
+      tags: ['access', 'nac', 'phase8']
+
+
+- name: OT Compliance & Governance
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    deploy_compliance: true
+    deploy_allowlist: true
+    deploy_vuln_pipeline: true
+    deploy_metrics: true
+
+  tasks:
+    # =========================================
+    # Phase 9: Compliance
+    # =========================================
+    - name: Phase 9 - Compliance Pack
+      ansible.builtin.include_role:
+        name: ot_compliance_pack
+      when: deploy_compliance | bool
+      tags: ['compliance', 'phase9']
+
+    - name: Phase 9 - Allowlist Assist
+      ansible.builtin.include_role:
+        name: ot_allowlist_assist
+      when: deploy_allowlist | bool
+      tags: ['compliance', 'allowlist', 'phase9']
+
+    # =========================================
+    # Phase 10: Vulnerability Management
+    # =========================================
+    - name: Phase 10 - Vulnerability Pipeline
+      ansible.builtin.include_role:
+        name: ot_vuln_pipeline
+      when: deploy_vuln_pipeline | bool
+      tags: ['vulnerability', 'phase10']
+
+    # =========================================
+    # Phase 11: Metrics & Reporting
+    # =========================================
+    - name: Phase 11 - Metrics Reporting
+      ansible.builtin.include_role:
+        name: ot_metrics_reporting
+      when: deploy_metrics | bool
+      tags: ['metrics', 'reporting', 'phase11']
+
+
+- name: Deployment Summary
+  hosts: localhost
+  gather_facts: false
+
+  tasks:
+    - name: Display deployment summary
+      ansible.builtin.debug:
+        msg:
+          - "=== OT Infrastructure Deployment Complete ==="
+          - "Compliance Framework: {{ ot_compliance_framework | default('IEC62443') }}"
+          - "Security Level: {{ ot_compliance_level | default('SL2') }}"
+          - "Zone Model: Purdue {{ ot_purdue_model_version | default('5') }}"
+          - "Emergency Freeze: {{ 'ACTIVE' if ot_emergency_freeze | default(false) else 'Inactive' }}"
+          - "Change Window Enforcement: {{ 'Enabled' if ot_change_window_enabled | default(true) else 'Disabled' }}"
+          - "Backup Enabled: {{ 'Yes' if ot_backup_enabled | default(true) else 'No' }}"
+          - "Audit Logging: {{ 'Enabled' if ot_audit_enabled | default(true) else 'Disabled' }}"
+      tags: ['always']

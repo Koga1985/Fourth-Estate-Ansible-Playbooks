@@ -1,0 +1,351 @@
+---
+# OpenShift Container Platform Deployment Playbook
+# Entry point for OpenShift platform automation
+#
+# Usage:
+#   ansible-galaxy collection install -r requirements.yml
+#   ansible-playbook -i inventory site.yml --ask-vault-pass
+#
+# Tags:
+#   - rbac: RBAC and group sync
+#   - namespaces: Namespace management
+#   - network: Network policies, ingress
+#   - storage: Storage classes, ODF
+#   - monitoring: Prometheus, alerting
+#   - logging: Log forwarding
+#   - gitops: ArgoCD, pipelines
+#   - security: PSA, image signing, secrets
+#   - compliance: Gatekeeper, compliance operator
+
+- name: OpenShift Container Platform Configuration
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    # Deployment control - set to true to enable each component
+    deploy_rbac: true
+    deploy_namespaces: true
+    deploy_network_policies: true
+    deploy_storage: true
+    deploy_monitoring: true
+    deploy_logging: true
+    deploy_gitops: false
+    deploy_pipelines: false
+    deploy_service_mesh: false
+    deploy_security: true
+    deploy_compliance: true
+    deploy_acm: false
+    generate_drift_report: true
+
+  tasks:
+    # =========================================
+    # Phase 1: RBAC & Identity
+    # =========================================
+    - name: Phase 1 - RBAC Baseline
+      ansible.builtin.include_role:
+        name: ocp_rbac_baseline
+      when: deploy_rbac | bool
+      tags: ['rbac', 'phase1']
+
+    - name: Phase 1 - Group Sync
+      ansible.builtin.include_role:
+        name: ocp_group_sync
+      when: deploy_rbac | bool
+      tags: ['rbac', 'phase1']
+
+    - name: Phase 1 - SSO Tuning
+      ansible.builtin.include_role:
+        name: ocp_sso_tuning
+      when: deploy_rbac | bool
+      tags: ['rbac', 'phase1']
+
+    # =========================================
+    # Phase 2: Namespace Management
+    # =========================================
+    - name: Phase 2 - Namespace Blueprints
+      ansible.builtin.include_role:
+        name: ocp_namespace_blueprints
+      when: deploy_namespaces | bool
+      tags: ['namespaces', 'phase2']
+
+    - name: Phase 2 - Project Request Template
+      ansible.builtin.include_role:
+        name: ocp_project_request_template
+      when: deploy_namespaces | bool
+      tags: ['namespaces', 'phase2']
+
+    - name: Phase 2 - Resource Quotas & Limits
+      ansible.builtin.include_role:
+        name: ocp_resource_quotas_limits
+      when: deploy_namespaces | bool
+      tags: ['namespaces', 'phase2']
+
+    - name: Phase 2 - Labels & Annotations
+      ansible.builtin.include_role:
+        name: ocp_labels_annotations
+      when: deploy_namespaces | bool
+      tags: ['namespaces', 'phase2']
+
+    # =========================================
+    # Phase 3: Network Policies
+    # =========================================
+    - name: Phase 3 - Network Policies Baseline
+      ansible.builtin.include_role:
+        name: ocp_network_policies_baseline
+      when: deploy_network_policies | bool
+      tags: ['network', 'phase3']
+
+    - name: Phase 3 - Routes TLS Policy
+      ansible.builtin.include_role:
+        name: ocp_routes_tls_policy
+      when: deploy_network_policies | bool
+      tags: ['network', 'phase3']
+
+    - name: Phase 3 - Proxy Trust Bundle
+      ansible.builtin.include_role:
+        name: ocp_proxy_trust_bundle
+      when: deploy_network_policies | bool
+      tags: ['network', 'phase3']
+
+    # =========================================
+    # Phase 4: Storage
+    # =========================================
+    - name: Phase 4 - Storage Classes
+      ansible.builtin.include_role:
+        name: ocp_storage_classes
+      when: deploy_storage | bool
+      tags: ['storage', 'phase4']
+
+    - name: Phase 4 - CSI Operators
+      ansible.builtin.include_role:
+        name: ocp_csi_operators
+      when: deploy_storage | bool
+      tags: ['storage', 'phase4']
+
+    - name: Phase 4 - ODF Baseline
+      ansible.builtin.include_role:
+        name: ocp_odf_baseline
+      when: deploy_storage | bool and (enable_odf | default(false) | bool)
+      tags: ['storage', 'odf', 'phase4']
+
+    - name: Phase 4 - Snapshot Policies
+      ansible.builtin.include_role:
+        name: ocp_snapshot_policies
+      when: deploy_storage | bool
+      tags: ['storage', 'phase4']
+
+    # =========================================
+    # Phase 5: Monitoring
+    # =========================================
+    - name: Phase 5 - User Workload Monitoring
+      ansible.builtin.include_role:
+        name: ocp_monitoring_user_workloads
+      when: deploy_monitoring | bool
+      tags: ['monitoring', 'phase5']
+
+    - name: Phase 5 - Events Exporter
+      ansible.builtin.include_role:
+        name: ocp_events_exporter
+      when: deploy_monitoring | bool
+      tags: ['monitoring', 'phase5']
+
+    # =========================================
+    # Phase 6: Logging
+    # =========================================
+    - name: Phase 6 - Log Forwarding
+      ansible.builtin.include_role:
+        name: ocp_log_forwarding
+      when: deploy_logging | bool
+      tags: ['logging', 'phase6']
+
+    - name: Phase 6 - Audit Configuration
+      ansible.builtin.include_role:
+        name: ocp_audit_config
+      when: deploy_logging | bool
+      tags: ['logging', 'phase6']
+
+    # =========================================
+    # Phase 7: GitOps & Pipelines (Optional)
+    # =========================================
+    - name: Phase 7 - ArgoCD GitOps
+      ansible.builtin.include_role:
+        name: ocp_argocd_gitops
+      when: deploy_gitops | bool
+      tags: ['gitops', 'phase7']
+
+    - name: Phase 7 - Tekton Pipelines
+      ansible.builtin.include_role:
+        name: ocp_pipelines_tekton
+      when: deploy_pipelines | bool
+      tags: ['pipelines', 'phase7']
+
+    - name: Phase 7 - Build Configs
+      ansible.builtin.include_role:
+        name: ocp_build_configs
+      when: deploy_pipelines | bool
+      tags: ['pipelines', 'phase7']
+
+    # =========================================
+    # Phase 8: Service Mesh (Optional)
+    # =========================================
+    - name: Phase 8 - Service Mesh
+      ansible.builtin.include_role:
+        name: ocp_service_mesh
+      when: deploy_service_mesh | bool
+      tags: ['servicemesh', 'phase8']
+
+    - name: Phase 8 - Serverless Knative
+      ansible.builtin.include_role:
+        name: ocp_serverless_knative
+      when: deploy_service_mesh | bool
+      tags: ['serverless', 'phase8']
+
+    # =========================================
+    # Phase 9: Security
+    # =========================================
+    - name: Phase 9 - Pod Security Admission
+      ansible.builtin.include_role:
+        name: ocp_psa_enforce
+      when: deploy_security | bool
+      tags: ['security', 'phase9']
+
+    - name: Phase 9 - SCC Legacy Management
+      ansible.builtin.include_role:
+        name: ocp_scc_legacy_mgmt
+      when: deploy_security | bool
+      tags: ['security', 'phase9']
+
+    - name: Phase 9 - Secrets Management
+      ansible.builtin.include_role:
+        name: ocp_secrets_management
+      when: deploy_security | bool
+      tags: ['security', 'phase9']
+
+    - name: Phase 9 - Image Signing Policy
+      ansible.builtin.include_role:
+        name: ocp_image_signing_policy
+      when: deploy_security | bool
+      tags: ['security', 'phase9']
+
+    - name: Phase 9 - Cert Manager
+      ansible.builtin.include_role:
+        name: ocp_cert_manager_operator
+      when: deploy_security | bool
+      tags: ['security', 'phase9']
+
+    - name: Phase 9 - Internal Registry
+      ansible.builtin.include_role:
+        name: ocp_internal_registry
+      when: deploy_security | bool
+      tags: ['security', 'phase9']
+
+    - name: Phase 9 - Quay External Registry
+      ansible.builtin.include_role:
+        name: ocp_quay_external_registry
+      when: deploy_security | bool
+      tags: ['security', 'phase9']
+
+    # =========================================
+    # Phase 10: Compliance & Governance
+    # =========================================
+    - name: Phase 10 - Gatekeeper Policies
+      ansible.builtin.include_role:
+        name: ocp_gatekeeper_policies
+      when: deploy_compliance | bool
+      tags: ['compliance', 'phase10']
+
+    # =========================================
+    # Phase 11: Cluster Operations
+    # =========================================
+    - name: Phase 11 - Machine Configs
+      ansible.builtin.include_role:
+        name: ocp_machine_configs
+      tags: ['operations', 'phase11']
+
+    - name: Phase 11 - Node Tuning
+      ansible.builtin.include_role:
+        name: ocp_node_tuning
+      tags: ['operations', 'phase11']
+
+    - name: Phase 11 - Autoscaling (HPA/VPA)
+      ansible.builtin.include_role:
+        name: ocp_hpa_vpa_autoscaling
+      tags: ['operations', 'phase11']
+
+    - name: Phase 11 - Cluster Autoscaling
+      ansible.builtin.include_role:
+        name: ocp_autoscaling
+      tags: ['operations', 'phase11']
+
+    - name: Phase 11 - Maintenance Windows
+      ansible.builtin.include_role:
+        name: ocp_maintenance_windows
+      tags: ['operations', 'phase11']
+
+    - name: Phase 11 - Upgrade Channel
+      ansible.builtin.include_role:
+        name: ocp_upgrade_channel
+      tags: ['operations', 'phase11']
+
+    # =========================================
+    # Phase 12: ACM Multi-Cluster (Optional)
+    # =========================================
+    - name: Phase 12 - ACM Hub
+      ansible.builtin.include_role:
+        name: ocp_acm_hub
+      when: deploy_acm | bool
+      tags: ['acm', 'phase12']
+
+    - name: Phase 12 - ACM Cluster Sets
+      ansible.builtin.include_role:
+        name: ocp_acm_cluster_sets
+      when: deploy_acm | bool
+      tags: ['acm', 'phase12']
+
+    - name: Phase 12 - ACM Governance
+      ansible.builtin.include_role:
+        name: ocp_acm_governance
+      when: deploy_acm | bool
+      tags: ['acm', 'phase12']
+
+    - name: Phase 12 - Multicluster Services
+      ansible.builtin.include_role:
+        name: ocp_multicluster_services
+      when: deploy_acm | bool
+      tags: ['acm', 'phase12']
+
+    # =========================================
+    # Phase 13: Validation & Reporting
+    # =========================================
+    - name: Phase 13 - Preflight Drift Report
+      ansible.builtin.include_role:
+        name: ocp_preflight_drift_report
+      when: generate_drift_report | bool
+      tags: ['validation', 'phase13']
+
+    - name: Phase 13 - Cost Management
+      ansible.builtin.include_role:
+        name: ocp_cost_management
+      tags: ['validation', 'phase13']
+
+    # =========================================
+    # Deployment Summary
+    # =========================================
+    - name: Display deployment summary
+      ansible.builtin.debug:
+        msg:
+          - "=== OpenShift Deployment Complete ==="
+          - "Cluster: {{ ocp_cluster_name | default('production') }}"
+          - "API URL: {{ ocp_api_url | default('https://api.cluster.example.com:6443') }}"
+          - "RBAC: {{ 'Configured' if deploy_rbac else 'Skipped' }}"
+          - "Namespaces: {{ 'Configured' if deploy_namespaces else 'Skipped' }}"
+          - "Network Policies: {{ 'Configured' if deploy_network_policies else 'Skipped' }}"
+          - "Storage: {{ 'Configured' if deploy_storage else 'Skipped' }}"
+          - "Monitoring: {{ 'Configured' if deploy_monitoring else 'Skipped' }}"
+          - "Logging: {{ 'Configured' if deploy_logging else 'Skipped' }}"
+          - "GitOps: {{ 'Configured' if deploy_gitops else 'Skipped' }}"
+          - "Security: {{ 'Configured' if deploy_security else 'Skipped' }}"
+          - "Compliance: {{ 'Configured' if deploy_compliance else 'Skipped' }}"
+          - "ACM Multi-Cluster: {{ 'Configured' if deploy_acm else 'Skipped' }}"
+      tags: ['always']
