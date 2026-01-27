@@ -1,10 +1,144 @@
 ---
+# Claroty xDome Secure Remote Access - Audit Export Configuration
+# Fourth Estate OT/ICS Security Configuration
+
 artifacts_dir: "/tmp/claroty-artifacts"
+log_dir: "/var/log/claroty"
 
-# Log export filter
-logs_filter:
-  since: "24h"         # last 24 hours
-  severity: []         # optional: ["high","critical"]
-  limit: 5000
+# Claroty xDome API Configuration
+claroty:
+  base_url: "https://xdome.claroty.com/api"
+  token: "{{ lookup('env', 'CLAROTY_API_TOKEN') }}"
+  verify_ssl: true
+  timeout: 60
 
-csv_filename: "secure_access_logs.csv"
+# Audit Log Export Configuration
+audit_export:
+  enabled: true
+  export_formats: ["csv", "json", "syslog"]
+  time_range:
+    mode: "relative"              # relative, absolute
+    relative_range: "24h"         # 1h, 24h, 7d, 30d
+    start_time: ""                # ISO 8601 format for absolute
+    end_time: ""
+  log_types:
+    - "session_logs"              # Remote access session logs
+    - "user_activity"             # User actions and commands
+    - "connection_logs"           # Connection attempts
+    - "file_transfer_logs"        # File upload/download
+    - "command_execution"         # Command history (SSH)
+    - "failed_access"             # Failed login attempts
+    - "policy_violations"         # Session policy violations
+    - "mfa_events"                # MFA authentication events
+    - "certificate_events"        # Certificate authentication events
+  filters:
+    users: []                     # Filter by user email
+    user_types: []                # vendor, contractor, employee
+    session_ids: []
+    source_ips: []
+    protocols: []                 # rdp, ssh, vnc, https
+    min_severity: "info"          # debug, info, warning, error, critical
+    include_successful: true
+    include_failed: true
+    include_policy_violations: true
+  enrichment:
+    include_user_details: true
+    include_asset_details: true
+    include_session_recordings: false
+    include_geo_location: true
+
+# SIEM Integration
+siem_integration:
+  enabled: false
+  platform: "splunk"              # splunk, qradar, arcsight, sentinel
+  splunk:
+    hec_url: "https://splunk.agency.gov:8088/services/collector"
+    hec_token: "{{ lookup('env', 'SPLUNK_HEC_TOKEN') }}"
+    index: "claroty_audit"
+    sourcetype: "claroty:xdome:audit"
+    verify_ssl: true
+  qradar:
+    syslog_host: "qradar.agency.gov"
+    syslog_port: 514
+    protocol: "tcp"               # tcp, udp
+    facility: "local4"
+  arcsight:
+    cef_destination: "arcsight.agency.gov"
+    cef_port: 514
+  azure_sentinel:
+    workspace_id: "{{ lookup('env', 'AZURE_SENTINEL_WORKSPACE_ID') }}"
+    shared_key: "{{ lookup('env', 'AZURE_SENTINEL_KEY') }}"
+    log_type: "ClarotyXdomeAudit"
+
+# ServiceNow Integration (Incident Creation)
+servicenow_integration:
+  enabled: false
+  instance: "agency.service-now.com"
+  token: "{{ lookup('env', 'SERVICENOW_TOKEN') }}"
+  create_incidents_for:
+    - "policy_violations"
+    - "failed_access"
+    - "suspicious_activity"
+  incident_table: "incident"
+  assignment_group: "OT Security Team"
+  priority: "2"
+  category: "Security"
+
+# Forensic Investigation Support
+forensics:
+  enabled: true
+  session_recording_export: true
+  command_history_export: true
+  file_transfer_hashes: true
+  network_flow_export: true
+  screenshot_export: false
+
+# Compliance Reporting
+compliance:
+  enabled: true
+  standards:
+    - "nerc_cip"
+    - "iec_62443"
+    - "nist_800_82"
+  report_formats: ["pdf", "csv"]
+  include_summary: true
+  include_violations: true
+  include_remediation: true
+
+# Export Scheduling
+scheduled_exports:
+  enabled: false
+  schedule: "0 2 * * *"           # Daily at 2 AM (cron format)
+  retention_days: 365
+  compress: true
+  encrypt: true
+  encryption_key_id: "claroty-audit-key"
+
+# Export Destinations
+export_destinations:
+  local_filesystem:
+    enabled: true
+    path: "{{ artifacts_dir }}"
+  s3:
+    enabled: false
+    bucket: "agency-claroty-audit-logs"
+    region: "us-gov-west-1"
+    prefix: "xdome/audit/"
+    encryption: "AES256"
+  sftp:
+    enabled: false
+    host: "sftp.agency.gov"
+    port: 22
+    username: "claroty-export"
+    key_file: "/etc/claroty/sftp_key"
+    remote_path: "/audit/claroty/"
+
+# Notification Settings
+notifications:
+  enabled: true
+  notify_on_export_complete: true
+  notify_on_export_failure: true
+  notify_on_policy_violations: true
+  notification_recipients:
+    - "ot-security@agency.gov"
+    - "soc@agency.gov"

@@ -1,0 +1,95 @@
+---
+# Assign criticality ratings to OT assets for risk prioritization
+
+- name: Retrieve assets for criticality assessment
+  ansible.builtin.uri:
+    url: "{{ dragos_base_url }}/api/assets?limit={{ page_size }}"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ dragos_token }}"
+    return_content: true
+    status_code: 200
+    validate_certs: "{{ dragos_verify_ssl }}"
+  register: assets_for_criticality
+
+- name: Calculate criticality scores
+  ansible.builtin.set_fact:
+    asset_criticality_scores: |
+      {% set scores = [] %}
+      {% for asset in (assets_for_criticality.json.items | default(assets_for_criticality.json.data | default([]))) %}
+        {% set score = 0 %}
+        {% if asset.asset_type in ['PLC', 'Safety System'] %}{% set score = score + 40 %}{% endif %}
+        {% if asset.asset_type in ['HMI', 'SCADA Server'] %}{% set score = score + 30 %}{% endif %}
+        {% if asset.asset_type in ['Historian', 'Engineering Station'] %}{% set score = score + 20 %}{% endif %}
+        {% if asset.process_critical | default(false) %}{% set score = score + 30 %}{% endif %}
+        {% if asset.safety_critical | default(false) %}{% set score = score + 50 %}{% endif %}
+        {% if asset.availability_requirement == 'high' %}{% set score = score + 20 %}{% endif %}
+        {% if asset.publicly_accessible | default(false) %}{% set score = score + 15 %}{% endif %}
+        {% set _ = scores.append({'id': asset.id, 'name': asset.name | default(asset.ip_address), 'score': score, 'rating': ('critical' if score >= 80 else ('high' if score >= 60 else ('medium' if score >= 40 else 'low')))}) %}
+      {% endfor %}
+      {{ scores }}
+
+- name: Apply criticality ratings to assets
+  ansible.builtin.uri:
+    url: "{{ dragos_base_url }}/api/assets/{{ item.id }}/criticality"
+    method: PUT
+    headers:
+      Authorization: "Bearer {{ dragos_token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      criticality_score: "{{ item.score }}"
+      criticality_rating: "{{ item.rating }}"
+      assessment_date: "{{ ansible_date_time.iso8601 }}"
+      assessment_method: "automated"
+      business_impact:
+        safety: "{{ item.safety_impact | default('medium') }}"
+        production: "{{ item.production_impact | default('medium') }}"
+        financial: "{{ item.financial_impact | default('medium') }}"
+        reputation: "{{ item.reputation_impact | default('medium') }}"
+        regulatory: "{{ item.regulatory_impact | default('medium') }}"
+    status_code: [200, 201]
+    validate_certs: "{{ dragos_verify_ssl }}"
+  loop: "{{ asset_criticality_scores }}"
+  loop_control:
+    label: "{{ item.name }} - Rating: {{ item.rating }} ({{ item.score }})"
+  when: not dry_run
+  register: criticality_assignments
+
+- name: Identify critical assets
+  ansible.builtin.set_fact:
+    critical_assets: "{{ asset_criticality_scores | selectattr('rating', 'equalto', 'critical') | list }}"
+    high_criticality_assets: "{{ asset_criticality_scores | selectattr('rating', 'equalto', 'high') | list }}"
+
+- name: Apply enhanced monitoring for critical assets
+  ansible.builtin.uri:
+    url: "{{ dragos_base_url }}/api/assets/{{ item.id }}/monitoring"
+    method: PUT
+    headers:
+      Authorization: "Bearer {{ dragos_token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      enhanced_monitoring: true
+      alert_priority: "critical"
+      logging_level: "verbose"
+      anomaly_detection: true
+    status_code: [200, 201]
+    validate_certs: "{{ dragos_verify_ssl }}"
+  loop: "{{ critical_assets }}"
+  loop_control:
+    label: "{{ item.name }} - Enhanced Monitoring"
+  when: not dry_run and enable_enhanced_monitoring
+  register: enhanced_monitoring
+
+- name: Generate criticality assessment report
+  ansible.builtin.template:
+    src: asset_criticality_report.j2
+    dest: "{{ artifacts_dir }}/asset_criticality_{{ ansible_date_time.iso8601_basic_short }}.html"
+    mode: "0644"
+
+- name: Save criticality ratings
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/asset_criticality_{{ ansible_date_time.iso8601_basic_short }}.json"
+    content: "{{ {'scores': asset_criticality_scores, 'critical_assets': critical_assets, 'high_assets': high_criticality_assets} | to_nice_json }}"
+    mode: "0644"

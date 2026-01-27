@@ -1,0 +1,95 @@
+---
+# Multi-tenancy configuration tasks for VAST
+
+- name: Enable multi-tenancy on cluster
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/clusters/{{ vast_cluster_id }}/multitenancy"
+    method: PATCH
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    body_format: json
+    body:
+      enabled: true
+    status_code: [200, 204]
+  delegate_to: localhost
+  when: vast_cluster_id is defined and vast_cluster_id != ''
+  tags:
+    - multitenancy
+    - tenants
+
+- name: Get existing tenants
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/tenants"
+    method: GET
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    return_content: true
+  register: vast_tenants_existing
+  delegate_to: localhost
+  changed_when: false
+  tags:
+    - multitenancy
+    - tenants
+    - discovery
+
+- name: Create tenants
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/tenants"
+    method: POST
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    body_format: json
+    body:
+      name: "{{ item.name }}"
+      quota: "{{ item.quota }}"
+      enabled: "{{ item.enabled | default(true) }}"
+    status_code: [200, 201, 409]
+  loop: "{{ vast_tenants }}"
+  when:
+    - vast_tenants is defined
+    - vast_tenants | length > 0
+    - vast_tenants_existing.json | selectattr('name', 'equalto', item.name) | list | length == 0
+  delegate_to: localhost
+  tags:
+    - multitenancy
+    - tenants
+
+- name: Configure tenant isolation
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/tenants/{{ item.name }}/isolation"
+    method: PATCH
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    body_format: json
+    body:
+      network_isolation: true
+      storage_isolation: true
+    status_code: [200, 204]
+  loop: "{{ vast_tenants }}"
+  when:
+    - vast_tenants is defined
+    - vast_tenants | length > 0
+  delegate_to: localhost
+  tags:
+    - multitenancy
+    - tenants
+    - isolation
+
+- name: Display tenant configuration
+  ansible.builtin.debug:
+    msg: "Created tenant: {{ item.name }} with quota {{ (item.quota / 1099511627776) | round(2) }} TB"
+  loop: "{{ vast_tenants }}"
+  when:
+    - vast_tenants is defined
+    - vast_tenants | length > 0
+  tags:
+    - multitenancy
+    - tenants

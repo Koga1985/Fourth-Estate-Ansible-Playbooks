@@ -1,0 +1,32 @@
+---
+# Custom user management
+
+- name: Create custom users
+  uri:
+    url: "https://localhost:{{ elasticsearch_http_port }}/_security/user/{{ item.username }}"
+    method: POST
+    user: "elastic"
+    password: "{{ elasticsearch_elastic_password }}"
+    force_basic_auth: yes
+    validate_certs: no
+    body_format: json
+    body:
+      password: "{{ item.password }}"
+      roles: "{{ item.roles }}"
+      full_name: "{{ item.full_name | default(item.username) }}"
+      email: "{{ item.email | default('') }}"
+      metadata: "{{ item.metadata | default({}) }}"
+    status_code: [200, 201]
+  loop: "{{ elasticsearch_custom_users }}"
+  when: elasticsearch_security_enabled | bool
+  no_log: true
+  register: user_result
+  until: user_result is succeeded
+  retries: 5
+  delay: 10
+
+- name: Display created users
+  debug:
+    msg: "Created user: {{ item.username }} with roles: {{ item.roles | join(', ') }}"
+  loop: "{{ elasticsearch_custom_users }}"
+  when: elasticsearch_security_enabled | bool

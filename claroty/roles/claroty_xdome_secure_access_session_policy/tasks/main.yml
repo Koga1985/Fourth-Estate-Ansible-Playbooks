@@ -1,10 +1,181 @@
 ---
-- name: Apply session-policy (approval/emergency/recording)
+# Claroty xDome Secure Remote Access - Session Policy Configuration Tasks
+# Fourth Estate OT/ICS Cybersecurity
+
+- name: Ensure directories exist
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0755"
+  loop:
+    - "{{ artifacts_dir }}"
+    - "{{ log_dir }}"
+
+- name: Validate API connectivity
   ansible.builtin.uri:
-    url: "{{ claroty.base_url }}/v1/secure-access/session-policy"
+    url: "{{ claroty.base_url }}/v1/health"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ claroty.token }}"
+    return_content: true
+    status_code: 200
+    validate_certs: "{{ claroty.verify_ssl }}"
+    timeout: "{{ claroty.timeout }}"
+  register: health_check
+
+# Session Policies Configuration
+- name: Get existing session policies
+  ansible.builtin.uri:
+    url: "{{ claroty.base_url }}/v1/secure-access/session-policies"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ claroty.token }}"
+      Content-Type: "application/json"
+    return_content: true
+    status_code: 200
+    validate_certs: "{{ claroty.verify_ssl }}"
+  register: existing_policies
+
+- name: Create or update session policies
+  ansible.builtin.uri:
+    url: "{{ claroty.base_url }}/v1/secure-access/session-policies"
     method: POST
-    headers: { Authorization: "Bearer {{ claroty.token }}", Content-Type: "application/json" }
+    headers:
+      Authorization: "Bearer {{ claroty.token }}"
+      Content-Type: "application/json"
     body_format: json
-    body: "{{ session_policy }}"
-    status_code: [200,201,204]
-    validate_certs: "{{ claroty.verify_ssl | default(true) }}"
+    body:
+      name: "{{ item.name }}"
+      description: "{{ item.description | default('') }}"
+      enabled: "{{ item.enabled | default(true) }}"
+      priority: "{{ item.priority | default(10) }}"
+      applies_to: "{{ item.applies_to | default({}) }}"
+      session_timeout: "{{ item.session_timeout | default({}) }}"
+      idle_timeout: "{{ item.idle_timeout | default({}) }}"
+      session_recording: "{{ item.session_recording | default({}) }}"
+      file_transfer: "{{ item.file_transfer | default({}) }}"
+      clipboard: "{{ item.clipboard | default({}) }}"
+      printing: "{{ item.printing | default({}) }}"
+      screenshot_capture: "{{ item.screenshot_capture | default({}) }}"
+      screen_sharing: "{{ item.screen_sharing | default({}) }}"
+      watermark: "{{ item.watermark | default({}) }}"
+      concurrent_sessions: "{{ item.concurrent_sessions | default({}) }}"
+      time_based_access: "{{ item.time_based_access | default({}) }}"
+      ip_restrictions: "{{ item.ip_restrictions | default({}) }}"
+      protocol_settings: "{{ item.protocol_settings | default({}) }}"
+      security_controls: "{{ item.security_controls | default({}) }}"
+      metadata:
+        created_by: "{{ ansible_user_id }}"
+        created_at: "{{ ansible_date_time.iso8601 }}"
+    status_code: [200, 201]
+    validate_certs: "{{ claroty.verify_ssl }}"
+    return_content: true
+  loop: "{{ session_policies }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: created_policies
+
+# Apply Default Session Policy
+- name: Apply default session policy
+  ansible.builtin.uri:
+    url: "{{ claroty.base_url }}/v1/secure-access/session-policies/default"
+    method: PUT
+    headers:
+      Authorization: "Bearer {{ claroty.token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body: "{{ default_session_policy }}"
+    status_code: [200, 201]
+    validate_certs: "{{ claroty.verify_ssl }}"
+  when: default_session_policy.enabled | default(true)
+
+# Configure Session Recording Settings
+- name: Configure global session recording settings
+  ansible.builtin.uri:
+    url: "{{ claroty.base_url }}/v1/secure-access/recording-settings"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ claroty.token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      retention_days: 365
+      encryption_enabled: true
+      compression_enabled: true
+      storage_location: "s3"
+      backup_enabled: true
+    status_code: [200, 201]
+    validate_certs: "{{ claroty.verify_ssl }}"
+
+# Configure Monitoring and Alerts
+- name: Configure session policy monitoring
+  ansible.builtin.uri:
+    url: "{{ claroty.base_url }}/v1/secure-access/monitoring"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ claroty.token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      enabled: "{{ monitoring.enabled }}"
+      alert_on_policy_violation: "{{ monitoring.alert_on_policy_violation }}"
+      alert_on_failed_mfa: "{{ monitoring.alert_on_failed_mfa }}"
+      alert_on_suspicious_activity: "{{ monitoring.alert_on_suspicious_activity }}"
+      alert_recipients: "{{ monitoring.alert_recipients }}"
+    status_code: [200, 201]
+    validate_certs: "{{ claroty.verify_ssl }}"
+  when: monitoring.enabled | default(true)
+
+# Generate Configuration Summary
+- name: Export session policies to CSV
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/session_policies_{{ ansible_date_time.iso8601_basic_short }}.csv"
+    mode: "0644"
+    content: |
+      policy_name,enabled,session_timeout,idle_timeout,recording,file_transfer,clipboard,mfa_required,watermark,concurrent_sessions
+      {% for result in created_policies.results | default([]) %}
+      {{ result.item.name }},{{ result.item.enabled | default(true) }},{{ result.item.session_timeout.timeout_minutes | default('N/A') }},{{ result.item.idle_timeout.timeout_minutes | default('N/A') }},{{ result.item.session_recording.enabled | default(true) }},{{ result.item.file_transfer.policy | default('deny') }},{{ result.item.clipboard.policy | default('deny') }},{{ result.item.security_controls.require_mfa | default(true) }},{{ result.item.watermark.enabled | default(true) }},{{ result.item.concurrent_sessions.max_sessions | default(1) }}
+      {% endfor %}
+
+- name: Generate session policy compliance report
+  ansible.builtin.template:
+    src: session_policy_report.html.j2
+    dest: "{{ artifacts_dir }}/session_policy_report_{{ ansible_date_time.iso8601_basic_short }}.html"
+    mode: "0644"
+  when: reporting.enabled | default(true)
+
+- name: Log session policy changes for compliance
+  ansible.builtin.copy:
+    dest: "{{ log_dir }}/session_policy_audit_{{ ansible_date_time.iso8601_basic_short }}.log"
+    mode: "0644"
+    content: |
+      === Claroty xDome Session Policy Configuration Audit Log ===
+      Timestamp: {{ ansible_date_time.iso8601 }}
+      Operator: {{ ansible_user_id }}
+      Hostname: {{ ansible_hostname }}
+
+      Session Policies Configured ({{ created_policies.results | default([]) | length }}):
+      {% for result in created_policies.results | default([]) %}
+      - {{ result.item.name }}
+        Priority: {{ result.item.priority | default(10) }}
+        Session Timeout: {{ result.item.session_timeout.timeout_minutes | default('N/A') }} min
+        Idle Timeout: {{ result.item.idle_timeout.timeout_minutes | default('N/A') }} min
+        Recording: {{ result.item.session_recording.enabled | default(true) }} ({{ result.item.session_recording.recording_type | default('full') }})
+        File Transfer: {{ result.item.file_transfer.policy | default('deny') }}
+        Clipboard: {{ result.item.clipboard.policy | default('deny') }}
+        MFA Required: {{ result.item.security_controls.require_mfa | default(true) }}
+      {% endfor %}
+
+      Default Policy: {{ 'Enabled' if default_session_policy.enabled | default(true) else 'Disabled' }}
+  when: compliance.log_policy_changes | default(true)
+
+- name: Display session policy summary
+  ansible.builtin.debug:
+    msg:
+      - "=== Claroty xDome Session Policy Configuration Complete ==="
+      - "Policies Configured: {{ created_policies.results | default([]) | length }}"
+      - "Default Policy: {{ 'Enabled' if default_session_policy.enabled | default(true) else 'Disabled' }}"
+      - "Session Recording: Enabled"
+      - "MFA Enforcement: Enabled"
+      - "Audit Log: {{ log_dir }}/session_policy_audit_{{ ansible_date_time.iso8601_basic_short }}.log"
+      - "Policy CSV: {{ artifacts_dir }}/session_policies_{{ ansible_date_time.iso8601_basic_short }}.csv"

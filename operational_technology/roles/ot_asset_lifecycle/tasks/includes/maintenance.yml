@@ -1,0 +1,71 @@
+---
+# Asset Maintenance Scheduling
+
+- name: Validate maintenance parameters
+  ansible.builtin.assert:
+    that:
+      - ot_asset_id is defined and ot_asset_id | length > 0
+      - ot_asset_maintenance_schedule is defined
+    fail_msg: "Asset ID and maintenance schedule required"
+
+- name: Calculate next maintenance date
+  ansible.builtin.set_fact:
+    ot_asset_next_maintenance: "{{ ansible_date_time.iso8601 }}"
+  when: ot_asset_next_maintenance is not defined or ot_asset_next_maintenance | length == 0
+
+- name: Create maintenance schedule record
+  ansible.builtin.set_fact:
+    maintenance_schedule:
+      asset_id: "{{ ot_asset_id }}"
+      schedule: "{{ ot_asset_maintenance_schedule }}"
+      maintenance_window: "{{ ot_asset_maintenance_window }}"
+      last_maintenance: "{{ ot_asset_last_maintenance }}"
+      next_maintenance: "{{ ot_asset_next_maintenance }}"
+      contact: "{{ ot_asset_maintenance_contact }}"
+      created_by: "{{ ansible_user_id }}"
+      created_at: "{{ ansible_date_time.iso8601 }}"
+
+- name: Register maintenance schedule
+  ansible.builtin.uri:
+    url: "{{ ot_asset_api_url }}/maintenance/schedule"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ ot_asset_api_token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body: "{{ maintenance_schedule }}"
+    validate_certs: "{{ ot_asset_verify_ssl }}"
+    status_code: [200, 201]
+  when:
+    - ot_asset_api_token | length > 0
+    - not ot_asset_dry_run
+
+- name: Save maintenance schedule locally
+  ansible.builtin.copy:
+    content: "{{ maintenance_schedule | to_nice_json }}"
+    dest: "{{ ot_asset_artifacts_dir }}/maintenance_{{ ot_asset_id }}.json"
+    mode: '0640'
+
+- name: Update asset with maintenance info
+  ansible.builtin.uri:
+    url: "{{ ot_asset_api_url }}/assets/{{ ot_asset_id }}"
+    method: PATCH
+    headers:
+      Authorization: "Bearer {{ ot_asset_api_token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      maintenance_schedule: "{{ ot_asset_maintenance_schedule }}"
+      next_maintenance: "{{ ot_asset_next_maintenance }}"
+    validate_certs: "{{ ot_asset_verify_ssl }}"
+    status_code: [200, 204]
+  when:
+    - ot_asset_api_token | length > 0
+    - not ot_asset_dry_run
+
+- name: Log maintenance scheduling
+  ansible.builtin.lineinfile:
+    path: "{{ ot_asset_log_dir }}/maintenance.log"
+    line: "{{ ansible_date_time.iso8601 }} | SCHEDULE | {{ ot_asset_id }} | Next: {{ ot_asset_next_maintenance }}"
+    create: yes
+    mode: '0640'

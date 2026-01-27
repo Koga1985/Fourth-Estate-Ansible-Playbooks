@@ -1,0 +1,94 @@
+---
+# Kerberos configuration tasks for VAST
+
+- name: Get current Kerberos configuration
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/kerberos"
+    method: GET
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    return_content: true
+    status_code: [200, 404]
+  register: vast_kerberos_current
+  delegate_to: localhost
+  changed_when: false
+  tags:
+    - kerberos
+    - discovery
+
+- name: Configure Kerberos realm
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/kerberos"
+    method: "{{ 'POST' if vast_kerberos_current.status == 404 else 'PATCH' }}"
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    body_format: json
+    body:
+      realm: "{{ vast_kerberos_realm }}"
+      kdc: "{{ vast_kerberos_kdc }}"
+      enabled: true
+    status_code: [200, 201, 204]
+  delegate_to: localhost
+  when:
+    - vast_kerberos_realm != ''
+    - vast_kerberos_kdc != ''
+  tags:
+    - kerberos
+    - authentication
+
+- name: Generate Kerberos keytab
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/kerberos/keytab"
+    method: POST
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    body_format: json
+    body:
+      realm: "{{ vast_kerberos_realm }}"
+      principal: "nfs/{{ vast_cluster_name }}.{{ vast_cluster_domain }}@{{ vast_kerberos_realm }}"
+    status_code: [200, 201]
+  register: vast_kerberos_keytab
+  delegate_to: localhost
+  when:
+    - vast_kerberos_realm != ''
+  tags:
+    - kerberos
+    - keytab
+
+- name: Enable Kerberos authentication for NFS
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/nfs"
+    method: PATCH
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    body_format: json
+    body:
+      kerberos_enabled: true
+      kerberos_realm: "{{ vast_kerberos_realm }}"
+      supported_sec_flavors:
+        - "krb5"
+        - "krb5i"
+        - "krb5p"
+    status_code: [200, 204]
+  delegate_to: localhost
+  tags:
+    - kerberos
+    - nfs
+
+- name: Display Kerberos configuration status
+  ansible.builtin.debug:
+    msg:
+      - "Kerberos Realm: {{ vast_kerberos_realm }}"
+      - "KDC Server: {{ vast_kerberos_kdc }}"
+      - "Keytab Generated: {{ 'Yes' if vast_kerberos_keytab is changed else 'Already exists' }}"
+  when: vast_kerberos_keytab is defined
+  tags:
+    - kerberos

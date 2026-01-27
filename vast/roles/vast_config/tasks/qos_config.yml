@@ -1,0 +1,69 @@
+---
+# QoS (Quality of Service) configuration tasks for VAST
+
+- name: Get existing QoS policies
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/qospolicies"
+    method: GET
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    return_content: true
+  register: vast_qos_existing
+  delegate_to: localhost
+  changed_when: false
+  tags:
+    - qos
+    - discovery
+
+- name: Create or update QoS policies
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/qospolicies"
+    method: POST
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    body_format: json
+    body:
+      name: "{{ item.name }}"
+      max_iops: "{{ item.max_iops | default(0) }}"
+      max_throughput_mbps: "{{ item.max_throughput_mbps | default(0) }}"
+      priority: "{{ item.priority | default('medium') }}"
+    status_code: [200, 201, 409]
+  loop: "{{ vast_qos_policies }}"
+  when:
+    - vast_qos_policies is defined
+    - vast_qos_policies | length > 0
+  delegate_to: localhost
+  tags:
+    - qos
+    - policies
+
+- name: Enable global QoS
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/clusters/{{ vast_cluster_id }}/qos"
+    method: PATCH
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    body_format: json
+    body:
+      enabled: true
+    status_code: [200, 204]
+  delegate_to: localhost
+  when: vast_cluster_id is defined and vast_cluster_id != ''
+  tags:
+    - qos
+
+- name: Display QoS policies
+  ansible.builtin.debug:
+    msg: "Created/Updated QoS policy: {{ item.name }} (Max IOPS: {{ item.max_iops }}, Max Throughput: {{ item.max_throughput_mbps }} MB/s)"
+  loop: "{{ vast_qos_policies }}"
+  when:
+    - vast_qos_policies is defined
+    - vast_qos_policies | length > 0
+  tags:
+    - qos

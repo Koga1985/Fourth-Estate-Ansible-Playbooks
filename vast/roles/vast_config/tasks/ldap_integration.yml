@@ -1,0 +1,97 @@
+---
+# LDAP integration tasks for VAST
+
+- name: Get current LDAP configuration
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/ldap"
+    method: GET
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    return_content: true
+    status_code: [200, 404]
+  register: vast_ldap_current
+  delegate_to: localhost
+  changed_when: false
+  tags:
+    - ldap
+    - discovery
+
+- name: Configure LDAP integration
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/ldap"
+    method: "{{ 'POST' if vast_ldap_current.status == 404 else 'PATCH' }}"
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    body_format: json
+    body:
+      server: "{{ vast_ldap_server }}"
+      port: "{{ vast_ldap_port }}"
+      use_ssl: "{{ vast_ldap_use_ssl }}"
+      base_dn: "{{ vast_ldap_base_dn }}"
+      bind_dn: "{{ vast_ldap_bind_dn }}"
+      bind_password: "{{ vast_ldap_bind_password }}"
+      enabled: true
+    status_code: [200, 201, 204]
+  delegate_to: localhost
+  when:
+    - vast_ldap_server != ''
+    - vast_ldap_base_dn != ''
+  tags:
+    - ldap
+    - authentication
+  notify: Verify LDAP connectivity
+
+- name: Test LDAP connectivity
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/ldap/test"
+    method: POST
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    body_format: json
+    body:
+      server: "{{ vast_ldap_server }}"
+      port: "{{ vast_ldap_port }}"
+    status_code: [200, 202]
+  register: vast_ldap_test
+  delegate_to: localhost
+  when:
+    - vast_ldap_server != ''
+  tags:
+    - ldap
+    - connectivity
+
+- name: Configure LDAP user mapping
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/ldap/mapping"
+    method: PATCH
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    body_format: json
+    body:
+      user_attribute: "uid"
+      group_attribute: "cn"
+      search_scope: "subtree"
+    status_code: [200, 204]
+  delegate_to: localhost
+  tags:
+    - ldap
+    - user_mapping
+
+- name: Display LDAP configuration status
+  ansible.builtin.debug:
+    msg:
+      - "LDAP Server: {{ vast_ldap_server }}:{{ vast_ldap_port }}"
+      - "LDAP Base DN: {{ vast_ldap_base_dn }}"
+      - "SSL/TLS Enabled: {{ vast_ldap_use_ssl }}"
+      - "Connectivity Test: {{ 'Passed' if vast_ldap_test.status == 200 else 'Check logs' }}"
+  when: vast_ldap_test is defined
+  tags:
+    - ldap

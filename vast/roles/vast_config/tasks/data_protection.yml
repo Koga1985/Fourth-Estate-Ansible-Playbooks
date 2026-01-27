@@ -1,0 +1,130 @@
+---
+# Data protection configuration tasks for VAST
+
+- name: Enable encryption at rest (FIPS 140-2)
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/clusters/{{ vast_cluster_id }}/encryption"
+    method: PATCH
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    body_format: json
+    body:
+      encryption_at_rest_enabled: "{{ vast_enable_encryption_at_rest }}"
+      algorithm: "{{ vast_encryption_algorithm }}"
+    status_code: [200, 204]
+  delegate_to: localhost
+  when:
+    - vast_cluster_id is defined and vast_cluster_id != ''
+    - vast_enable_encryption_at_rest | bool
+  tags:
+    - data_protection
+    - encryption
+    - security
+
+- name: Configure snapshot policies for data protection
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/snapshotpolicies"
+    method: POST
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    body_format: json
+    body:
+      name: "{{ item.name }}"
+      description: "{{ item.description }}"
+      schedule: "{{ item.schedule }}"
+      retention_days: "{{ item.retention_days }}"
+      enabled: "{{ item.enabled }}"
+    status_code: [200, 201, 409]
+  loop: "{{ vast_snapshot_policies }}"
+  when:
+    - vast_snapshot_policies is defined
+    - vast_snapshot_policies | length > 0
+  delegate_to: localhost
+  tags:
+    - data_protection
+    - snapshots
+    - backup
+
+- name: Enable data immutability (WORM compliance)
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/clusters/{{ vast_cluster_id }}/compliance"
+    method: PATCH
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    body_format: json
+    body:
+      immutability_enabled: "{{ vast_global_settings.enable_data_immutability }}"
+      worm_mode: "{{ vast_global_settings.worm_mode }}"
+    status_code: [200, 204]
+  delegate_to: localhost
+  when:
+    - vast_cluster_id is defined and vast_cluster_id != ''
+    - vast_global_settings.enable_data_immutability | bool or vast_global_settings.worm_mode | bool
+  tags:
+    - data_protection
+    - compliance
+    - worm
+
+- name: Configure replication pairs for disaster recovery
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/replication/pairs"
+    method: POST
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    body_format: json
+    body:
+      name: "{{ item.name }}"
+      source_view: "{{ item.source_view }}"
+      target_cluster: "{{ item.target_cluster }}"
+      target_view: "{{ item.target_view }}"
+      replication_type: "{{ item.replication_type }}"
+      schedule: "{{ item.schedule }}"
+    status_code: [200, 201, 409]
+  loop: "{{ vast_replication_pairs }}"
+  when:
+    - vast_replication_pairs is defined
+    - vast_replication_pairs | length > 0
+  delegate_to: localhost
+  tags:
+    - data_protection
+    - replication
+    - dr
+
+- name: Enable data integrity verification
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/clusters/{{ vast_cluster_id }}/integrity"
+    method: PATCH
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    body_format: json
+    body:
+      checksum_enabled: true
+      scrubbing_enabled: true
+      scrubbing_schedule: "weekly"
+    status_code: [200, 204]
+  delegate_to: localhost
+  when: vast_cluster_id is defined and vast_cluster_id != ''
+  tags:
+    - data_protection
+    - integrity
+
+- name: Display data protection configuration
+  ansible.builtin.debug:
+    msg:
+      - "Encryption at rest: {{ 'Enabled' if vast_enable_encryption_at_rest else 'Disabled' }}"
+      - "Encryption algorithm: {{ vast_encryption_algorithm }}"
+      - "Snapshot policies: {{ vast_snapshot_policies | length }}"
+      - "WORM mode: {{ 'Enabled' if vast_global_settings.worm_mode else 'Disabled' }}"
+      - "Replication pairs: {{ vast_replication_pairs | length }}"
+  tags:
+    - data_protection

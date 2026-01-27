@@ -1,0 +1,138 @@
+---
+# Active Directory integration tasks for VAST
+
+- name: Get current Active Directory configuration
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/activedirectory"
+    method: GET
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    return_content: true
+    status_code: [200, 404]
+  register: vast_ad_current
+  delegate_to: localhost
+  changed_when: false
+  tags:
+    - ad
+    - discovery
+
+- name: Configure Active Directory integration
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/activedirectory"
+    method: "{{ 'POST' if vast_ad_current.status == 404 else 'PATCH' }}"
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    body_format: json
+    body:
+      domain: "{{ vast_ad_domain }}"
+      server: "{{ vast_ad_server }}"
+      organizational_unit: "{{ vast_ad_ou }}"
+      username: "{{ vast_ad_username }}"
+      password: "{{ vast_ad_password }}"
+      use_ldaps: "{{ vast_ad_use_ldaps }}"
+      enabled: true
+    status_code: [200, 201, 204]
+  delegate_to: localhost
+  when:
+    - vast_ad_domain != ''
+    - vast_ad_server != ''
+  tags:
+    - ad
+    - authentication
+  notify: Verify AD connectivity
+
+- name: Join VAST cluster to Active Directory domain
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/activedirectory/join"
+    method: POST
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    body_format: json
+    body:
+      domain: "{{ vast_ad_domain }}"
+      username: "{{ vast_ad_username }}"
+      password: "{{ vast_ad_password }}"
+    status_code: [200, 202]
+    timeout: 120
+  register: vast_ad_join_result
+  delegate_to: localhost
+  when:
+    - vast_ad_domain != ''
+    - vast_ad_current.status == 404 or (vast_ad_current.json.joined | default(false)) == false
+  tags:
+    - ad
+    - domain_join
+
+- name: Wait for AD domain join to complete
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/activedirectory/status"
+    method: GET
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    return_content: true
+  register: vast_ad_status
+  until: vast_ad_status.json.status == "joined"
+  retries: 30
+  delay: 10
+  delegate_to: localhost
+  when: vast_ad_join_result is changed
+  tags:
+    - ad
+    - domain_join
+
+- name: Configure SMB to use Active Directory authentication
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/smb"
+    method: PATCH
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    body_format: json
+    body:
+      use_active_directory: true
+      workgroup: "{{ vast_ad_domain.split('.')[0] | upper }}"
+    status_code: [200, 204]
+  delegate_to: localhost
+  tags:
+    - ad
+    - smb
+
+- name: Enable Kerberos for NFS with Active Directory
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/nfs"
+    method: PATCH
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    body_format: json
+    body:
+      kerberos_enabled: true
+      kerberos_realm: "{{ vast_ad_domain | upper }}"
+    status_code: [200, 204]
+  delegate_to: localhost
+  when: vast_nfs_kerberos_required | bool
+  tags:
+    - ad
+    - nfs
+    - kerberos
+
+- name: Display Active Directory configuration status
+  ansible.builtin.debug:
+    msg:
+      - "Active Directory Domain: {{ vast_ad_domain }}"
+      - "AD Server: {{ vast_ad_server }}"
+      - "Domain Join Status: {{ vast_ad_status.json.status | default('unknown') }}"
+      - "LDAPS Enabled: {{ vast_ad_use_ldaps }}"
+  when: vast_ad_status is defined and vast_ad_status.json is defined
+  tags:
+    - ad

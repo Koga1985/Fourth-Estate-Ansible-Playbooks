@@ -1,0 +1,38 @@
+---
+# Audit logging configuration
+
+- name: Configure audit logging
+  blockinfile:
+    path: /etc/elasticsearch/elasticsearch.yml
+    marker: "# {mark} ANSIBLE MANAGED AUDIT BLOCK"
+    block: |
+      xpack.security.audit.enabled: {{ elasticsearch_audit_enabled | lower }}
+      {% if elasticsearch_audit_enabled %}
+      xpack.security.audit.outputs: {{ elasticsearch_audit_outputs | to_json }}
+      xpack.security.audit.logfile.events.include: {{ elasticsearch_audit_include_events | to_json }}
+      xpack.security.audit.logfile.events.exclude: []
+      xpack.security.audit.logfile.events.emit_request_body: {{ elasticsearch_audit_include_request_body | lower }}
+      {% if elasticsearch_audit_exclude_users | length > 0 %}
+      xpack.security.audit.logfile.events.ignore_filters.ignore_journalist_reads:
+        users: {{ elasticsearch_audit_exclude_users | to_json }}
+        realms: ["native"]
+        actions: ["indices:data/read/*"]
+      {% endif %}
+      {% if elasticsearch_fourth_estate_security %}
+      # Fourth Estate specific audit settings
+      xpack.security.audit.logfile.events.ignore_filters.ignore_service_accounts:
+        users: ["kibana_system", "logstash_system", "beats_system"]
+        actions: ["cluster:monitor/*"]
+      {% endif %}
+      {% endif %}
+    backup: yes
+  notify: restart elasticsearch
+
+- name: Create audit log directory
+  file:
+    path: /var/log/elasticsearch/audit
+    state: directory
+    owner: elasticsearch
+    group: elasticsearch
+    mode: '0750'
+  when: elasticsearch_audit_enabled | bool

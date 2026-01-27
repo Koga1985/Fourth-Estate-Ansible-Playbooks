@@ -1,0 +1,81 @@
+---
+# Identify and analyze asset communication patterns
+
+- name: Retrieve asset communication patterns
+  ansible.builtin.uri:
+    url: "{{ dragos_base_url }}/api/assets/communications/patterns?timerange={{ communication_timerange }}&limit={{ page_size }}"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ dragos_token }}"
+    return_content: true
+    status_code: 200
+    validate_certs: "{{ dragos_verify_ssl }}"
+  register: communication_patterns
+
+- name: Analyze communication frequency
+  ansible.builtin.uri:
+    url: "{{ dragos_base_url }}/api/assets/communications/frequency_analysis"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ dragos_token }}"
+    return_content: true
+    status_code: 200
+    validate_certs: "{{ dragos_verify_ssl }}"
+  register: frequency_analysis
+
+- name: Identify periodic communications
+  ansible.builtin.set_fact:
+    periodic_communications: "{{ communication_patterns.json.patterns | default([]) | selectattr('pattern_type', 'equalto', 'periodic') | list }}"
+
+- name: Identify sporadic communications
+  ansible.builtin.set_fact:
+    sporadic_communications: "{{ communication_patterns.json.patterns | default([]) | selectattr('pattern_type', 'equalto', 'sporadic') | list }}"
+
+- name: Identify anomalous communications
+  ansible.builtin.uri:
+    url: "{{ dragos_base_url }}/api/assets/communications/anomalies?timerange={{ communication_timerange }}"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ dragos_token }}"
+    return_content: true
+    status_code: 200
+    validate_certs: "{{ dragos_verify_ssl }}"
+  register: communication_anomalies
+
+- name: Analyze inter-zone communications
+  ansible.builtin.uri:
+    url: "{{ dragos_base_url }}/api/assets/communications/inter_zone"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ dragos_token }}"
+    return_content: true
+    status_code: 200
+    validate_certs: "{{ dragos_verify_ssl }}"
+  register: inter_zone_communications
+
+- name: Identify unexpected external communications
+  ansible.builtin.uri:
+    url: "{{ dragos_base_url }}/api/assets/communications/external"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ dragos_token }}"
+    return_content: true
+    status_code: 200
+    validate_certs: "{{ dragos_verify_ssl }}"
+  register: external_communications
+
+- name: Flag suspicious external communications
+  ansible.builtin.set_fact:
+    suspicious_external_comms: "{{ external_communications.json.communications | default([]) | selectattr('expected', 'equalto', false) | list }}"
+
+- name: Generate communication pattern report
+  ansible.builtin.template:
+    src: communication_patterns_report.j2
+    dest: "{{ artifacts_dir }}/communication_patterns_{{ ansible_date_time.iso8601_basic_short }}.html"
+    mode: "0644"
+
+- name: Save communication analysis
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/communication_analysis_{{ ansible_date_time.iso8601_basic_short }}.json"
+    content: "{{ {'patterns': communication_patterns, 'frequency': frequency_analysis, 'anomalies': communication_anomalies, 'inter_zone': inter_zone_communications, 'external': external_communications, 'suspicious': suspicious_external_comms} | to_nice_json }}"
+    mode: "0644"

@@ -1,0 +1,77 @@
+---
+# Assign OT assets to network zones based on Purdue Model
+
+- name: Retrieve assets for zone assignment
+  ansible.builtin.uri:
+    url: "{{ dragos_base_url }}/api/assets?limit={{ page_size }}"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ dragos_token }}"
+    return_content: true
+    status_code: 200
+    validate_certs: "{{ dragos_verify_ssl }}"
+  register: assets_for_zones
+
+- name: Apply network zone assignments
+  ansible.builtin.uri:
+    url: "{{ dragos_base_url }}/api/assets/{{ item.id }}/zone"
+    method: PUT
+    headers:
+      Authorization: "Bearer {{ dragos_token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      zone: "{{ item.zone | default(zone_assignment_rules[item.asset_type] | default('Unknown')) }}"
+      purdue_level: "{{ item.purdue_level | default(purdue_level_mapping[item.asset_type] | default('L2')) }}"
+      vlan_id: "{{ item.vlan_id | default(omit) }}"
+      subnet: "{{ item.subnet | default(omit) }}"
+    status_code: [200, 201]
+    validate_certs: "{{ dragos_verify_ssl }}"
+  loop: "{{ assets_for_zones.json.items | default(assets_for_zones.json.data | default([])) }}"
+  loop_control:
+    label: "{{ item.name | default(item.ip_address) }} - Zone Assignment"
+  when: not dry_run
+  register: zone_assignments
+
+- name: Apply zone-based segmentation policies
+  ansible.builtin.uri:
+    url: "{{ dragos_base_url }}/api/zones/{{ item }}/policies"
+    method: PUT
+    headers:
+      Authorization: "Bearer {{ dragos_token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      zone: "{{ item }}"
+      allowed_communications: "{{ zone_policies[item].allowed_communications | default([]) }}"
+      blocked_protocols: "{{ zone_policies[item].blocked_protocols | default([]) }}"
+      isolation_level: "{{ zone_policies[item].isolation_level | default('medium') }}"
+    status_code: [200, 201]
+    validate_certs: "{{ dragos_verify_ssl }}"
+  loop: "{{ network_zones }}"
+  when: not dry_run and apply_zone_policies
+  register: zone_policy_assignments
+
+- name: Identify zone boundary crossings
+  ansible.builtin.uri:
+    url: "{{ dragos_base_url }}/api/zones/boundary_crossings"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ dragos_token }}"
+    return_content: true
+    status_code: 200
+    validate_certs: "{{ dragos_verify_ssl }}"
+  register: zone_boundaries
+
+- name: Generate zone topology map
+  ansible.builtin.template:
+    src: zone_topology_map.j2
+    dest: "{{ artifacts_dir }}/zone_topology_{{ ansible_date_time.iso8601_basic_short }}.html"
+    mode: "0644"
+
+- name: Save zone assignments
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/zone_assignments_{{ ansible_date_time.iso8601_basic_short }}.json"
+    content: "{{ {'assignments': zone_assignments, 'policies': zone_policy_assignments, 'boundaries': zone_boundaries} | to_nice_json }}"
+    mode: "0644"
+  when: zone_assignments is defined

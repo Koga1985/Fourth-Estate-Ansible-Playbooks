@@ -1,6 +1,6 @@
 ---
 # defaults file for vast_config
-# VAST Data Storage Configuration - Production Defaults
+# VAST Data Storage Configuration - Production Defaults for Fourth Estate
 
 # VAST Management Server
 vast_mgmt_host: "{{ vault_vast_mgmt_host }}"
@@ -10,25 +10,141 @@ vast_mgmt_password: "{{ vault_vast_mgmt_password }}"
 vast_api_version: "v1"
 vast_verify_ssl: true
 vast_ssl_cert_path: "/etc/pki/tls/certs/vast-ca-bundle.crt"
+vast_api_timeout: 60
 
 # Cluster Configuration
 vast_cluster_name: "production-cluster"
 vast_cluster_domain: "vast.local"
 vast_cluster_timezone: "America/New_York"
+vast_cluster_description: "Fourth Estate Production Storage Cluster"
 
-# Network Configuration
-vast_vip_pool_name: "production-vip-pool"
-vast_vip_pool_start: ""
-vast_vip_pool_end: ""
-vast_vip_pool_subnet: ""
-vast_vip_pool_gateway: ""
+# Network Configuration - VIP Pools
+vast_vip_pools:
+  - name: "production-vip-pool"
+    ip_range_start: ""
+    ip_range_end: ""
+    subnet: ""
+    gateway: ""
+    vlan: 0
+    enabled: true
+  - name: "replication-vip-pool"
+    ip_range_start: ""
+    ip_range_end: ""
+    subnet: ""
+    gateway: ""
+    vlan: 0
+    enabled: false
 
-# Storage Configuration
-vast_default_view_policy: "Production"
-vast_default_quota_policy: "StandardQuota"
-vast_snapshot_retention_days: 30
-vast_enable_deduplication: true
-vast_enable_compression: true
+# DNS Configuration
+vast_dns_servers:
+  - "10.0.0.10"
+  - "10.0.0.11"
+vast_dns_domain_suffix:
+  - "vast.local"
+  - "fourthestate.local"
+
+# NTP Configuration (DoD STIG requirement)
+vast_ntp_servers:
+  - "time.nist.gov"
+  - "ntp.dod.gov"
+vast_ntp_timezone: "America/New_York"
+
+# SMTP Configuration
+vast_smtp_enabled: false
+vast_smtp_server: "{{ vault_smtp_server | default('') }}"
+vast_smtp_port: 25
+vast_smtp_use_tls: true
+vast_smtp_from_address: "vast-cluster@fourthestate.local"
+vast_smtp_auth_required: false
+vast_smtp_username: "{{ vault_smtp_username | default('') }}"
+vast_smtp_password: "{{ vault_smtp_password | default('') }}"
+
+# Storage Domains / Pools
+vast_storage_domains:
+  - name: "production-domain"
+    description: "Production workload storage"
+    protocol_compression: true
+    protocol_deduplication: true
+    enabled: true
+  - name: "archive-domain"
+    description: "Long-term archive storage"
+    protocol_compression: true
+    protocol_deduplication: true
+    enabled: true
+
+# View Policies (Storage Policies)
+vast_view_policies:
+  - name: "high-performance"
+    description: "High performance workloads"
+    flavor: "performance"
+    data_reduction: "inline"
+    compression_enabled: true
+    deduplication_enabled: false
+  - name: "standard"
+    description: "Standard workloads"
+    flavor: "balanced"
+    data_reduction: "inline"
+    compression_enabled: true
+    deduplication_enabled: true
+  - name: "archive"
+    description: "Archive and compliance storage"
+    flavor: "capacity"
+    data_reduction: "inline"
+    compression_enabled: true
+    deduplication_enabled: true
+
+# Quota Policies
+vast_quota_policies:
+  - name: "no-quota"
+    hard_limit: 0
+    soft_limit: 0
+    grace_period: 0
+  - name: "standard-1tb"
+    hard_limit: 1099511627776  # 1 TB
+    soft_limit: 966367641600   # 900 GB
+    grace_period: 7
+  - name: "large-10tb"
+    hard_limit: 10995116277760  # 10 TB
+    soft_limit: 9663676416000   # 9 TB
+    grace_period: 7
+
+# Snapshot Policies (Retention)
+vast_snapshot_policies:
+  - name: "hourly-7days"
+    description: "Hourly snapshots retained for 7 days"
+    schedule: "0 * * * *"
+    retention_days: 7
+    enabled: true
+  - name: "daily-30days"
+    description: "Daily snapshots retained for 30 days"
+    schedule: "0 2 * * *"
+    retention_days: 30
+    enabled: true
+  - name: "weekly-90days"
+    description: "Weekly snapshots retained for 90 days"
+    schedule: "0 3 * * 0"
+    retention_days: 90
+    enabled: true
+  - name: "monthly-365days"
+    description: "Monthly snapshots retained for 365 days"
+    schedule: "0 4 1 * *"
+    retention_days: 365
+    enabled: true
+
+# QoS Policies
+vast_qos_policies:
+  - name: "critical-workload"
+    max_iops: 100000
+    max_throughput_mbps: 10000
+    priority: "high"
+  - name: "standard-workload"
+    max_iops: 50000
+    max_throughput_mbps: 5000
+    priority: "medium"
+  - name: "backup-workload"
+    max_iops: 10000
+    max_throughput_mbps: 1000
+    priority: "low"
 
 # Protocol Configuration
 vast_enable_nfs: true
@@ -36,6 +152,116 @@ vast_enable_smb: true
 vast_enable_s3: true
 vast_nfs_versions: ["3", "4.0", "4.1", "4.2"]
 vast_smb_versions: ["2.1", "3.0", "3.1.1"]
+vast_s3_enforce_https: true
+
+# NFS Export Configuration
+vast_nfs_exports:
+  - path: "/production"
+    client_rules:
+      - clients: "10.0.0.0/8"
+        access: "rw"
+        squash: "root_squash"
+        security: "sys"
+    enabled: true
+  - path: "/archive"
+    client_rules:
+      - clients: "10.0.0.0/8"
+        access: "rw"
+        squash: "root_squash"
+        security: "sys"
+    enabled: true
+
+# SMB Share Configuration
+vast_smb_shares:
+  - name: "production"
+    path: "/production"
+    description: "Production file shares"
+    enabled: true
+    browsable: true
+    access_based_enumeration: true
+    permissions:
+      - principal: "DOMAIN\\Domain Admins"
+        type: "allow"
+        access: "full"
+  - name: "archive"
+    path: "/archive"
+    description: "Archive file shares"
+    enabled: true
+    browsable: true
+    access_based_enumeration: true
+    permissions:
+      - principal: "DOMAIN\\Domain Admins"
+        type: "allow"
+        access: "full"
+
+# S3 Bucket Configuration
+vast_s3_buckets:
+  - name: "media-assets"
+    versioning_enabled: true
+    encryption_enabled: true
+    lifecycle_policy: "archive-90days"
+  - name: "backup-repository"
+    versioning_enabled: true
+    encryption_enabled: true
+    lifecycle_policy: "retention-365days"
+
+# Active Directory Integration
+vast_ad_enabled: false
+vast_ad_domain: "{{ vault_ad_domain | default('') }}"
+vast_ad_server: "{{ vault_ad_server | default('') }}"
+vast_ad_ou: "{{ vault_ad_ou | default('') }}"
+vast_ad_username: "{{ vault_ad_username | default('') }}"
+vast_ad_password: "{{ vault_ad_password | default('') }}"
+vast_ad_use_ldaps: true
+
+# LDAP Integration
+vast_ldap_enabled: false
+vast_ldap_server: "{{ vault_ldap_server | default('') }}"
+vast_ldap_port: 636
+vast_ldap_use_ssl: true
+vast_ldap_base_dn: "{{ vault_ldap_base_dn | default('') }}"
+vast_ldap_bind_dn: "{{ vault_ldap_bind_dn | default('') }}"
+vast_ldap_bind_password: "{{ vault_ldap_bind_password | default('') }}"
+
+# Kerberos Configuration
+vast_kerberos_enabled: false
+vast_kerberos_realm: "{{ vault_kerberos_realm | default('') }}"
+vast_kerberos_kdc: "{{ vault_kerberos_kdc | default('') }}"
+
+# Multi-tenancy Configuration
+vast_multitenancy_enabled: false
+vast_tenants:
+  - name: "tenant-production"
+    quota: 10995116277760  # 10 TB
+    enabled: true
+  - name: "tenant-development"
+    quota: 1099511627776   # 1 TB
+    enabled: true
+
+# User and Group Management
+vast_local_users:
+  - username: "vast-admin"
+    password: "{{ vault_vast_admin_password | default('') }}"
+    role: "admin"
+    enabled: true
+  - username: "vast-monitor"
+    password: "{{ vault_vast_monitor_password | default('') }}"
+    role: "readonly"
+    enabled: true
+
+# RBAC Configuration
+vast_custom_roles:
+  - name: "storage-admin"
+    description: "Storage administration role"
+    permissions:
+      - "storage.manage"
+      - "views.manage"
+      - "quotas.manage"
+  - name: "backup-operator"
+    description: "Backup operator role"
+    permissions:
+      - "snapshots.manage"
+      - "replication.manage"
 
 # Security Settings (DoD STIG Aligned)
 vast_enforce_secure_protocols: true
@@ -46,6 +272,12 @@ vast_nfs_kerberos_required: false
 vast_enable_audit_logging: true
 vast_audit_log_retention_days: 365
 
+# Data Protection
+vast_enable_deduplication: true
+vast_enable_compression: true
+vast_enable_encryption_at_rest: true
+vast_encryption_algorithm: "AES-256-GCM"
+
 # High Availability
 vast_enable_ha: true
 vast_replication_enabled: false
@@ -55,6 +287,7 @@ vast_replication_target: ""
 vast_max_concurrent_connections: 10000
 vast_io_scheduler: "noop"
 vast_readahead_kb: 4096
+vast_write_cache_size_gb: 256
 
 # Monitoring and Alerting
 vast_enable_snmp: true
@@ -63,11 +296,6 @@ vast_enable_syslog: true
 vast_syslog_server: "{{ vault_syslog_server | default('') }}"
 vast_syslog_port: 514
 vast_syslog_protocol: "tcp"
-
-# Backup Configuration
-vast_backup_enabled: false
-vast_backup_schedule: "daily"
-vast_backup_retention: 7
 
 # Compliance Settings
 vast_compliance_mode: "dod"  # Options: dod, nist, hipaa, pci
@@ -78,3 +306,22 @@ vast_cipher_suites:
   - "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256"
   - "TLS_DHE_RSA_WITH_AES_256_GCM_SHA384"
   - "TLS_DHE_RSA_WITH_AES_128_GCM_SHA256"
+
+# Replication Configuration
+vast_replication_pairs: []
+# Example:
+# vast_replication_pairs:
+#   - name: "production-to-dr"
+#     source_view: "/production"
+#     target_cluster: "dr-cluster.vast.local"
+#     target_view: "/production-replica"
+#     replication_type: "async"
+#     schedule: "*/15 * * * *"
+
+# Global Settings
+vast_global_settings:
+  enable_data_immutability: false
+  worm_mode: false
+  min_password_length: 15
+  password_complexity_required: true
+  session_timeout_minutes: 15
