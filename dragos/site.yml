@@ -1,0 +1,149 @@
+---
+# Dragos Platform Deployment Playbook
+# Entry point for Dragos OT security platform automation
+#
+# Usage:
+#   ansible-galaxy collection install -r requirements.yml
+#   ansible-playbook -i inventory site.yml --ask-vault-pass
+#
+# Tags:
+#   - sensors: Sensor deployment and configuration
+#   - inventory: Asset inventory management
+#   - alerts: Alert pipeline configuration
+#   - integrations: SIEM/ITSM integrations
+#   - governance: Compliance and governance
+
+- name: Dragos Platform Configuration
+  hosts: localhost
+  connection: local
+  gather_facts: true
+
+  vars:
+    # Deployment control - set to true to enable each component
+    deploy_sensors: true
+    deploy_inventory: true
+    deploy_topology: true
+    deploy_alerts: true
+    deploy_intel: true
+    deploy_vuln_mgmt: true
+    deploy_integrations: true
+    deploy_governance: true
+    deploy_segmentation: false
+    deploy_mssp: false
+
+  tasks:
+    # =========================================
+    # Phase 1: Sensor Operations
+    # =========================================
+    - name: Phase 1 - Sensor Operations
+      ansible.builtin.include_role:
+        name: dragos_sensor_ops
+      when: deploy_sensors | bool
+      tags: ['sensors', 'phase1']
+
+    # =========================================
+    # Phase 2: Asset Inventory
+    # =========================================
+    - name: Phase 2 - Inventory Model
+      ansible.builtin.include_role:
+        name: dragos_inventory_model
+      when: deploy_inventory | bool
+      tags: ['inventory', 'phase2']
+
+    - name: Phase 2 - Topology Baseline
+      ansible.builtin.include_role:
+        name: dragos_topology_baseline
+      when: deploy_topology | bool
+      tags: ['topology', 'phase2']
+
+    # =========================================
+    # Phase 3: Threat Detection
+    # =========================================
+    - name: Phase 3 - Alerts Pipeline
+      ansible.builtin.include_role:
+        name: dragos_alerts_pipeline
+      when: deploy_alerts | bool
+      tags: ['alerts', 'phase3']
+
+    - name: Phase 3 - Intel Operations
+      ansible.builtin.include_role:
+        name: dragos_intel_ops
+      when: deploy_intel | bool
+      tags: ['intel', 'phase3']
+
+    # =========================================
+    # Phase 4: Vulnerability Management
+    # =========================================
+    - name: Phase 4 - Vulnerability Management
+      ansible.builtin.include_role:
+        name: dragos_vulnerability_mgmt
+      when: deploy_vuln_mgmt | bool
+      tags: ['vulnerability', 'phase4']
+
+    # =========================================
+    # Phase 5: Case Management
+    # =========================================
+    - name: Phase 5 - Cases Workflow
+      ansible.builtin.include_role:
+        name: dragos_cases_workflow
+      tags: ['cases', 'phase5']
+
+    # =========================================
+    # Phase 6: Integrations
+    # =========================================
+    - name: Phase 6 - ServiceNow Integration
+      ansible.builtin.include_role:
+        name: dragos_servicenow_integration
+      when: deploy_integrations | bool and (dragos_servicenow_enabled | default(false) | bool)
+      tags: ['integrations', 'servicenow', 'phase6']
+
+    - name: Phase 6 - Jira Integration
+      ansible.builtin.include_role:
+        name: dragos_jira_integration
+      when: deploy_integrations | bool and (dragos_jira_enabled | default(false) | bool)
+      tags: ['integrations', 'jira', 'phase6']
+
+    # =========================================
+    # Phase 7: Governance & Compliance
+    # =========================================
+    - name: Phase 7 - Governance Pack
+      ansible.builtin.include_role:
+        name: dragos_governance_pack
+      when: deploy_governance | bool
+      tags: ['governance', 'compliance', 'phase7']
+
+    # =========================================
+    # Phase 8: Network Segmentation (Optional)
+    # =========================================
+    - name: Phase 8 - Segmentation Assist
+      ansible.builtin.include_role:
+        name: dragos_segmentation_assist
+      when: deploy_segmentation | bool
+      tags: ['segmentation', 'phase8']
+
+    # =========================================
+    # Phase 9: MSSP Operations (Optional)
+    # =========================================
+    - name: Phase 9 - MSSP Orchestrator
+      ansible.builtin.include_role:
+        name: dragos_mssp_orchestrator
+      when: deploy_mssp | bool
+      tags: ['mssp', 'phase9']
+
+    # =========================================
+    # Deployment Summary
+    # =========================================
+    - name: Display deployment summary
+      ansible.builtin.debug:
+        msg:
+          - "=== Dragos Platform Deployment Complete ==="
+          - "Platform URL: {{ dragos_api_url | default('https://dragos.example.com') }}"
+          - "Sensors: {{ 'Configured' if deploy_sensors else 'Skipped' }}"
+          - "Asset Inventory: {{ 'Configured' if deploy_inventory else 'Skipped' }}"
+          - "Topology: {{ 'Configured' if deploy_topology else 'Skipped' }}"
+          - "Alerts Pipeline: {{ 'Configured' if deploy_alerts else 'Skipped' }}"
+          - "Threat Intel: {{ 'Configured' if deploy_intel else 'Skipped' }}"
+          - "Vulnerability Mgmt: {{ 'Configured' if deploy_vuln_mgmt else 'Skipped' }}"
+          - "Integrations: {{ 'Configured' if deploy_integrations else 'Skipped' }}"
+          - "Governance: {{ 'Configured' if deploy_governance else 'Skipped' }}"
+      tags: ['always']

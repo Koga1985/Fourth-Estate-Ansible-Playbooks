@@ -1,0 +1,305 @@
+---
+# Cisco Platform Deployment Playbook
+# Entry point for Cisco ISE and UCS automation
+#
+# Usage:
+#   ansible-galaxy collection install -r requirements.yml
+#   ansible-playbook -i inventory site.yml --ask-vault-pass
+#
+# Tags:
+#   - ise: Cisco ISE only
+#   - ucs: Cisco UCS only
+#   - policy: Policy configuration
+#   - security: Security hardening
+
+- name: Cisco ISE Configuration
+  hosts: localhost
+  connection: local
+  gather_facts: true
+
+  vars:
+    # ISE Deployment control
+    deploy_ise_policy: true
+    deploy_ise_profiling: true
+    deploy_ise_posture: true
+    deploy_ise_guest: true
+    deploy_ise_pxgrid: true
+    deploy_ise_byod: false
+    deploy_ise_integrations: true
+    deploy_ise_reporting: true
+
+  tasks:
+    # =========================================
+    # Phase 1: ISE Policy Configuration
+    # =========================================
+    - name: Phase 1 - Policy Sets Scaffold
+      ansible.builtin.include_role:
+        name: ise_policy__policy_sets_scaffold
+      when: deploy_ise_policy | bool
+      tags: ['ise', 'policy', 'phase1']
+
+    - name: Phase 1 - Conditions Library
+      ansible.builtin.include_role:
+        name: ise_policy__conditions_library
+      when: deploy_ise_policy | bool
+      tags: ['ise', 'policy', 'phase1']
+
+    - name: Phase 1 - Authorization Profiles
+      ansible.builtin.include_role:
+        name: ise_policy__authz_profiles
+      when: deploy_ise_policy | bool
+      tags: ['ise', 'policy', 'phase1']
+
+    - name: Phase 1 - RADIUS DACLs
+      ansible.builtin.include_role:
+        name: ise_policy__radius_dacls
+      when: deploy_ise_policy | bool
+      tags: ['ise', 'policy', 'phase1']
+
+    - name: Phase 1 - Shell Profiles & Command Sets
+      ansible.builtin.include_role:
+        name: ise_policy__shell_profiles_cmdsets
+      when: deploy_ise_policy | bool
+      tags: ['ise', 'policy', 'phase1']
+
+    - name: Phase 1 - Apply Policy Rules
+      ansible.builtin.include_role:
+        name: ise_policy__apply_rules
+      when: deploy_ise_policy | bool
+      tags: ['ise', 'policy', 'phase1']
+
+    # =========================================
+    # Phase 2: ISE Profiling
+    # =========================================
+    - name: Phase 2 - Profiler Probes
+      ansible.builtin.include_role:
+        name: ise_profiling__probes
+      when: deploy_ise_profiling | bool
+      tags: ['ise', 'profiling', 'phase2']
+
+    - name: Phase 2 - Profiling Policies
+      ansible.builtin.include_role:
+        name: ise_profiling__policies
+      when: deploy_ise_profiling | bool
+      tags: ['ise', 'profiling', 'phase2']
+
+    # =========================================
+    # Phase 3: ISE Endpoints
+    # =========================================
+    - name: Phase 3 - Endpoint Registration (Bulk)
+      ansible.builtin.include_role:
+        name: ise_endpoints__register_bulk
+      tags: ['ise', 'endpoints', 'phase3']
+
+    - name: Phase 3 - Endpoint Group Membership
+      ansible.builtin.include_role:
+        name: ise_endpoints__group_membership
+      tags: ['ise', 'endpoints', 'phase3']
+
+    # =========================================
+    # Phase 4: ISE Posture
+    # =========================================
+    - name: Phase 4 - Posture Conditions & Rules
+      ansible.builtin.include_role:
+        name: ise_posture__conditions_rules
+      when: deploy_ise_posture | bool
+      tags: ['ise', 'posture', 'phase4']
+
+    - name: Phase 4 - Client Provisioning
+      ansible.builtin.include_role:
+        name: ise_posture__client_provisioning
+      when: deploy_ise_posture | bool
+      tags: ['ise', 'posture', 'phase4']
+
+    - name: Phase 4 - Posture Updates Channel
+      ansible.builtin.include_role:
+        name: ise_posture__updates_channel
+      when: deploy_ise_posture | bool
+      tags: ['ise', 'posture', 'phase4']
+
+    # =========================================
+    # Phase 5: ISE Guest & BYOD
+    # =========================================
+    - name: Phase 5 - Guest Portal
+      ansible.builtin.include_role:
+        name: ise_guest__guest_portal
+      when: deploy_ise_guest | bool
+      tags: ['ise', 'guest', 'phase5']
+
+    - name: Phase 5 - Sponsor Portal
+      ansible.builtin.include_role:
+        name: ise_guest__sponsor_portal
+      when: deploy_ise_guest | bool
+      tags: ['ise', 'guest', 'phase5']
+
+    - name: Phase 5 - Guest Accounts (Bulk)
+      ansible.builtin.include_role:
+        name: ise_guest__accounts_bulk
+      when: deploy_ise_guest | bool
+      tags: ['ise', 'guest', 'phase5']
+
+    - name: Phase 5 - BYOD Workflow
+      ansible.builtin.include_role:
+        name: ise_byod__workflow
+      when: deploy_ise_byod | bool
+      tags: ['ise', 'byod', 'phase5']
+
+    # =========================================
+    # Phase 6: ISE pxGrid & Integrations
+    # =========================================
+    - name: Phase 6 - pxGrid Enable Clients
+      ansible.builtin.include_role:
+        name: ise_pxgrid__enable_clients
+      when: deploy_ise_pxgrid | bool
+      tags: ['ise', 'pxgrid', 'phase6']
+
+    - name: Phase 6 - MSE/DNAC Integration
+      ansible.builtin.include_role:
+        name: ise_integration__mse_dnac
+      when: deploy_ise_integrations | bool
+      tags: ['ise', 'integrations', 'phase6']
+
+    - name: Phase 6 - Logging Integration
+      ansible.builtin.include_role:
+        name: ise_integration__logging
+      when: deploy_ise_integrations | bool
+      tags: ['ise', 'integrations', 'phase6']
+
+    # =========================================
+    # Phase 7: ISE Security
+    # =========================================
+    - name: Phase 7 - ANC Quarantine Rules
+      ansible.builtin.include_role:
+        name: ise_anc__quarantine_rules
+      tags: ['ise', 'security', 'phase7']
+
+    # =========================================
+    # Phase 8: ISE Operations
+    # =========================================
+    - name: Phase 8 - Policy Hitcount Shadow Report
+      ansible.builtin.include_role:
+        name: ise_policy__hitcount_shadow_report
+      when: deploy_ise_reporting | bool
+      tags: ['ise', 'operations', 'phase8']
+
+    - name: Phase 8 - Stale Objects Prune
+      ansible.builtin.include_role:
+        name: ise_hygiene__stale_objects_prune
+      tags: ['ise', 'operations', 'phase8']
+
+    - name: Phase 8 - Audit Config Changes
+      ansible.builtin.include_role:
+        name: ise_audit__config_changes
+      tags: ['ise', 'audit', 'phase8']
+
+    # =========================================
+    # Phase 9: ISE Reporting
+    # =========================================
+    - name: Phase 9 - Auth Failures Report
+      ansible.builtin.include_role:
+        name: ise_report__auth_failures
+      when: deploy_ise_reporting | bool
+      tags: ['ise', 'reporting', 'phase9']
+
+    - name: Phase 9 - Endpoint Catalog Report
+      ansible.builtin.include_role:
+        name: ise_report__endpoint_catalog
+      when: deploy_ise_reporting | bool
+      tags: ['ise', 'reporting', 'phase9']
+
+    - name: Phase 9 - Export Active Sessions
+      ansible.builtin.include_role:
+        name: ise_sessions__export_active
+      when: deploy_ise_reporting | bool
+      tags: ['ise', 'reporting', 'phase9']
+
+    - name: Phase 9 - RADIUS Accounting Monitor
+      ansible.builtin.include_role:
+        name: ise_monitor__radius_accounting
+      when: deploy_ise_reporting | bool
+      tags: ['ise', 'reporting', 'phase9']
+
+
+- name: Cisco UCS Configuration
+  hosts: localhost
+  connection: local
+  gather_facts: true
+
+  vars:
+    # UCS Deployment control
+    deploy_ucs_infrastructure: true
+    deploy_ucs_networking: true
+    deploy_ucs_security: true
+    deploy_ucs_backup: true
+    deploy_ucs_monitoring: true
+
+  tasks:
+    # =========================================
+    # Phase 10: UCS Infrastructure
+    # =========================================
+    - name: Phase 10 - UCS Infrastructure
+      ansible.builtin.include_role:
+        name: ucs_prod_infrastructure
+      when: deploy_ucs_infrastructure | bool
+      tags: ['ucs', 'infrastructure', 'phase10']
+
+    # =========================================
+    # Phase 11: UCS Networking
+    # =========================================
+    - name: Phase 11 - UCS Networking
+      ansible.builtin.include_role:
+        name: ucs_prod_networking
+      when: deploy_ucs_networking | bool
+      tags: ['ucs', 'networking', 'phase11']
+
+    # =========================================
+    # Phase 12: UCS Security
+    # =========================================
+    - name: Phase 12 - UCS Security Hardening
+      ansible.builtin.include_role:
+        name: ucs_security_hardening
+      when: deploy_ucs_security | bool
+      tags: ['ucs', 'security', 'phase12']
+
+    # =========================================
+    # Phase 13: UCS Backup & DR
+    # =========================================
+    - name: Phase 13 - UCS Backup & DR
+      ansible.builtin.include_role:
+        name: ucs_prod_backup_dr
+      when: deploy_ucs_backup | bool
+      tags: ['ucs', 'backup', 'phase13']
+
+    # =========================================
+    # Phase 14: UCS Monitoring
+    # =========================================
+    - name: Phase 14 - UCS Monitoring
+      ansible.builtin.include_role:
+        name: ucs_prod_monitoring
+      when: deploy_ucs_monitoring | bool
+      tags: ['ucs', 'monitoring', 'phase14']
+
+
+- name: Deployment Summary
+  hosts: localhost
+  gather_facts: false
+
+  tasks:
+    - name: Display deployment summary
+      ansible.builtin.debug:
+        msg:
+          - "=== Cisco Platform Deployment Complete ==="
+          - "--- Cisco ISE ---"
+          - "ISE Version: {{ ise_version | default('3.2') }}"
+          - "Policy Sets: {{ 'Configured' if deploy_ise_policy | default(true) else 'Skipped' }}"
+          - "Profiling: {{ 'Configured' if deploy_ise_profiling | default(true) else 'Skipped' }}"
+          - "Posture: {{ 'Configured' if deploy_ise_posture | default(true) else 'Skipped' }}"
+          - "Guest Portal: {{ 'Configured' if deploy_ise_guest | default(true) else 'Skipped' }}"
+          - "pxGrid: {{ 'Configured' if deploy_ise_pxgrid | default(true) else 'Skipped' }}"
+          - "--- Cisco UCS ---"
+          - "Infrastructure: {{ 'Configured' if deploy_ucs_infrastructure | default(true) else 'Skipped' }}"
+          - "Networking: {{ 'Configured' if deploy_ucs_networking | default(true) else 'Skipped' }}"
+          - "Security: {{ 'Hardened' if deploy_ucs_security | default(true) else 'Skipped' }}"
+          - "Backup/DR: {{ 'Configured' if deploy_ucs_backup | default(true) else 'Skipped' }}"
+          - "Monitoring: {{ 'Configured' if deploy_ucs_monitoring | default(true) else 'Skipped' }}"
+      tags: ['always']

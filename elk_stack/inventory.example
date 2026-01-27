@@ -1,0 +1,119 @@
+# ELK Stack Inventory Example
+# Copy this file to your inventory directory and customize
+
+# --- Elasticsearch Master Nodes ---
+[elasticsearch_master]
+es-master-01 ansible_host=192.168.1.100 elasticsearch_node_master=true elasticsearch_node_data=false
+es-master-02 ansible_host=192.168.1.101 elasticsearch_node_master=true elasticsearch_node_data=false
+es-master-03 ansible_host=192.168.1.102 elasticsearch_node_master=true elasticsearch_node_data=false
+
+# --- Elasticsearch Data Nodes ---
+[elasticsearch_data]
+es-data-01 ansible_host=192.168.1.110 elasticsearch_node_master=false elasticsearch_node_data=true
+es-data-02 ansible_host=192.168.1.111 elasticsearch_node_master=false elasticsearch_node_data=true
+es-data-03 ansible_host=192.168.1.112 elasticsearch_node_master=false elasticsearch_node_data=true
+
+# --- Elasticsearch Coordinating Nodes ---
+[elasticsearch_coordinating]
+es-coord-01 ansible_host=192.168.1.120 elasticsearch_node_master=false elasticsearch_node_data=false
+es-coord-02 ansible_host=192.168.1.121 elasticsearch_node_master=false elasticsearch_node_data=false
+
+# --- All Elasticsearch Nodes ---
+[elasticsearch:children]
+elasticsearch_master
+elasticsearch_data
+elasticsearch_coordinating
+
+# --- Kibana Servers ---
+[kibana]
+kibana-01 ansible_host=192.168.1.130
+kibana-02 ansible_host=192.168.1.131
+
+# --- Logstash Servers ---
+[logstash]
+logstash-01 ansible_host=192.168.1.140
+logstash-02 ansible_host=192.168.1.141
+
+# --- Fleet Server (Elastic Agent) ---
+[fleet_server]
+fleet-01 ansible_host=192.168.1.150
+
+# --- All ELK Stack Servers ---
+[elk_stack:children]
+elasticsearch
+kibana
+logstash
+fleet_server
+
+# --- Common Variables ---
+[elk_stack:vars]
+ansible_user=ansible
+ansible_become=true
+ansible_python_interpreter=/usr/bin/python3
+
+# Elasticsearch Version
+elasticsearch_version=8.11
+
+# Cluster configuration
+elasticsearch_cluster_name=production-elk
+elasticsearch_http_port=9200
+elasticsearch_transport_port=9300
+
+# Discovery configuration (master node IPs)
+elasticsearch_discovery_seed_hosts:
+  - 192.168.1.100
+  - 192.168.1.101
+  - 192.168.1.102
+
+elasticsearch_initial_master_nodes:
+  - es-master-01
+  - es-master-02
+  - es-master-03
+
+# --- Security Configuration ---
+[elasticsearch:vars]
+elasticsearch_security_enabled=true
+elasticsearch_xpack_security_enabled=true
+
+# Built-in user passwords - use vault
+elasticsearch_elastic_password={{ vault_elasticsearch_elastic_password }}
+elasticsearch_kibana_password={{ vault_elasticsearch_kibana_password }}
+elasticsearch_logstash_password={{ vault_elasticsearch_logstash_password }}
+
+# TLS/SSL Configuration
+elasticsearch_ssl_enabled=true
+elasticsearch_ssl_certificate_path=/etc/elasticsearch/certs
+elasticsearch_ssl_verification_mode=certificate
+
+# --- Performance Tuning ---
+# Heap size (set to 50% of available RAM, max 31g)
+elasticsearch_heap_size=16g
+
+# Data path
+elasticsearch_data_path=/var/lib/elasticsearch
+elasticsearch_logs_path=/var/log/elasticsearch
+
+# --- Index Lifecycle Management ---
+elasticsearch_ilm_enabled=true
+elasticsearch_hot_phase_days=7
+elasticsearch_warm_phase_days=30
+elasticsearch_cold_phase_days=90
+elasticsearch_delete_phase_days=365
+
+# --- Kibana Configuration ---
+[kibana:vars]
+kibana_server_port=5601
+kibana_elasticsearch_hosts=["https://es-coord-01:9200", "https://es-coord-02:9200"]
+kibana_encryption_key={{ vault_kibana_encryption_key }}
+
+# --- Logstash Configuration ---
+[logstash:vars]
+logstash_pipeline_workers=4
+logstash_pipeline_batch_size=125
+logstash_elasticsearch_hosts=["https://es-coord-01:9200", "https://es-coord-02:9200"]
+
+# --- Audit Configuration ---
+[elasticsearch:vars]
+elasticsearch_audit_enabled=true
+elasticsearch_audit_outputs=["logfile"]
+elasticsearch_audit_events=["authentication_success", "authentication_failed", "access_denied", "access_granted"]

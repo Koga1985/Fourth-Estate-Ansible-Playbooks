@@ -1,0 +1,148 @@
+---
+# MySQL Database Deployment Playbook
+# Entry point for MySQL platform automation
+#
+# Usage:
+#   ansible-galaxy collection install -r requirements.yml
+#   ansible-playbook -i inventory site.yml --ask-vault-pass
+#
+# Tags:
+#   - install: MySQL installation only
+#   - config: Configuration only
+#   - security: Security hardening
+#   - replication: Setup replication
+#   - galera: Galera cluster setup
+#   - backup: Backup configuration
+
+- name: MySQL Primary Server Setup
+  hosts: mysql_primary
+  become: true
+  gather_facts: true
+
+  vars:
+    deploy_install: true
+    deploy_config: true
+    deploy_security: true
+    deploy_replication: true
+    deploy_audit: true
+    deploy_backup: true
+
+  tasks:
+    - name: Phase 1 - Install MySQL
+      ansible.builtin.include_role:
+        name: mysql_install
+      when: deploy_install | bool
+      tags: ['install', 'phase1']
+
+    - name: Phase 2 - Configure MySQL
+      ansible.builtin.include_role:
+        name: mysql_config
+      when: deploy_config | bool
+      tags: ['config', 'phase2']
+
+    - name: Phase 3 - Security Hardening
+      ansible.builtin.include_role:
+        name: mysql_security
+      when: deploy_security | bool
+      tags: ['security', 'phase3']
+
+    - name: Phase 4 - Configure Replication (Primary)
+      ansible.builtin.include_role:
+        name: mysql_replication
+      vars:
+        replication_role: primary
+      when: deploy_replication | bool
+      tags: ['replication', 'phase4']
+
+    - name: Phase 5 - Configure Audit Logging
+      ansible.builtin.include_role:
+        name: mysql_audit
+      when: deploy_audit | bool
+      tags: ['audit', 'phase5']
+
+    - name: Phase 6 - Configure Backup
+      ansible.builtin.include_role:
+        name: mysql_backup
+      when: deploy_backup | bool
+      tags: ['backup', 'phase6']
+
+    - name: Phase 6 - Configure Binlog Backup
+      ansible.builtin.include_role:
+        name: mysql_binlog_backup
+      when: deploy_backup | bool and (mysql_binlog_backup_enabled | default(true) | bool)
+      tags: ['backup', 'phase6']
+
+
+- name: MySQL Replica Server Setup
+  hosts: mysql_replicas
+  become: true
+  gather_facts: true
+  serial: 1
+
+  vars:
+    deploy_install: true
+    deploy_config: true
+    deploy_security: true
+    deploy_replication: true
+
+  tasks:
+    - name: Phase 1 - Install MySQL
+      ansible.builtin.include_role:
+        name: mysql_install
+      when: deploy_install | bool
+      tags: ['install', 'phase1']
+
+    - name: Phase 2 - Configure MySQL
+      ansible.builtin.include_role:
+        name: mysql_config
+      when: deploy_config | bool
+      tags: ['config', 'phase2']
+
+    - name: Phase 3 - Security Hardening
+      ansible.builtin.include_role:
+        name: mysql_security
+      when: deploy_security | bool
+      tags: ['security', 'phase3']
+
+    - name: Phase 4 - Configure Replication (Replica)
+      ansible.builtin.include_role:
+        name: mysql_replication
+      vars:
+        replication_role: replica
+      when: deploy_replication | bool
+      tags: ['replication', 'phase4']
+
+
+- name: MySQL Galera Cluster Setup
+  hosts: mysql_galera
+  become: true
+  gather_facts: true
+
+  vars:
+    deploy_galera: true
+
+  tasks:
+    - name: Phase 1 - Configure Galera Cluster
+      ansible.builtin.include_role:
+        name: mysql_galera_cluster
+      when: deploy_galera | bool
+      tags: ['galera', 'cluster']
+
+
+- name: Deployment Summary
+  hosts: localhost
+  gather_facts: false
+
+  tasks:
+    - name: Display deployment summary
+      ansible.builtin.debug:
+        msg:
+          - "=== MySQL Deployment Complete ==="
+          - "Version: {{ mysql_version | default('8.0') }}"
+          - "Primary: {{ groups['mysql_primary'] | default([]) | join(', ') }}"
+          - "Replicas: {{ groups['mysql_replicas'] | default([]) | join(', ') }}"
+          - "Galera Nodes: {{ groups['mysql_galera'] | default([]) | join(', ') }}"
+          - "SSL Enabled: {{ mysql_ssl_enabled | default(true) }}"
+          - "Audit Logging: {{ mysql_audit_log_enabled | default(true) }}"
+          - "GTID Replication: Enabled"
+      tags: ['always']

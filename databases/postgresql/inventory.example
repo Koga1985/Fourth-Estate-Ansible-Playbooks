@@ -1,0 +1,89 @@
+# PostgreSQL Inventory Example
+# Copy this file to your inventory directory and customize
+
+# --- Primary Database Server ---
+[postgresql_primary]
+pg-primary ansible_host=192.168.1.50
+
+# --- Replica Servers ---
+[postgresql_replicas]
+pg-replica-01 ansible_host=192.168.1.51
+pg-replica-02 ansible_host=192.168.1.52
+
+# --- All PostgreSQL Servers ---
+[postgresql:children]
+postgresql_primary
+postgresql_replicas
+
+# --- Barman Backup Server ---
+[postgresql_backup]
+pg-barman ansible_host=192.168.1.60
+
+# --- pgPool Load Balancer ---
+[postgresql_pgpool]
+pg-pool-01 ansible_host=192.168.1.70
+pg-pool-02 ansible_host=192.168.1.71
+
+# --- Common Variables ---
+[postgresql:vars]
+ansible_user=ansible
+ansible_become=true
+ansible_python_interpreter=/usr/bin/python3
+
+# PostgreSQL Version
+postgresql_version=15
+
+# Database credentials - use vault
+postgresql_admin_user=postgres
+postgresql_admin_password={{ vault_postgresql_admin_password }}
+
+# Replication credentials
+postgresql_replication_user=replicator
+postgresql_replication_password={{ vault_postgresql_replication_password }}
+
+# --- Network Configuration ---
+postgresql_listen_addresses='*'
+postgresql_port=5432
+
+# Allowed connections (pg_hba.conf)
+postgresql_allowed_networks:
+  - "192.168.1.0/24"
+  - "10.0.0.0/8"
+
+# --- Performance Tuning ---
+# Adjust based on server memory
+postgresql_shared_buffers=4GB
+postgresql_effective_cache_size=12GB
+postgresql_work_mem=256MB
+postgresql_maintenance_work_mem=1GB
+postgresql_max_connections=200
+
+# --- Replication Configuration ---
+[postgresql_primary:vars]
+postgresql_role=primary
+postgresql_max_wal_senders=10
+postgresql_wal_level=replica
+postgresql_hot_standby=on
+
+[postgresql_replicas:vars]
+postgresql_role=replica
+postgresql_primary_host=192.168.1.50
+
+# --- Backup Configuration ---
+[postgresql_backup:vars]
+barman_backup_directory=/var/lib/barman
+barman_retention_policy="RECOVERY WINDOW OF 30 DAYS"
+barman_backup_schedule="0 2 * * *"
+
+# --- Security Configuration ---
+[postgresql:vars]
+postgresql_ssl_enabled=true
+postgresql_ssl_cert_file=/etc/ssl/certs/postgresql.crt
+postgresql_ssl_key_file=/etc/ssl/private/postgresql.key
+postgresql_password_encryption=scram-sha-256
+
+# Audit logging
+postgresql_log_connections=on
+postgresql_log_disconnections=on
+postgresql_log_statement=ddl
+postgresql_log_min_duration_statement=1000
