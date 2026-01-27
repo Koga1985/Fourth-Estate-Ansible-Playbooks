@@ -1,0 +1,94 @@
+---
+# Asset Disposal Workflow
+
+- name: Validate disposal requirements
+  ansible.builtin.assert:
+    that:
+      - ot_asset_id is defined and ot_asset_id | length > 0
+      - ot_asset_disposal_method is defined and ot_asset_disposal_method | length > 0
+      - ot_asset_disposal_method in ['recycle', 'destroy', 'return_to_vendor', 'archive']
+      - not ot_asset_dry_run
+    fail_msg: "Disposal requires asset_id, valid disposal method, and dry_run must be false"
+
+- name: Verify asset is decommissioned
+  ansible.builtin.uri:
+    url: "{{ ot_asset_api_url }}/assets/{{ ot_asset_id }}"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ ot_asset_api_token }}"
+    validate_certs: "{{ ot_asset_verify_ssl }}"
+    status_code: [200]
+  register: asset_status
+  when: ot_asset_api_token | length > 0
+
+- name: Fail if asset not decommissioned
+  ansible.builtin.fail:
+    msg: "Asset must be decommissioned before disposal"
+  when:
+    - asset_status is defined
+    - asset_status.json.state != 'decommissioned'
+
+- name: Create final asset snapshot
+  ansible.builtin.copy:
+    content: "{{ asset_status.json | to_nice_json }}"
+    dest: "{{ ot_asset_backup_dir }}/{{ ot_asset_id }}_final_snapshot.json"
+    mode: '0640'
+  when: asset_status is defined
+
+- name: Data sanitization record
+  ansible.builtin.set_fact:
+    sanitization_record:
+      asset_id: "{{ ot_asset_id }}"
+      sanitization_required: "{{ ot_asset_data_sanitization_required }}"
+      sanitization_date: "{{ ansible_date_time.iso8601 if ot_asset_data_sanitization_required else 'N/A' }}"
+      sanitization_method: "{{ 'DoD 5220.22-M' if ot_asset_data_sanitization_required else 'N/A' }}"
+      verified_by: "{{ ansible_user_id if ot_asset_data_sanitization_required else 'N/A' }}"
+
+- name: Create disposal record
+  ansible.builtin.set_fact:
+    disposal_record:
+      asset_id: "{{ ot_asset_id }}"
+      disposal_date: "{{ ansible_date_time.iso8601 }}"
+      disposal_method: "{{ ot_asset_disposal_method }}"
+      disposed_by: "{{ ansible_user_id }}"
+      data_sanitization: "{{ sanitization_record }}"
+      final_snapshot: "{{ ot_asset_backup_dir }}/{{ ot_asset_id }}_final_snapshot.json"
+
+- name: Save disposal record
+  ansible.builtin.copy:
+    content: "{{ disposal_record | to_nice_json }}"
+    dest: "{{ ot_asset_artifacts_dir }}/disposal_{{ ot_asset_id }}_{{ ansible_date_time.iso8601_basic_short }}.json"
+    mode: '0640'
+
+- name: Update asset to disposed state
+  ansible.builtin.uri:
+    url: "{{ ot_asset_api_url }}/assets/{{ ot_asset_id }}"
+    method: PATCH
+    headers:
+      Authorization: "Bearer {{ ot_asset_api_token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      state: "disposed"
+      disposal_date: "{{ ansible_date_time.iso8601 }}"
+      disposal_method: "{{ ot_asset_disposal_method }}"
+      disposed_by: "{{ ansible_user_id }}"
+    validate_certs: "{{ ot_asset_verify_ssl }}"
+    status_code: [200, 204]
+  when: ot_asset_api_token | length > 0
+
+- name: Log disposal event
+  ansible.builtin.lineinfile:
+    path: "{{ ot_asset_log_dir }}/disposals.log"
+    line: "{{ ansible_date_time.iso8601 }} | DISPOSE | {{ ot_asset_id }} | {{ ot_asset_disposal_method }}"
+    create: yes
+    mode: '0640'
+
+- name: Display disposal summary
+  ansible.builtin.debug:
+    msg:
+      - "Asset Disposal Completed"
+      - "Asset ID: {{ ot_asset_id }}"
+      - "Method: {{ ot_asset_disposal_method }}"
+      - "Data Sanitization: {{ ot_asset_data_sanitization_required }}"
+      - "Date: {{ ansible_date_time.iso8601 }}"

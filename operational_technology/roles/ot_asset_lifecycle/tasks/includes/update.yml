@@ -1,0 +1,71 @@
+---
+# Asset Update Workflow
+
+- name: Validate update requirements
+  ansible.builtin.assert:
+    that:
+      - ot_asset_id is defined and ot_asset_id | length > 0
+    fail_msg: "Asset ID required for update"
+
+- name: Retrieve current asset data
+  ansible.builtin.uri:
+    url: "{{ ot_asset_api_url }}/assets/{{ ot_asset_id }}"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ ot_asset_api_token }}"
+    validate_certs: "{{ ot_asset_verify_ssl }}"
+    status_code: [200]
+  register: current_asset
+  when: ot_asset_api_token | length > 0
+
+- name: Backup current asset state
+  ansible.builtin.copy:
+    content: "{{ current_asset.json | to_nice_json }}"
+    dest: "{{ ot_asset_backup_dir }}/{{ ot_asset_id }}_pre_update_{{ ansible_date_time.iso8601_basic_short }}.json"
+    mode: '0640'
+  when: current_asset is defined
+
+- name: Prepare update payload
+  ansible.builtin.set_fact:
+    asset_update_payload:
+      asset_id: "{{ ot_asset_id }}"
+      name: "{{ ot_asset_name | default(current_asset.json.name) }}"
+      firmware_version: "{{ ot_asset_firmware_version | default(current_asset.json.firmware_version) }}"
+      ip_address: "{{ ot_asset_ip_address | default(current_asset.json.ip_address) }}"
+      owner: "{{ ot_asset_owner | default(current_asset.json.owner) }}"
+      custodian: "{{ ot_asset_custodian | default(current_asset.json.custodian) }}"
+      criticality: "{{ ot_asset_criticality | default(current_asset.json.criticality) }}"
+      location:
+        facility: "{{ ot_asset_facility | default(current_asset.json.facility) }}"
+        building: "{{ ot_asset_building | default(current_asset.json.building) }}"
+        room: "{{ ot_asset_room | default(current_asset.json.room) }}"
+      updated_by: "{{ ansible_user_id }}"
+      updated_at: "{{ ansible_date_time.iso8601 }}"
+
+- name: Update asset in CMDB
+  ansible.builtin.uri:
+    url: "{{ ot_asset_api_url }}/assets/{{ ot_asset_id }}"
+    method: PUT
+    headers:
+      Authorization: "Bearer {{ ot_asset_api_token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body: "{{ asset_update_payload }}"
+    validate_certs: "{{ ot_asset_verify_ssl }}"
+    status_code: [200, 204]
+  when:
+    - ot_asset_api_token | length > 0
+    - not ot_asset_dry_run
+
+- name: Save update record locally
+  ansible.builtin.copy:
+    content: "{{ asset_update_payload | to_nice_json }}"
+    dest: "{{ ot_asset_artifacts_dir }}/update_{{ ot_asset_id }}_{{ ansible_date_time.iso8601_basic_short }}.json"
+    mode: '0640'
+
+- name: Log asset update
+  ansible.builtin.lineinfile:
+    path: "{{ ot_asset_log_dir }}/updates.log"
+    line: "{{ ansible_date_time.iso8601 }} | UPDATE | {{ ot_asset_id }} | {{ ansible_user_id }}"
+    create: yes
+    mode: '0640'

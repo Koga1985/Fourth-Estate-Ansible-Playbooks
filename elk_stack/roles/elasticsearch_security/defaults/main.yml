@@ -1,0 +1,188 @@
+---
+# Elasticsearch Security Defaults
+
+# Security configuration
+elasticsearch_security_enabled: true
+elasticsearch_security_auto_configure: true
+
+# TLS/SSL configuration
+elasticsearch_tls_enabled: true
+elasticsearch_tls_transport_enabled: true
+elasticsearch_tls_http_enabled: true
+
+# Certificate configuration
+elasticsearch_certs_dir: "/etc/elasticsearch/certs"
+elasticsearch_ca_cert_path: "{{ elasticsearch_certs_dir }}/ca/ca.crt"
+elasticsearch_ca_key_path: "{{ elasticsearch_certs_dir }}/ca/ca.key"
+elasticsearch_node_cert_path: "{{ elasticsearch_certs_dir }}/{{ ansible_hostname }}/{{ ansible_hostname }}.crt"
+elasticsearch_node_key_path: "{{ elasticsearch_certs_dir }}/{{ ansible_hostname }}/{{ ansible_hostname }}.key"
+
+# Certificate generation
+elasticsearch_generate_ca: true
+elasticsearch_generate_node_certs: true
+elasticsearch_cert_validity_days: 3650
+elasticsearch_cert_key_size: 4096
+
+# Certificate details
+elasticsearch_cert_country: "US"
+elasticsearch_cert_state: "DC"
+elasticsearch_cert_locality: "Washington"
+elasticsearch_cert_organization: "Fourth Estate Media"
+elasticsearch_cert_organizational_unit: "Infrastructure"
+
+# TLS versions and ciphers
+elasticsearch_tls_versions: ["TLSv1.2", "TLSv1.3"]
+elasticsearch_tls_ciphers: []  # Empty uses defaults
+
+# Client authentication
+elasticsearch_tls_client_auth: "optional"  # none, optional, required
+
+# Built-in users
+elasticsearch_builtin_users:
+  - username: "elastic"
+    password: "{{ elasticsearch_elastic_password | default('changeme') }}"
+  - username: "kibana_system"
+    password: "{{ elasticsearch_kibana_password | default('changeme') }}"
+  - username: "logstash_system"
+    password: "{{ elasticsearch_logstash_password | default('changeme') }}"
+  - username: "beats_system"
+    password: "{{ elasticsearch_beats_password | default('changeme') }}"
+  - username: "apm_system"
+    password: "{{ elasticsearch_apm_password | default('changeme') }}"
+  - username: "remote_monitoring_user"
+    password: "{{ elasticsearch_monitoring_password | default('changeme') }}"
+
+# Custom roles
+elasticsearch_custom_roles:
+  - name: "journalist_readonly"
+    cluster:
+      - "monitor"
+    indices:
+      - names: ["logs-*", "filebeat-*"]
+        privileges: ["read", "view_index_metadata"]
+        field_security:
+          grant: ["@timestamp", "message", "log.*", "source.*"]
+        query: '{"match": {"log.level": "info"}}'
+
+  - name: "security_analyst"
+    cluster:
+      - "monitor"
+      - "manage_ilm"
+    indices:
+      - names: ["logs-security-*", "logs-firewall-*", "logs-ids-*"]
+        privileges: ["read", "write", "view_index_metadata", "create_index"]
+
+  - name: "infrastructure_admin"
+    cluster:
+      - "monitor"
+      - "manage"
+      - "manage_ilm"
+    indices:
+      - names: ["*"]
+        privileges: ["all"]
+
+  - name: "editor_access"
+    cluster:
+      - "monitor"
+    indices:
+      - names: ["logs-application-*", "logs-cms-*"]
+        privileges: ["read", "view_index_metadata"]
+
+# Custom users
+elasticsearch_custom_users:
+  - username: "journalist_user"
+    password: "{{ elasticsearch_journalist_password | default('changeme') }}"
+    roles: ["journalist_readonly"]
+  - username: "security_user"
+    password: "{{ elasticsearch_security_user_password | default('changeme') }}"
+    roles: ["security_analyst"]
+  - username: "infra_admin"
+    password: "{{ elasticsearch_infra_password | default('changeme') }}"
+    roles: ["infrastructure_admin"]
+
+# LDAP/AD integration
+elasticsearch_ldap_enabled: false
+elasticsearch_ldap_url: "ldaps://ldap.fourthestate.org:636"
+elasticsearch_ldap_bind_dn: "cn=elasticsearch,ou=service-accounts,dc=fourthestate,dc=org"
+elasticsearch_ldap_bind_password: "{{ elasticsearch_ldap_bind_password_vault }}"
+elasticsearch_ldap_user_search_base: "ou=users,dc=fourthestate,dc=org"
+elasticsearch_ldap_user_search_filter: "(cn={0})"
+elasticsearch_ldap_group_search_base: "ou=groups,dc=fourthestate,dc=org"
+elasticsearch_ldap_group_search_filter: "(member={0})"
+
+# Active Directory integration
+elasticsearch_ad_enabled: false
+elasticsearch_ad_domain: "fourthestate.org"
+elasticsearch_ad_url: "ldaps://ad.fourthestate.org:636"
+elasticsearch_ad_user_search_base: "CN=Users,DC=fourthestate,DC=org"
+elasticsearch_ad_group_search_base: "CN=Users,DC=fourthestate,DC=org"
+
+# SAML SSO
+elasticsearch_saml_enabled: false
+elasticsearch_saml_idp_metadata_path: "/etc/elasticsearch/saml/idp-metadata.xml"
+elasticsearch_saml_sp_entity_id: "https://elk.fourthestate.org"
+elasticsearch_saml_sp_acs: "https://elk.fourthestate.org/api/security/saml/callback"
+elasticsearch_saml_sp_logout: "https://elk.fourthestate.org/logout"
+
+# API Keys
+elasticsearch_api_keys_enabled: true
+elasticsearch_api_keys: []
+# Example:
+# elasticsearch_api_keys:
+#   - name: "monitoring_key"
+#     role_descriptors:
+#       monitoring:
+#         cluster: ["monitor"]
+#         indices:
+#           - names: ["*"]
+#             privileges: ["read"]
+
+# Audit logging
+elasticsearch_audit_enabled: true
+elasticsearch_audit_outputs: ["logfile"]  # logfile, index
+elasticsearch_audit_include_request_body: false
+elasticsearch_audit_exclude_users: ["kibana_system", "logstash_system"]
+elasticsearch_audit_include_events:
+  - "access_denied"
+  - "access_granted"
+  - "anonymous_access_denied"
+  - "authentication_failed"
+  - "authentication_success"
+  - "realm_authentication_failed"
+  - "tampered_request"
+  - "connection_granted"
+  - "connection_denied"
+
+# IP filtering
+elasticsearch_ip_filter_enabled: false
+elasticsearch_ip_filter_allow: []
+# Example:
+# elasticsearch_ip_filter_allow:
+#   - "10.0.0.0/8"
+#   - "172.16.0.0/12"
+#   - "192.168.0.0/16"
+elasticsearch_ip_filter_deny: []
+
+# Anonymous access
+elasticsearch_anonymous_access_enabled: false
+elasticsearch_anonymous_username: "anonymous_user"
+elasticsearch_anonymous_roles: ["monitoring"]
+
+# Document and field level security
+elasticsearch_dls_fls_enabled: true
+
+# Encryption at rest
+elasticsearch_encryption_at_rest_enabled: false
+
+# Fourth Estate specific
+elasticsearch_fourth_estate_security: true
+elasticsearch_source_protection_enabled: true
+elasticsearch_journalist_audit_enabled: true
+elasticsearch_compliance_audit_enabled: true
+
+# Password policies
+elasticsearch_password_hashing_algorithm: "bcrypt10"  # bcrypt, bcrypt4-10, pbkdf2, pbkdf2_1000-50000
+
+# Token service
+elasticsearch_token_service_enabled: true
+elasticsearch_token_timeout: "20m"

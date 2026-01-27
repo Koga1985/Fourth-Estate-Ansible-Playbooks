@@ -1,0 +1,98 @@
+---
+# Detect and catalog industrial protocols in OT environments
+
+- name: Retrieve protocol detection data
+  ansible.builtin.uri:
+    url: "{{ dragos_base_url }}/api/assets/protocols?timerange={{ protocol_timerange }}&limit={{ page_size }}"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ dragos_token }}"
+    return_content: true
+    status_code: 200
+    validate_certs: "{{ dragos_verify_ssl }}"
+  register: detected_protocols
+
+- name: Categorize protocols by type
+  ansible.builtin.set_fact:
+    protocol_categories:
+      fieldbus:
+        - Modbus
+        - DNP3
+        - Profinet
+        - EtherNet/IP
+        - CIP
+      process_control:
+        - OPC UA
+        - IEC 61850
+        - IEC 60870-5-104
+      building_automation:
+        - BACnet
+        - LonWorks
+        - KNX
+      legacy:
+        - Modbus RTU
+        - Modbus ASCII
+        - DF1
+      proprietary:
+        - S7comm
+        - CIP
+        - GE SRTP
+
+- name: Identify Modbus communications
+  ansible.builtin.set_fact:
+    modbus_assets: "{{ detected_protocols.json.assets | default([]) | selectattr('protocols', 'search', 'Modbus') | list }}"
+
+- name: Identify DNP3 communications
+  ansible.builtin.set_fact:
+    dnp3_assets: "{{ detected_protocols.json.assets | default([]) | selectattr('protocols', 'search', 'DNP3') | list }}"
+
+- name: Identify IEC 61850 communications
+  ansible.builtin.set_fact:
+    iec61850_assets: "{{ detected_protocols.json.assets | default([]) | selectattr('protocols', 'search', 'IEC 61850') | list }}"
+
+- name: Identify BACnet communications
+  ansible.builtin.set_fact:
+    bacnet_assets: "{{ detected_protocols.json.assets | default([]) | selectattr('protocols', 'search', 'BACnet') | list }}"
+
+- name: Identify OPC UA communications
+  ansible.builtin.set_fact:
+    opcua_assets: "{{ detected_protocols.json.assets | default([]) | selectattr('protocols', 'search', 'OPC UA') | list }}"
+
+- name: Identify EtherNet/IP communications
+  ansible.builtin.set_fact:
+    ethernetip_assets: "{{ detected_protocols.json.assets | default([]) | selectattr('protocols', 'search', 'EtherNet/IP') | list }}"
+
+- name: Identify Profinet communications
+  ansible.builtin.set_fact:
+    profinet_assets: "{{ detected_protocols.json.assets | default([]) | selectattr('protocols', 'search', 'Profinet') | list }}"
+
+- name: Identify S7comm communications (Siemens)
+  ansible.builtin.set_fact:
+    s7comm_assets: "{{ detected_protocols.json.assets | default([]) | selectattr('protocols', 'search', 'S7comm') | list }}"
+
+- name: Detect insecure protocol usage
+  ansible.builtin.uri:
+    url: "{{ dragos_base_url }}/api/assets/protocols/insecure"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ dragos_token }}"
+    return_content: true
+    status_code: 200
+    validate_certs: "{{ dragos_verify_ssl }}"
+  register: insecure_protocols
+
+- name: Detect legacy protocol usage
+  ansible.builtin.set_fact:
+    legacy_protocol_assets: "{{ detected_protocols.json.assets | default([]) | selectattr('protocols', 'search', 'RTU|ASCII|DF1') | list }}"
+
+- name: Generate protocol distribution report
+  ansible.builtin.template:
+    src: protocol_distribution_report.j2
+    dest: "{{ artifacts_dir }}/protocol_distribution_{{ ansible_date_time.iso8601_basic_short }}.html"
+    mode: "0644"
+
+- name: Save protocol detection data
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/protocol_detection_{{ ansible_date_time.iso8601_basic_short }}.json"
+    content: "{{ {'modbus': modbus_assets, 'dnp3': dnp3_assets, 'iec61850': iec61850_assets, 'bacnet': bacnet_assets, 'opcua': opcua_assets, 'ethernetip': ethernetip_assets, 'profinet': profinet_assets, 's7comm': s7comm_assets, 'insecure': insecure_protocols, 'legacy': legacy_protocol_assets} | to_nice_json }}"
+    mode: "0644"

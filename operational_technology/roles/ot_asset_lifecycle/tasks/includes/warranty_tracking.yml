@@ -1,0 +1,66 @@
+---
+# Warranty and Support Contract Tracking
+
+- name: Check warranty expiration status
+  ansible.builtin.set_fact:
+    warranty_expired: "{{ (ot_asset_warranty_expiry | default('') | length > 0) and ((ot_asset_warranty_expiry | to_datetime) < (ansible_date_time.iso8601 | to_datetime)) }}"
+    support_expired: "{{ (ot_asset_support_expiry | default('') | length > 0) and ((ot_asset_support_expiry | to_datetime) < (ansible_date_time.iso8601 | to_datetime)) }}"
+  when: ot_asset_warranty_expiry is defined or ot_asset_support_expiry is defined
+
+- name: Calculate days until warranty expiration
+  ansible.builtin.set_fact:
+    warranty_days_remaining: "{{ ((ot_asset_warranty_expiry | to_datetime) - (ansible_date_time.iso8601 | to_datetime)).days }}"
+  when:
+    - ot_asset_warranty_expiry is defined
+    - ot_asset_warranty_expiry | length > 0
+    - not warranty_expired | default(false)
+
+- name: Calculate days until support expiration
+  ansible.builtin.set_fact:
+    support_days_remaining: "{{ ((ot_asset_support_expiry | to_datetime) - (ansible_date_time.iso8601 | to_datetime)).days }}"
+  when:
+    - ot_asset_support_expiry is defined
+    - ot_asset_support_expiry | length > 0
+    - not support_expired | default(false)
+
+- name: Create warranty tracking record
+  ansible.builtin.set_fact:
+    warranty_record:
+      asset_id: "{{ ot_asset_id }}"
+      warranty_expiry: "{{ ot_asset_warranty_expiry }}"
+      warranty_expired: "{{ warranty_expired | default(false) }}"
+      warranty_days_remaining: "{{ warranty_days_remaining | default('N/A') }}"
+      support_contract: "{{ ot_asset_support_contract_number }}"
+      support_expiry: "{{ ot_asset_support_expiry }}"
+      support_expired: "{{ support_expired | default(false) }}"
+      support_days_remaining: "{{ support_days_remaining | default('N/A') }}"
+      checked_at: "{{ ansible_date_time.iso8601 }}"
+
+- name: Save warranty tracking record
+  ansible.builtin.copy:
+    content: "{{ warranty_record | to_nice_json }}"
+    dest: "{{ ot_asset_artifacts_dir }}/warranty_{{ ot_asset_id }}.json"
+    mode: '0640'
+
+- name: Alert if warranty expiring soon
+  ansible.builtin.debug:
+    msg: "WARNING: Warranty for {{ ot_asset_id }} expires in {{ warranty_days_remaining }} days"
+  when:
+    - warranty_days_remaining is defined
+    - warranty_days_remaining | int < 90
+    - warranty_days_remaining | int > 0
+
+- name: Alert if support contract expiring soon
+  ansible.builtin.debug:
+    msg: "WARNING: Support contract for {{ ot_asset_id }} expires in {{ support_days_remaining }} days"
+  when:
+    - support_days_remaining is defined
+    - support_days_remaining | int < 90
+    - support_days_remaining | int > 0
+
+- name: Log warranty status
+  ansible.builtin.lineinfile:
+    path: "{{ ot_asset_log_dir }}/warranty_tracking.log"
+    line: "{{ ansible_date_time.iso8601 }} | {{ ot_asset_id }} | Warranty: {{ warranty_expired | default('unknown') }} | Support: {{ support_expired | default('unknown') }}"
+    create: yes
+    mode: '0640'

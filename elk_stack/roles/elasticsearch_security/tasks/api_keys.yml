@@ -1,0 +1,38 @@
+---
+# API key management
+
+- name: Create API keys
+  uri:
+    url: "https://localhost:{{ elasticsearch_http_port }}/_security/api_key"
+    method: POST
+    user: "elastic"
+    password: "{{ elasticsearch_elastic_password }}"
+    force_basic_auth: yes
+    validate_certs: no
+    body_format: json
+    body:
+      name: "{{ item.name }}"
+      role_descriptors: "{{ item.role_descriptors }}"
+      expiration: "{{ item.expiration | default('365d') }}"
+    status_code: [200, 201]
+  loop: "{{ elasticsearch_api_keys }}"
+  register: api_key_result
+  no_log: true
+  until: api_key_result is succeeded
+  retries: 5
+  delay: 10
+
+- name: Save API keys to file
+  copy:
+    content: |
+      # Elasticsearch API Keys
+      # Generated: {{ ansible_date_time.iso8601 }}
+      {% for result in api_key_result.results %}
+      # {{ result.item.name }}
+      API_KEY_{{ result.item.name | upper | regex_replace('[^A-Z0-9]', '_') }}: {{ result.json.encoded }}
+      {% endfor %}
+    dest: "/etc/elasticsearch/api_keys_{{ ansible_date_time.epoch }}.txt"
+    owner: root
+    group: root
+    mode: '0600'
+  when: api_key_result is changed

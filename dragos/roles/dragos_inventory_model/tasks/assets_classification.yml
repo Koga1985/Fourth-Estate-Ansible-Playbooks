@@ -1,0 +1,85 @@
+---
+# Classify OT assets by vendor, model, and function
+
+- name: Retrieve assets for classification
+  ansible.builtin.uri:
+    url: "{{ dragos_base_url }}/api/assets?unclassified=true&limit={{ page_size }}"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ dragos_token }}"
+    return_content: true
+    status_code: 200
+    validate_certs: "{{ dragos_verify_ssl }}"
+  register: unclassified_assets
+
+- name: Apply vendor identification
+  ansible.builtin.uri:
+    url: "{{ dragos_base_url }}/api/assets/{{ item.id }}/classification"
+    method: PUT
+    headers:
+      Authorization: "Bearer {{ dragos_token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      vendor: "{{ item.detected_vendor | default(item.vendor) }}"
+      product_family: "{{ item.product_family | default(omit) }}"
+      model: "{{ item.model | default(omit) }}"
+      firmware_version: "{{ item.firmware_version | default(omit) }}"
+      asset_type: "{{ item.asset_type | default(omit) }}"
+      function: "{{ item.function | default(omit) }}"
+    status_code: [200, 201]
+    validate_certs: "{{ dragos_verify_ssl }}"
+  loop: "{{ unclassified_assets.json.items | default(unclassified_assets.json.data | default([])) }}"
+  loop_control:
+    label: "{{ item.ip_address | default(item.name) }} - {{ item.detected_vendor | default('Unknown') }}"
+  when: not dry_run
+  register: asset_classification
+
+- name: Apply custom classification rules
+  ansible.builtin.uri:
+    url: "{{ dragos_base_url }}/api/assets/{{ item.asset_id }}/classification"
+    method: PUT
+    headers:
+      Authorization: "Bearer {{ dragos_token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body: "{{ item }}"
+    status_code: [200, 201]
+    validate_certs: "{{ dragos_verify_ssl }}"
+  loop: "{{ custom_classifications }}"
+  loop_control:
+    label: "{{ item.asset_id }} - Custom Rule"
+  when: not dry_run and custom_classifications | length > 0
+  register: custom_classification
+
+- name: Identify Siemens assets
+  ansible.builtin.set_fact:
+    siemens_assets: "{{ (unclassified_assets.json.items | default(unclassified_assets.json.data | default([]))) | selectattr('vendor', 'search', 'Siemens') | list }}"
+
+- name: Identify Rockwell assets
+  ansible.builtin.set_fact:
+    rockwell_assets: "{{ (unclassified_assets.json.items | default(unclassified_assets.json.data | default([]))) | selectattr('vendor', 'search', 'Rockwell|Allen-Bradley') | list }}"
+
+- name: Identify Schneider Electric assets
+  ansible.builtin.set_fact:
+    schneider_assets: "{{ (unclassified_assets.json.items | default(unclassified_assets.json.data | default([]))) | selectattr('vendor', 'search', 'Schneider') | list }}"
+
+- name: Identify ABB assets
+  ansible.builtin.set_fact:
+    abb_assets: "{{ (unclassified_assets.json.items | default(unclassified_assets.json.data | default([]))) | selectattr('vendor', 'search', 'ABB') | list }}"
+
+- name: Identify GE assets
+  ansible.builtin.set_fact:
+    ge_assets: "{{ (unclassified_assets.json.items | default(unclassified_assets.json.data | default([]))) | selectattr('vendor', 'search', 'GE|General Electric') | list }}"
+
+- name: Generate vendor classification report
+  ansible.builtin.template:
+    src: asset_classification_report.j2
+    dest: "{{ artifacts_dir }}/asset_classification_{{ ansible_date_time.iso8601_basic_short }}.html"
+    mode: "0644"
+
+- name: Save classification results
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/asset_classification_{{ ansible_date_time.iso8601_basic_short }}.json"
+    content: "{{ {'siemens': siemens_assets, 'rockwell': rockwell_assets, 'schneider': schneider_assets, 'abb': abb_assets, 'ge': ge_assets} | to_nice_json }}"
+    mode: "0644"

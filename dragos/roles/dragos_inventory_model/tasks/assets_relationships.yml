@@ -1,0 +1,103 @@
+---
+# Map asset relationships and dependencies in OT environments
+
+- name: Retrieve asset communication data
+  ansible.builtin.uri:
+    url: "{{ dragos_base_url }}/api/assets/communications?timerange={{ relationship_timerange }}&limit={{ page_size }}"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ dragos_token }}"
+    return_content: true
+    status_code: 200
+    validate_certs: "{{ dragos_verify_ssl }}"
+  register: asset_communications
+
+- name: Build asset relationship graph
+  ansible.builtin.uri:
+    url: "{{ dragos_base_url }}/api/assets/relationships/graph"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ dragos_token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      timerange: "{{ relationship_timerange }}"
+      include_protocols: true
+      include_frequency: true
+      min_communication_count: "{{ min_communication_count }}"
+    status_code: [200, 201]
+    validate_certs: "{{ dragos_verify_ssl }}"
+  when: not dry_run
+  register: relationship_graph
+
+- name: Identify master-slave relationships
+  ansible.builtin.uri:
+    url: "{{ dragos_base_url }}/api/assets/relationships/master_slave"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ dragos_token }}"
+    return_content: true
+    status_code: 200
+    validate_certs: "{{ dragos_verify_ssl }}"
+  register: master_slave_relationships
+
+- name: Identify HMI-PLC relationships
+  ansible.builtin.uri:
+    url: "{{ dragos_base_url }}/api/assets/relationships/hmi_plc"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ dragos_token }}"
+    return_content: true
+    status_code: 200
+    validate_certs: "{{ dragos_verify_ssl }}"
+  register: hmi_plc_relationships
+
+- name: Identify engineering station access patterns
+  ansible.builtin.uri:
+    url: "{{ dragos_base_url }}/api/assets/relationships/engineering_access"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ dragos_token }}"
+    return_content: true
+    status_code: 200
+    validate_certs: "{{ dragos_verify_ssl }}"
+  register: engineering_access
+
+- name: Identify historian data sources
+  ansible.builtin.uri:
+    url: "{{ dragos_base_url }}/api/assets/relationships/historian_sources"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ dragos_token }}"
+    return_content: true
+    status_code: 200
+    validate_certs: "{{ dragos_verify_ssl }}"
+  register: historian_sources
+
+- name: Detect dependency chains
+  ansible.builtin.uri:
+    url: "{{ dragos_base_url }}/api/assets/relationships/dependency_chains"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ dragos_token }}"
+    return_content: true
+    status_code: 200
+    validate_certs: "{{ dragos_verify_ssl }}"
+  register: dependency_chains
+
+- name: Identify single points of failure
+  ansible.builtin.set_fact:
+    single_points_of_failure: "{{ dependency_chains.json.chains | selectattr('redundancy', 'equalto', false) | selectattr('critical', 'equalto', true) | list }}"
+
+- name: Generate relationship diagram
+  ansible.builtin.template:
+    src: asset_relationships_diagram.j2
+    dest: "{{ artifacts_dir }}/asset_relationships_{{ ansible_date_time.iso8601_basic_short }}.html"
+    mode: "0644"
+
+- name: Save relationship data
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/asset_relationships_{{ ansible_date_time.iso8601_basic_short }}.json"
+    content: "{{ {'graph': relationship_graph, 'master_slave': master_slave_relationships, 'hmi_plc': hmi_plc_relationships, 'engineering': engineering_access, 'historian': historian_sources, 'spof': single_points_of_failure} | to_nice_json }}"
+    mode: "0644"
+  when: relationship_graph is defined

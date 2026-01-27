@@ -1,0 +1,31 @@
+---
+# Custom role management
+
+- name: Create custom roles
+  uri:
+    url: "https://localhost:{{ elasticsearch_http_port }}/_security/role/{{ item.name }}"
+    method: PUT
+    user: "elastic"
+    password: "{{ elasticsearch_elastic_password }}"
+    force_basic_auth: yes
+    validate_certs: no
+    body_format: json
+    body:
+      cluster: "{{ item.cluster | default([]) }}"
+      indices: "{{ item.indices | default([]) }}"
+      applications: "{{ item.applications | default([]) }}"
+      run_as: "{{ item.run_as | default([]) }}"
+    status_code: [200, 201]
+  loop: "{{ elasticsearch_custom_roles }}"
+  when: elasticsearch_security_enabled | bool
+  no_log: true
+  register: role_result
+  until: role_result is succeeded
+  retries: 5
+  delay: 10
+
+- name: Display created roles
+  debug:
+    msg: "Created role: {{ item.name }}"
+  loop: "{{ elasticsearch_custom_roles }}"
+  when: elasticsearch_security_enabled | bool

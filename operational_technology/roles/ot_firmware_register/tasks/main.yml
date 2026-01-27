@@ -1,4 +1,87 @@
 ---
-- ansible.builtin.include_tasks: includes/import_versions.yml
-- ansible.builtin.include_tasks: includes/delta_report.yml
-- ansible.builtin.include_tasks: includes/signature_check.yml
+# OT Firmware Register - Main Tasks
+
+- name: Validate required variables
+  ansible.builtin.assert:
+    that:
+      - ot_firmware_api_url is defined
+      - ot_firmware_operation in ['register', 'verify', 'baseline', 'update_plan', 'rollback']
+    fail_msg: "Required variables not properly configured"
+
+- name: Create required directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: '0750'
+    owner: root
+    group: root
+  loop:
+    - "{{ ot_firmware_artifacts_dir }}"
+    - "{{ ot_firmware_log_dir }}"
+    - "{{ ot_firmware_backup_dir }}"
+    - "{{ ot_firmware_repository_dir }}"
+    - "{{ ot_firmware_golden_image_path }}"
+    - "{{ ot_firmware_report_destination }}"
+
+- name: Include firmware registration workflow
+  ansible.builtin.include_tasks: includes/register.yml
+  when: ot_firmware_operation == 'register'
+
+- name: Include firmware verification workflow
+  ansible.builtin.include_tasks: includes/verify.yml
+  when: ot_firmware_operation == 'verify'
+
+- name: Include baseline management workflow
+  ansible.builtin.include_tasks: includes/baseline.yml
+  when: ot_firmware_operation == 'baseline'
+
+- name: Include update planning workflow
+  ansible.builtin.include_tasks: includes/update_plan.yml
+  when: ot_firmware_operation == 'update_plan'
+
+- name: Include rollback planning workflow
+  ansible.builtin.include_tasks: includes/rollback.yml
+  when: ot_firmware_operation == 'rollback'
+
+- name: Sync to firmware registry
+  ansible.builtin.uri:
+    url: "{{ ot_firmware_api_url }}/firmware"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ ot_firmware_api_token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      firmware_id: "{{ ot_firmware_id }}"
+      vendor: "{{ ot_firmware_vendor }}"
+      device_type: "{{ ot_firmware_device_type }}"
+      device_model: "{{ ot_firmware_device_model }}"
+      version: "{{ ot_firmware_version }}"
+      hash_algorithm: "{{ ot_firmware_hash_algorithm }}"
+      hash_value: "{{ ot_firmware_hash_value }}"
+      golden_image: "{{ ot_firmware_golden_image }}"
+      baseline: "{{ ot_firmware_is_baseline }}"
+      cve_ids: "{{ ot_firmware_cve_ids }}"
+      vulnerability_severity: "{{ ot_firmware_vulnerability_severity }}"
+      approved: "{{ ot_firmware_approved }}"
+    validate_certs: "{{ ot_firmware_verify_ssl }}"
+    timeout: "{{ ot_firmware_api_timeout }}"
+    status_code: [200, 201]
+  when:
+    - not ot_firmware_dry_run
+    - ot_firmware_api_token | length > 0
+  register: firmware_sync_result
+
+- name: Generate firmware report
+  ansible.builtin.template:
+    src: "firmware_report.{{ ot_firmware_report_format }}.j2"
+    dest: "{{ ot_firmware_report_destination }}/firmware_{{ ot_firmware_id | default('unknown') }}_{{ ansible_date_time.iso8601_basic_short }}.{{ ot_firmware_report_format }}"
+    mode: '0640'
+  when: ot_firmware_generate_reports
+
+- name: Log firmware operation
+  ansible.builtin.lineinfile:
+    path: "{{ ot_firmware_log_dir }}/firmware_register.log"
+    line: "{{ ansible_date_time.iso8601 }} | {{ ot_firmware_operation | upper }} | {{ ot_firmware_vendor }} | {{ ot_firmware_device_model }} | {{ ot_firmware_version }}"
+    create: yes
+    mode: '0640'

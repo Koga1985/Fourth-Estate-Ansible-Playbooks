@@ -1,0 +1,118 @@
+---
+# Certificate generation and management
+
+- name: Check if CA certificate exists
+  stat:
+    path: "{{ elasticsearch_ca_cert_path }}"
+  register: ca_cert_exists
+
+- name: Generate CA private key
+  openssl_privatekey:
+    path: "{{ elasticsearch_ca_key_path }}"
+    size: "{{ elasticsearch_cert_key_size }}"
+    mode: '0600'
+  when:
+    - elasticsearch_generate_ca | bool
+    - not ca_cert_exists.stat.exists
+
+- name: Generate CA certificate signing request
+  openssl_csr:
+    path: "{{ elasticsearch_certs_dir }}/ca/ca.csr"
+    privatekey_path: "{{ elasticsearch_ca_key_path }}"
+    common_name: "Fourth Estate Elasticsearch CA"
+    country_name: "{{ elasticsearch_cert_country }}"
+    state_or_province_name: "{{ elasticsearch_cert_state }}"
+    locality_name: "{{ elasticsearch_cert_locality }}"
+    organization_name: "{{ elasticsearch_cert_organization }}"
+    organizational_unit_name: "{{ elasticsearch_cert_organizational_unit }}"
+    basic_constraints:
+      - "CA:TRUE"
+    basic_constraints_critical: yes
+    key_usage:
+      - digitalSignature
+      - keyCertSign
+      - cRLSign
+    key_usage_critical: yes
+  when:
+    - elasticsearch_generate_ca | bool
+    - not ca_cert_exists.stat.exists
+
+- name: Generate self-signed CA certificate
+  openssl_certificate:
+    path: "{{ elasticsearch_ca_cert_path }}"
+    privatekey_path: "{{ elasticsearch_ca_key_path }}"
+    csr_path: "{{ elasticsearch_certs_dir }}/ca/ca.csr"
+    provider: selfsigned
+    selfsigned_not_after: "+{{ elasticsearch_cert_validity_days }}d"
+    mode: '0644'
+  when:
+    - elasticsearch_generate_ca | bool
+    - not ca_cert_exists.stat.exists
+
+- name: Generate node private key
+  openssl_privatekey:
+    path: "{{ elasticsearch_node_key_path }}"
+    size: "{{ elasticsearch_cert_key_size }}"
+    mode: '0600'
+  when: elasticsearch_generate_node_certs | bool
+
+- name: Generate node certificate signing request
+  openssl_csr:
+    path: "{{ elasticsearch_certs_dir }}/{{ ansible_hostname }}/{{ ansible_hostname }}.csr"
+    privatekey_path: "{{ elasticsearch_node_key_path }}"
+    common_name: "{{ ansible_fqdn }}"
+    country_name: "{{ elasticsearch_cert_country }}"
+    state_or_province_name: "{{ elasticsearch_cert_state }}"
+    locality_name: "{{ elasticsearch_cert_locality }}"
+    organization_name: "{{ elasticsearch_cert_organization }}"
+    organizational_unit_name: "{{ elasticsearch_cert_organizational_unit }}"
+    subject_alt_name:
+      - "DNS:{{ ansible_hostname }}"
+      - "DNS:{{ ansible_fqdn }}"
+      - "DNS:localhost"
+      - "IP:{{ ansible_default_ipv4.address }}"
+      - "IP:127.0.0.1"
+      - "IP:::1"
+    key_usage:
+      - digitalSignature
+      - keyEncipherment
+      - dataEncipherment
+    extended_key_usage:
+      - serverAuth
+      - clientAuth
+  when: elasticsearch_generate_node_certs | bool
+
+- name: Sign node certificate with CA
+  openssl_certificate:
+    path: "{{ elasticsearch_node_cert_path }}"
+    csr_path: "{{ elasticsearch_certs_dir }}/{{ ansible_hostname }}/{{ ansible_hostname }}.csr"
+    provider: ownca
+    ownca_path: "{{ elasticsearch_ca_cert_path }}"
+    ownca_privatekey_path: "{{ elasticsearch_ca_key_path }}"
+    ownca_not_after: "+{{ elasticsearch_cert_validity_days }}d"
+    mode: '0644'
+  when: elasticsearch_generate_node_certs | bool
+
+- name: Set certificate ownership
+  file:
+    path: "{{ item }}"
+    owner: root
+    group: elasticsearch
+    mode: '0640'
+  loop:
+    - "{{ elasticsearch_node_cert_path }}"
+    - "{{ elasticsearch_node_key_path }}"
+    - "{{ elasticsearch_ca_cert_path }}"
+  when: elasticsearch_generate_node_certs | bool
+
+- name: Create PKCS12 keystore for node
+  openssl_pkcs12:
+    action: export
+    path: "{{ elasticsearch_certs_dir }}/{{ ansible_hostname }}/{{ ansible_hostname }}.p12"
+    friendly_name: "{{ ansible_hostname }}"
+    privatekey_path: "{{ elasticsearch_node_key_path }}"
+    certificate_path: "{{ elasticsearch_node_cert_path }}"
+    other_certificates: "{{ elasticsearch_ca_cert_path }}"
+    state: present
+    mode: '0640'
+  when: elasticsearch_generate_node_certs | bool

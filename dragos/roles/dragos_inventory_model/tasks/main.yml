@@ -1,4 +1,5 @@
 ---
+# Dragos Asset Inventory Model for Fourth Estate OT/ICS Environments
 
 - name: Ensure artifacts directory exists
   ansible.builtin.file:
@@ -6,11 +7,65 @@
     state: directory
     mode: "0755"
 
-- include_tasks: assets_export_full.yml
-- when: delta_since_iso is defined
-  include_tasks: assets_export_delta.yml
-- when: tags_desired | length > 0
-  include_tasks: assets_normalize_tag.yml
-- when: cmdb is defined and (cmdb | length) > 0
-  include_tasks: assets_cmdb_sync.yml
-- include_tasks: assets_coverage_report.yml
+- name: Discover OT assets
+  when: asset_operation in ['discover', 'all']
+  ansible.builtin.include_tasks: assets_discovery.yml
+  tags: [discovery]
+
+- name: Classify OT assets
+  when: asset_operation in ['classify', 'all']
+  ansible.builtin.include_tasks: assets_classification.yml
+  tags: [classification]
+
+- name: Enrich asset metadata
+  when: asset_operation in ['enrich', 'all']
+  ansible.builtin.include_tasks: assets_enrichment.yml
+  tags: [enrichment]
+
+- name: Assign network zones
+  when: asset_operation in ['zones', 'all']
+  ansible.builtin.include_tasks: assets_zones.yml
+  tags: [zones]
+
+- name: Set asset criticality ratings
+  when: asset_operation in ['criticality', 'all']
+  ansible.builtin.include_tasks: assets_criticality.yml
+  tags: [criticality]
+
+- name: Map asset relationships
+  when: asset_operation in ['relationships', 'all']
+  ansible.builtin.include_tasks: assets_relationships.yml
+  tags: [relationships]
+
+- name: Identify communication patterns
+  when: asset_operation in ['communications', 'all']
+  ansible.builtin.include_tasks: assets_communications.yml
+  tags: [communications]
+
+- name: Detect industrial protocols
+  when: asset_operation in ['protocols', 'all']
+  ansible.builtin.include_tasks: assets_protocols.yml
+  tags: [protocols]
+
+- name: Export full asset inventory
+  ansible.builtin.include_tasks: assets_export_full.yml
+  tags: [export, always]
+
+- name: Export asset changes (delta)
+  when: delta_since_iso is defined
+  ansible.builtin.include_tasks: assets_export_delta.yml
+  tags: [export, delta]
+
+- name: Normalize asset tags
+  when: tags_desired | length > 0
+  ansible.builtin.include_tasks: assets_normalize_tag.yml
+  tags: [tagging]
+
+- name: Sync with CMDB
+  when: cmdb is defined and (cmdb | length) > 0
+  ansible.builtin.include_tasks: assets_cmdb_sync.yml
+  tags: [cmdb]
+
+- name: Generate asset coverage report
+  ansible.builtin.include_tasks: assets_coverage_report.yml
+  tags: [report, always]

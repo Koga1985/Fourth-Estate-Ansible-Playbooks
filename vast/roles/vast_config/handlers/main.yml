@@ -1,0 +1,102 @@
+---
+# handlers file for vast_config
+# Fourth Estate VAST Data Storage Configuration Handlers
+
+- name: Verify AD connectivity
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/activedirectory/test"
+    method: POST
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    status_code: [200]
+    timeout: 30
+  register: ad_test_result
+  delegate_to: localhost
+  failed_when: false
+
+- name: Verify LDAP connectivity
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/ldap/test"
+    method: POST
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    status_code: [200]
+    timeout: 30
+  register: ldap_test_result
+  delegate_to: localhost
+  failed_when: false
+
+- name: Restart NFS service
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/services/nfs/restart"
+    method: POST
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    status_code: [200, 202]
+  delegate_to: localhost
+
+- name: Restart SMB service
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/services/smb/restart"
+    method: POST
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    status_code: [200, 202]
+  delegate_to: localhost
+
+- name: Restart S3 service
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/services/s3/restart"
+    method: POST
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    status_code: [200, 202]
+  delegate_to: localhost
+
+- name: Refresh cluster configuration
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/clusters/{{ vast_cluster_id }}/refresh"
+    method: POST
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    status_code: [200, 202]
+  delegate_to: localhost
+  when: vast_cluster_id is defined
+
+- name: Sync configuration to all nodes
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/clusters/{{ vast_cluster_id }}/sync"
+    method: POST
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    status_code: [200, 202]
+  delegate_to: localhost
+  when: vast_cluster_id is defined
+
+- name: Trigger configuration backup
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/backup/config"
+    method: POST
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    body_format: json
+    body:
+      description: "Automated backup after configuration change"
+    status_code: [200, 201]
+  delegate_to: localhost

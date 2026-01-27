@@ -1,0 +1,111 @@
+---
+# Asset Commissioning Workflow
+
+- name: Validate commissioning data
+  ansible.builtin.assert:
+    that:
+      - ot_asset_id is defined and ot_asset_id | length > 0
+      - ot_asset_commission_date is defined or ansible_date_time is defined
+    fail_msg: "Asset ID required for commissioning"
+
+- name: Set commission date if not provided
+  ansible.builtin.set_fact:
+    ot_asset_commission_date: "{{ ansible_date_time.iso8601 }}"
+  when: ot_asset_commission_date is not defined or ot_asset_commission_date | length == 0
+
+- name: Verify asset exists
+  ansible.builtin.uri:
+    url: "{{ ot_asset_api_url }}/assets/{{ ot_asset_id }}"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ ot_asset_api_token }}"
+    validate_certs: "{{ ot_asset_verify_ssl }}"
+    status_code: [200]
+  register: asset_verify
+  when: ot_asset_api_token | length > 0
+
+- name: Pre-commissioning validation checks
+  ansible.builtin.assert:
+    that:
+      - ot_asset_purdue_level is defined and ot_asset_purdue_level | length > 0
+      - ot_asset_criticality is defined
+      - ot_asset_owner is defined and ot_asset_owner | length > 0
+    fail_msg: "Pre-commissioning validation failed - missing required data"
+
+- name: Configure baseline monitoring
+  ansible.builtin.uri:
+    url: "{{ ot_asset_api_url }}/monitoring/configure"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ ot_asset_api_token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      asset_id: "{{ ot_asset_id }}"
+      enabled: "{{ ot_asset_monitoring_enabled }}"
+      snmp_enabled: "{{ ot_asset_snmp_community | length > 0 }}"
+      syslog_enabled: "{{ ot_asset_syslog_enabled }}"
+      metrics_collection: "{{ ot_asset_metrics_collection }}"
+    validate_certs: "{{ ot_asset_verify_ssl }}"
+    status_code: [200, 201]
+  when:
+    - ot_asset_api_token | length > 0
+    - not ot_asset_dry_run
+
+- name: Enable configuration backup
+  ansible.builtin.uri:
+    url: "{{ ot_asset_api_url }}/backup/schedule"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ ot_asset_api_token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      asset_id: "{{ ot_asset_id }}"
+      enabled: "{{ ot_asset_config_backup_enabled }}"
+      schedule: "{{ ot_asset_config_backup_schedule }}"
+    validate_certs: "{{ ot_asset_verify_ssl }}"
+    status_code: [200, 201]
+  when:
+    - ot_asset_api_token | length > 0
+    - ot_asset_config_backup_enabled
+    - not ot_asset_dry_run
+
+- name: Update asset to commissioned state
+  ansible.builtin.uri:
+    url: "{{ ot_asset_api_url }}/assets/{{ ot_asset_id }}"
+    method: PATCH
+    headers:
+      Authorization: "Bearer {{ ot_asset_api_token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      state: "commissioned"
+      commission_date: "{{ ot_asset_commission_date }}"
+      commissioned_by: "{{ ansible_user_id }}"
+    validate_certs: "{{ ot_asset_verify_ssl }}"
+    status_code: [200, 204]
+  when:
+    - ot_asset_api_token | length > 0
+    - not ot_asset_dry_run
+
+- name: Create commissioning record
+  ansible.builtin.copy:
+    content: |
+      {
+        "asset_id": "{{ ot_asset_id }}",
+        "commission_date": "{{ ot_asset_commission_date }}",
+        "commissioned_by": "{{ ansible_user_id }}",
+        "monitoring_enabled": {{ ot_asset_monitoring_enabled | to_json }},
+        "backup_enabled": {{ ot_asset_config_backup_enabled | to_json }},
+        "status": "commissioned"
+      }
+    dest: "{{ ot_asset_artifacts_dir }}/commission_{{ ot_asset_id }}_{{ ansible_date_time.iso8601_basic_short }}.json"
+    mode: '0640'
+
+- name: Log commissioning event
+  ansible.builtin.lineinfile:
+    path: "{{ ot_asset_log_dir }}/commissions.log"
+    line: "{{ ansible_date_time.iso8601 }} | COMMISSION | {{ ot_asset_id }} | {{ ot_asset_commission_date }}"
+    create: yes
+    mode: '0640'

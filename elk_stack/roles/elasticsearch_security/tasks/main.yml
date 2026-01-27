@@ -1,0 +1,131 @@
+---
+# Elasticsearch Security Tasks
+
+- name: Ensure Elasticsearch is installed
+  stat:
+    path: /usr/share/elasticsearch/bin/elasticsearch
+  register: elasticsearch_binary
+  failed_when: not elasticsearch_binary.stat.exists
+
+- name: Create certificates directory
+  file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: elasticsearch
+    mode: '0750'
+  loop:
+    - "{{ elasticsearch_certs_dir }}"
+    - "{{ elasticsearch_certs_dir }}/ca"
+    - "{{ elasticsearch_certs_dir }}/{{ ansible_hostname }}"
+
+- name: Include certificate generation tasks
+  include_tasks: certificates.yml
+  when: elasticsearch_tls_enabled | bool
+
+- name: Configure security in elasticsearch.yml
+  blockinfile:
+    path: /etc/elasticsearch/elasticsearch.yml
+    marker: "# {mark} ANSIBLE MANAGED SECURITY BLOCK"
+    block: "{{ lookup('template', 'security_config.yml.j2') }}"
+    backup: yes
+  notify: restart elasticsearch
+
+- name: Create keystore if it doesn't exist
+  command: /usr/share/elasticsearch/bin/elasticsearch-keystore create
+  args:
+    creates: /etc/elasticsearch/elasticsearch.keystore
+  become: yes
+
+- name: Set keystore permissions
+  file:
+    path: /etc/elasticsearch/elasticsearch.keystore
+    owner: root
+    group: elasticsearch
+    mode: '0660'
+
+- name: Include LDAP configuration
+  include_tasks: ldap_config.yml
+  when: elasticsearch_ldap_enabled | bool
+
+- name: Include Active Directory configuration
+  include_tasks: ad_config.yml
+  when: elasticsearch_ad_enabled | bool
+
+- name: Include SAML configuration
+  include_tasks: saml_config.yml
+  when: elasticsearch_saml_enabled | bool
+
+- name: Restart Elasticsearch to apply security settings
+  systemd:
+    name: elasticsearch
+    state: restarted
+  when: elasticsearch_security_enabled | bool
+
+- name: Wait for Elasticsearch to start with security
+  wait_for:
+    host: localhost
+    port: "{{ elasticsearch_http_port }}"
+    delay: 15
+    timeout: 300
+
+- name: Check if setup-passwords has been run
+  stat:
+    path: /etc/elasticsearch/.setup_passwords_complete
+  register: setup_passwords_done
+
+- name: Run setup-passwords auto
+  shell: |
+    echo "y" | /usr/share/elasticsearch/bin/elasticsearch-setup-passwords auto > /tmp/elasticsearch_passwords.txt 2>&1
+    touch /etc/elasticsearch/.setup_passwords_complete
+  args:
+    creates: /etc/elasticsearch/.setup_passwords_complete
+  when:
+    - elasticsearch_security_enabled | bool
+    - not setup_passwords_done.stat.exists
+    - elasticsearch_security_auto_configure | bool
+  register: setup_passwords_output
+  no_log: false
+
+- name: Save generated passwords
+  copy:
+    content: "{{ setup_passwords_output.stdout }}"
+    dest: "/etc/elasticsearch/initial_passwords_{{ ansible_date_time.epoch }}.txt"
+    owner: root
+    group: root
+    mode: '0600'
+  when:
+    - setup_passwords_output is defined
+    - setup_passwords_output.changed
+
+- name: Include role management tasks
+  include_tasks: roles.yml
+  when: elasticsearch_custom_roles | length > 0
+
+- name: Include user management tasks
+  include_tasks: users.yml
+  when: elasticsearch_custom_users | length > 0
+
+- name: Include audit logging configuration
+  include_tasks: audit.yml
+  when: elasticsearch_audit_enabled | bool
+
+- name: Include IP filtering configuration
+  include_tasks: ip_filter.yml
+  when: elasticsearch_ip_filter_enabled | bool
+
+- name: Include API key management
+  include_tasks: api_keys.yml
+  when:
+    - elasticsearch_api_keys_enabled | bool
+    - elasticsearch_api_keys | length > 0
+
+- name: Display security status
+  debug:
+    msg:
+      - "Elasticsearch security enabled: {{ elasticsearch_security_enabled }}"
+      - "TLS/SSL enabled: {{ elasticsearch_tls_enabled }}"
+      - "Audit logging enabled: {{ elasticsearch_audit_enabled }}"
+      - "LDAP integration: {{ elasticsearch_ldap_enabled }}"
+      - "SAML SSO: {{ elasticsearch_saml_enabled }}"
+      - "Fourth Estate security mode: {{ elasticsearch_fourth_estate_security }}"

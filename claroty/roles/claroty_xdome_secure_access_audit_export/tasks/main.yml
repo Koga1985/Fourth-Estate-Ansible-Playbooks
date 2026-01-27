@@ -1,28 +1,267 @@
 ---
-- name: Ensure artifacts dir
-  ansible.builtin.file: { path: "{{ artifacts_dir }}", state: directory, mode: "0755" }
+# Claroty xDome Secure Remote Access - Audit Export Tasks
+# Fourth Estate OT/ICS Cybersecurity
 
-- name: Export Secure Access logs
+- name: Ensure directories exist
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0755"
+  loop:
+    - "{{ artifacts_dir }}"
+    - "{{ log_dir }}"
+
+# Session Audit Logs
+- name: Export session audit logs
   ansible.builtin.uri:
-    url: "{{ claroty.base_url }}/v1/secure-access/logs/search"
+    url: "{{ claroty.base_url }}/v1/secure-access/audit/sessions"
     method: POST
-    headers: { Authorization: "Bearer {{ claroty.token }}", Content-Type: "application/json" }
+    headers:
+      Authorization: "Bearer {{ claroty.token }}"
+      Content-Type: "application/json"
     body_format: json
-    body: "{{ logs_filter }}"
+    body:
+      time_range: "{{ audit_export.time_range }}"
+      filters: "{{ audit_export.filters }}"
+      include_recordings: "{{ forensics.session_recording_export }}"
     status_code: 200
     return_content: true
-    validate_certs: "{{ claroty.verify_ssl | default(true) }}"
-  register: _logs
+    validate_certs: "{{ claroty.verify_ssl }}"
+    timeout: "{{ claroty.timeout }}"
+  register: session_logs
+  when: "'session_logs' in audit_export.log_types"
 
-- name: Write CSV
+# User Activity Logs
+- name: Export user activity logs
+  ansible.builtin.uri:
+    url: "{{ claroty.base_url }}/v1/secure-access/audit/user-activity"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ claroty.token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      time_range: "{{ audit_export.time_range }}"
+      filters: "{{ audit_export.filters }}"
+    status_code: 200
+    return_content: true
+    validate_certs: "{{ claroty.verify_ssl }}"
+  register: user_activity_logs
+  when: "'user_activity' in audit_export.log_types"
+
+# Connection Logs
+- name: Export connection logs
+  ansible.builtin.uri:
+    url: "{{ claroty.base_url }}/v1/secure-access/audit/connections"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ claroty.token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      time_range: "{{ audit_export.time_range }}"
+      filters: "{{ audit_export.filters }}"
+    status_code: 200
+    return_content: true
+    validate_certs: "{{ claroty.verify_ssl }}"
+  register: connection_logs
+  when: "'connection_logs' in audit_export.log_types"
+
+# File Transfer Logs
+- name: Export file transfer logs
+  ansible.builtin.uri:
+    url: "{{ claroty.base_url }}/v1/secure-access/audit/file-transfers"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ claroty.token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      time_range: "{{ audit_export.time_range }}"
+      filters: "{{ audit_export.filters }}"
+      include_hashes: "{{ forensics.file_transfer_hashes }}"
+    status_code: 200
+    return_content: true
+    validate_certs: "{{ claroty.verify_ssl }}"
+  register: file_transfer_logs
+  when: "'file_transfer_logs' in audit_export.log_types"
+
+# Command Execution Logs (SSH)
+- name: Export command execution logs
+  ansible.builtin.uri:
+    url: "{{ claroty.base_url }}/v1/secure-access/audit/commands"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ claroty.token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      time_range: "{{ audit_export.time_range }}"
+      filters: "{{ audit_export.filters }}"
+    status_code: 200
+    return_content: true
+    validate_certs: "{{ claroty.verify_ssl }}"
+  register: command_logs
+  when: "'command_execution' in audit_export.log_types"
+
+# Failed Access Attempts
+- name: Export failed access attempts
+  ansible.builtin.uri:
+    url: "{{ claroty.base_url }}/v1/secure-access/audit/failed-access"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ claroty.token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      time_range: "{{ audit_export.time_range }}"
+      filters: "{{ audit_export.filters }}"
+    status_code: 200
+    return_content: true
+    validate_certs: "{{ claroty.verify_ssl }}"
+  register: failed_access_logs
+  when: "'failed_access' in audit_export.log_types"
+
+# Policy Violations
+- name: Export policy violations
+  ansible.builtin.uri:
+    url: "{{ claroty.base_url }}/v1/secure-access/audit/policy-violations"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ claroty.token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      time_range: "{{ audit_export.time_range }}"
+      filters: "{{ audit_export.filters }}"
+    status_code: 200
+    return_content: true
+    validate_certs: "{{ claroty.verify_ssl }}"
+  register: policy_violation_logs
+  when: "'policy_violations' in audit_export.log_types"
+
+# Export to CSV Format
+- name: Export audit logs to CSV
   ansible.builtin.copy:
-    dest: "{{ artifacts_dir }}/{{ csv_filename }}"
+    dest: "{{ artifacts_dir }}/claroty_audit_{{ item.key }}_{{ ansible_date_time.iso8601_basic_short }}.csv"
     mode: "0644"
     content: |
-      datetime,user,vendor,asset,site,action,result,reason,session_id
-      {% for L in _logs.json.items | default([]) %}
-      {{ L.timestamp | default('') }},{{ L.user.email | default('') }},{{ L.user.vendor | default('') }},
-      {{ L.asset.name | default('') }},{{ L.asset.site.name | default('') }},
-      {{ L.action | default('') }},{{ L.result | default('') }},{{ L.reason | default('') }},
-      {{ L.sessionId | default('') }}
+      timestamp,user_email,user_type,session_id,source_ip,protocol,action,result,asset_name,site,details
+      {% for log in item.value.json.items | default([]) %}
+      {{ log.timestamp | default('') }},{{ log.user.email | default('') }},{{ log.user.type | default('') }},{{ log.session_id | default('') }},{{ log.source_ip | default('') }},{{ log.protocol | default('') }},{{ log.action | default('') }},{{ log.result | default('') }},{{ log.asset.name | default('') }},{{ log.asset.site | default('') }},{{ log.details | default('') | to_json }}
       {% endfor %}
+  loop:
+    - { key: 'sessions', value: '{{ session_logs }}' }
+    - { key: 'user_activity', value: '{{ user_activity_logs }}' }
+    - { key: 'connections', value: '{{ connection_logs }}' }
+    - { key: 'file_transfers', value: '{{ file_transfer_logs }}' }
+    - { key: 'commands', value: '{{ command_logs }}' }
+    - { key: 'failed_access', value: '{{ failed_access_logs }}' }
+    - { key: 'policy_violations', value: '{{ policy_violation_logs }}' }
+  when:
+    - audit_export.enabled
+    - "'csv' in audit_export.export_formats"
+    - item.value.json is defined
+
+# Export to JSON Format
+- name: Export audit logs to JSON
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/claroty_audit_{{ item.key }}_{{ ansible_date_time.iso8601_basic_short }}.json"
+    mode: "0644"
+    content: "{{ item.value.json | to_nice_json }}"
+  loop:
+    - { key: 'sessions', value: '{{ session_logs }}' }
+    - { key: 'user_activity', value: '{{ user_activity_logs }}' }
+    - { key: 'connections', value: '{{ connection_logs }}' }
+    - { key: 'file_transfers', value: '{{ file_transfer_logs }}' }
+    - { key: 'commands', value: '{{ command_logs }}' }
+    - { key: 'failed_access', value: '{{ failed_access_logs }}' }
+    - { key: 'policy_violations', value: '{{ policy_violation_logs }}' }
+  when:
+    - audit_export.enabled
+    - "'json' in audit_export.export_formats"
+    - item.value.json is defined
+
+# SIEM Integration - Splunk HEC
+- name: Send audit logs to Splunk HEC
+  ansible.builtin.uri:
+    url: "{{ siem_integration.splunk.hec_url }}"
+    method: POST
+    headers:
+      Authorization: "Splunk {{ siem_integration.splunk.hec_token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      event: "{{ item }}"
+      index: "{{ siem_integration.splunk.index }}"
+      sourcetype: "{{ siem_integration.splunk.sourcetype }}"
+      source: "claroty_xdome"
+    status_code: [200, 201]
+    validate_certs: "{{ siem_integration.splunk.verify_ssl }}"
+  loop: "{{ session_logs.json.items | default([]) }}"
+  when:
+    - siem_integration.enabled
+    - siem_integration.platform == 'splunk'
+    - session_logs.json is defined
+
+# ServiceNow Incident Creation for Policy Violations
+- name: Create ServiceNow incidents for policy violations
+  ansible.builtin.uri:
+    url: "https://{{ servicenow_integration.instance }}/api/now/table/{{ servicenow_integration.incident_table }}"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ servicenow_integration.token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      short_description: "Claroty xDome Policy Violation - {{ item.user.email | default('Unknown') }}"
+      description: |
+        Policy Violation Detected
+
+        User: {{ item.user.email | default('Unknown') }}
+        Session ID: {{ item.session_id | default('N/A') }}
+        Policy: {{ item.policy_name | default('N/A') }}
+        Violation: {{ item.violation_details | default('') }}
+        Timestamp: {{ item.timestamp | default('') }}
+        Asset: {{ item.asset.name | default('N/A') }}
+        Site: {{ item.asset.site | default('N/A') }}
+      category: "{{ servicenow_integration.category }}"
+      priority: "{{ servicenow_integration.priority }}"
+      assignment_group: "{{ servicenow_integration.assignment_group }}"
+      u_claroty_session_id: "{{ item.session_id | default('') }}"
+    status_code: [200, 201]
+    validate_certs: true
+  loop: "{{ policy_violation_logs.json.items | default([]) }}"
+  when:
+    - servicenow_integration.enabled
+    - policy_violation_logs.json is defined
+
+# Generate Compliance Report
+- name: Generate compliance audit report
+  ansible.builtin.template:
+    src: compliance_audit_report.html.j2
+    dest: "{{ artifacts_dir }}/compliance_audit_report_{{ ansible_date_time.iso8601_basic_short }}.html"
+    mode: "0644"
+  when: compliance.enabled
+
+# Forensic Investigation Package
+- name: Create forensic investigation package
+  ansible.builtin.archive:
+    path:
+      - "{{ artifacts_dir }}/claroty_audit_*_{{ ansible_date_time.iso8601_basic_short }}.*"
+    dest: "{{ artifacts_dir }}/claroty_forensics_package_{{ ansible_date_time.iso8601_basic_short }}.tar.gz"
+    format: gz
+    mode: "0644"
+  when: forensics.enabled
+
+- name: Display export summary
+  ansible.builtin.debug:
+    msg:
+      - "=== Claroty xDome Audit Export Complete ==="
+      - "Session Logs: {{ session_logs.json.items | default([]) | length }}"
+      - "Connection Logs: {{ connection_logs.json.items | default([]) | length }}"
+      - "File Transfers: {{ file_transfer_logs.json.items | default([]) | length }}"
+      - "Command Logs: {{ command_logs.json.items | default([]) | length }}"
+      - "Failed Access: {{ failed_access_logs.json.items | default([]) | length }}"
+      - "Policy Violations: {{ policy_violation_logs.json.items | default([]) | length }}"
+      - "Export Location: {{ artifacts_dir }}"

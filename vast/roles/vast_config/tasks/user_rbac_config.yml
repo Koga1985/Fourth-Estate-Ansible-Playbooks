@@ -1,0 +1,136 @@
+---
+# User and RBAC configuration tasks for VAST
+
+- name: Get existing local users
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/users"
+    method: GET
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    return_content: true
+  register: vast_users_existing
+  delegate_to: localhost
+  changed_when: false
+  tags:
+    - users
+    - rbac
+    - discovery
+
+- name: Create local users
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/users"
+    method: POST
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    body_format: json
+    body:
+      username: "{{ item.username }}"
+      password: "{{ item.password }}"
+      role: "{{ item.role }}"
+      enabled: "{{ item.enabled | default(true) }}"
+    status_code: [200, 201, 409]
+  loop: "{{ vast_local_users }}"
+  when:
+    - vast_local_users is defined
+    - vast_local_users | length > 0
+    - vast_users_existing.json | selectattr('username', 'equalto', item.username) | list | length == 0
+  delegate_to: localhost
+  no_log: true
+  tags:
+    - users
+    - rbac
+
+- name: Get existing custom roles
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/roles"
+    method: GET
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    return_content: true
+  register: vast_roles_existing
+  delegate_to: localhost
+  changed_when: false
+  tags:
+    - rbac
+    - discovery
+
+- name: Create custom RBAC roles
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/roles"
+    method: POST
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    body_format: json
+    body:
+      name: "{{ item.name }}"
+      description: "{{ item.description }}"
+      permissions: "{{ item.permissions }}"
+    status_code: [200, 201, 409]
+  loop: "{{ vast_custom_roles }}"
+  when:
+    - vast_custom_roles is defined
+    - vast_custom_roles | length > 0
+    - vast_roles_existing.json | selectattr('name', 'equalto', item.name) | list | length == 0
+  delegate_to: localhost
+  tags:
+    - rbac
+    - roles
+
+- name: Configure password policy (DoD STIG requirement)
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/security/password-policy"
+    method: PATCH
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    body_format: json
+    body:
+      min_length: "{{ vast_global_settings.min_password_length }}"
+      complexity_required: "{{ vast_global_settings.password_complexity_required }}"
+      max_age_days: 60
+      history_count: 24
+    status_code: [200, 204]
+  delegate_to: localhost
+  tags:
+    - rbac
+    - security
+    - password_policy
+
+- name: Configure session timeout (NIST 800-53 AC-12)
+  ansible.builtin.uri:
+    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/security/session"
+    method: PATCH
+    user: "{{ vast_mgmt_user }}"
+    password: "{{ vast_mgmt_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ vast_verify_ssl }}"
+    body_format: json
+    body:
+      timeout_minutes: "{{ vast_global_settings.session_timeout_minutes }}"
+      max_concurrent_sessions: 3
+    status_code: [200, 204]
+  delegate_to: localhost
+  tags:
+    - rbac
+    - security
+    - session
+
+- name: Display user and RBAC configuration
+  ansible.builtin.debug:
+    msg:
+      - "Local users created: {{ vast_local_users | length }}"
+      - "Custom roles created: {{ vast_custom_roles | length }}"
+      - "Password policy: Minimum {{ vast_global_settings.min_password_length }} characters"
+      - "Session timeout: {{ vast_global_settings.session_timeout_minutes }} minutes"
+  tags:
+    - users
+    - rbac

@@ -1,0 +1,36 @@
+---
+# SAML SSO configuration
+
+- name: Create SAML directory
+  file:
+    path: /etc/elasticsearch/saml
+    state: directory
+    owner: root
+    group: elasticsearch
+    mode: '0750'
+
+- name: Copy SAML IdP metadata
+  copy:
+    src: "{{ elasticsearch_saml_idp_metadata_path }}"
+    dest: /etc/elasticsearch/saml/idp-metadata.xml
+    owner: root
+    group: elasticsearch
+    mode: '0640'
+  when: elasticsearch_saml_idp_metadata_path is defined
+
+- name: Create SAML realm configuration
+  blockinfile:
+    path: /etc/elasticsearch/elasticsearch.yml
+    marker: "# {mark} ANSIBLE MANAGED SAML BLOCK"
+    block: |
+      xpack.security.authc.realms.saml.saml1:
+        order: 2
+        idp.metadata.path: /etc/elasticsearch/saml/idp-metadata.xml
+        idp.entity_id: "https://idp.fourthestate.org"
+        sp.entity_id: "{{ elasticsearch_saml_sp_entity_id }}"
+        sp.acs: "{{ elasticsearch_saml_sp_acs }}"
+        sp.logout: "{{ elasticsearch_saml_sp_logout }}"
+        attributes.principal: "nameid"
+        attributes.groups: "groups"
+    backup: yes
+  notify: restart elasticsearch

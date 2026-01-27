@@ -1,0 +1,96 @@
+---
+# End-of-Life Tracking
+
+- name: Check EOL and EOSL status
+  ansible.builtin.set_fact:
+    eol_reached: "{{ (ot_asset_eol_date | default('') | length > 0) and ((ot_asset_eol_date | to_datetime) < (ansible_date_time.iso8601 | to_datetime)) }}"
+    eosl_reached: "{{ (ot_asset_eosl_date | default('') | length > 0) and ((ot_asset_eosl_date | to_datetime) < (ansible_date_time.iso8601 | to_datetime)) }}"
+  when: ot_asset_eol_date is defined or ot_asset_eosl_date is defined
+
+- name: Calculate days until EOL
+  ansible.builtin.set_fact:
+    eol_days_remaining: "{{ ((ot_asset_eol_date | to_datetime) - (ansible_date_time.iso8601 | to_datetime)).days }}"
+  when:
+    - ot_asset_eol_date is defined
+    - ot_asset_eol_date | length > 0
+    - not eol_reached | default(false)
+
+- name: Calculate days until EOSL
+  ansible.builtin.set_fact:
+    eosl_days_remaining: "{{ ((ot_asset_eosl_date | to_datetime) - (ansible_date_time.iso8601 | to_datetime)).days }}"
+  when:
+    - ot_asset_eosl_date is defined
+    - ot_asset_eosl_date | length > 0
+    - not eosl_reached | default(false)
+
+- name: Create EOL tracking record
+  ansible.builtin.set_fact:
+    eol_record:
+      asset_id: "{{ ot_asset_id }}"
+      vendor: "{{ ot_asset_vendor }}"
+      model: "{{ ot_asset_model }}"
+      firmware_version: "{{ ot_asset_firmware_version }}"
+      eol_date: "{{ ot_asset_eol_date }}"
+      eol_reached: "{{ eol_reached | default(false) }}"
+      eol_days_remaining: "{{ eol_days_remaining | default('N/A') }}"
+      eosl_date: "{{ ot_asset_eosl_date }}"
+      eosl_reached: "{{ eosl_reached | default(false) }}"
+      eosl_days_remaining: "{{ eosl_days_remaining | default('N/A') }}"
+      criticality: "{{ ot_asset_criticality }}"
+      replacement_required: "{{ eol_reached | default(false) or (eol_days_remaining | default(999) | int < 180) }}"
+      checked_at: "{{ ansible_date_time.iso8601 }}"
+
+- name: Save EOL tracking record
+  ansible.builtin.copy:
+    content: "{{ eol_record | to_nice_json }}"
+    dest: "{{ ot_asset_artifacts_dir }}/eol_{{ ot_asset_id }}.json"
+    mode: '0640'
+
+- name: Alert if EOL approaching (within 180 days)
+  ansible.builtin.debug:
+    msg: "CRITICAL: Asset {{ ot_asset_id }} reaches End-of-Life in {{ eol_days_remaining }} days - Replacement planning required"
+  when:
+    - eol_days_remaining is defined
+    - eol_days_remaining | int < 180
+    - eol_days_remaining | int > 0
+
+- name: Alert if EOL reached
+  ansible.builtin.debug:
+    msg: "CRITICAL: Asset {{ ot_asset_id }} has reached End-of-Life - Immediate replacement required"
+  when:
+    - eol_reached is defined
+    - eol_reached | bool
+
+- name: Alert if EOSL approaching (within 90 days)
+  ansible.builtin.debug:
+    msg: "WARNING: Asset {{ ot_asset_id }} reaches End-of-Service-Life in {{ eosl_days_remaining }} days"
+  when:
+    - eosl_days_remaining is defined
+    - eosl_days_remaining | int < 90
+    - eosl_days_remaining | int > 0
+
+- name: Update asset with EOL status
+  ansible.builtin.uri:
+    url: "{{ ot_asset_api_url }}/assets/{{ ot_asset_id }}"
+    method: PATCH
+    headers:
+      Authorization: "Bearer {{ ot_asset_api_token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      eol_status:
+        eol_reached: "{{ eol_reached | default(false) }}"
+        eosl_reached: "{{ eosl_reached | default(false) }}"
+        replacement_required: "{{ eol_reached | default(false) or (eol_days_remaining | default(999) | int < 180) }}"
+    validate_certs: "{{ ot_asset_verify_ssl }}"
+    status_code: [200, 204]
+  when:
+    - ot_asset_api_token | length > 0
+    - not ot_asset_dry_run
+
+- name: Log EOL tracking
+  ansible.builtin.lineinfile:
+    path: "{{ ot_asset_log_dir }}/eol_tracking.log"
+    line: "{{ ansible_date_time.iso8601 }} | {{ ot_asset_id }} | EOL: {{ eol_reached | default('unknown') }} | EOSL: {{ eosl_reached | default('unknown') }}"
+    create: yes
+    mode: '0640'

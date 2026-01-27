@@ -1,0 +1,54 @@
+---
+# Dragos Asset Inventory Model Handlers
+
+- name: Trigger asset discovery scan
+  ansible.builtin.uri:
+    url: "{{ dragos_base_url }}/api/assets/discovery/scan"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ dragos_token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      scan_type: "full"
+      automated: true
+    status_code: [200, 201, 202]
+    validate_certs: "{{ dragos_verify_ssl }}"
+
+- name: Refresh asset cache
+  ansible.builtin.uri:
+    url: "{{ dragos_base_url }}/api/assets/cache/refresh"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ dragos_token }}"
+    status_code: [200, 202]
+    validate_certs: "{{ dragos_verify_ssl }}"
+
+- name: Notify asset inventory change
+  ansible.builtin.uri:
+    url: "{{ notification_webhook_url }}"
+    method: POST
+    headers:
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      event_type: "asset_inventory_change"
+      description: "OT asset inventory has been updated"
+      timestamp: "{{ ansible_date_time.iso8601 }}"
+    status_code: [200, 201, 202]
+    validate_certs: true
+  when: notification_webhook_url is defined
+
+- name: Update CMDB
+  ansible.builtin.uri:
+    url: "{{ cmdb.url }}/api/assets/bulk_update"
+    method: POST
+    headers:
+      Authorization: "{{ cmdb.token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      assets: "{{ updated_assets | default([]) }}"
+    status_code: [200, 201]
+    validate_certs: true
+  when: cmdb is defined and cmdb.url is defined

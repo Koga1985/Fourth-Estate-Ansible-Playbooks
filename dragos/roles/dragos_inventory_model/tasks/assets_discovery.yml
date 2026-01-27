@@ -1,0 +1,88 @@
+---
+# Discover OT/ICS assets in industrial environments
+
+- name: Initiate asset discovery scan
+  ansible.builtin.uri:
+    url: "{{ dragos_base_url }}/api/assets/discovery/scan"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ dragos_token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      scan_type: "{{ discovery_scan_type }}"
+      network_ranges: "{{ discovery_network_ranges }}"
+      include_passive: "{{ include_passive_discovery }}"
+      include_active: "{{ include_active_discovery }}"
+      protocol_detection: true
+      deep_inspection: "{{ deep_asset_inspection }}"
+    status_code: [200, 201, 202]
+    validate_certs: "{{ dragos_verify_ssl }}"
+  when: not dry_run and trigger_discovery_scan
+  register: discovery_scan
+
+- name: Monitor discovery scan progress
+  ansible.builtin.uri:
+    url: "{{ dragos_base_url }}/api/assets/discovery/scan/{{ discovery_scan.json.scan_id }}/status"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ dragos_token }}"
+    return_content: true
+    status_code: 200
+    validate_certs: "{{ dragos_verify_ssl }}"
+  register: scan_status
+  until: scan_status.json.status in ['completed', 'failed']
+  retries: "{{ discovery_max_retries }}"
+  delay: "{{ discovery_check_interval }}"
+  when: not dry_run and trigger_discovery_scan and wait_for_discovery
+
+- name: Retrieve discovered assets
+  ansible.builtin.uri:
+    url: "{{ dragos_base_url }}/api/assets?limit={{ page_size }}&offset={{ item }}"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ dragos_token }}"
+    return_content: true
+    status_code: 200
+    validate_certs: "{{ dragos_verify_ssl }}"
+  loop: "{{ range(0, 10000, page_size) | list }}"
+  register: discovered_assets
+  until: discovered_assets.json.items | default(discovered_assets.json.data | default([])) | length == 0
+  when: item == 0 or (discovered_assets.results[-1].json.items | default(discovered_assets.results[-1].json.data | default([])) | length == page_size)
+
+- name: Aggregate discovered assets
+  ansible.builtin.set_fact:
+    all_discovered_assets: "{{ discovered_assets.results | map(attribute='json.items', default=discovered_assets.results | map(attribute='json.data')) | flatten }}"
+
+- name: Categorize discovered assets by type
+  ansible.builtin.set_fact:
+    asset_types:
+      plcs: "{{ all_discovered_assets | selectattr('asset_type', 'equalto', 'PLC') | list }}"
+      hmis: "{{ all_discovered_assets | selectattr('asset_type', 'equalto', 'HMI') | list }}"
+      engineering_stations: "{{ all_discovered_assets | selectattr('asset_type', 'equalto', 'Engineering Station') | list }}"
+      historians: "{{ all_discovered_assets | selectattr('asset_type', 'equalto', 'Historian') | list }}"
+      rtus: "{{ all_discovered_assets | selectattr('asset_type', 'equalto', 'RTU') | list }}"
+      scada_servers: "{{ all_discovered_assets | selectattr('asset_type', 'equalto', 'SCADA Server') | list }}"
+      iot_devices: "{{ all_discovered_assets | selectattr('asset_type', 'equalto', 'IoT Device') | list }}"
+      network_devices: "{{ all_discovered_assets | selectattr('asset_type', 'equalto', 'Network Device') | list }}"
+
+- name: Display discovery summary
+  ansible.builtin.debug:
+    msg: |
+      ===== Asset Discovery Summary =====
+      Total Assets Discovered: {{ all_discovered_assets | length }}
+      PLCs: {{ asset_types.plcs | length }}
+      HMIs: {{ asset_types.hmis | length }}
+      Engineering Stations: {{ asset_types.engineering_stations | length }}
+      Historians: {{ asset_types.historians | length }}
+      RTUs: {{ asset_types.rtus | length }}
+      SCADA Servers: {{ asset_types.scada_servers | length }}
+      IoT Devices: {{ asset_types.iot_devices | length }}
+      Network Devices: {{ asset_types.network_devices | length }}
+      ===================================
+
+- name: Save discovered assets
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/discovered_assets_{{ ansible_date_time.iso8601_basic_short }}.json"
+    content: "{{ all_discovered_assets | to_nice_json }}"
+    mode: "0644"

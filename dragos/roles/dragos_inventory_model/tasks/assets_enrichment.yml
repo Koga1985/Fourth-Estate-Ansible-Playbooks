@@ -1,0 +1,114 @@
+---
+# Enrich OT assets with custom attributes and metadata
+
+- name: Retrieve assets for enrichment
+  ansible.builtin.uri:
+    url: "{{ dragos_base_url }}/api/assets?limit={{ page_size }}"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ dragos_token }}"
+    return_content: true
+    status_code: 200
+    validate_certs: "{{ dragos_verify_ssl }}"
+  register: assets_to_enrich
+
+- name: Apply custom attributes to assets
+  ansible.builtin.uri:
+    url: "{{ dragos_base_url }}/api/assets/{{ item.id }}/attributes"
+    method: PUT
+    headers:
+      Authorization: "Bearer {{ dragos_token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      custom_attributes: "{{ item.custom_attributes | default({}) | combine(default_custom_attributes) }}"
+    status_code: [200, 201]
+    validate_certs: "{{ dragos_verify_ssl }}"
+  loop: "{{ assets_to_enrich.json.items | default(assets_to_enrich.json.data | default([])) }}"
+  loop_control:
+    label: "{{ item.name | default(item.ip_address) }}"
+  when: not dry_run
+  register: asset_enrichment
+
+- name: Add business context to assets
+  ansible.builtin.uri:
+    url: "{{ dragos_base_url }}/api/assets/{{ item.id }}/context"
+    method: PUT
+    headers:
+      Authorization: "Bearer {{ dragos_token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      business_unit: "{{ item.business_unit | default(omit) }}"
+      cost_center: "{{ item.cost_center | default(omit) }}"
+      owner: "{{ item.owner | default(omit) }}"
+      support_contact: "{{ item.support_contact | default(omit) }}"
+      location: "{{ item.location | default(omit) }}"
+      building: "{{ item.building | default(omit) }}"
+      floor: "{{ item.floor | default(omit) }}"
+      room: "{{ item.room | default(omit) }}"
+    status_code: [200, 201]
+    validate_certs: "{{ dragos_verify_ssl }}"
+  loop: "{{ assets_to_enrich.json.items | default(assets_to_enrich.json.data | default([])) }}"
+  loop_control:
+    label: "{{ item.name | default(item.ip_address) }} - Business Context"
+  when: not dry_run and add_business_context
+  register: asset_context
+
+- name: Add compliance tags to assets
+  ansible.builtin.uri:
+    url: "{{ dragos_base_url }}/api/assets/{{ item.id }}/compliance"
+    method: PUT
+    headers:
+      Authorization: "Bearer {{ dragos_token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      compliance_frameworks:
+        - framework: "NERC CIP"
+          applicable: "{{ item.nerc_cip_applicable | default(true) }}"
+          controls: "{{ item.nerc_cip_controls | default([]) }}"
+        - framework: "IEC 62443"
+          applicable: "{{ item.iec62443_applicable | default(true) }}"
+          security_level: "{{ item.iec62443_level | default('SL2') }}"
+        - framework: "NIST 800-82"
+          applicable: "{{ item.nist_applicable | default(true) }}"
+          controls: "{{ item.nist_controls | default([]) }}"
+    status_code: [200, 201]
+    validate_certs: "{{ dragos_verify_ssl }}"
+  loop: "{{ assets_to_enrich.json.items | default(assets_to_enrich.json.data | default([])) }}"
+  loop_control:
+    label: "{{ item.name | default(item.ip_address) }} - Compliance Tags"
+  when: not dry_run and add_compliance_tags
+  register: asset_compliance
+
+- name: Add lifecycle information
+  ansible.builtin.uri:
+    url: "{{ dragos_base_url }}/api/assets/{{ item.id }}/lifecycle"
+    method: PUT
+    headers:
+      Authorization: "Bearer {{ dragos_token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      install_date: "{{ item.install_date | default(omit) }}"
+      warranty_expiration: "{{ item.warranty_expiration | default(omit) }}"
+      end_of_life: "{{ item.end_of_life | default(omit) }}"
+      end_of_support: "{{ item.end_of_support | default(omit) }}"
+      last_maintenance: "{{ item.last_maintenance | default(omit) }}"
+      next_maintenance: "{{ item.next_maintenance | default(omit) }}"
+      lifecycle_stage: "{{ item.lifecycle_stage | default('production') }}"
+    status_code: [200, 201]
+    validate_certs: "{{ dragos_verify_ssl }}"
+  loop: "{{ assets_to_enrich.json.items | default(assets_to_enrich.json.data | default([])) }}"
+  loop_control:
+    label: "{{ item.name | default(item.ip_address) }} - Lifecycle"
+  when: not dry_run and add_lifecycle_info
+  register: asset_lifecycle
+
+- name: Save enrichment results
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/asset_enrichment_{{ ansible_date_time.iso8601_basic_short }}.json"
+    content: "{{ {'enrichment': asset_enrichment, 'context': asset_context, 'compliance': asset_compliance, 'lifecycle': asset_lifecycle} | to_nice_json }}"
+    mode: "0644"
+  when: asset_enrichment is defined
