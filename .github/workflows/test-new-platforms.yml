@@ -1,0 +1,179 @@
+---
+name: Test New Platforms
+
+on:
+  pull_request:
+    paths:
+      - 'crowdstrike/**'
+      - 'sentinelone/**'
+      - 'kubernetes/roles/k8s_backup_velero/**'
+  push:
+    branches: [main, master]
+    paths:
+      - 'crowdstrike/**'
+      - 'sentinelone/**'
+      - 'kubernetes/roles/k8s_backup_velero/**'
+  workflow_dispatch:
+
+jobs:
+  test-crowdstrike:
+    name: Test CrowdStrike EDR
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Ansible
+        run: |
+          pip install ansible
+          ansible-galaxy collection install ansible.builtin
+
+      - name: Run CrowdStrike syntax check
+        run: |
+          cd crowdstrike
+          find playbooks -name "*.yml" | while read playbook; do
+            echo "Checking: $playbook"
+            ansible-playbook "$playbook" --syntax-check
+          done
+
+      - name: Run CrowdStrike installation test
+        run: |
+          cd crowdstrike/playbooks/tests
+          ansible-playbook test_sensor_installation.yml
+
+      - name: Validate CrowdStrike role structure
+        run: |
+          test -d crowdstrike/roles/falcon_sensor_install/tasks
+          test -f crowdstrike/roles/falcon_sensor_install/defaults/main.yml
+          test -f crowdstrike/roles/falcon_sensor_install/tasks/main.yml
+          echo "✓ CrowdStrike role structure valid"
+
+  test-sentinelone:
+    name: Test SentinelOne EDR
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Ansible
+        run: |
+          pip install ansible
+          ansible-galaxy collection install ansible.builtin
+
+      - name: Run SentinelOne syntax check
+        run: |
+          cd sentinelone
+          find playbooks -name "*.yml" | while read playbook; do
+            echo "Checking: $playbook"
+            ansible-playbook "$playbook" --syntax-check
+          done
+
+      - name: Run SentinelOne installation test
+        run: |
+          cd sentinelone/playbooks/tests
+          ansible-playbook test_agent_installation.yml
+
+      - name: Validate SentinelOne role structure
+        run: |
+          test -d sentinelone/roles/s1_agent_install/tasks
+          test -f sentinelone/roles/s1_agent_install/defaults/main.yml
+          test -f sentinelone/roles/s1_agent_install/tasks/main.yml
+          echo "✓ SentinelOne role structure valid"
+
+  test-velero:
+    name: Test Velero Backup
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Ansible and Kubernetes collection
+        run: |
+          pip install ansible kubernetes
+          ansible-galaxy collection install kubernetes.core
+          ansible-galaxy collection install ansible.builtin
+
+      - name: Run Velero backup test
+        run: |
+          cd kubernetes/playbooks/tests
+          ansible-playbook test_velero_backup.yml
+
+      - name: Validate Velero role structure
+        run: |
+          test -d kubernetes/roles/k8s_backup_velero/tasks
+          test -f kubernetes/roles/k8s_backup_velero/defaults/main.yml
+          test -f kubernetes/roles/k8s_backup_velero/tasks/main.yml
+          test -f kubernetes/roles/k8s_backup_velero/templates/velero-values.yml.j2
+          echo "✓ Velero role structure valid"
+
+  documentation-check:
+    name: Documentation Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check CrowdStrike documentation
+        run: |
+          test -f crowdstrike/README.md
+          grep -q "CrowdStrike Falcon EDR" crowdstrike/README.md
+          grep -q "Fourth Estate" crowdstrike/README.md
+          echo "✓ CrowdStrike documentation complete"
+
+      - name: Check SentinelOne documentation
+        run: |
+          test -f sentinelone/README.md
+          grep -q "SentinelOne EDR" sentinelone/README.md
+          grep -q "Fourth Estate" sentinelone/README.md
+          echo "✓ SentinelOne documentation complete"
+
+      - name: Verify compliance mentions
+        run: |
+          grep -q "DoD STIG" crowdstrike/README.md
+          grep -q "NIST 800-53" crowdstrike/README.md
+          grep -q "DoD STIG" sentinelone/README.md
+          grep -q "NIST 800-53" sentinelone/README.md
+          echo "✓ Compliance documentation verified"
+
+  integration-summary:
+    name: Integration Test Summary
+    runs-on: ubuntu-latest
+    needs: [test-crowdstrike, test-sentinelone, test-velero, documentation-check]
+    if: always()
+    steps:
+      - name: Check test results
+        run: |
+          echo "================================"
+          echo "New Platforms Integration Tests"
+          echo "================================"
+          echo "✓ CrowdStrike EDR tests: ${{ needs.test-crowdstrike.result }}"
+          echo "✓ SentinelOne EDR tests: ${{ needs.test-sentinelone.result }}"
+          echo "✓ Velero Backup tests: ${{ needs.test-velero.result }}"
+          echo "✓ Documentation check: ${{ needs.documentation-check.result }}"
+          echo "================================"
+
+      - name: Verify all passed
+        run: |
+          if [ "${{ needs.test-crowdstrike.result }}" != "success" ] || \
+             [ "${{ needs.test-sentinelone.result }}" != "success" ] || \
+             [ "${{ needs.test-velero.result }}" != "success" ] || \
+             [ "${{ needs.documentation-check.result }}" != "success" ]; then
+            echo "❌ Some tests failed"
+            exit 1
+          fi
+          echo "✅ All tests passed successfully"

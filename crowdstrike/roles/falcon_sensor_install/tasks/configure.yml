@@ -1,0 +1,36 @@
+---
+# CrowdStrike Falcon Sensor Configuration
+
+- name: Configure sensor backend (Linux)
+  ansible.builtin.command: /opt/CrowdStrike/falconctl -s --backend={{ falcon_sensor_backend }}
+  when:
+    - ansible_os_family in ['RedHat', 'Debian', 'Suse']
+    - falcon_sensor_backend != 'auto'
+  changed_when: true
+
+- name: Configure tamper protection (Linux)
+  ansible.builtin.command: /opt/CrowdStrike/falconctl -s --feature=tamper-protection --enable={{ 'true' if falcon_tamper_protection else 'false' }}
+  when: ansible_os_family in ['RedHat', 'Debian', 'Suse']
+  changed_when: true
+
+- name: Configure proxy settings (Linux)
+  ansible.builtin.command: >
+    /opt/CrowdStrike/falconctl -s
+    --aph={{ falcon_proxy_host }}
+    --app={{ falcon_proxy_port }}
+    --apd={{ 'true' if falcon_proxy_disable_ssl else 'false' }}
+  when:
+    - ansible_os_family in ['RedHat', 'Debian', 'Suse']
+    - falcon_proxy_enabled | bool
+  changed_when: true
+
+- name: Configure sensor grouping tags
+  ansible.builtin.command: /opt/CrowdStrike/falconctl -s --grouping-tags={{ falcon_sensor_grouping_tags | join(',') }}
+  when:
+    - ansible_os_family in ['RedHat', 'Debian', 'Suse']
+    - falcon_sensor_grouping_tags | length > 0
+  changed_when: true
+
+- name: Display configuration status
+  ansible.builtin.debug:
+    msg: "Falcon sensor configured successfully"

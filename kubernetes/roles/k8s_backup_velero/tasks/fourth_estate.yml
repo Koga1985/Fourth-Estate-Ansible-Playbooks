@@ -1,0 +1,54 @@
+---
+# Velero Fourth Estate Specific Configuration
+
+- name: Label Fourth Estate critical namespaces
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: "{{ item }}"
+        labels:
+          velero.io/backup: "critical"
+          fourth-estate.io/protected: "true"
+  loop:
+    - source-protection
+    - journalist-workspace
+    - publication-pipeline
+    - secure-drop
+  ignore_errors: true
+
+- name: Create Fourth Estate backup schedule
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: velero.io/v1
+      kind: Schedule
+      metadata:
+        name: fourth-estate-critical
+        namespace: "{{ velero_namespace }}"
+        labels:
+          backup-type: fourth-estate
+          criticality: high
+      spec:
+        schedule: "*/15 * * * *"  # Every 15 minutes
+        template:
+          ttl: "2160h"  # 90 days
+          includedNamespaces:
+            - source-protection
+            - journalist-workspace
+            - publication-pipeline
+            - secure-drop
+          includeClusterResources: true
+          snapshotVolumes: true
+          defaultVolumesToRestic: true
+          storageLocation: "{{ velero_aws_backup_location }}"
+          labelSelector:
+            matchLabels:
+              fourth-estate.io/protected: "true"
+  when: velero_source_protection_backup | bool
+
+- name: Display Fourth Estate configuration
+  ansible.builtin.debug:
+    msg: "Fourth Estate specific Velero configuration applied"

@@ -1,0 +1,322 @@
+---
+# ============================================================================
+# [PLATFORM_NAME] - Prerequisites Check
+# ============================================================================
+# Purpose: Validate environment meets requirements before deployment
+# Called by: playbooks/deploy.yml (pre_tasks)
+# ============================================================================
+
+- name: Prerequisites - Display check information
+  ansible.builtin.debug:
+    msg:
+      - "Checking prerequisites for [Platform Name] deployment"
+      - "Target: {{ inventory_hostname }}"
+      - "OS: {{ ansible_distribution }} {{ ansible_distribution_version }}"
+
+# ============================================================================
+# Check 1: Operating System Requirements
+# ============================================================================
+
+- name: Prerequisites - Verify supported operating system
+  ansible.builtin.assert:
+    that:
+      - ansible_os_family in supported_os_families
+      - ansible_distribution_major_version | int >= min_os_version
+    fail_msg: |
+      Unsupported OS: {{ ansible_distribution }} {{ ansible_distribution_version }}
+      Supported: {{ supported_os_families | join(', ') }} version {{ min_os_version }}+
+    success_msg: "Operating system supported: {{ ansible_distribution }} {{ ansible_distribution_version }}"
+  vars:
+    supported_os_families:
+      - "RedHat"      # RHEL, CentOS, Rocky, AlmaLinux
+      - "Debian"      # Debian, Ubuntu
+      # - "Windows"   # Uncomment if Windows supported
+    min_os_version: 8  # CHANGE_THIS: Minimum major version
+
+# ============================================================================
+# Check 2: System Resources
+# ============================================================================
+
+- name: Prerequisites - Check available disk space
+  ansible.builtin.assert:
+    that:
+      - ansible_mounts | selectattr('mount', 'equalto', '/') | map(attribute='size_available') | first > required_disk_space
+    fail_msg: |
+      Insufficient disk space on /
+      Required: {{ (required_disk_space / 1024 / 1024 / 1024) | round(2) }} GB
+      Available: {{ (ansible_mounts | selectattr('mount', 'equalto', '/') | map(attribute='size_available') | first / 1024 / 1024 / 1024) | round(2) }} GB
+    success_msg: "Sufficient disk space available"
+  vars:
+    required_disk_space: 10737418240  # 10 GB in bytes - CHANGE_THIS
+
+- name: Prerequisites - Check available memory
+  ansible.builtin.assert:
+    that:
+      - ansible_memtotal_mb >= required_memory_mb
+    fail_msg: |
+      Insufficient memory
+      Required: {{ required_memory_mb }} MB
+      Available: {{ ansible_memtotal_mb }} MB
+    success_msg: "Sufficient memory available: {{ ansible_memtotal_mb }} MB"
+  vars:
+    required_memory_mb: 4096  # 4 GB - CHANGE_THIS
+
+- name: Prerequisites - Check CPU cores
+  ansible.builtin.assert:
+    that:
+      - ansible_processor_vcpus >= required_cpu_cores
+    fail_msg: |
+      Insufficient CPU cores
+      Required: {{ required_cpu_cores }}
+      Available: {{ ansible_processor_vcpus }}
+    success_msg: "Sufficient CPU cores: {{ ansible_processor_vcpus }}"
+  vars:
+    required_cpu_cores: 2  # CHANGE_THIS
+
+# ============================================================================
+# Check 3: Network Connectivity
+# ============================================================================
+
+- name: Prerequisites - Test DNS resolution
+  ansible.builtin.command:
+    cmd: "nslookup {{ platform_hostname }}"
+  register: dns_check
+  changed_when: false
+  failed_when: dns_check.rc != 0
+
+- name: Prerequisites - Test connectivity to platform endpoint
+  ansible.builtin.wait_for:
+    host: "{{ platform_hostname }}"
+    port: "{{ platform_port | default(443) }}"
+    timeout: 10
+  register: connectivity_check
+  failed_when: connectivity_check is failed
+
+- name: Prerequisites - Test internet connectivity (for package downloads)
+  ansible.builtin.uri:
+    url: "https://{{ package_repo_url | default('repo.platform.com') }}"
+    timeout: 10
+    validate_certs: true
+  register: internet_check
+  when: install_method == 'package'
+
+# ============================================================================
+# Check 4: Required Packages
+# ============================================================================
+
+- name: Prerequisites - Install required system packages
+  ansible.builtin.package:
+    name: "{{ required_packages }}"
+    state: present
+  become: true
+  vars:
+    required_packages:
+      # Python packages
+      - python3
+      - python3-pip
+      # Network utilities
+      - curl
+      - wget
+      - net-tools
+      # SSL/TLS
+      - openssl
+      # CHANGE_THIS: Add platform-specific packages
+      # Example:
+      # - docker-ce
+      # - kubernetes-client
+
+- name: Prerequisites - Install required Python packages
+  ansible.builtin.pip:
+    name: "{{ required_python_packages }}"
+    state: present
+  become: true
+  vars:
+    required_python_packages:
+      - requests
+      - urllib3
+      # CHANGE_THIS: Add platform-specific Python packages
+      # Example:
+      # - docker
+      # - kubernetes
+
+# ============================================================================
+# Check 5: User and Group
+# ============================================================================
+
+- name: Prerequisites - Check if service user exists
+  ansible.builtin.user:
+    name: "{{ service_user }}"
+    state: present
+    create_home: false
+    system: true
+  become: true
+  when: create_service_user | default(true)
+  register: service_user_check
+
+- name: Prerequisites - Check if service group exists
+  ansible.builtin.group:
+    name: "{{ service_group }}"
+    state: present
+    system: true
+  become: true
+  when: create_service_user | default(true)
+  register: service_group_check
+
+# ============================================================================
+# Check 6: Directory Structure
+# ============================================================================
+
+- name: Prerequisites - Create installation directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ service_user | default('root') }}"
+    group: "{{ service_group | default('root') }}"
+    mode: '0755'
+  become: true
+  loop:
+    - "{{ install_path }}"
+    - "{{ install_path }}/bin"
+    - "{{ install_path }}/config"
+    - "{{ install_path }}/data"
+    - "/var/log/platform"
+    - "/etc/platform"
+    # CHANGE_THIS: Add platform-specific directories
+
+# ============================================================================
+# Check 7: Firewall Configuration
+# ============================================================================
+
+- name: Prerequisites - Check firewall status
+  ansible.builtin.service_facts:
+  register: service_facts
+
+- name: Prerequisites - Open required firewall ports
+  ansible.posix.firewalld:
+    port: "{{ item }}/tcp"
+    permanent: true
+    immediate: true
+    state: enabled
+  become: true
+  loop:
+    - "{{ platform_port | default(443) }}"
+    # CHANGE_THIS: Add platform-specific ports
+  when:
+    - firewall_enabled | default(true)
+    - "'firewalld.service' in ansible_facts.services"
+    - ansible_facts.services['firewalld.service'].state == 'running'
+
+# ============================================================================
+# Check 8: SELinux Configuration (RHEL/CentOS)
+# ============================================================================
+
+- name: Prerequisites - Check SELinux status
+  ansible.builtin.command:
+    cmd: getenforce
+  register: selinux_status
+  changed_when: false
+  failed_when: false
+  when: ansible_os_family == 'RedHat'
+
+- name: Prerequisites - Configure SELinux contexts
+  ansible.builtin.sefcontext:
+    target: "{{ install_path }}(/.*)?"
+    setype: "bin_t"
+    state: present
+  become: true
+  when:
+    - ansible_os_family == 'RedHat'
+    - selinux_status.stdout != 'Disabled'
+  notify: restore selinux contexts
+
+# ============================================================================
+# Check 9: Existing Installation
+# ============================================================================
+
+- name: Prerequisites - Check for existing installation
+  ansible.builtin.stat:
+    path: "{{ install_path }}/bin/platform"  # CHANGE_THIS
+  register: existing_install
+
+- name: Prerequisites - Display existing installation warning
+  ansible.builtin.debug:
+    msg:
+      - "WARNING: Existing installation detected"
+      - "Path: {{ install_path }}"
+      - "The deployment will upgrade/reconfigure the existing installation"
+  when: existing_install.stat.exists
+
+# ============================================================================
+# Check 10: Credentials and Authentication
+# ============================================================================
+
+- name: Prerequisites - Validate required variables are set
+  ansible.builtin.assert:
+    that:
+      - platform_hostname is defined
+      - platform_hostname != "CHANGE_THIS"
+      - platform_username is defined
+      - platform_password is defined or platform_api_key is defined
+      - organization_name is defined
+      - organization_name != "CHANGE_THIS"
+    fail_msg: |
+      Required variables are not properly configured.
+      Please check your variables file and ensure all CHANGE_THIS values are replaced.
+    success_msg: "All required variables are configured"
+
+- name: Prerequisites - Test platform authentication
+  ansible.builtin.uri:
+    url: "{{ platform_api_endpoint | default('https://' + platform_hostname + '/api') }}/auth/verify"  # CHANGE_THIS
+    method: GET
+    user: "{{ platform_username }}"
+    password: "{{ platform_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ platform_validate_certs }}"
+    status_code: 200
+  register: auth_test
+  failed_when: auth_test.status != 200
+  when:
+    - platform_username is defined
+    - platform_password is defined
+
+# ============================================================================
+# Check 11: Compliance Requirements (Fourth Estate)
+# ============================================================================
+
+- name: Prerequisites - Verify FIPS mode (if required)
+  ansible.builtin.command:
+    cmd: cat /proc/sys/crypto/fips_enabled
+  register: fips_check
+  changed_when: false
+  failed_when: false
+  when: compliance_mode in ['fedramp_high', 'fedramp_moderate']
+
+- name: Prerequisites - Assert FIPS mode is enabled
+  ansible.builtin.assert:
+    that:
+      - fips_check.stdout == '1'
+    fail_msg: "FIPS mode is required for {{ compliance_mode }} compliance but is not enabled"
+    success_msg: "FIPS mode is enabled"
+  when:
+    - compliance_mode in ['fedramp_high', 'fedramp_moderate']
+    - fips_check is defined
+
+# ============================================================================
+# Prerequisites Summary
+# ============================================================================
+
+- name: Prerequisites - Display summary
+  ansible.builtin.debug:
+    msg:
+      - "=========================================="
+      - "Prerequisites Check Complete"
+      - "=========================================="
+      - "OS: {{ ansible_distribution }} {{ ansible_distribution_version }}"
+      - "Memory: {{ ansible_memtotal_mb }} MB"
+      - "CPU Cores: {{ ansible_processor_vcpus }}"
+      - "Disk Space: Available"
+      - "Network: Connectivity verified"
+      - "Authentication: Credentials validated"
+      - "Firewall: Configured"
+      - "Ready for deployment: YES"
+      - "=========================================="

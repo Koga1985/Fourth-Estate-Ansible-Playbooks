@@ -1,0 +1,50 @@
+---
+# SentinelOne Agent Installation - Main Tasks
+# Fourth Estate production-ready EDR deployment
+
+- name: Validate required variables
+  ansible.builtin.assert:
+    that:
+      - s1_site_token is defined
+      - s1_site_token | length > 0
+      - s1_console_url is defined
+      - s1_console_url | length > 0
+    fail_msg: "s1_site_token and s1_console_url are required but not defined"
+    success_msg: "Required variables validated"
+
+- name: Include pre-flight checks
+  ansible.builtin.include_tasks: preflight.yml
+  tags: [preflight, always]
+
+- name: Include Linux agent installation
+  ansible.builtin.include_tasks: install_linux.yml
+  when: ansible_os_family in ['RedHat', 'Debian', 'Suse']
+  tags: [install, linux]
+
+- name: Include Windows agent installation
+  ansible.builtin.include_tasks: install_windows.yml
+  when: ansible_os_family == 'Windows'
+  tags: [install, windows]
+
+- name: Include Kubernetes agent deployment
+  ansible.builtin.include_tasks: install_kubernetes.yml
+  when: s1_k8s_enabled | bool
+  tags: [install, kubernetes]
+
+- name: Include agent configuration
+  ansible.builtin.include_tasks: configure.yml
+  tags: [configure, config]
+
+- name: Include agent verification
+  ansible.builtin.include_tasks: verify.yml
+  tags: [verify, validation]
+
+- name: Include Fourth Estate configuration
+  ansible.builtin.include_tasks: fourth_estate.yml
+  when: s1_fourth_estate_enabled | bool
+  tags: [fourth-estate, compliance]
+
+- name: Include monitoring setup
+  ansible.builtin.include_tasks: monitoring.yml
+  when: s1_enable_agent_monitoring | bool
+  tags: [monitoring, observability]

@@ -1,0 +1,40 @@
+---
+# SentinelOne Fourth Estate Configuration
+
+- name: Apply Fourth Estate agent tags via API
+  ansible.builtin.uri:
+    url: "{{ s1_console_url }}/web/api/v2.1/agents/actions/set-external-id"
+    method: POST
+    headers:
+      Authorization: "ApiToken {{ s1_api_token }}"
+      Content-Type: "application/json"
+    body:
+      filter:
+        computerName: "{{ ansible_hostname }}"
+      data:
+        externalId: "Fourth-Estate-{{ inventory_hostname }}"
+    body_format: json
+    status_code: [200, 201]
+  when:
+    - s1_api_token | length > 0
+    - s1_fourth_estate_enabled | bool
+  failed_when: false
+
+- name: Enable enhanced logging for Fourth Estate (Linux)
+  ansible.builtin.command: /opt/sentinelone/bin/sentinelctl config log.level debug
+  when:
+    - ansible_os_family in ['RedHat', 'Debian', 'Suse']
+    - s1_enhanced_logging | bool
+  changed_when: true
+
+- name: Configure STIG compliance mode (Linux)
+  ansible.builtin.command: /opt/sentinelone/bin/sentinelctl config compliance.stig enabled
+  when:
+    - ansible_os_family in ['RedHat', 'Debian', 'Suse']
+    - s1_stig_mode | bool
+  changed_when: true
+  failed_when: false
+
+- name: Display Fourth Estate configuration
+  ansible.builtin.debug:
+    msg: "Fourth Estate specific SentinelOne configuration applied"

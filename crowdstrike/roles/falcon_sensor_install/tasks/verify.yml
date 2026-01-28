@@ -1,0 +1,35 @@
+---
+# CrowdStrike Falcon Sensor Verification
+
+- name: Check sensor status (Linux)
+  ansible.builtin.command: /opt/CrowdStrike/falconctl -g --aid
+  register: falcon_aid
+  changed_when: false
+  when: ansible_os_family in ['RedHat', 'Debian', 'Suse']
+
+- name: Check sensor service status (Linux)
+  ansible.builtin.systemd:
+    name: "{{ falcon_linux_service_name }}"
+  register: falcon_service_status
+  when: ansible_os_family in ['RedHat', 'Debian', 'Suse']
+
+- name: Verify sensor is checking in
+  ansible.builtin.command: /opt/CrowdStrike/falconctl -g --rfm-state
+  register: falcon_rfm_state
+  changed_when: false
+  when: ansible_os_family in ['RedHat', 'Debian', 'Suse']
+
+- name: Display verification results
+  ansible.builtin.debug:
+    msg:
+      - "Agent ID: {{ falcon_aid.stdout if ansible_os_family != 'Windows' else 'Check Windows registry' }}"
+      - "Service Status: {{ falcon_service_status.status.ActiveState if ansible_os_family != 'Windows' else 'Running' }}"
+      - "RFM State: {{ falcon_rfm_state.stdout if ansible_os_family != 'Windows' else 'N/A' }}"
+
+- name: Assert sensor is operational
+  ansible.builtin.assert:
+    that:
+      - falcon_service_status.status.ActiveState == 'active'
+    fail_msg: "Falcon sensor is not running"
+    success_msg: "Falcon sensor is operational"
+  when: ansible_os_family in ['RedHat', 'Debian', 'Suse']

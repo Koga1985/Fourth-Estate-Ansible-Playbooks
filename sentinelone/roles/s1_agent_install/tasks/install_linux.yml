@@ -1,0 +1,58 @@
+---
+# SentinelOne Agent Linux Installation
+
+- name: Download SentinelOne agent installer (URL method)
+  ansible.builtin.get_url:
+    url: "{{ s1_agent_download_url }}"
+    dest: "{{ s1_agent_download_path }}/SentinelAgent.{{ 'rpm' if ansible_os_family == 'RedHat' else 'deb' }}"
+    mode: '0644'
+  when:
+    - s1_install_method == 'url'
+    - s1_agent_download_url | length > 0
+
+- name: Install SentinelOne agent (RHEL/CentOS)
+  ansible.builtin.yum:
+    name: "{{ s1_agent_download_path }}/SentinelAgent.rpm"
+    state: present
+    disable_gpg_check: "{{ s1_air_gapped }}"
+  when:
+    - ansible_os_family == 'RedHat'
+    - s1_linux_install_method == 'rpm'
+
+- name: Install SentinelOne agent (Debian/Ubuntu)
+  ansible.builtin.apt:
+    deb: "{{ s1_agent_download_path }}/SentinelAgent.deb"
+    state: present
+  when:
+    - ansible_os_family == 'Debian'
+    - s1_linux_install_method == 'deb'
+
+- name: Set site token
+  ansible.builtin.command: >
+    /opt/sentinelone/bin/sentinelctl management token set {{ s1_site_token }}
+  changed_when: true
+  no_log: true
+
+- name: Set management URL
+  ansible.builtin.command: >
+    /opt/sentinelone/bin/sentinelctl config server.url {{ s1_management_url }}
+  changed_when: true
+
+- name: Configure proxy (if enabled)
+  ansible.builtin.command: >
+    /opt/sentinelone/bin/sentinelctl config proxy.address {{ s1_proxy_host }}:{{ s1_proxy_port }}
+  when: s1_proxy_enabled | bool
+  changed_when: true
+
+- name: Start agent registration
+  ansible.builtin.command: /opt/sentinelone/bin/sentinelctl management start
+  changed_when: true
+
+- name: Enable and start SentinelOne agent service
+  ansible.builtin.systemd:
+    name: "{{ s1_linux_service_name }}"
+    state: started
+    enabled: true
+  when:
+    - s1_service_enable | bool
+    - s1_service_start | bool

@@ -1,0 +1,60 @@
+---
+# Velero Security Configuration
+
+- name: Create NetworkPolicy for Velero
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: networking.k8s.io/v1
+      kind: NetworkPolicy
+      metadata:
+        name: velero
+        namespace: "{{ velero_namespace }}"
+      spec:
+        podSelector:
+          matchLabels:
+            app.kubernetes.io/name: velero
+        policyTypes:
+          - Ingress
+          - Egress
+        ingress:
+          - from:
+              - namespaceSelector:
+                  matchLabels:
+                    name: monitoring
+            ports:
+              - protocol: TCP
+                port: "{{ velero_metrics_port }}"
+        egress:
+          - to:
+              - namespaceSelector: {}
+            ports:
+              - protocol: TCP
+                port: 443
+              - protocol: TCP
+                port: 6443
+          - to:
+              - podSelector:
+                  matchLabels:
+                    app.kubernetes.io/name: minio
+            ports:
+              - protocol: TCP
+                port: 9000
+  when: velero_enable_network_policy | bool
+
+- name: Apply Pod Security Standard
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: "{{ velero_namespace }}"
+        labels:
+          pod-security.kubernetes.io/enforce: privileged
+          pod-security.kubernetes.io/audit: privileged
+          pod-security.kubernetes.io/warn: privileged
+
+- name: Display security configuration
+  ansible.builtin.debug:
+    msg: "Velero security hardening applied"

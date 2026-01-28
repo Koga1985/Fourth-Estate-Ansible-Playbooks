@@ -1,0 +1,108 @@
+---
+# MinIO Installation for Air-gapped Velero
+
+- name: Create MinIO namespace
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: "{{ velero_namespace }}"
+
+- name: Deploy MinIO
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: minio
+        namespace: "{{ velero_namespace }}"
+      spec:
+        selector:
+          matchLabels:
+            app: minio
+        strategy:
+          type: Recreate
+        template:
+          metadata:
+            labels:
+              app: minio
+          spec:
+            containers:
+              - name: minio
+                image: minio/minio:latest
+                args:
+                  - server
+                  - /data
+                env:
+                  - name: MINIO_ACCESS_KEY
+                    value: "{{ velero_minio_access_key }}"
+                  - name: MINIO_SECRET_KEY
+                    value: "{{ velero_minio_secret_key }}"
+                ports:
+                  - containerPort: 9000
+                volumeMounts:
+                  - name: data
+                    mountPath: /data
+                resources:
+                  requests:
+                    cpu: 500m
+                    memory: 512Mi
+                  limits:
+                    cpu: 1000m
+                    memory: 1Gi
+            volumes:
+              - name: data
+                persistentVolumeClaim:
+                  claimName: minio-pvc
+
+- name: Create MinIO PVC
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: PersistentVolumeClaim
+      metadata:
+        name: minio-pvc
+        namespace: "{{ velero_namespace }}"
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: 100Gi
+
+- name: Create MinIO Service
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Service
+      metadata:
+        name: minio
+        namespace: "{{ velero_namespace }}"
+      spec:
+        type: ClusterIP
+        ports:
+          - port: 9000
+            targetPort: 9000
+            protocol: TCP
+        selector:
+          app: minio
+
+- name: Wait for MinIO to be ready
+  kubernetes.core.k8s_info:
+    kind: Deployment
+    name: minio
+    namespace: "{{ velero_namespace }}"
+    wait: true
+    wait_condition:
+      type: Available
+      status: "True"
+    wait_timeout: 300
+
+- name: Display MinIO configuration
+  ansible.builtin.debug:
+    msg: "MinIO deployed for air-gapped Velero backup storage"

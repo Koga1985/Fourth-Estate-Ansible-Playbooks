@@ -1,0 +1,48 @@
+---
+# CrowdStrike Falcon Sensor Monitoring
+
+- name: Create sensor health check script
+  ansible.builtin.copy:
+    dest: /usr/local/bin/falcon-health-check.sh
+    mode: '0755'
+    content: |
+      #!/bin/bash
+      # CrowdStrike Falcon Health Check
+
+      echo "Checking Falcon sensor status..."
+
+      # Check if service is running
+      if systemctl is-active --quiet falcon-sensor; then
+        echo "✓ Falcon sensor service is running"
+      else
+        echo "✗ Falcon sensor service is NOT running"
+        exit 1
+      fi
+
+      # Check if sensor has AID
+      AID=$(/opt/CrowdStrike/falconctl -g --aid 2>/dev/null | grep -oP 'aid="\K[^"]+')
+      if [ -n "$AID" ]; then
+        echo "✓ Sensor is registered (AID: ${AID:0:8}...)"
+      else
+        echo "✗ Sensor is NOT registered"
+        exit 1
+      fi
+
+      # Check RFM state
+      RFM=$(/opt/CrowdStrike/falconctl -g --rfm-state 2>/dev/null)
+      echo "  RFM State: $RFM"
+
+      echo "Falcon sensor health check complete"
+  when: ansible_os_family in ['RedHat', 'Debian', 'Suse']
+
+- name: Create sensor health check cron job
+  ansible.builtin.cron:
+    name: "Falcon sensor health check"
+    minute: "0"
+    hour: "*"
+    job: "/usr/local/bin/falcon-health-check.sh > /var/log/falcon-health.log 2>&1"
+  when: ansible_os_family in ['RedHat', 'Debian', 'Suse']
+
+- name: Display monitoring configuration
+  ansible.builtin.debug:
+    msg: "Falcon sensor monitoring configured"

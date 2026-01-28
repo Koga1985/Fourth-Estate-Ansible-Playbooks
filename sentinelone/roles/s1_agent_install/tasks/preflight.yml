@@ -1,0 +1,59 @@
+---
+# SentinelOne Agent Pre-flight Checks
+
+- name: Check if SentinelOne agent is already installed (Linux)
+  ansible.builtin.stat:
+    path: /opt/sentinelone/bin/sentinelctl
+  register: s1_installed_linux
+  when: ansible_os_family in ['RedHat', 'Debian', 'Suse']
+
+- name: Check if SentinelOne agent is already installed (Windows)
+  ansible.windows.win_service:
+    name: "{{ s1_windows_service_name }}"
+  register: s1_installed_windows
+  when: ansible_os_family == 'Windows'
+  failed_when: false
+
+- name: Get current agent version (Linux)
+  ansible.builtin.command: /opt/sentinelone/bin/sentinelctl version
+  register: current_s1_version
+  changed_when: false
+  failed_when: false
+  when:
+    - ansible_os_family in ['RedHat', 'Debian', 'Suse']
+    - s1_installed_linux.stat.exists
+
+- name: Verify network connectivity to SentinelOne console
+  ansible.builtin.uri:
+    url: "{{ s1_console_url }}/api/health"
+    method: GET
+    status_code: [200, 401, 403]
+  register: s1_connectivity
+  when: not s1_air_gapped | bool
+  failed_when: false
+
+- name: Check system requirements (Linux)
+  ansible.builtin.assert:
+    that:
+      - ansible_kernel is version('2.6.32', '>=')
+      - ansible_memtotal_mb >= 1024
+    fail_msg: "System does not meet minimum requirements"
+    success_msg: "System requirements met"
+  when: ansible_os_family in ['RedHat', 'Debian', 'Suse']
+
+- name: Check system requirements (Windows)
+  ansible.builtin.assert:
+    that:
+      - ansible_distribution_major_version | int >= 7
+    fail_msg: "Windows version not supported"
+    success_msg: "Windows version supported"
+  when: ansible_os_family == 'Windows'
+
+- name: Display pre-flight check results
+  ansible.builtin.debug:
+    msg:
+      - "Console URL: {{ s1_console_url }}"
+      - "Site Token: {{ s1_site_token[:8] }}..."
+      - "Installation Method: {{ s1_install_method }}"
+      - "Air-gapped Mode: {{ s1_air_gapped }}"
+      - "Already Installed: {{ s1_installed_linux.stat.exists if ansible_os_family != 'Windows' else (s1_installed_windows.exists | default(false)) }}"

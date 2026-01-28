@@ -1,0 +1,58 @@
+---
+# CrowdStrike Falcon Pre-flight Checks
+
+- name: Check if CrowdStrike sensor is already installed (Linux)
+  ansible.builtin.stat:
+    path: /opt/CrowdStrike/falconctl
+  register: falcon_installed_linux
+  when: ansible_os_family in ['RedHat', 'Debian', 'Suse']
+
+- name: Check if CrowdStrike sensor is already installed (Windows)
+  ansible.windows.win_service:
+    name: "{{ falcon_windows_service_name }}"
+  register: falcon_installed_windows
+  when: ansible_os_family == 'Windows'
+  failed_when: false
+
+- name: Get current sensor version (Linux)
+  ansible.builtin.command: /opt/CrowdStrike/falconctl -g --version
+  register: current_falcon_version
+  changed_when: false
+  failed_when: false
+  when:
+    - ansible_os_family in ['RedHat', 'Debian', 'Suse']
+    - falcon_installed_linux.stat.exists
+
+- name: Verify network connectivity to CrowdStrike cloud
+  ansible.builtin.uri:
+    url: "{{ falcon_api_base_url }}/oauth2/token"
+    method: POST
+    status_code: [200, 201, 400, 401]
+  register: falcon_connectivity
+  when: not falcon_air_gapped | bool
+
+- name: Check system requirements (Linux)
+  ansible.builtin.assert:
+    that:
+      - ansible_kernel is version('2.6.32', '>=')
+      - ansible_memtotal_mb >= 2048
+    fail_msg: "System does not meet minimum requirements"
+    success_msg: "System requirements met"
+  when: ansible_os_family in ['RedHat', 'Debian', 'Suse']
+
+- name: Check system requirements (Windows)
+  ansible.builtin.assert:
+    that:
+      - ansible_distribution_major_version | int >= 7
+    fail_msg: "Windows version not supported"
+    success_msg: "Windows version supported"
+  when: ansible_os_family == 'Windows'
+
+- name: Display pre-flight check results
+  ansible.builtin.debug:
+    msg:
+      - "Falcon CID: {{ falcon_cid[:8] }}..."
+      - "Falcon Cloud: {{ falcon_cloud }}"
+      - "Installation Method: {{ falcon_install_method }}"
+      - "Air-gapped Mode: {{ falcon_air_gapped }}"
+      - "Already Installed: {{ falcon_installed_linux.stat.exists if ansible_os_family != 'Windows' else (falcon_installed_windows.exists | default(false)) }}"

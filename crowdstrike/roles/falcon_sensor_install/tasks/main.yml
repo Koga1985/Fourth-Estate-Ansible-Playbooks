@@ -1,0 +1,48 @@
+---
+# CrowdStrike Falcon Sensor Installation - Main Tasks
+# Fourth Estate production-ready EDR deployment
+
+- name: Validate required variables
+  ansible.builtin.assert:
+    that:
+      - falcon_cid is defined
+      - falcon_cid | length > 0
+    fail_msg: "falcon_cid is required but not defined"
+    success_msg: "Required variables validated"
+
+- name: Include pre-flight checks
+  ansible.builtin.include_tasks: preflight.yml
+  tags: [preflight, always]
+
+- name: Include Linux sensor installation
+  ansible.builtin.include_tasks: install_linux.yml
+  when: ansible_os_family in ['RedHat', 'Debian', 'Suse']
+  tags: [install, linux]
+
+- name: Include Windows sensor installation
+  ansible.builtin.include_tasks: install_windows.yml
+  when: ansible_os_family == 'Windows'
+  tags: [install, windows]
+
+- name: Include Kubernetes sensor deployment
+  ansible.builtin.include_tasks: install_kubernetes.yml
+  when: falcon_k8s_enabled | bool
+  tags: [install, kubernetes]
+
+- name: Include sensor configuration
+  ansible.builtin.include_tasks: configure.yml
+  tags: [configure, config]
+
+- name: Include sensor verification
+  ansible.builtin.include_tasks: verify.yml
+  tags: [verify, validation]
+
+- name: Include Fourth Estate configuration
+  ansible.builtin.include_tasks: fourth_estate.yml
+  when: falcon_fourth_estate_enabled | bool
+  tags: [fourth-estate, compliance]
+
+- name: Include monitoring setup
+  ansible.builtin.include_tasks: monitoring.yml
+  when: falcon_enable_sensor_monitoring | bool
+  tags: [monitoring, observability]

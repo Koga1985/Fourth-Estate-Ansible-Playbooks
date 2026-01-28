@@ -1,0 +1,68 @@
+---
+# Velero Monitoring Configuration
+
+- name: Create ServiceMonitor for Prometheus
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: monitoring.coreos.com/v1
+      kind: ServiceMonitor
+      metadata:
+        name: velero
+        namespace: "{{ velero_namespace }}"
+        labels:
+          app.kubernetes.io/name: velero
+      spec:
+        selector:
+          matchLabels:
+            app.kubernetes.io/name: velero
+        endpoints:
+          - port: http-monitoring
+            interval: 30s
+            path: /metrics
+
+- name: Create PrometheusRule for Velero alerts
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: monitoring.coreos.com/v1
+      kind: PrometheusRule
+      metadata:
+        name: velero-alerts
+        namespace: "{{ velero_namespace }}"
+        labels:
+          app.kubernetes.io/name: velero
+      spec:
+        groups:
+          - name: velero
+            interval: 30s
+            rules:
+              - alert: VeleroBackupFailed
+                expr: velero_backup_failure_total > 0
+                for: 5m
+                labels:
+                  severity: critical
+                annotations:
+                  summary: "Velero backup failed"
+                  description: "Velero backup {{ $labels.schedule }} has failed"
+              - alert: VeleroBackupPartiallyFailed
+                expr: velero_backup_partial_failure_total > 0
+                for: 5m
+                labels:
+                  severity: warning
+                annotations:
+                  summary: "Velero backup partially failed"
+                  description: "Velero backup {{ $labels.schedule }} has partially failed"
+              - alert: VeleroBackupTooOld
+                expr: (time() - velero_backup_last_successful_timestamp{schedule!=""}) > 86400
+                for: 1h
+                labels:
+                  severity: warning
+                annotations:
+                  summary: "Velero backup is too old"
+                  description: "Velero backup {{ $labels.schedule }} has not completed in 24 hours"
+  when: velero_enable_backup_alerts | bool
+
+- name: Display monitoring configuration
+  ansible.builtin.debug:
+    msg: "Velero monitoring configured with Prometheus metrics on port {{ velero_metrics_port }}"
