@@ -1,0 +1,37 @@
+---
+# Velero Backup Schedules Configuration
+
+- name: Create backup schedules
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: velero.io/v1
+      kind: Schedule
+      metadata:
+        name: "{{ item.name }}"
+        namespace: "{{ velero_namespace }}"
+        labels: "{{ item.labels | default({}) }}"
+      spec:
+        schedule: "{{ item.schedule }}"
+        template:
+          ttl: "{{ item.ttl | default(velero_default_backup_ttl) }}"
+          includedNamespaces: "{{ item.include_namespaces | default([]) }}"
+          excludedNamespaces: "{{ item.exclude_namespaces | default([]) }}"
+          includedResources: "{{ item.include_resources | default([]) }}"
+          excludedResources: "{{ item.exclude_resources | default([]) }}"
+          includeClusterResources: true
+          snapshotVolumes: "{{ item.snapshot_volumes | default(velero_use_volume_snapshots) }}"
+          defaultVolumesToRestic: "{{ velero_use_restic }}"
+          storageLocation: "{{ velero_aws_backup_location }}"
+  loop: "{{ velero_backup_schedules }}"
+  when: velero_backup_schedules | length > 0
+
+- name: Verify backup schedules
+  kubernetes.core.k8s_info:
+    kind: Schedule
+    namespace: "{{ velero_namespace }}"
+  register: backup_schedules
+
+- name: Display configured backup schedules
+  ansible.builtin.debug:
+    msg: "Configured {{ backup_schedules.resources | length }} backup schedule(s)"

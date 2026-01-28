@@ -1,0 +1,48 @@
+---
+# CrowdStrike Falcon Linux Sensor Installation
+
+- name: Download Falcon sensor from API
+  ansible.builtin.uri:
+    url: "{{ falcon_api_base_url }}/sensors/entities/download-installer/v1?id={{ falcon_sensor_version }}"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ falcon_api_token }}"
+    dest: "{{ falcon_sensor_download_path }}/falcon-sensor.{{ 'rpm' if ansible_os_family == 'RedHat' else 'deb' }}"
+    creates: "{{ falcon_sensor_download_path }}/falcon-sensor.{{ 'rpm' if ansible_os_family == 'RedHat' else 'deb' }}"
+  when:
+    - falcon_install_method == 'api'
+    - not falcon_air_gapped | bool
+
+- name: Install Falcon sensor (RHEL/CentOS)
+  ansible.builtin.yum:
+    name: "{{ falcon_sensor_download_path }}/falcon-sensor.rpm"
+    state: present
+    disable_gpg_check: "{{ falcon_air_gapped }}"
+  when:
+    - ansible_os_family == 'RedHat'
+    - falcon_linux_install_method == 'rpm'
+
+- name: Install Falcon sensor (Debian/Ubuntu)
+  ansible.builtin.apt:
+    deb: "{{ falcon_sensor_download_path }}/falcon-sensor.deb"
+    state: present
+  when:
+    - ansible_os_family == 'Debian'
+    - falcon_linux_install_method == 'deb'
+
+- name: Configure Falcon sensor
+  ansible.builtin.command: >
+    /opt/CrowdStrike/falconctl -s --cid={{ falcon_cid }}
+    {% if falcon_provisioning_wait %}--provisioning-token={{ falcon_installation_token }}{% endif %}
+    {% if falcon_sensor_tags %}--tags={{ falcon_sensor_tags }}{% endif %}
+    {% if falcon_proxy_enabled %}--aph={{ falcon_proxy_host }} --app={{ falcon_proxy_port }}{% endif %}
+  changed_when: true
+
+- name: Enable and start Falcon sensor service
+  ansible.builtin.systemd:
+    name: "{{ falcon_linux_service_name }}"
+    state: started
+    enabled: true
+  when:
+    - falcon_service_enable | bool
+    - falcon_service_start | bool

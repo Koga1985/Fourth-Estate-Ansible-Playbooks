@@ -1,0 +1,41 @@
+---
+# SentinelOne Agent Verification
+
+- name: Check agent status (Linux)
+  ansible.builtin.command: /opt/sentinelone/bin/sentinelctl status
+  register: s1_status
+  changed_when: false
+  when: ansible_os_family in ['RedHat', 'Debian', 'Suse']
+
+- name: Check agent version (Linux)
+  ansible.builtin.command: /opt/sentinelone/bin/sentinelctl version
+  register: s1_version
+  changed_when: false
+  when: ansible_os_family in ['RedHat', 'Debian', 'Suse']
+
+- name: Check management connectivity (Linux)
+  ansible.builtin.command: /opt/sentinelone/bin/sentinelctl management status
+  register: s1_mgmt_status
+  changed_when: false
+  when: ansible_os_family in ['RedHat', 'Debian', 'Suse']
+
+- name: Display verification results
+  ansible.builtin.debug:
+    msg:
+      - "Agent Status: {{ s1_status.stdout_lines if ansible_os_family != 'Windows' else 'Check Windows service' }}"
+      - "Agent Version: {{ s1_version.stdout if ansible_os_family != 'Windows' else 'N/A' }}"
+      - "Management Status: {{ s1_mgmt_status.stdout if ansible_os_family != 'Windows' else 'N/A' }}"
+
+- name: Verify agent service is running
+  ansible.builtin.systemd:
+    name: "{{ s1_linux_service_name }}"
+  register: s1_service_status
+  when: ansible_os_family in ['RedHat', 'Debian', 'Suse']
+
+- name: Assert agent is operational
+  ansible.builtin.assert:
+    that:
+      - s1_service_status.status.ActiveState == 'active'
+    fail_msg: "SentinelOne agent is not running"
+    success_msg: "SentinelOne agent is operational"
+  when: ansible_os_family in ['RedHat', 'Debian', 'Suse']

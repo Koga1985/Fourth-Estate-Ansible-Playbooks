@@ -1,0 +1,56 @@
+---
+# SentinelOne Agent Monitoring
+
+- name: Create agent health check script
+  ansible.builtin.copy:
+    dest: /usr/local/bin/s1-health-check.sh
+    mode: '0755'
+    content: |
+      #!/bin/bash
+      # SentinelOne Agent Health Check
+
+      echo "Checking SentinelOne agent status..."
+
+      # Check if service is running
+      if systemctl is-active --quiet sentinelone; then
+        echo "✓ SentinelOne agent service is running"
+      else
+        echo "✗ SentinelOne agent service is NOT running"
+        exit 1
+      fi
+
+      # Check agent status
+      STATUS=$(/opt/sentinelone/bin/sentinelctl status 2>/dev/null)
+      echo "  Agent Status: $STATUS"
+
+      # Check management connectivity
+      MGMT=$(/opt/sentinelone/bin/sentinelctl management status 2>/dev/null)
+      if echo "$MGMT" | grep -q "connected"; then
+        echo "✓ Agent is connected to management console"
+      else
+        echo "✗ Agent is NOT connected to management console"
+        exit 1
+      fi
+
+      echo "SentinelOne agent health check complete"
+  when: ansible_os_family in ['RedHat', 'Debian', 'Suse']
+
+- name: Create agent health check cron job
+  ansible.builtin.cron:
+    name: "SentinelOne agent health check"
+    minute: "0"
+    hour: "*"
+    job: "/usr/local/bin/s1-health-check.sh > /var/log/s1-health.log 2>&1"
+  when: ansible_os_family in ['RedHat', 'Debian', 'Suse']
+
+- name: Configure syslog export (if enabled)
+  ansible.builtin.command: >
+    /opt/sentinelone/bin/sentinelctl config syslog.server {{ s1_syslog_server }}:{{ s1_syslog_port }}
+  when:
+    - ansible_os_family in ['RedHat', 'Debian', 'Suse']
+    - s1_syslog_enabled | bool
+  changed_when: true
+
+- name: Display monitoring configuration
+  ansible.builtin.debug:
+    msg: "SentinelOne agent monitoring configured"

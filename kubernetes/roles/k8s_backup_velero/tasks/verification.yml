@@ -1,0 +1,43 @@
+---
+# Velero Backup Verification
+
+- name: Create backup verification CronJob
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: batch/v1
+      kind: CronJob
+      metadata:
+        name: velero-backup-verification
+        namespace: "{{ velero_namespace }}"
+      spec:
+        schedule: "{{ velero_verification_schedule }}"
+        jobTemplate:
+          spec:
+            template:
+              spec:
+                serviceAccountName: "{{ velero_service_account }}"
+                containers:
+                  - name: velero-verify
+                    image: "velero/velero:{{ velero_version }}"
+                    command:
+                      - /bin/sh
+                      - -c
+                      - |
+                        echo "Verifying Velero backups..."
+                        velero backup get
+                        velero schedule get
+                        velero backup-location get
+                        echo "Verification complete"
+                    resources:
+                      requests:
+                        cpu: 100m
+                        memory: 128Mi
+                      limits:
+                        cpu: 200m
+                        memory: 256Mi
+                restartPolicy: OnFailure
+
+- name: Display verification configuration
+  ansible.builtin.debug:
+    msg: "Velero backup verification scheduled: {{ velero_verification_schedule }}"

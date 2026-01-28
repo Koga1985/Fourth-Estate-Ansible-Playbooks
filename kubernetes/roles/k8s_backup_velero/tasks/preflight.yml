@@ -1,0 +1,72 @@
+---
+# Velero Pre-flight Checks
+
+- name: Check if kubectl is available
+  ansible.builtin.command: kubectl version --client --short
+  register: kubectl_version
+  changed_when: false
+  failed_when: false
+
+- name: Fail if kubectl is not available
+  ansible.builtin.fail:
+    msg: "kubectl is not installed or not in PATH"
+  when: kubectl_version.rc != 0
+
+- name: Check Kubernetes cluster connectivity
+  ansible.builtin.command: kubectl cluster-info
+  register: cluster_info
+  changed_when: false
+  failed_when: cluster_info.rc != 0
+
+- name: Check if Velero namespace exists
+  kubernetes.core.k8s_info:
+    kind: Namespace
+    name: "{{ velero_namespace }}"
+  register: velero_ns_check
+
+- name: Verify required storage provider credentials
+  ansible.builtin.assert:
+    that:
+      - (velero_provider == 'aws' and velero_aws_bucket is defined and velero_aws_bucket | length > 0) or
+        (velero_provider == 'azure' and velero_azure_storage_account is defined and velero_azure_storage_account | length > 0) or
+        (velero_provider == 'gcp' and velero_gcp_bucket is defined and velero_gcp_bucket | length > 0) or
+        (velero_minio_enabled | bool)
+    fail_msg: "Storage provider credentials are not properly configured"
+    success_msg: "Storage provider configuration validated"
+
+- name: Check if Helm is installed (when using Helm installation)
+  ansible.builtin.command: helm version --short
+  register: helm_version
+  changed_when: false
+  failed_when: false
+  when: velero_install_method == 'helm'
+
+- name: Fail if Helm is not available
+  ansible.builtin.fail:
+    msg: "Helm is not installed or not in PATH"
+  when:
+    - velero_install_method == 'helm'
+    - helm_version.rc != 0
+
+- name: Check cluster storage classes
+  kubernetes.core.k8s_info:
+    kind: StorageClass
+  register: storage_classes
+
+- name: Verify at least one storage class exists
+  ansible.builtin.assert:
+    that:
+      - storage_classes.resources | length > 0
+    fail_msg: "No storage classes found in cluster"
+    success_msg: "Storage classes available"
+  when: velero_use_volume_snapshots | bool
+
+- name: Display pre-flight check results
+  ansible.builtin.debug:
+    msg:
+      - "Kubectl version: {{ kubectl_version.stdout }}"
+      - "Velero provider: {{ velero_provider }}"
+      - "Velero version: {{ velero_version }}"
+      - "Installation method: {{ velero_install_method }}"
+      - "Restic enabled: {{ velero_use_restic }}"
+      - "Volume snapshots enabled: {{ velero_use_volume_snapshots }}"

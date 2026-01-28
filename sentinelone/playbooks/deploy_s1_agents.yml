@@ -1,0 +1,47 @@
+---
+# SentinelOne Agent Deployment Playbook
+# Fourth Estate production-ready EDR deployment
+
+- name: Deploy SentinelOne Agents
+  hosts: all
+  become: true
+  gather_facts: true
+
+  vars:
+    # Override these variables at runtime or in inventory
+    # ansible-playbook deploy_s1_agents.yml -e "s1_site_token=YOUR_TOKEN"
+    s1_site_token: "{{ lookup('env', 'S1_SITE_TOKEN') }}"
+    s1_console_url: "https://usgoveast1.sentinelone.net"
+    s1_fourth_estate_enabled: true
+    s1_enable_deep_visibility: true
+
+  pre_tasks:
+    - name: Validate SentinelOne site token is provided
+      ansible.builtin.assert:
+        that:
+          - s1_site_token is defined
+          - s1_site_token | length > 0
+        fail_msg: "SentinelOne site token must be provided via -e s1_site_token=YOUR_TOKEN or S1_SITE_TOKEN env var"
+
+    - name: Display deployment information
+      ansible.builtin.debug:
+        msg:
+          - "Deploying SentinelOne agents"
+          - "Target hosts: {{ ansible_play_hosts | length }}"
+          - "Console URL: {{ s1_console_url }}"
+          - "Fourth Estate Mode: {{ s1_fourth_estate_enabled }}"
+          - "Deep Visibility: {{ s1_enable_deep_visibility }}"
+
+  roles:
+    - role: s1_agent_install
+
+  post_tasks:
+    - name: Verify agent deployment
+      ansible.builtin.command: /opt/sentinelone/bin/sentinelctl status
+      register: deployment_verify
+      changed_when: false
+      when: ansible_os_family in ['RedHat', 'Debian', 'Suse']
+
+    - name: Display deployment results
+      ansible.builtin.debug:
+        msg: "SentinelOne agent deployed successfully on {{ inventory_hostname }}"

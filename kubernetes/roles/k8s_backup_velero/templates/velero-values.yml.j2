@@ -1,0 +1,105 @@
+# Velero Helm Chart Values
+# Managed by Ansible - Fourth Estate Configuration
+
+configuration:
+  provider: {{ velero_provider }}
+  backupStorageLocation:
+    name: {{ velero_aws_backup_location }}
+    provider: {{ velero_provider }}
+    bucket: {{ velero_aws_bucket if velero_provider == 'aws' else (velero_azure_container if velero_provider == 'azure' else (velero_gcp_bucket if velero_provider == 'gcp' else velero_minio_bucket)) }}
+    prefix: {{ velero_namespace }}
+    config:
+{% if velero_provider == 'aws' %}
+      region: {{ velero_aws_region }}
+{% if velero_aws_s3_url %}
+      s3Url: {{ velero_aws_s3_url }}
+{% endif %}
+{% if velero_aws_s3_force_path_style %}
+      s3ForcePathStyle: "{{ velero_aws_s3_force_path_style }}"
+{% endif %}
+{% if velero_aws_kms_key_id %}
+      kmsKeyId: {{ velero_aws_kms_key_id }}
+{% endif %}
+{% elif velero_minio_enabled %}
+      region: minio
+      s3Url: http://{{ velero_minio_endpoint }}
+      s3ForcePathStyle: "true"
+      publicUrl: http://{{ velero_minio_endpoint }}
+{% endif %}
+
+  volumeSnapshotLocation:
+    name: {{ velero_snapshot_location_name }}
+    provider: {{ velero_provider }}
+    config:
+      region: {{ velero_aws_region if velero_provider == 'aws' else 'default' }}
+
+  defaultVolumesToRestic: {{ velero_use_restic }}
+
+credentials:
+  useSecret: true
+  existingSecret: {{ velero_aws_credentials_secret }}
+
+initContainers:
+{% for plugin in velero_plugins %}
+  - name: {{ plugin.name }}
+    image: {{ plugin.image }}
+    volumeMounts:
+      - mountPath: /target
+        name: plugins
+{% endfor %}
+
+metrics:
+  enabled: {{ velero_enable_prometheus_metrics }}
+  serviceMonitor:
+    enabled: {{ velero_enable_prometheus_metrics }}
+
+deployRestic: {{ velero_use_restic }}
+
+restic:
+  podVolumePath: /var/lib/kubelet/pods
+  privileged: true
+  resources:
+    requests:
+      cpu: {{ velero_restic_resource_requests.cpu }}
+      memory: {{ velero_restic_resource_requests.memory }}
+    limits:
+      cpu: {{ velero_restic_resource_limits.cpu }}
+      memory: {{ velero_restic_resource_limits.memory }}
+  tolerations:
+    - key: node-role.kubernetes.io/master
+      operator: Exists
+      effect: NoSchedule
+    - key: node-role.kubernetes.io/control-plane
+      operator: Exists
+      effect: NoSchedule
+
+resources:
+  requests:
+    cpu: {{ velero_server_resource_requests.cpu }}
+    memory: {{ velero_server_resource_requests.memory }}
+  limits:
+    cpu: {{ velero_server_resource_limits.cpu }}
+    memory: {{ velero_server_resource_limits.memory }}
+
+schedules:
+{% for schedule in velero_backup_schedules %}
+  {{ schedule.name }}:
+    schedule: "{{ schedule.schedule }}"
+    template:
+      ttl: "{{ schedule.ttl }}"
+      includedNamespaces: {{ schedule.include_namespaces | to_json }}
+      excludedNamespaces: {{ schedule.exclude_namespaces | to_json }}
+      snapshotVolumes: {{ schedule.snapshot_volumes }}
+      defaultVolumesToRestic: {{ velero_use_restic }}
+{% endfor %}
+
+serviceAccount:
+  server:
+    create: true
+    name: {{ velero_service_account }}
+
+rbac:
+  create: true
+
+podSecurityPolicy:
+  enabled: {{ velero_enable_pod_security_policy }}

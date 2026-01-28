@@ -1,0 +1,77 @@
+---
+# SentinelOne Agent Kubernetes Deployment
+
+- name: Create SentinelOne namespace
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: "{{ s1_k8s_namespace }}"
+
+- name: Create SentinelOne site token secret
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: s1-site-token
+        namespace: "{{ s1_k8s_namespace }}"
+      type: Opaque
+      stringData:
+        token: "{{ s1_site_token }}"
+  no_log: true
+
+- name: Deploy SentinelOne DaemonSet
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: apps/v1
+      kind: DaemonSet
+      metadata:
+        name: sentinelone-agent
+        namespace: "{{ s1_k8s_namespace }}"
+      spec:
+        selector:
+          matchLabels:
+            app: sentinelone-agent
+        template:
+          metadata:
+            labels:
+              app: sentinelone-agent
+          spec:
+            hostNetwork: true
+            hostPID: true
+            containers:
+              - name: sentinelone
+                image: "sentinelone/agent:{{ s1_agent_version }}"
+                env:
+                  - name: SITE_TOKEN
+                    valueFrom:
+                      secretKeyRef:
+                        name: s1-site-token
+                        key: token
+                  - name: MGMT_URL
+                    value: "{{ s1_management_url }}"
+                  - name: CLUSTER_NAME
+                    value: "{{ s1_k8s_cluster_name }}"
+                securityContext:
+                  privileged: true
+                volumeMounts:
+                  - name: host-fs
+                    mountPath: /host
+                    readOnly: true
+            volumes:
+              - name: host-fs
+                hostPath:
+                  path: /
+
+- name: Wait for SentinelOne DaemonSet to be ready
+  kubernetes.core.k8s_info:
+    kind: DaemonSet
+    name: sentinelone-agent
+    namespace: "{{ s1_k8s_namespace }}"
+    wait: true
+    wait_timeout: 300

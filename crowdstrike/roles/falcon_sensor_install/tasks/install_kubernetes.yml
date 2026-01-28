@@ -1,0 +1,80 @@
+---
+# CrowdStrike Falcon Kubernetes Sensor Deployment
+
+- name: Create Falcon namespace
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: "{{ falcon_k8s_namespace }}"
+
+- name: Create Falcon CID secret
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: falcon-cid
+        namespace: "{{ falcon_k8s_namespace }}"
+      type: Opaque
+      stringData:
+        cid: "{{ falcon_cid }}"
+  no_log: true
+
+- name: Deploy Falcon DaemonSet
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: apps/v1
+      kind: DaemonSet
+      metadata:
+        name: falcon-node-sensor
+        namespace: "{{ falcon_k8s_namespace }}"
+      spec:
+        selector:
+          matchLabels:
+            app: falcon-node-sensor
+        template:
+          metadata:
+            labels:
+              app: falcon-node-sensor
+          spec:
+            hostNetwork: true
+            hostPID: true
+            hostIPC: true
+            containers:
+              - name: falcon-sensor
+                image: "crowdstrike/falcon-sensor:{{ falcon_sensor_version }}"
+                env:
+                  - name: FALCONCTL_OPT_CID
+                    valueFrom:
+                      secretKeyRef:
+                        name: falcon-cid
+                        key: cid
+                  - name: FALCONCTL_OPT_TAGS
+                    value: "{{ falcon_sensor_tags }}"
+                securityContext:
+                  privileged: true
+                volumeMounts:
+                  - name: dev
+                    mountPath: /dev
+                  - name: var-run
+                    mountPath: /var/run
+            volumes:
+              - name: dev
+                hostPath:
+                  path: /dev
+              - name: var-run
+                hostPath:
+                  path: /var/run
+
+- name: Wait for Falcon DaemonSet to be ready
+  kubernetes.core.k8s_info:
+    kind: DaemonSet
+    name: falcon-node-sensor
+    namespace: "{{ falcon_k8s_namespace }}"
+    wait: true
+    wait_timeout: 300

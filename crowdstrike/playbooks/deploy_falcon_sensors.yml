@@ -1,0 +1,46 @@
+---
+# CrowdStrike Falcon Sensor Deployment Playbook
+# Fourth Estate production-ready EDR deployment
+
+- name: Deploy CrowdStrike Falcon Sensors
+  hosts: all
+  become: true
+  gather_facts: true
+
+  vars:
+    # Override these variables at runtime or in inventory
+    # ansible-playbook deploy_falcon_sensors.yml -e "falcon_cid=YOUR_CID"
+    falcon_cid: "{{ lookup('env', 'FALCON_CID') }}"
+    falcon_installation_token: "{{ lookup('env', 'FALCON_TOKEN') }}"
+    falcon_cloud: "us-gov-1"
+    falcon_fourth_estate_enabled: true
+
+  pre_tasks:
+    - name: Validate Falcon CID is provided
+      ansible.builtin.assert:
+        that:
+          - falcon_cid is defined
+          - falcon_cid | length > 0
+        fail_msg: "Falcon CID must be provided via -e falcon_cid=YOUR_CID or FALCON_CID env var"
+
+    - name: Display deployment information
+      ansible.builtin.debug:
+        msg:
+          - "Deploying CrowdStrike Falcon sensors"
+          - "Target hosts: {{ ansible_play_hosts | length }}"
+          - "Falcon Cloud: {{ falcon_cloud }}"
+          - "Fourth Estate Mode: {{ falcon_fourth_estate_enabled }}"
+
+  roles:
+    - role: falcon_sensor_install
+
+  post_tasks:
+    - name: Verify sensor deployment
+      ansible.builtin.command: /opt/CrowdStrike/falconctl -g --aid
+      register: deployment_verify
+      changed_when: false
+      when: ansible_os_family in ['RedHat', 'Debian', 'Suse']
+
+    - name: Display deployment results
+      ansible.builtin.debug:
+        msg: "Falcon sensor deployed successfully on {{ inventory_hostname }}"
