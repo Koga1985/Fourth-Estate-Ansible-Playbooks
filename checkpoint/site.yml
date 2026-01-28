@@ -1,0 +1,64 @@
+---
+# Check Point Deployment Playbook
+# Entry point for Check Point firewall automation
+#
+# Usage:
+#   ansible-galaxy collection install -r requirements.yml
+#   ansible-playbook -i inventory site.yml --ask-vault-pass
+
+- name: Check Point Configuration
+  hosts: localhost
+  connection: local
+  gather_facts: true
+
+  vars:
+    deploy_services: true
+    deploy_access_policy: true
+    deploy_threat_prevention: true
+    deploy_identity: true
+    deploy_inventory: true
+
+  tasks:
+    - name: Phase 1 - Services Catalog
+      ansible.builtin.include_role:
+        name: cp_services_catalog
+      when: deploy_services | bool
+      tags: ['services', 'phase1']
+
+    - name: Phase 2 - Access Policy
+      ansible.builtin.include_role:
+        name: cp_access_policy
+      when: deploy_access_policy | bool
+      tags: ['policy', 'phase2']
+
+    - name: Phase 3 - Threat Prevention
+      ansible.builtin.include_role:
+        name: cp_threat_prevention
+      when: deploy_threat_prevention | bool
+      tags: ['threat', 'phase3']
+
+    - name: Phase 4 - Identity Awareness
+      ansible.builtin.include_role:
+        name: cp_identity_awareness
+      when: deploy_identity | bool
+      tags: ['identity', 'phase4']
+
+    - name: Phase 5 - Inventory Model
+      ansible.builtin.include_role:
+        name: cp_inventory_model
+      when: deploy_inventory | bool
+      tags: ['inventory', 'phase5']
+
+    - name: Phase 6 - Inventory Prune
+      ansible.builtin.include_role:
+        name: cp_inventory_prune
+      tags: ['inventory', 'hygiene', 'phase6']
+
+    - name: Display summary
+      ansible.builtin.debug:
+        msg:
+          - "=== Check Point Deployment Complete ==="
+          - "Policy Package: {{ checkpoint_policy_package | default('Standard') }}"
+          - "Threat Prevention: {{ 'Enabled' if deploy_threat_prevention else 'Skipped' }}"
+          - "Identity Awareness: {{ 'Enabled' if deploy_identity else 'Skipped' }}"
+      tags: ['always']

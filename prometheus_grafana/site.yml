@@ -1,0 +1,50 @@
+---
+# Prometheus & Grafana Deployment Playbook
+# Entry point for monitoring stack automation
+#
+# Usage:
+#   ansible-galaxy collection install -r requirements.yml
+#   ansible-playbook -i inventory site.yml --ask-vault-pass
+
+- name: Prometheus Installation
+  hosts: prometheus_servers
+  become: true
+  gather_facts: true
+
+  vars:
+    deploy_prometheus: true
+    deploy_exporters: true
+
+  tasks:
+    - name: Phase 1 - Prometheus Installation
+      ansible.builtin.include_role:
+        name: prometheus_install
+      when: deploy_prometheus | bool
+      tags: ['prometheus', 'install', 'phase1']
+
+    - name: Phase 2 - Prometheus Configuration
+      ansible.builtin.include_role:
+        name: prometheus_config
+      when: deploy_prometheus | bool
+      tags: ['prometheus', 'config', 'phase2']
+
+    - name: Phase 3 - Exporters
+      ansible.builtin.include_role:
+        name: prometheus_exporters
+      when: deploy_exporters | bool
+      tags: ['exporters', 'phase3']
+
+
+- name: Deployment Summary
+  hosts: localhost
+  gather_facts: false
+
+  tasks:
+    - name: Display summary
+      ansible.builtin.debug:
+        msg:
+          - "=== Monitoring Stack Deployment Complete ==="
+          - "Prometheus: {{ prometheus_version | default('2.47.0') }}"
+          - "Grafana: {{ grafana_version | default('10.2.0') }}"
+          - "Retention: {{ prometheus_retention_time | default('30d') }}"
+      tags: ['always']

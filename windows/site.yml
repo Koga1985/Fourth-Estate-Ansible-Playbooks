@@ -1,0 +1,106 @@
+---
+# Windows Server Deployment Playbook
+# Entry point for Windows infrastructure automation
+#
+# Usage:
+#   ansible-galaxy collection install -r requirements.yml
+#   ansible-playbook -i inventory site.yml --ask-vault-pass
+
+- name: Windows Domain Controllers
+  hosts: windows_dc
+  gather_facts: true
+
+  vars:
+    deploy_ad: true
+    deploy_dhcp_dns: true
+    deploy_gpo: true
+
+  tasks:
+    - name: Phase 1 - Active Directory
+      ansible.builtin.include_role:
+        name: win_active_directory
+      when: deploy_ad | bool
+      tags: ['ad', 'phase1']
+
+    - name: Phase 2 - DHCP & DNS
+      ansible.builtin.include_role:
+        name: win_dhcp_dns
+      when: deploy_dhcp_dns | bool
+      tags: ['dhcp', 'dns', 'phase2']
+
+    - name: Phase 3 - Group Policy
+      ansible.builtin.include_role:
+        name: win_group_policy
+      when: deploy_gpo | bool
+      tags: ['gpo', 'phase3']
+
+
+- name: Windows Member Servers
+  hosts: windows_servers
+  gather_facts: true
+
+  vars:
+    deploy_users: true
+    deploy_firewall: true
+    deploy_updates: true
+    deploy_wsus: true
+    deploy_iis: false
+    deploy_backup: true
+    deploy_stig: true
+
+  tasks:
+    - name: Phase 4 - User Management
+      ansible.builtin.include_role:
+        name: win_user_management
+      when: deploy_users | bool
+      tags: ['users', 'phase4']
+
+    - name: Phase 5 - Windows Firewall
+      ansible.builtin.include_role:
+        name: win_firewall
+      when: deploy_firewall | bool
+      tags: ['firewall', 'phase5']
+
+    - name: Phase 6 - Windows Updates
+      ansible.builtin.include_role:
+        name: win_updates
+      when: deploy_updates | bool
+      tags: ['updates', 'phase6']
+
+    - name: Phase 7 - WSUS Configuration
+      ansible.builtin.include_role:
+        name: win_wsus
+      when: deploy_wsus | bool
+      tags: ['wsus', 'phase7']
+
+    - name: Phase 8 - IIS Configuration
+      ansible.builtin.include_role:
+        name: win_iis
+      when: deploy_iis | bool
+      tags: ['iis', 'phase8']
+
+    - name: Phase 9 - Windows Backup
+      ansible.builtin.include_role:
+        name: win_backup
+      when: deploy_backup | bool
+      tags: ['backup', 'phase9']
+
+    - name: Phase 10 - STIG Hardening
+      ansible.builtin.include_role:
+        name: win_stig_hardening
+      when: deploy_stig | bool
+      tags: ['stig', 'security', 'phase10']
+
+
+- name: Deployment Summary
+  hosts: localhost
+  gather_facts: false
+
+  tasks:
+    - name: Display summary
+      ansible.builtin.debug:
+        msg:
+          - "=== Windows Deployment Complete ==="
+          - "Domain Controllers: {{ groups['windows_dc'] | default([]) | length }}"
+          - "Member Servers: {{ groups['windows_servers'] | default([]) | length }}"
+      tags: ['always']

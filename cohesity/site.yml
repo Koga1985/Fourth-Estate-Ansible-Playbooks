@@ -1,0 +1,71 @@
+---
+# Cohesity Data Protection Playbook
+# Entry point for Cohesity backup automation
+#
+# Usage:
+#   ansible-galaxy collection install -r requirements.yml
+#   ansible-playbook -i inventory site.yml --ask-vault-pass
+
+- name: Cohesity Configuration
+  hosts: localhost
+  connection: local
+  gather_facts: true
+
+  vars:
+    deploy_cluster: true
+    deploy_policies: true
+    deploy_agents: true
+    deploy_views: true
+    deploy_cloud_archive: true
+    deploy_recovery: false
+
+  tasks:
+    - name: Phase 1 - Cluster Installation
+      ansible.builtin.include_role:
+        name: cohesity_cluster_install
+      when: deploy_cluster | bool
+      tags: ['cluster', 'install', 'phase1']
+
+    - name: Phase 2 - Cluster Configuration
+      ansible.builtin.include_role:
+        name: cohesity_cluster_config
+      when: deploy_cluster | bool
+      tags: ['cluster', 'config', 'phase2']
+
+    - name: Phase 3 - Protection Policies
+      ansible.builtin.include_role:
+        name: cohesity_protection_policies
+      when: deploy_policies | bool
+      tags: ['policies', 'phase3']
+
+    - name: Phase 4 - Agent Deployment
+      ansible.builtin.include_role:
+        name: cohesity_agents
+      when: deploy_agents | bool
+      tags: ['agents', 'phase4']
+
+    - name: Phase 5 - Views Configuration
+      ansible.builtin.include_role:
+        name: cohesity_views
+      when: deploy_views | bool
+      tags: ['views', 'phase5']
+
+    - name: Phase 6 - Cloud Archive
+      ansible.builtin.include_role:
+        name: cohesity_cloud_archive
+      when: deploy_cloud_archive | bool
+      tags: ['cloud', 'archive', 'phase6']
+
+    - name: Phase 7 - Recovery Operations
+      ansible.builtin.include_role:
+        name: cohesity_recovery
+      when: deploy_recovery | bool
+      tags: ['recovery', 'phase7']
+
+    - name: Display summary
+      ansible.builtin.debug:
+        msg:
+          - "=== Cohesity Deployment Complete ==="
+          - "Cluster: {{ cohesity_cluster_name | default('Production-Cohesity') }}"
+          - "Cloud Archive: {{ 'Enabled' if deploy_cloud_archive else 'Disabled' }}"
+      tags: ['always']

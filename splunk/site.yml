@@ -1,0 +1,64 @@
+---
+# Splunk Enterprise Deployment Playbook
+# Entry point for Splunk automation
+#
+# Usage:
+#   ansible-galaxy collection install -r requirements.yml
+#   ansible-playbook -i inventory site.yml --ask-vault-pass
+
+- name: Splunk Installation
+  hosts: splunk_all
+  become: true
+  gather_facts: true
+
+  vars:
+    deploy_install: true
+    deploy_indexer_cluster: true
+    deploy_forwarders: true
+    deploy_security: true
+    deploy_monitoring: true
+    deploy_backup: true
+
+  tasks:
+    - name: Phase 1 - Splunk Installation
+      ansible.builtin.include_role:
+        name: splunk_enterprise_install
+      when: deploy_install | bool
+      tags: ['install', 'phase1']
+
+    - name: Phase 2 - Indexer Cluster
+      ansible.builtin.include_role:
+        name: splunk_indexer_cluster
+      when: deploy_indexer_cluster | bool and inventory_hostname in groups['splunk_indexers']
+      tags: ['indexer', 'cluster', 'phase2']
+
+    - name: Phase 3 - Forwarder Configuration
+      ansible.builtin.include_role:
+        name: splunk_forwarder
+      when: deploy_forwarders | bool and inventory_hostname in groups['splunk_forwarders']
+      tags: ['forwarder', 'phase3']
+
+    - name: Phase 4 - Security Hardening
+      ansible.builtin.include_role:
+        name: splunk_security_hardening
+      when: deploy_security | bool
+      tags: ['security', 'phase4']
+
+    - name: Phase 5 - Monitoring
+      ansible.builtin.include_role:
+        name: splunk_monitoring
+      when: deploy_monitoring | bool
+      tags: ['monitoring', 'phase5']
+
+    - name: Phase 6 - Backup & DR
+      ansible.builtin.include_role:
+        name: splunk_backup_dr
+      when: deploy_backup | bool
+      tags: ['backup', 'phase6']
+
+    - name: Display summary
+      ansible.builtin.debug:
+        msg:
+          - "=== Splunk Deployment Complete ==="
+          - "Cluster: {{ splunk_cluster_name | default('production') }}"
+      tags: ['always']

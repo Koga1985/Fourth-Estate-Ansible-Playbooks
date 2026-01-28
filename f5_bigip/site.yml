@@ -1,0 +1,105 @@
+---
+# F5 BIG-IP Deployment Playbook
+# Entry point for F5 load balancer automation
+#
+# Usage:
+#   ansible-galaxy collection install -r requirements.yml
+#   ansible-playbook -i inventory site.yml --ask-vault-pass
+
+- name: F5 BIG-IP Configuration
+  hosts: localhost
+  connection: local
+  gather_facts: true
+
+  vars:
+    deploy_system: true
+    deploy_network: true
+    deploy_ha: true
+    deploy_ssl: true
+    deploy_monitors: true
+    deploy_pools: true
+    deploy_virtual_servers: true
+    deploy_profiles: true
+    deploy_persistence: true
+    deploy_irules: true
+    deploy_asm: true
+
+  tasks:
+    - name: Phase 1 - System Configuration
+      ansible.builtin.include_role:
+        name: f5_bigip_system
+      when: deploy_system | bool
+      tags: ['system', 'phase1']
+
+    - name: Phase 2 - Network Configuration
+      ansible.builtin.include_role:
+        name: f5_bigip_network
+      when: deploy_network | bool
+      tags: ['network', 'phase2']
+
+    - name: Phase 3 - HA Configuration
+      ansible.builtin.include_role:
+        name: f5_bigip_ha
+      when: deploy_ha | bool
+      tags: ['ha', 'phase3']
+
+    - name: Phase 4 - SSL Certificates
+      ansible.builtin.include_role:
+        name: f5_bigip_ssl
+      when: deploy_ssl | bool
+      tags: ['ssl', 'phase4']
+
+    - name: Phase 5 - Health Monitors
+      ansible.builtin.include_role:
+        name: f5_bigip_monitor
+      when: deploy_monitors | bool
+      tags: ['monitors', 'phase5']
+
+    - name: Phase 6 - Nodes
+      ansible.builtin.include_role:
+        name: f5_bigip_node
+      tags: ['nodes', 'phase6']
+
+    - name: Phase 7 - Pools
+      ansible.builtin.include_role:
+        name: f5_bigip_pool
+      when: deploy_pools | bool
+      tags: ['pools', 'phase7']
+
+    - name: Phase 8 - Profiles
+      ansible.builtin.include_role:
+        name: f5_bigip_profiles
+      when: deploy_profiles | bool
+      tags: ['profiles', 'phase8']
+
+    - name: Phase 9 - Persistence
+      ansible.builtin.include_role:
+        name: f5_bigip_persistence
+      when: deploy_persistence | bool
+      tags: ['persistence', 'phase9']
+
+    - name: Phase 10 - iRules
+      ansible.builtin.include_role:
+        name: f5_bigip_irules
+      when: deploy_irules | bool
+      tags: ['irules', 'phase10']
+
+    - name: Phase 11 - Virtual Servers
+      ansible.builtin.include_role:
+        name: f5_bigip_virtual_server
+      when: deploy_virtual_servers | bool
+      tags: ['virtual', 'phase11']
+
+    - name: Phase 12 - ASM (WAF)
+      ansible.builtin.include_role:
+        name: f5_bigip_asm
+      when: deploy_asm | bool
+      tags: ['asm', 'waf', 'phase12']
+
+    - name: Display summary
+      ansible.builtin.debug:
+        msg:
+          - "=== F5 BIG-IP Deployment Complete ==="
+          - "HA Enabled: {{ f5_ha_enabled | default(true) }}"
+          - "ASM/WAF: {{ 'Enabled' if deploy_asm else 'Disabled' }}"
+      tags: ['always']
