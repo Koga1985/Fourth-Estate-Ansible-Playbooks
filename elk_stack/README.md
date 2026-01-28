@@ -24,7 +24,34 @@ This directory contains **10 Ansible roles** for deploying and configuring the *
 - **elastic_security** - Elastic Security (SIEM) configuration
 - **elastic_fleet** - Fleet server for endpoint management
 
-## 🚀 Quick Start
+## 🚀 Quick Start (Drop-In Deployment)
+
+```bash
+# 1. Install dependencies
+ansible-galaxy collection install -r requirements.yml
+
+# 2. Configure your inventory
+cp inventory.example inventory
+# Edit inventory with your ELK servers
+
+# 3. Deploy
+ansible-playbook -i inventory site.yml --ask-vault-pass
+```
+
+### Deployment Options
+
+```bash
+# Deploy Elasticsearch only
+ansible-playbook -i inventory site.yml --tags elasticsearch
+
+# Deploy Kibana only
+ansible-playbook -i inventory site.yml --tags kibana
+
+# Deploy Logstash only
+ansible-playbook -i inventory site.yml --tags logstash
+```
+
+### Individual Role Execution (Alternative)
 
 ```bash
 # Deploy ELK stack

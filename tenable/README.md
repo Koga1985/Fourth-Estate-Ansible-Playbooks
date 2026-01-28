@@ -20,7 +20,37 @@ This directory contains **8 Ansible roles** for automating **Tenable Security Ce
 ### Reporting (1 role)
 - **tenable_reporting** - Automated report generation and distribution
 
-## 🚀 Quick Start
+## 🚀 Quick Start (Drop-In Deployment)
+
+```bash
+# 1. Install dependencies
+ansible-galaxy collection install -r requirements.yml
+
+# 2. Configure your inventory
+cp inventory.example inventory
+# Edit inventory with your Tenable servers
+
+# 3. Deploy
+ansible-playbook -i inventory site.yml --ask-vault-pass
+```
+
+### Deployment Options
+
+```bash
+# Install Security Center
+ansible-playbook -i inventory site.yml --tags install
+
+# Configure scan policies
+ansible-playbook -i inventory site.yml --tags policies
+
+# Configure compliance checks
+ansible-playbook -i inventory site.yml --tags compliance
+
+# Configure reporting
+ansible-playbook -i inventory site.yml --tags reporting
+```
+
+### Individual Role Execution (Alternative)
 
 ```bash
 # Install Security Center

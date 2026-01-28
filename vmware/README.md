@@ -26,13 +26,47 @@ This directory contains **35+ Ansible roles** for automating **VMware vSphere** 
 
 Tip: run `ls -1 *.yml` in this folder to see available playbooks.
 
+## 🚀 Quick Start (Drop-In Deployment)
+
+This platform supports **drop-in deployment**. Get started in 3 steps:
+
+```bash
+# 1. Install dependencies
+ansible-galaxy collection install -r requirements.yml
+
+# 2. Configure your inventory
+cp inventory.example inventory
+# Edit inventory with your vCenter details
+
+# 3. Deploy
+ansible-playbook -i inventory site.yml --ask-vault-pass
+```
+
+### Deployment Options
+
+Use tags to deploy specific components:
+
+```bash
+# Deploy only vCenter configuration
+ansible-playbook -i inventory site.yml --tags vcenter
+
+# Deploy only ESXi configuration
+ansible-playbook -i inventory site.yml --tags esxi
+
+# Deploy only cluster settings
+ansible-playbook -i inventory site.yml --tags cluster
+
+# Apply STIG hardening only
+ansible-playbook -i inventory site.yml --tags stig
+```
+
 ## Prerequisites
 
 - Ansible 2.14+ (Automation Platform 2.x compatible)
 - Collections: `community.vmware` and/or `vmware.vmware`
 - Python packages: `pyvmomi`, `requests`
 
-Install the essentials on your control host:
+### Manual Installation (Alternative)
 
 ```bash
 ansible-galaxy collection install community.vmware vmware.vmware

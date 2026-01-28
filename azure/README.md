@@ -73,16 +73,48 @@ Comprehensive Azure automation covering Azure AD/Entra ID, Virtual Networks, Vir
 - **azure_fedramp_compliance** - FedRAMP baseline controls
 - **azure_nist_compliance** - NIST 800-53 implementation
 
-## 🚀 Quick Start
+## 🚀 Quick Start (Drop-In Deployment)
+
+This platform supports **drop-in deployment**. Get started in 3 steps:
+
+```bash
+# 1. Install dependencies
+ansible-galaxy collection install -r requirements.yml
+
+# 2. Configure your inventory
+cp inventory.example inventory
+# Edit inventory with your Azure environment details
+
+# 3. Deploy
+ansible-playbook -i inventory site.yml --ask-vault-pass
+```
+
+### Deployment Options
+
+Use tags to deploy specific components:
+
+```bash
+# Deploy only identity/RBAC
+ansible-playbook -i inventory site.yml --tags identity
+
+# Deploy only networking
+ansible-playbook -i inventory site.yml --tags network
+
+# Deploy only security services
+ansible-playbook -i inventory site.yml --tags security
+
+# Deploy AKS cluster
+ansible-playbook -i inventory site.yml --tags aks
+```
 
 ### Prerequisites
 
 - Ansible 2.12.0+
-- `azure.azcollection` collection (version 1.14.0+)
+- Python 3.8+
 - Azure CLI installed and configured
 - Python azure-* libraries
 
-### Installation
+### Manual Installation (Alternative)
 
 ```bash
 # Install Azure collection

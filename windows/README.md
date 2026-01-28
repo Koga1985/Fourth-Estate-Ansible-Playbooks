@@ -24,7 +24,35 @@ Comprehensive Windows Server automation covering STIG hardening, Active Director
 - **win_backup** - Windows Server Backup automation
 - **win_iis** - IIS web server and application pool management
 
-## 🚀 Quick Start
+## 🚀 Quick Start (Drop-In Deployment)
+
+```bash
+# 1. Install dependencies
+ansible-galaxy collection install -r requirements.yml
+
+# 2. Configure your inventory
+cp inventory.example inventory
+# Edit inventory with your Windows servers
+
+# 3. Deploy
+ansible-playbook -i inventory site.yml --ask-vault-pass
+```
+
+### Deployment Options
+
+```bash
+# Deploy Active Directory
+ansible-playbook -i inventory site.yml --tags ad
+
+# Apply STIG hardening
+ansible-playbook -i inventory site.yml --tags stig
+
+# Configure Group Policy
+ansible-playbook -i inventory site.yml --tags gpo
+
+# Configure Windows Firewall
+ansible-playbook -i inventory site.yml --tags firewall
+```
 
 ### Prerequisites
 
@@ -34,7 +62,7 @@ Comprehensive Windows Server automation covering STIG hardening, Active Director
 - PowerShell 5.1+ on target Windows servers
 - WinRM configured on Windows targets
 
-### Installation
+### Manual Installation (Alternative)
 
 ```bash
 # Install required collections
