@@ -1,0 +1,221 @@
+---
+# VMware vSphere Infrastructure Deployment Playbook
+# Entry point for VMware platform automation
+#
+# Usage:
+#   ansible-galaxy collection install -r requirements.yml
+#   ansible-playbook -i inventory site.yml --ask-vault-pass
+#
+# Tags:
+#   - vcenter: vCenter configuration only
+#   - esxi: ESXi host configuration only
+#   - cluster: Cluster settings (DRS, HA, vSAN)
+#   - network: Distributed switching, port groups
+#   - storage: Datastores, SDRS, policies
+#   - templates: Template management
+#   - provision: VM provisioning
+#   - stig: Security hardening
+
+- name: VMware vSphere Infrastructure Deployment
+  hosts: vcenter
+  connection: local
+  gather_facts: false
+
+  vars:
+    # Deployment control - set to true to enable each component
+    deploy_vcenter_config: true
+    deploy_esxi_config: true
+    deploy_cluster_config: true
+    deploy_network: true
+    deploy_storage: true
+    deploy_templates: false
+    deploy_vms_linux: false
+    deploy_vms_windows: false
+    deploy_stig_hardening: true
+    generate_reports: true
+
+  tasks:
+    # =========================================
+    # Phase 1: vCenter Configuration
+    # =========================================
+    - name: Phase 1 - vCenter Configuration
+      ansible.builtin.include_role:
+        name: vcenter_config
+      when: deploy_vcenter_config | bool
+      tags: ['vcenter', 'phase1']
+
+    # =========================================
+    # Phase 2: ESXi Host Configuration
+    # =========================================
+    - name: Phase 2 - ESXi Host Configuration
+      ansible.builtin.include_role:
+        name: vsphere_esxi_config
+      when: deploy_esxi_config | bool
+      tags: ['esxi', 'phase2']
+
+    # =========================================
+    # Phase 3: Cluster Configuration
+    # =========================================
+    - name: Phase 3 - Cluster Baseline
+      ansible.builtin.include_role:
+        name: cluster_baseline
+      when: deploy_cluster_config | bool
+      tags: ['cluster', 'phase3']
+
+    - name: Phase 3 - Cluster Affinity Rules
+      ansible.builtin.include_role:
+        name: cluster_affinity_rules
+      when: deploy_cluster_config | bool
+      tags: ['cluster', 'phase3']
+
+    - name: Phase 3 - Cluster Lifecycle (vLCM)
+      ansible.builtin.include_role:
+        name: cluster_lifecycle_vlcm
+      when: deploy_cluster_config | bool
+      tags: ['cluster', 'phase3']
+
+    - name: Phase 3 - vSAN Cluster
+      ansible.builtin.include_role:
+        name: vsan_cluster
+      when: deploy_cluster_config | bool and (vsan_enabled | default(false) | bool)
+      tags: ['cluster', 'vsan', 'phase3']
+
+    - name: Phase 3 - vSAN Policies
+      ansible.builtin.include_role:
+        name: vsan_policies
+      when: deploy_cluster_config | bool and (vsan_enabled | default(false) | bool)
+      tags: ['cluster', 'vsan', 'phase3']
+
+    # =========================================
+    # Phase 4: Networking
+    # =========================================
+    - name: Phase 4 - NSX-T Networking
+      ansible.builtin.include_role:
+        name: nsx_t_networking
+      when: deploy_network | bool
+      tags: ['network', 'nsx', 'phase4']
+
+    - name: Phase 4 - NSX-T Security
+      ansible.builtin.include_role:
+        name: nsx_t_security
+      when: deploy_network | bool
+      tags: ['network', 'nsx', 'phase4']
+
+    - name: Phase 4 - NSX-T Load Balancer
+      ansible.builtin.include_role:
+        name: nsx_t_load_balancer
+      when: deploy_network | bool
+      tags: ['network', 'nsx', 'phase4']
+
+    # =========================================
+    # Phase 5: Storage
+    # =========================================
+    - name: Phase 5 - Datastore Cluster (SDRS)
+      ansible.builtin.include_role:
+        name: datastore_cluster_sdrs
+      when: deploy_storage | bool
+      tags: ['storage', 'phase5']
+
+    - name: Phase 5 - Host Profiles
+      ansible.builtin.include_role:
+        name: host_profiles_enforce
+      when: deploy_storage | bool
+      tags: ['storage', 'phase5']
+
+    # =========================================
+    # Phase 6: Templates & Customization
+    # =========================================
+    - name: Phase 6 - Template Pipeline
+      ansible.builtin.include_role:
+        name: template_pipeline
+      when: deploy_templates | bool
+      tags: ['templates', 'phase6']
+
+    - name: Phase 6 - Guest Customization Specs
+      ansible.builtin.include_role:
+        name: guest_customization_specs
+      when: deploy_templates | bool
+      tags: ['templates', 'phase6']
+
+    # =========================================
+    # Phase 7: VM Provisioning (Optional)
+    # =========================================
+    - name: Phase 7 - Linux VM Provisioning
+      ansible.builtin.include_role:
+        name: linux_virtual_machine_provsion
+      when: deploy_vms_linux | bool
+      tags: ['provision', 'linux', 'phase7']
+
+    - name: Phase 7 - Windows VM Provisioning
+      ansible.builtin.include_role:
+        name: windows_virtual_machine_provision_role
+      when: deploy_vms_windows | bool
+      tags: ['provision', 'windows', 'phase7']
+
+    - name: Phase 7 - VM Tools Configuration
+      ansible.builtin.include_role:
+        name: vm_tools_config
+      when: deploy_vms_linux | bool or deploy_vms_windows | bool
+      tags: ['provision', 'phase7']
+
+    - name: Phase 7 - VM Placement Policies
+      ansible.builtin.include_role:
+        name: vm_placement_policies
+      when: deploy_vms_linux | bool or deploy_vms_windows | bool
+      tags: ['provision', 'phase7']
+
+    # =========================================
+    # Phase 8: STIG Hardening
+    # =========================================
+    - name: Phase 8 - ESXi STIG Hardening
+      ansible.builtin.include_role:
+        name: vsphere_esxi_stig_hardening
+      when: deploy_stig_hardening | bool
+      tags: ['stig', 'security', 'phase8']
+
+    - name: Phase 8 - VM STIG Hardening
+      ansible.builtin.include_role:
+        name: vsphere_vm_stig_hardening
+      when: deploy_stig_hardening | bool
+      tags: ['stig', 'security', 'phase8']
+
+    # =========================================
+    # Phase 9: Reporting & Validation
+    # =========================================
+    - name: Phase 9 - Snapshot Management
+      ansible.builtin.include_role:
+        name: vsphere_snapshots_role
+      when: generate_reports | bool
+      tags: ['reports', 'phase9']
+
+    - name: Phase 9 - Capacity Reports
+      ansible.builtin.include_role:
+        name: capacity_reports
+      when: generate_reports | bool
+      tags: ['reports', 'phase9']
+
+    - name: Phase 9 - Drift Report
+      ansible.builtin.include_role:
+        name: drift_report
+      when: generate_reports | bool
+      tags: ['reports', 'phase9']
+
+    # =========================================
+    # Deployment Summary
+    # =========================================
+    - name: Display deployment summary
+      ansible.builtin.debug:
+        msg:
+          - "=== VMware vSphere Deployment Complete ==="
+          - "vCenter: {{ vcenter_hostname }}"
+          - "Datacenter: {{ vcenter_datacenter | default('DC1') }}"
+          - "Cluster: {{ vcenter_cluster | default('Production-Cluster') }}"
+          - "vCenter Config: {{ 'Configured' if deploy_vcenter_config else 'Skipped' }}"
+          - "ESXi Config: {{ 'Configured' if deploy_esxi_config else 'Skipped' }}"
+          - "Cluster Config: {{ 'Configured' if deploy_cluster_config else 'Skipped' }}"
+          - "Networking: {{ 'Configured' if deploy_network else 'Skipped' }}"
+          - "Storage: {{ 'Configured' if deploy_storage else 'Skipped' }}"
+          - "Templates: {{ 'Configured' if deploy_templates else 'Skipped' }}"
+          - "STIG Hardening: {{ 'Applied' if deploy_stig_hardening else 'Skipped' }}"
+          - "Reports: {{ 'Generated' if generate_reports else 'Skipped' }}"
+      tags: ['always']

@@ -1,0 +1,64 @@
+---
+# RHEL Server Deployment Playbook
+# Entry point for RHEL infrastructure automation
+#
+# Usage:
+#   ansible-galaxy collection install -r requirements.yml
+#   ansible-playbook -i inventory site.yml --ask-vault-pass
+
+- name: RHEL Server Configuration
+  hosts: rhel_servers
+  become: true
+  gather_facts: true
+
+  vars:
+    deploy_hardening: true
+    deploy_firewall: true
+    deploy_users: true
+    deploy_patching: true
+    deploy_audit: true
+
+  tasks:
+    - name: Phase 1 - System Hardening
+      ansible.builtin.include_role:
+        name: rhel-hardening
+      when: deploy_hardening | bool
+      tags: ['hardening', 'phase1']
+
+    - name: Phase 2 - Firewall & SELinux
+      ansible.builtin.include_role:
+        name: rhel-firewall-selinux
+      when: deploy_firewall | bool
+      tags: ['firewall', 'selinux', 'phase2']
+
+    - name: Phase 3 - User Access
+      ansible.builtin.include_role:
+        name: rhel-user-access
+      when: deploy_users | bool
+      tags: ['users', 'phase3']
+
+    - name: Phase 4 - Patch Management
+      ansible.builtin.include_role:
+        name: rhel-patch-management
+      when: deploy_patching | bool
+      tags: ['patching', 'phase4']
+
+    - name: Phase 5 - Audit Logging
+      ansible.builtin.include_role:
+        name: rhel-audit-logging
+      when: deploy_audit | bool
+      tags: ['audit', 'phase5']
+
+
+- name: Deployment Summary
+  hosts: localhost
+  gather_facts: false
+
+  tasks:
+    - name: Display summary
+      ansible.builtin.debug:
+        msg:
+          - "=== RHEL Deployment Complete ==="
+          - "Servers: {{ groups['rhel_servers'] | default([]) | length }}"
+          - "STIG Hardening: {{ 'Applied' if deploy_hardening | default(true) else 'Skipped' }}"
+      tags: ['always']

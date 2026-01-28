@@ -1,0 +1,164 @@
+---
+# ScienceLogic SL1 Deployment Playbook
+# Entry point for SL1 monitoring platform automation
+#
+# Usage:
+#   ansible-galaxy collection install -r requirements.yml
+#   ansible-playbook -i inventory site.yml --ask-vault-pass
+
+- name: SL1 Platform Installation
+  hosts: sl1_all
+  become: true
+  gather_facts: true
+
+  vars:
+    deploy_install: false
+    deploy_config: true
+    deploy_hardening: true
+    deploy_database: true
+
+  tasks:
+    - name: Phase 1 - Platform Installation
+      ansible.builtin.include_role:
+        name: sl1_platform_install
+      when: deploy_install | bool
+      tags: ['install', 'phase1']
+
+    - name: Phase 2 - Platform Configuration
+      ansible.builtin.include_role:
+        name: sl1_platform_config
+      when: deploy_config | bool
+      tags: ['config', 'phase2']
+
+    - name: Phase 3 - Platform Hardening
+      ansible.builtin.include_role:
+        name: sl1_platform_hardening
+      when: deploy_hardening | bool
+      tags: ['hardening', 'phase3']
+
+    - name: Phase 4 - Database Baseline
+      ansible.builtin.include_role:
+        name: sl1_database_baseline
+      when: deploy_database | bool and inventory_hostname in groups['sl1_database']
+      tags: ['database', 'phase4']
+
+
+- name: SL1 Monitoring Configuration
+  hosts: localhost
+  connection: local
+  gather_facts: true
+
+  vars:
+    deploy_inventory: true
+    deploy_discovery: true
+    deploy_monitoring: true
+    deploy_events: true
+    deploy_dashboards: true
+    deploy_itsm: true
+    deploy_collectors: true
+    deploy_retention: true
+    deploy_governance: true
+
+  tasks:
+    - name: Phase 5 - Inventory Model
+      ansible.builtin.include_role:
+        name: sl1_inventory_model
+      when: deploy_inventory | bool
+      tags: ['inventory', 'phase5']
+
+    - name: Phase 6 - Discovery Pipelines
+      ansible.builtin.include_role:
+        name: sl1_discovery_pipelines
+      when: deploy_discovery | bool
+      tags: ['discovery', 'phase6']
+
+    - name: Phase 7 - Monitoring Baseline
+      ansible.builtin.include_role:
+        name: sl1_monitoring_baseline
+      when: deploy_monitoring | bool
+      tags: ['monitoring', 'phase7']
+
+    - name: Phase 7 - Server Baseline
+      ansible.builtin.include_role:
+        name: sl1_server_baseline
+      when: deploy_monitoring | bool
+      tags: ['monitoring', 'phase7']
+
+    - name: Phase 7 - Network Baseline
+      ansible.builtin.include_role:
+        name: sl1_network_baseline
+      when: deploy_monitoring | bool
+      tags: ['monitoring', 'phase7']
+
+    - name: Phase 8 - Thresholds
+      ansible.builtin.include_role:
+        name: sl1_thresholds_baseline
+      tags: ['thresholds', 'phase8']
+
+    - name: Phase 9 - Event Policies
+      ansible.builtin.include_role:
+        name: sl1_event_policy_hygiene
+      when: deploy_events | bool
+      tags: ['events', 'phase9']
+
+    - name: Phase 9 - Notification Routing
+      ansible.builtin.include_role:
+        name: sl1_notify_routing
+      when: deploy_events | bool
+      tags: ['events', 'phase9']
+
+    - name: Phase 10 - Dashboard Catalog
+      ansible.builtin.include_role:
+        name: sl1_dashboard_catalog
+      when: deploy_dashboards | bool
+      tags: ['dashboards', 'phase10']
+
+    - name: Phase 10 - KPI Scorecards
+      ansible.builtin.include_role:
+        name: sl1_kpi_scorecards
+      when: deploy_dashboards | bool
+      tags: ['dashboards', 'phase10']
+
+    - name: Phase 11 - ITSM Pipeline
+      ansible.builtin.include_role:
+        name: sl1_itsm_pipeline
+      when: deploy_itsm | bool
+      tags: ['itsm', 'phase11']
+
+    - name: Phase 11 - ITSM Enrichment
+      ansible.builtin.include_role:
+        name: sl1_itsm_enrichment
+      when: deploy_itsm | bool
+      tags: ['itsm', 'phase11']
+
+    - name: Phase 12 - Collector Fleet
+      ansible.builtin.include_role:
+        name: sl1_collector_fleet
+      when: deploy_collectors | bool
+      tags: ['collectors', 'phase12']
+
+    - name: Phase 13 - Data Retention
+      ansible.builtin.include_role:
+        name: sl1_data_retention
+      when: deploy_retention | bool
+      tags: ['retention', 'phase13']
+
+    - name: Phase 14 - Governance Pack
+      ansible.builtin.include_role:
+        name: sl1_governance_pack
+      when: deploy_governance | bool
+      tags: ['governance', 'phase14']
+
+    - name: Phase 14 - Audit Governance
+      ansible.builtin.include_role:
+        name: sl1_audit_governance
+      when: deploy_governance | bool
+      tags: ['governance', 'phase14']
+
+    - name: Display summary
+      ansible.builtin.debug:
+        msg:
+          - "=== ScienceLogic SL1 Deployment Complete ==="
+          - "Version: {{ sl1_version | default('11.3') }}"
+          - "API URL: {{ sl1_api_url }}"
+      tags: ['always']

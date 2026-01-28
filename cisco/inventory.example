@@ -1,0 +1,179 @@
+# Cisco Platform Inventory Example
+# Copy this file to your inventory directory and customize
+
+# =========================================
+# Cisco ISE (Identity Services Engine)
+# =========================================
+[ise_pan]
+ise-pan-01 ansible_host=192.168.1.10
+
+[ise_psn]
+ise-psn-01 ansible_host=192.168.1.11
+ise-psn-02 ansible_host=192.168.1.12
+
+[ise_mnt]
+ise-mnt-01 ansible_host=192.168.1.13
+
+[ise:children]
+ise_pan
+ise_psn
+ise_mnt
+
+# =========================================
+# Cisco UCS
+# =========================================
+[ucs_manager]
+ucs-mgr-01 ansible_host=192.168.2.10
+
+[ucs_fabric_interconnect]
+ucs-fi-a ansible_host=192.168.2.11
+ucs-fi-b ansible_host=192.168.2.12
+
+[ucs_servers]
+ucs-blade-01 ansible_host=192.168.2.20 ucs_slot=1
+ucs-blade-02 ansible_host=192.168.2.21 ucs_slot=2
+ucs-blade-03 ansible_host=192.168.2.22 ucs_slot=3
+
+[ucs:children]
+ucs_manager
+ucs_fabric_interconnect
+ucs_servers
+
+# =========================================
+# All Cisco Devices
+# =========================================
+[cisco:children]
+ise
+ucs
+
+# =========================================
+# Localhost for API Operations
+# =========================================
+[localhost]
+localhost ansible_connection=local ansible_python_interpreter=/usr/bin/python3
+
+# =========================================
+# ISE Variables
+# =========================================
+[ise:vars]
+# ISE API Configuration
+ise_hostname={{ ansible_host }}
+ise_username={{ vault_ise_username }}
+ise_password={{ vault_ise_password }}
+ise_verify=true
+ise_version=3.2
+ise_uses_api_gateway=true
+
+# ISE node roles
+[ise_pan:vars]
+ise_node_role=PAN
+
+[ise_psn:vars]
+ise_node_role=PSN
+
+[ise_mnt:vars]
+ise_node_role=MNT
+
+# --- ISE Policy Configuration ---
+[ise:vars]
+# Authentication policy
+ise_default_network_access_policy=Default Network Access
+ise_dot1x_enabled=true
+ise_mab_enabled=true
+
+# Authorization profiles
+ise_default_authz_profile=PermitAccess
+ise_quarantine_profile=Quarantine
+
+# Profiling
+ise_profiling_enabled=true
+ise_profiler_probes=["DHCP", "RADIUS", "DNS", "SNMP"]
+
+# --- ISE LDAP/AD Integration ---
+[ise:vars]
+ise_ad_integration_enabled=true
+ise_ad_domain=example.com
+ise_ad_admin_user={{ vault_ise_ad_admin_user }}
+ise_ad_admin_password={{ vault_ise_ad_admin_password }}
+
+# --- ISE pxGrid Configuration ---
+[ise:vars]
+ise_pxgrid_enabled=true
+ise_pxgrid_clients=["splunk", "firewall"]
+
+# --- ISE Guest Portal ---
+[ise:vars]
+ise_guest_portal_enabled=true
+ise_guest_ssid=Guest-WiFi
+ise_sponsor_groups=["IT-Support", "Reception"]
+ise_guest_account_duration_days=1
+
+# --- ISE Posture ---
+[ise:vars]
+ise_posture_enabled=true
+ise_posture_agent=AnyConnect
+ise_posture_remediation_enabled=true
+
+# --- ISE Audit Configuration ---
+[ise:vars]
+ise_audit_enabled=true
+ise_audit_syslog_target=siem.example.com
+ise_audit_syslog_port=514
+
+# =========================================
+# UCS Variables
+# =========================================
+[ucs:vars]
+# UCS Manager Configuration
+ucs_hostname={{ ansible_host }}
+ucs_username={{ vault_ucs_username }}
+ucs_password={{ vault_ucs_password }}
+
+# UCS Domain
+ucs_domain=ucs.example.com
+
+# --- UCS Infrastructure ---
+[ucs:vars]
+# Fabric Interconnect settings
+ucs_fc_mode=end-host
+ucs_fc_vsan_a=100
+ucs_fc_vsan_b=200
+
+# Network settings
+ucs_default_vlan=1
+ucs_management_vlan=100
+ucs_vmotion_vlan=200
+ucs_production_vlans=[300, 301, 302, 303]
+
+# --- UCS Service Profiles ---
+[ucs:vars]
+ucs_service_profile_template=SP-Template-ESXi
+ucs_boot_policy=Boot-Local-Disk
+ucs_bios_policy=BIOS-Performance
+
+# --- UCS Security ---
+[ucs:vars]
+ucs_security_hardening_enabled=true
+ucs_ssh_enabled=true
+ucs_telnet_enabled=false
+ucs_http_enabled=false
+ucs_https_enabled=true
+
+# Session timeout
+ucs_session_timeout=600
+ucs_console_timeout=600
+
+# --- UCS Backup ---
+[ucs:vars]
+ucs_backup_enabled=true
+ucs_backup_protocol=scp
+ucs_backup_server=backup.example.com
+ucs_backup_path=/backups/ucs
+ucs_backup_schedule="0 2 * * *"
+
+# --- UCS Monitoring ---
+[ucs:vars]
+ucs_monitoring_enabled=true
+ucs_snmp_community={{ vault_ucs_snmp_community }}
+ucs_snmp_trap_destination=monitor.example.com
+ucs_syslog_destination=siem.example.com

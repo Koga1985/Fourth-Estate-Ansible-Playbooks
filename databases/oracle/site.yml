@@ -1,0 +1,116 @@
+---
+# Oracle Database Deployment Playbook
+# Entry point for Oracle database automation
+#
+# Usage:
+#   ansible-galaxy collection install -r requirements.yml
+#   ansible-playbook -i inventory site.yml --ask-vault-pass
+
+- name: Oracle Database Installation
+  hosts: oracle_primary
+  become: true
+  gather_facts: true
+
+  vars:
+    deploy_install: true
+    deploy_database: true
+    deploy_security: true
+    deploy_audit: true
+    deploy_data_guard: true
+    deploy_rman: true
+    deploy_flashback: true
+
+  tasks:
+    - name: Phase 1 - Oracle Installation
+      ansible.builtin.include_role:
+        name: oracle_install
+      when: deploy_install | bool
+      tags: ['install', 'phase1']
+
+    - name: Phase 2 - Database Creation
+      ansible.builtin.include_role:
+        name: oracle_database_create
+      when: deploy_database | bool
+      tags: ['database', 'phase2']
+
+    - name: Phase 3 - Security Configuration
+      ansible.builtin.include_role:
+        name: oracle_security
+      when: deploy_security | bool
+      tags: ['security', 'phase3']
+
+    - name: Phase 4 - Audit Configuration
+      ansible.builtin.include_role:
+        name: oracle_audit
+      when: deploy_audit | bool
+      tags: ['audit', 'phase4']
+
+    - name: Phase 5 - Data Guard (Primary)
+      ansible.builtin.include_role:
+        name: oracle_data_guard
+      vars:
+        data_guard_role: primary
+      when: deploy_data_guard | bool
+      tags: ['dataguard', 'phase5']
+
+    - name: Phase 6 - RMAN Backup
+      ansible.builtin.include_role:
+        name: oracle_rman
+      when: deploy_rman | bool
+      tags: ['rman', 'backup', 'phase6']
+
+    - name: Phase 7 - Flashback
+      ansible.builtin.include_role:
+        name: oracle_flashback
+      when: deploy_flashback | bool
+      tags: ['flashback', 'phase7']
+
+
+- name: Oracle Standby Configuration
+  hosts: oracle_standby
+  become: true
+  gather_facts: true
+  serial: 1
+
+  vars:
+    deploy_data_guard: true
+
+  tasks:
+    - name: Data Guard (Standby)
+      ansible.builtin.include_role:
+        name: oracle_data_guard
+      vars:
+        data_guard_role: standby
+      when: deploy_data_guard | bool
+      tags: ['dataguard', 'standby']
+
+
+- name: Oracle RAC Configuration
+  hosts: oracle_rac
+  become: true
+  gather_facts: true
+
+  vars:
+    deploy_rac: true
+
+  tasks:
+    - name: RAC Configuration
+      ansible.builtin.include_role:
+        name: oracle_rac
+      when: deploy_rac | bool
+      tags: ['rac']
+
+
+- name: Deployment Summary
+  hosts: localhost
+  gather_facts: false
+
+  tasks:
+    - name: Display summary
+      ansible.builtin.debug:
+        msg:
+          - "=== Oracle Deployment Complete ==="
+          - "Version: {{ oracle_version | default('19c') }}"
+          - "Primary: {{ groups['oracle_primary'] | default([]) | join(', ') }}"
+          - "Standby: {{ groups['oracle_standby'] | default([]) | join(', ') }}"
+      tags: ['always']

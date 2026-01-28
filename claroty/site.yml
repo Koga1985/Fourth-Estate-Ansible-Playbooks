@@ -1,0 +1,121 @@
+---
+# Claroty xDome Deployment Playbook
+# Entry point for Claroty OT security platform automation
+#
+# Usage:
+#   ansible-galaxy collection install -r requirements.yml
+#   ansible-playbook -i inventory site.yml --ask-vault-pass
+
+- name: Claroty xDome Configuration
+  hosts: localhost
+  connection: local
+  gather_facts: true
+
+  vars:
+    deploy_inventory: true
+    deploy_alerts: true
+    deploy_secure_access: true
+    deploy_segmentation: true
+    deploy_vulnerability: true
+    deploy_compliance: true
+
+  tasks:
+    # =========================================
+    # Phase 1: Inventory Management
+    # =========================================
+    - name: Phase 1 - Inventory Export
+      ansible.builtin.include_role:
+        name: claroty_xdome_inventory_export
+      when: deploy_inventory | bool
+      tags: ['inventory', 'phase1']
+
+    - name: Phase 1 - Inventory Scheduler
+      ansible.builtin.include_role:
+        name: claroty_xdome_inventory_scheduler
+      when: deploy_inventory | bool
+      tags: ['inventory', 'phase1']
+
+    - name: Phase 1 - CMDB Normalization
+      ansible.builtin.include_role:
+        name: claroty_xdome_inventory_normalize_cmdb
+      when: deploy_inventory | bool
+      tags: ['inventory', 'cmdb', 'phase1']
+
+    # =========================================
+    # Phase 2: Alert Integration
+    # =========================================
+    - name: Phase 2 - Alerts SIEM Integration
+      ansible.builtin.include_role:
+        name: claroty_xdome_alerts_siem
+      when: deploy_alerts | bool
+      tags: ['alerts', 'siem', 'phase2']
+
+    # =========================================
+    # Phase 3: Secure Access
+    # =========================================
+    - name: Phase 3 - Secure Access Onboarding
+      ansible.builtin.include_role:
+        name: claroty_xdome_secure_access_onboarding
+      when: deploy_secure_access | bool
+      tags: ['access', 'phase3']
+
+    - name: Phase 3 - Session Policy
+      ansible.builtin.include_role:
+        name: claroty_xdome_secure_access_session_policy
+      when: deploy_secure_access | bool
+      tags: ['access', 'phase3']
+
+    - name: Phase 3 - Audit Export
+      ansible.builtin.include_role:
+        name: claroty_xdome_secure_access_audit_export
+      when: deploy_secure_access | bool
+      tags: ['access', 'audit', 'phase3']
+
+    # =========================================
+    # Phase 4: Segmentation
+    # =========================================
+    - name: Phase 4 - Segmentation
+      ansible.builtin.include_role:
+        name: claroty_xdome_segmentation
+      when: deploy_segmentation | bool
+      tags: ['segmentation', 'phase4']
+
+    # =========================================
+    # Phase 5: Vulnerability Management
+    # =========================================
+    - name: Phase 5 - Vulnerability Risk
+      ansible.builtin.include_role:
+        name: claroty_xdome_vuln_risk
+      when: deploy_vulnerability | bool
+      tags: ['vulnerability', 'phase5']
+
+    # =========================================
+    # Phase 6: Compliance & Reporting
+    # =========================================
+    - name: Phase 6 - Compliance Pack
+      ansible.builtin.include_role:
+        name: claroty_xdome_reporting_compliance_pack
+      when: deploy_compliance | bool
+      tags: ['compliance', 'phase6']
+
+    - name: Phase 6 - Executive Summary
+      ansible.builtin.include_role:
+        name: claroty_xdome_reporting_exec_summary
+      when: deploy_compliance | bool
+      tags: ['reporting', 'phase6']
+
+    # =========================================
+    # Deployment Summary
+    # =========================================
+    - name: Display deployment summary
+      ansible.builtin.debug:
+        msg:
+          - "=== Claroty xDome Deployment Complete ==="
+          - "API URL: {{ claroty_api_url }}"
+          - "Inventory: {{ 'Configured' if deploy_inventory else 'Skipped' }}"
+          - "Alerts/SIEM: {{ 'Configured' if deploy_alerts else 'Skipped' }}"
+          - "Secure Access: {{ 'Configured' if deploy_secure_access else 'Skipped' }}"
+          - "Segmentation: {{ 'Configured' if deploy_segmentation else 'Skipped' }}"
+          - "Vulnerability: {{ 'Configured' if deploy_vulnerability else 'Skipped' }}"
+          - "Compliance: {{ 'Configured' if deploy_compliance else 'Skipped' }}"
+      tags: ['always']

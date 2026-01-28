@@ -1,0 +1,105 @@
+---
+# HashiCorp Vault Deployment Playbook
+# Entry point for Vault automation
+#
+# Usage:
+#   ansible-galaxy collection install -r requirements.yml
+#   ansible-playbook -i inventory site.yml --ask-vault-pass
+
+- name: Vault Server Installation
+  hosts: vault_servers
+  become: true
+  gather_facts: true
+  serial: 1
+
+  vars:
+    deploy_install: true
+    deploy_cluster: true
+    deploy_ha: true
+
+  tasks:
+    - name: Phase 1 - Vault Installation
+      ansible.builtin.include_role:
+        name: vault_install
+      when: deploy_install | bool
+      tags: ['install', 'phase1']
+
+    - name: Phase 2 - Cluster Configuration
+      ansible.builtin.include_role:
+        name: vault_cluster
+      when: deploy_cluster | bool
+      tags: ['cluster', 'phase2']
+
+    - name: Phase 3 - HA Configuration
+      ansible.builtin.include_role:
+        name: vault_ha_config
+      when: deploy_ha | bool
+      tags: ['ha', 'phase3']
+
+
+- name: Vault Configuration
+  hosts: localhost
+  connection: local
+  gather_facts: true
+
+  vars:
+    deploy_auth: true
+    deploy_secrets: true
+    deploy_policies: true
+    deploy_pki: true
+    deploy_database: true
+    deploy_transit: true
+    deploy_audit: true
+
+  tasks:
+    - name: Phase 4 - Auth Methods
+      ansible.builtin.include_role:
+        name: vault_auth_methods
+      when: deploy_auth | bool
+      tags: ['auth', 'phase4']
+
+    - name: Phase 5 - Policies
+      ansible.builtin.include_role:
+        name: vault_policies
+      when: deploy_policies | bool
+      tags: ['policies', 'phase5']
+
+    - name: Phase 6 - Secrets Engines
+      ansible.builtin.include_role:
+        name: vault_secrets_engine
+      when: deploy_secrets | bool
+      tags: ['secrets', 'phase6']
+
+    - name: Phase 7 - PKI Secrets Engine
+      ansible.builtin.include_role:
+        name: vault_pki
+      when: deploy_pki | bool
+      tags: ['pki', 'phase7']
+
+    - name: Phase 8 - Database Secrets
+      ansible.builtin.include_role:
+        name: vault_database_secrets
+      when: deploy_database | bool
+      tags: ['database', 'phase8']
+
+    - name: Phase 9 - Transit Encryption
+      ansible.builtin.include_role:
+        name: vault_transit_encryption
+      when: deploy_transit | bool
+      tags: ['transit', 'phase9']
+
+    - name: Phase 10 - Audit Logging
+      ansible.builtin.include_role:
+        name: vault_audit_logging
+      when: deploy_audit | bool
+      tags: ['audit', 'phase10']
+
+    - name: Display summary
+      ansible.builtin.debug:
+        msg:
+          - "=== HashiCorp Vault Deployment Complete ==="
+          - "Cluster: {{ vault_cluster_name | default('production-vault') }}"
+          - "API Address: {{ vault_api_addr }}"
+          - "TLS: {{ 'Enabled' if vault_tls_enabled | default(true) else 'Disabled' }}"
+          - "Audit: {{ 'Enabled' if deploy_audit else 'Disabled' }}"
+      tags: ['always']

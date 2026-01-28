@@ -1,0 +1,156 @@
+---
+# ELK Stack Deployment Playbook
+# Entry point for Elasticsearch, Logstash, and Kibana automation
+#
+# Usage:
+#   ansible-galaxy collection install -r requirements.yml
+#   ansible-playbook -i inventory site.yml --ask-vault-pass
+#
+# Tags:
+#   - elasticsearch: Elasticsearch only
+#   - kibana: Kibana only
+#   - logstash: Logstash only
+#   - security: Security configuration
+
+- name: Elasticsearch Cluster Setup
+  hosts: elasticsearch
+  become: true
+  gather_facts: true
+  serial: "{{ elasticsearch_rolling_update | default(false) | ternary(1, '100%') }}"
+
+  vars:
+    deploy_install: true
+    deploy_config: true
+    deploy_security: true
+
+  tasks:
+    - name: Phase 1 - Install Elasticsearch
+      ansible.builtin.include_role:
+        name: elasticsearch_install
+      when: deploy_install | bool
+      tags: ['elasticsearch', 'install', 'phase1']
+
+    - name: Phase 2 - Configure Elasticsearch
+      ansible.builtin.include_role:
+        name: elasticsearch_config
+      when: deploy_config | bool
+      tags: ['elasticsearch', 'config', 'phase2']
+
+    - name: Phase 3 - Security Configuration
+      ansible.builtin.include_role:
+        name: elasticsearch_security
+      when: deploy_security | bool
+      tags: ['elasticsearch', 'security', 'phase3']
+
+
+- name: Verify Elasticsearch Cluster Health
+  hosts: elasticsearch_master[0]
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Wait for cluster to be ready
+      ansible.builtin.uri:
+        url: "https://localhost:9200/_cluster/health"
+        method: GET
+        user: elastic
+        password: "{{ elasticsearch_elastic_password }}"
+        validate_certs: false
+        status_code: 200
+      register: cluster_health
+      until: cluster_health.json.status in ['green', 'yellow']
+      retries: 30
+      delay: 10
+      tags: ['elasticsearch', 'verify']
+
+    - name: Display cluster health
+      ansible.builtin.debug:
+        msg:
+          - "Cluster: {{ cluster_health.json.cluster_name }}"
+          - "Status: {{ cluster_health.json.status }}"
+          - "Nodes: {{ cluster_health.json.number_of_nodes }}"
+          - "Data Nodes: {{ cluster_health.json.number_of_data_nodes }}"
+      tags: ['elasticsearch', 'verify']
+
+
+- name: Kibana Setup
+  hosts: kibana
+  become: true
+  gather_facts: true
+
+  vars:
+    deploy_kibana: true
+
+  tasks:
+    - name: Install and Configure Kibana
+      ansible.builtin.debug:
+        msg: "Kibana installation - extend with kibana_install role when available"
+      when: deploy_kibana | bool
+      tags: ['kibana']
+
+    # Placeholder for kibana role - add when role is created
+    # - name: Phase 1 - Install Kibana
+    #   ansible.builtin.include_role:
+    #     name: kibana_install
+    #   when: deploy_kibana | bool
+    #   tags: ['kibana', 'install']
+
+
+- name: Logstash Setup
+  hosts: logstash
+  become: true
+  gather_facts: true
+
+  vars:
+    deploy_logstash: true
+
+  tasks:
+    - name: Install and Configure Logstash
+      ansible.builtin.debug:
+        msg: "Logstash installation - extend with logstash_install role when available"
+      when: deploy_logstash | bool
+      tags: ['logstash']
+
+    # Placeholder for logstash role - add when role is created
+    # - name: Phase 1 - Install Logstash
+    #   ansible.builtin.include_role:
+    #     name: logstash_install
+    #   when: deploy_logstash | bool
+    #   tags: ['logstash', 'install']
+
+
+- name: Fleet Server Setup
+  hosts: fleet_server
+  become: true
+  gather_facts: true
+
+  vars:
+    deploy_fleet: true
+
+  tasks:
+    - name: Install and Configure Fleet Server
+      ansible.builtin.debug:
+        msg: "Fleet Server installation - extend with fleet_server role when available"
+      when: deploy_fleet | bool
+      tags: ['fleet']
+
+
+- name: Deployment Summary
+  hosts: localhost
+  gather_facts: false
+
+  tasks:
+    - name: Display deployment summary
+      ansible.builtin.debug:
+        msg:
+          - "=== ELK Stack Deployment Complete ==="
+          - "Elasticsearch Version: {{ elasticsearch_version | default('8.11') }}"
+          - "Cluster Name: {{ elasticsearch_cluster_name | default('production-elk') }}"
+          - "Master Nodes: {{ groups['elasticsearch_master'] | default([]) | length }}"
+          - "Data Nodes: {{ groups['elasticsearch_data'] | default([]) | length }}"
+          - "Coordinating Nodes: {{ groups['elasticsearch_coordinating'] | default([]) | length }}"
+          - "Kibana Servers: {{ groups['kibana'] | default([]) | length }}"
+          - "Logstash Servers: {{ groups['logstash'] | default([]) | length }}"
+          - "Security: {{ 'Enabled' if elasticsearch_security_enabled | default(true) else 'Disabled' }}"
+          - "TLS/SSL: {{ 'Enabled' if elasticsearch_ssl_enabled | default(true) else 'Disabled' }}"
+      tags: ['always']

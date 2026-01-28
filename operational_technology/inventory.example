@@ -1,0 +1,173 @@
+# Operational Technology (OT) Inventory Example
+# Copy this file to your inventory directory and customize
+# Based on IEC 62443 / Purdue Model zones
+
+# =========================================
+# Level 5 - Enterprise Zone
+# =========================================
+[ot_level5_enterprise]
+# Enterprise systems that connect to OT
+
+# =========================================
+# Level 4 - Site Business Planning
+# =========================================
+[ot_level4_business]
+# Business planning and logistics systems
+
+# =========================================
+# Level 3.5 - DMZ (Industrial DMZ)
+# =========================================
+[ot_dmz]
+ot-dmz-fw-01 ansible_host=10.100.0.1 device_type=firewall vendor=paloalto
+ot-dmz-fw-02 ansible_host=10.100.0.2 device_type=firewall vendor=checkpoint
+ot-jump-01 ansible_host=10.100.0.10 device_type=bastion
+
+# =========================================
+# Level 3 - Site Operations
+# =========================================
+[ot_level3_operations]
+ot-historian-01 ansible_host=10.100.3.10 device_type=historian
+ot-historian-02 ansible_host=10.100.3.11 device_type=historian
+ot-scada-server-01 ansible_host=10.100.3.20 device_type=scada
+
+[ot_level3_network]
+ot-l3-sw-01 ansible_host=10.100.3.1 device_type=switch vendor=cisco
+ot-l3-sw-02 ansible_host=10.100.3.2 device_type=switch vendor=cisco
+
+# =========================================
+# Level 2 - Area Supervisory Control
+# =========================================
+[ot_level2_control]
+ot-hmi-01 ansible_host=10.100.2.10 device_type=hmi os=windows
+ot-hmi-02 ansible_host=10.100.2.11 device_type=hmi os=windows
+ot-eng-ws-01 ansible_host=10.100.2.20 device_type=engineering_workstation
+
+[ot_level2_network]
+ot-l2-sw-01 ansible_host=10.100.2.1 device_type=switch vendor=cisco
+
+# =========================================
+# Level 1 - Basic Control
+# =========================================
+[ot_level1_control]
+# PLCs, RTUs, Safety Systems
+ot-plc-area1 ansible_host=10.100.1.10 device_type=plc vendor=rockwell
+ot-plc-area2 ansible_host=10.100.1.11 device_type=plc vendor=siemens
+ot-rtu-01 ansible_host=10.100.1.20 device_type=rtu
+
+# =========================================
+# Level 0 - Process
+# =========================================
+[ot_level0_process]
+# Sensors, actuators, field devices (typically not managed via Ansible)
+
+# =========================================
+# Security Monitoring
+# =========================================
+[ot_security_monitoring]
+ot-ids-sensor-01 ansible_host=10.100.10.10 device_type=ids sensor_zone=dmz
+ot-ids-sensor-02 ansible_host=10.100.10.11 device_type=ids sensor_zone=level3
+ot-siem-collector ansible_host=10.100.10.20 device_type=siem_collector
+
+# =========================================
+# Groupings
+# =========================================
+[ot_firewalls:children]
+ot_dmz
+
+[ot_windows_hosts]
+ot-historian-01
+ot-historian-02
+ot-hmi-01
+ot-hmi-02
+ot-eng-ws-01
+
+[ot_network_devices:children]
+ot_level3_network
+ot_level2_network
+
+[ot_all:children]
+ot_dmz
+ot_level3_operations
+ot_level3_network
+ot_level2_control
+ot_level2_network
+ot_level1_control
+ot_security_monitoring
+
+# =========================================
+# Common Variables
+# =========================================
+[ot_all:vars]
+ansible_user=ansible
+ansible_become=true
+
+# Timezone for all OT systems
+ot_timezone=America/New_York
+
+# NTP Servers (internal, dedicated for OT)
+ot_ntp_servers:
+  - 10.100.0.50
+  - 10.100.0.51
+
+# Syslog destination
+ot_syslog_server=10.100.10.20
+ot_syslog_port=514
+
+# --- Zone Model ---
+[ot_all:vars]
+ot_zone_model_enabled=true
+ot_purdue_model_version=5
+
+# --- Change Management ---
+[ot_all:vars]
+ot_change_window_enabled=true
+ot_change_window_timezone=America/New_York
+# Maintenance windows (cron format)
+ot_maintenance_windows:
+  - name: "Weekly Maintenance"
+    schedule: "0 2 * * 0"
+    duration_hours: 4
+
+# Emergency freeze (halt all changes)
+ot_emergency_freeze=false
+
+# --- Backup Configuration ---
+[ot_all:vars]
+ot_backup_enabled=true
+ot_backup_destination=/backup/ot
+ot_backup_retention_days=90
+
+# --- Compliance ---
+[ot_all:vars]
+ot_compliance_framework=IEC62443
+ot_compliance_level=SL2
+ot_audit_enabled=true
+
+# --- Windows HMI Configuration ---
+[ot_windows_hosts:vars]
+ansible_connection=winrm
+ansible_winrm_transport=ntlm
+ansible_winrm_server_cert_validation=ignore
+ansible_port=5985
+
+# Windows patching (WSUS)
+ot_wsus_server=wsus.ot.example.com
+ot_patch_schedule="0 3 * * 0"
+ot_patch_reboot_allowed=false
+
+# --- Firewall Configuration ---
+[ot_firewalls:vars]
+ot_firewall_backup_enabled=true
+ot_firewall_policy_validation=true
+
+# Palo Alto specific
+panos_provider:
+  ip_address: "{{ ansible_host }}"
+  username: "{{ vault_panos_username }}"
+  password: "{{ vault_panos_password }}"
+
+# Check Point specific
+checkpoint_provider:
+  server: "{{ ansible_host }}"
+  user: "{{ vault_checkpoint_username }}"
+  password: "{{ vault_checkpoint_password }}"

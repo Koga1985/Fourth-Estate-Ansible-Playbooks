@@ -20,7 +20,41 @@ This directory contains **8 Ansible roles** for automating **MySQL** and **Maria
 - **mysql_security** - Security hardening and SSL/TLS
 - **mysql_audit** - Audit plugin for compliance logging
 
-## 🚀 Quick Start
+## 🚀 Quick Start (Drop-In Deployment)
+
+This platform supports **drop-in deployment**. Get started in 3 steps:
+
+```bash
+# 1. Install dependencies
+ansible-galaxy collection install -r requirements.yml
+
+# 2. Configure your inventory
+cp inventory.example inventory
+# Edit inventory with your database servers
+
+# 3. Deploy
+ansible-playbook -i inventory site.yml --ask-vault-pass
+```
+
+### Deployment Options
+
+Use tags to deploy specific components:
+
+```bash
+# Install only
+ansible-playbook -i inventory site.yml --tags install
+
+# Configure replication
+ansible-playbook -i inventory site.yml --tags replication
+
+# Galera cluster setup
+ansible-playbook -i inventory site.yml --tags galera
+
+# Security hardening
+ansible-playbook -i inventory site.yml --tags security
+```
+
+### Individual Role Execution (Alternative)
 
 ```bash
 # Install MySQL 8.0

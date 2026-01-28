@@ -1,0 +1,44 @@
+---
+# NetApp ONTAP Deployment Playbook
+# Entry point for NetApp storage automation
+#
+# Usage:
+#   ansible-galaxy collection install -r requirements.yml
+#   ansible-playbook -i inventory site.yml --ask-vault-pass
+
+- name: NetApp ONTAP Configuration
+  hosts: localhost
+  connection: local
+  gather_facts: true
+
+  vars:
+    deploy_cluster: true
+    deploy_svm: true
+    deploy_volumes: true
+
+  tasks:
+    - name: Phase 1 - Cluster Setup
+      ansible.builtin.include_role:
+        name: netapp_cluster_setup
+      when: deploy_cluster | bool
+      tags: ['cluster', 'phase1']
+
+    - name: Phase 2 - SVM Management
+      ansible.builtin.include_role:
+        name: netapp_svm_management
+      when: deploy_svm | bool
+      tags: ['svm', 'phase2']
+
+    - name: Phase 3 - Volume Provisioning
+      ansible.builtin.include_role:
+        name: netapp_volume_provisioning
+      when: deploy_volumes | bool
+      tags: ['volumes', 'phase3']
+
+    - name: Display summary
+      ansible.builtin.debug:
+        msg:
+          - "=== NetApp Deployment Complete ==="
+          - "Cluster: {{ netapp_cluster_name | default('Production-NetApp') }}"
+          - "SVM: {{ netapp_svm_name | default('svm_prod') }}"
+      tags: ['always']

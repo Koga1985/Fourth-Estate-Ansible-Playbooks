@@ -65,7 +65,42 @@ The OpenShift automation covers the complete platform lifecycle from initial dep
 - **ocp_chargeback** - Resource usage tracking
 - **ocp_capacity_planning** - Cluster capacity analysis
 
-## 🚀 Quick Start
+## 🚀 Quick Start (Drop-In Deployment)
+
+This platform supports **drop-in deployment**. Get started in 3 steps:
+
+```bash
+# 1. Install dependencies
+ansible-galaxy collection install -r requirements.yml
+
+# 2. Configure your inventory
+cp inventory.example inventory
+# Edit inventory with your OpenShift cluster details
+
+# 3. Deploy
+ansible-playbook -i inventory site.yml --ask-vault-pass
+```
+
+### Deployment Options
+
+Use tags to deploy specific components:
+
+```bash
+# Deploy only RBAC configuration
+ansible-playbook -i inventory site.yml --tags rbac
+
+# Deploy only network policies
+ansible-playbook -i inventory site.yml --tags network
+
+# Deploy only security/PSA settings
+ansible-playbook -i inventory site.yml --tags security
+
+# Deploy GitOps (ArgoCD)
+ansible-playbook -i inventory site.yml --tags gitops
+
+# Deploy compliance (Gatekeeper)
+ansible-playbook -i inventory site.yml --tags compliance
+```
 
 ### Prerequisites
 
@@ -76,7 +111,7 @@ The OpenShift automation covers the complete platform lifecycle from initial dep
 - `oc` CLI tool installed
 - Kubeconfig with cluster-admin privileges
 
-### Installation
+### Manual Installation (Alternative)
 
 ```bash
 # Install required collections

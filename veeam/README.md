@@ -2,6 +2,36 @@
 
 This directory contains **6 Ansible roles** for automating **Veeam Backup & Replication** lifecycle management including installation, backup job configuration, restore operations, replication, cloud tiering, and automated testing with SureBackup.
 
+## 🚀 Quick Start (Drop-In Deployment)
+
+```bash
+# 1. Install dependencies
+ansible-galaxy collection install -r requirements.yml
+
+# 2. Configure your inventory
+cp inventory.example inventory
+# Edit inventory with your Veeam servers
+
+# 3. Deploy
+ansible-playbook -i inventory site.yml --ask-vault-pass
+```
+
+### Deployment Options
+
+```bash
+# Install Veeam server
+ansible-playbook -i inventory site.yml --tags install
+
+# Configure backup jobs
+ansible-playbook -i inventory site.yml --tags backup
+
+# Configure replication
+ansible-playbook -i inventory site.yml --tags replication
+
+# Configure cloud tier
+ansible-playbook -i inventory site.yml --tags cloud
+```
+
 ## Overview
 
 Comprehensive Veeam automation covering backup server installation, repository management, backup job creation and scheduling, restore operations, replication configuration, cloud archive tier setup, and automated backup testing.

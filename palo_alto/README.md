@@ -2,10 +2,40 @@
 
 This folder contains Ansible roles and playbooks to automate configuration and operational tasks for Palo Alto Networks firewalls and Panorama.
 
+## 🚀 Quick Start (Drop-In Deployment)
+
+```bash
+# 1. Install dependencies
+ansible-galaxy collection install -r requirements.yml
+
+# 2. Configure your inventory
+cp inventory.example inventory
+# Edit inventory with your firewall/Panorama details
+
+# 3. Deploy
+ansible-playbook -i inventory site.yml --ask-vault-pass
+```
+
+### Deployment Options
+
+```bash
+# Deploy platform baseline only
+ansible-playbook -i inventory site.yml --tags baseline
+
+# Deploy security policies
+ansible-playbook -i inventory site.yml --tags security
+
+# Configure SSL decryption
+ansible-playbook -i inventory site.yml --tags ssl
+
+# Configure VPN
+ansible-playbook -i inventory site.yml --tags vpn
+```
+
 ## Prerequisites
 
 - Ansible 2.9+ (2.10+ recommended)
-- The `paloaltonetworks.panos` collection (install with `ansible-galaxy collection install paloaltonetworks.panos`)
+- The `paloaltonetworks.panos` collection
 - Network connectivity to target firewalls/Panorama and appropriate API credentials
 
 ## Contents

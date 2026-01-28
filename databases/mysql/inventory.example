@@ -1,0 +1,97 @@
+# MySQL Inventory Example
+# Copy this file to your inventory directory and customize
+
+# --- Primary Database Server ---
+[mysql_primary]
+mysql-primary ansible_host=192.168.1.80
+
+# --- Replica Servers ---
+[mysql_replicas]
+mysql-replica-01 ansible_host=192.168.1.81
+mysql-replica-02 ansible_host=192.168.1.82
+
+# --- All MySQL Servers ---
+[mysql:children]
+mysql_primary
+mysql_replicas
+
+# --- Galera Cluster (Alternative to Primary/Replica) ---
+[mysql_galera]
+# galera-01 ansible_host=192.168.1.90
+# galera-02 ansible_host=192.168.1.91
+# galera-03 ansible_host=192.168.1.92
+
+# --- Common Variables ---
+[mysql:vars]
+ansible_user=ansible
+ansible_become=true
+ansible_python_interpreter=/usr/bin/python3
+
+# MySQL Version
+mysql_version=8.0
+
+# Database credentials - use vault
+mysql_root_password={{ vault_mysql_root_password }}
+
+# Replication credentials
+mysql_replication_user=replicator
+mysql_replication_password={{ vault_mysql_replication_password }}
+
+# --- Network Configuration ---
+mysql_bind_address=0.0.0.0
+mysql_port=3306
+
+# --- Performance Tuning ---
+# Adjust based on server memory
+mysql_innodb_buffer_pool_size=4G
+mysql_innodb_log_file_size=1G
+mysql_innodb_flush_log_at_trx_commit=1
+mysql_max_connections=200
+mysql_query_cache_size=0
+mysql_thread_cache_size=16
+
+# --- Replication Configuration ---
+[mysql_primary:vars]
+mysql_role=primary
+mysql_server_id=1
+mysql_log_bin=mysql-bin
+mysql_binlog_format=ROW
+mysql_gtid_mode=ON
+mysql_enforce_gtid_consistency=ON
+
+[mysql_replicas:vars]
+mysql_role=replica
+mysql_primary_host=192.168.1.80
+mysql_read_only=ON
+
+# Auto-increment offset for replicas
+mysql_replica_01_server_id=2
+mysql_replica_02_server_id=3
+
+# --- Galera Configuration ---
+[mysql_galera:vars]
+mysql_galera_enabled=true
+mysql_wsrep_cluster_name=production-galera
+mysql_wsrep_cluster_address="gcomm://192.168.1.90,192.168.1.91,192.168.1.92"
+mysql_wsrep_sst_method=mariabackup
+mysql_wsrep_sst_auth={{ vault_mysql_sst_user }}:{{ vault_mysql_sst_password }}
+
+# --- Backup Configuration ---
+[mysql:vars]
+mysql_backup_enabled=true
+mysql_backup_directory=/var/lib/mysql-backup
+mysql_backup_retention_days=30
+mysql_backup_schedule="0 2 * * *"
+mysql_binlog_backup_enabled=true
+
+# --- Security Configuration ---
+mysql_ssl_enabled=true
+mysql_ssl_ca=/etc/mysql/ssl/ca.pem
+mysql_ssl_cert=/etc/mysql/ssl/server-cert.pem
+mysql_ssl_key=/etc/mysql/ssl/server-key.pem
+mysql_require_secure_transport=ON
+
+# Audit logging
+mysql_audit_log_enabled=true
+mysql_audit_log_policy=ALL
+mysql_audit_log_format=JSON

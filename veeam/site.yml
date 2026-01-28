@@ -1,0 +1,78 @@
+---
+# Veeam Backup & Replication Deployment Playbook
+# Entry point for Veeam automation
+#
+# Usage:
+#   ansible-galaxy collection install -r requirements.yml
+#   ansible-playbook -i inventory site.yml --ask-vault-pass
+
+- name: Veeam Configuration
+  hosts: localhost
+  connection: local
+  gather_facts: true
+
+  vars:
+    deploy_install: false
+    deploy_config: true
+    deploy_repositories: true
+    deploy_jobs: true
+    deploy_replication: true
+    deploy_cloud_tier: true
+    deploy_surebackup: true
+    deploy_restore: false
+
+  tasks:
+    - name: Phase 1 - Backup Server Installation
+      ansible.builtin.include_role:
+        name: veeam_backup_server_install
+      when: deploy_install | bool
+      tags: ['install', 'phase1']
+
+    - name: Phase 2 - Backup Server Configuration
+      ansible.builtin.include_role:
+        name: veeam_backup_server_config
+      when: deploy_config | bool
+      tags: ['config', 'phase2']
+
+    - name: Phase 3 - Repositories
+      ansible.builtin.include_role:
+        name: veeam_repositories
+      when: deploy_repositories | bool
+      tags: ['repositories', 'phase3']
+
+    - name: Phase 4 - Backup Jobs
+      ansible.builtin.include_role:
+        name: veeam_backup_jobs
+      when: deploy_jobs | bool
+      tags: ['jobs', 'phase4']
+
+    - name: Phase 5 - Replication
+      ansible.builtin.include_role:
+        name: veeam_replication
+      when: deploy_replication | bool
+      tags: ['replication', 'phase5']
+
+    - name: Phase 6 - Cloud Tier
+      ansible.builtin.include_role:
+        name: veeam_cloud_tier
+      when: deploy_cloud_tier | bool
+      tags: ['cloud', 'phase6']
+
+    - name: Phase 7 - SureBackup
+      ansible.builtin.include_role:
+        name: veeam_surebackup
+      when: deploy_surebackup | bool
+      tags: ['surebackup', 'phase7']
+
+    - name: Phase 8 - Restore Operations
+      ansible.builtin.include_role:
+        name: veeam_restore_operations
+      when: deploy_restore | bool
+      tags: ['restore', 'phase8']
+
+    - name: Display summary
+      ansible.builtin.debug:
+        msg:
+          - "=== Veeam Deployment Complete ==="
+          - "Backup Server: {{ veeam_server }}"
+      tags: ['always']

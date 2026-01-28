@@ -22,7 +22,37 @@ This directory contains **10 Ansible roles** for automating **HashiCorp Vault** 
 - **vault_pki** - PKI secrets engine and certificate management
 - **vault_audit_logging** - Audit device configuration
 
-## 🚀 Quick Start
+## 🚀 Quick Start (Drop-In Deployment)
+
+```bash
+# 1. Install dependencies
+ansible-galaxy collection install -r requirements.yml
+
+# 2. Configure your inventory
+cp inventory.example inventory
+# Edit inventory with your Vault servers
+
+# 3. Deploy
+ansible-playbook -i inventory site.yml --ask-vault-pass
+```
+
+### Deployment Options
+
+```bash
+# Install only
+ansible-playbook -i inventory site.yml --tags install
+
+# Configure HA
+ansible-playbook -i inventory site.yml --tags ha
+
+# Configure auth methods
+ansible-playbook -i inventory site.yml --tags auth
+
+# Configure PKI
+ansible-playbook -i inventory site.yml --tags pki
+```
+
+### Individual Role Execution (Alternative)
 
 ```bash
 # Install Vault cluster

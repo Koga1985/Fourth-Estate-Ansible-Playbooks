@@ -1,0 +1,151 @@
+---
+# PostgreSQL Database Deployment Playbook
+# Entry point for PostgreSQL platform automation
+#
+# Usage:
+#   ansible-galaxy collection install -r requirements.yml
+#   ansible-playbook -i inventory site.yml --ask-vault-pass
+#
+# Tags:
+#   - install: PostgreSQL installation only
+#   - config: Configuration only
+#   - security: Security hardening
+#   - replication: Setup replication
+#   - backup: Backup configuration
+#   - pgpool: pgPool load balancing
+
+- name: PostgreSQL Primary Server Setup
+  hosts: postgresql_primary
+  become: true
+  gather_facts: true
+
+  vars:
+    deploy_install: true
+    deploy_config: true
+    deploy_security: true
+    deploy_replication: true
+    deploy_audit: true
+
+  tasks:
+    - name: Phase 1 - Install PostgreSQL
+      ansible.builtin.include_role:
+        name: postgresql_install
+      when: deploy_install | bool
+      tags: ['install', 'phase1']
+
+    - name: Phase 2 - Configure PostgreSQL
+      ansible.builtin.include_role:
+        name: postgresql_config
+      when: deploy_config | bool
+      tags: ['config', 'phase2']
+
+    - name: Phase 3 - Security Hardening
+      ansible.builtin.include_role:
+        name: postgresql_security
+      when: deploy_security | bool
+      tags: ['security', 'phase3']
+
+    - name: Phase 4 - Configure Replication (Primary)
+      ansible.builtin.include_role:
+        name: postgresql_replication
+      vars:
+        replication_role: primary
+      when: deploy_replication | bool
+      tags: ['replication', 'phase4']
+
+    - name: Phase 5 - Configure Audit Logging
+      ansible.builtin.include_role:
+        name: postgresql_audit
+      when: deploy_audit | bool
+      tags: ['audit', 'phase5']
+
+
+- name: PostgreSQL Replica Server Setup
+  hosts: postgresql_replicas
+  become: true
+  gather_facts: true
+  serial: 1
+
+  vars:
+    deploy_install: true
+    deploy_config: true
+    deploy_security: true
+    deploy_replication: true
+
+  tasks:
+    - name: Phase 1 - Install PostgreSQL
+      ansible.builtin.include_role:
+        name: postgresql_install
+      when: deploy_install | bool
+      tags: ['install', 'phase1']
+
+    - name: Phase 2 - Configure PostgreSQL
+      ansible.builtin.include_role:
+        name: postgresql_config
+      when: deploy_config | bool
+      tags: ['config', 'phase2']
+
+    - name: Phase 3 - Security Hardening
+      ansible.builtin.include_role:
+        name: postgresql_security
+      when: deploy_security | bool
+      tags: ['security', 'phase3']
+
+    - name: Phase 4 - Configure Replication (Replica)
+      ansible.builtin.include_role:
+        name: postgresql_replication
+      vars:
+        replication_role: replica
+      when: deploy_replication | bool
+      tags: ['replication', 'phase4']
+
+
+- name: Barman Backup Server Setup
+  hosts: postgresql_backup
+  become: true
+  gather_facts: true
+
+  vars:
+    deploy_barman: true
+
+  tasks:
+    - name: Phase 1 - Configure Barman Backup
+      ansible.builtin.include_role:
+        name: postgresql_barman
+      when: deploy_barman | bool
+      tags: ['backup', 'barman']
+
+
+- name: pgPool Load Balancer Setup
+  hosts: postgresql_pgpool
+  become: true
+  gather_facts: true
+
+  vars:
+    deploy_pgpool: true
+
+  tasks:
+    - name: Phase 1 - Configure pgPool
+      ansible.builtin.include_role:
+        name: postgresql_pgpool
+      when: deploy_pgpool | bool
+      tags: ['pgpool', 'loadbalancer']
+
+
+- name: Deployment Summary
+  hosts: localhost
+  gather_facts: false
+
+  tasks:
+    - name: Display deployment summary
+      ansible.builtin.debug:
+        msg:
+          - "=== PostgreSQL Deployment Complete ==="
+          - "Version: {{ postgresql_version | default('15') }}"
+          - "Primary: {{ groups['postgresql_primary'] | default([]) | join(', ') }}"
+          - "Replicas: {{ groups['postgresql_replicas'] | default([]) | join(', ') }}"
+          - "Backup Server: {{ groups['postgresql_backup'] | default([]) | join(', ') }}"
+          - "pgPool Nodes: {{ groups['postgresql_pgpool'] | default([]) | join(', ') }}"
+          - "SSL Enabled: {{ postgresql_ssl_enabled | default(true) }}"
+          - "Replication: Streaming"
+      tags: ['always']
