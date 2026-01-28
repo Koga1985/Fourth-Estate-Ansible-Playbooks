@@ -1,0 +1,295 @@
+---
+# ============================================================================
+# [PLATFORM_NAME] - Functional Deployment Tests
+# ============================================================================
+# Purpose: Verify successful deployment and configuration of [platform]
+# Idempotent: Yes - safe to run multiple times
+# Runtime: 2-5 minutes
+#
+# Usage:
+#   ansible-playbook [platform]/playbooks/tests/test_deployment.yml \
+#     -i inventory/production \
+#     -e "@group_vars/[your_org].yml"
+#
+# Test Categories:
+#   1. Prerequisites - OS, packages, network
+#   2. Installation - Files, directories, services
+#   3. Configuration - Config files, settings
+#   4. Security - Permissions, encryption, audit logs
+#   5. Connectivity - API, network ports
+#   6. Compliance - Fourth Estate controls
+# ============================================================================
+
+- name: Test [Platform Name] Deployment
+  hosts: platform_servers  # CHANGE_THIS: Update with your inventory group name
+  gather_facts: true
+
+  vars:
+    test_results: []
+    failed_tests: []
+
+  tasks:
+    # ========================================================================
+    # Test Category 1: Prerequisites
+    # ========================================================================
+    - name: Test Category - Prerequisites
+      block:
+        - name: Test - Operating system is supported
+          ansible.builtin.assert:
+            that:
+              - ansible_os_family in ['RedHat', 'Debian', 'Windows']  # CHANGE_THIS
+              - ansible_distribution_major_version | int >= 8  # CHANGE_THIS
+            fail_msg: "Unsupported OS: {{ ansible_distribution }} {{ ansible_distribution_version }}"
+            success_msg: "OS supported: {{ ansible_distribution }} {{ ansible_distribution_version }}"
+          register: test_os
+
+        - name: Test - Required packages are installed
+          ansible.builtin.package_facts:
+            manager: auto
+          register: package_facts
+
+        - name: Test - Verify critical packages
+          ansible.builtin.assert:
+            that:
+              - "'package-name' in ansible_facts.packages"  # CHANGE_THIS
+            fail_msg: "Required package not found: package-name"
+            success_msg: "All required packages installed"
+          register: test_packages
+
+        - name: Test - Network connectivity to platform endpoint
+          ansible.builtin.wait_for:
+            host: "{{ platform_hostname }}"
+            port: "{{ platform_port | default(443) }}"
+            timeout: 10
+          register: test_network
+
+      rescue:
+        - name: Record prerequisite test failure
+          ansible.builtin.set_fact:
+            failed_tests: "{{ failed_tests + ['Prerequisites'] }}"
+
+    # ========================================================================
+    # Test Category 2: Installation
+    # ========================================================================
+    - name: Test Category - Installation
+      block:
+        - name: Test - Platform installation directory exists
+          ansible.builtin.stat:
+            path: /opt/platform  # CHANGE_THIS
+          register: install_dir
+          failed_when: not install_dir.stat.exists
+
+        - name: Test - Platform binary is executable
+          ansible.builtin.stat:
+            path: /opt/platform/bin/platform  # CHANGE_THIS
+          register: platform_binary
+          failed_when: not platform_binary.stat.exists or not platform_binary.stat.executable
+
+        - name: Test - Platform service is installed
+          ansible.builtin.service_facts:
+          register: service_facts
+
+        - name: Test - Verify service exists
+          ansible.builtin.assert:
+            that:
+              - "'platform-service.service' in ansible_facts.services"  # CHANGE_THIS
+            fail_msg: "Platform service not installed"
+            success_msg: "Platform service installed"
+
+        - name: Test - Platform service is running
+          ansible.builtin.service:
+            name: platform-service  # CHANGE_THIS
+            state: started
+          check_mode: true
+          register: service_test
+          failed_when: service_test is changed
+
+      rescue:
+        - name: Record installation test failure
+          ansible.builtin.set_fact:
+            failed_tests: "{{ failed_tests + ['Installation'] }}"
+
+    # ========================================================================
+    # Test Category 3: Configuration
+    # ========================================================================
+    - name: Test Category - Configuration
+      block:
+        - name: Test - Configuration file exists
+          ansible.builtin.stat:
+            path: /etc/platform/config.yml  # CHANGE_THIS
+          register: config_file
+          failed_when: not config_file.stat.exists
+
+        - name: Test - Configuration file has correct permissions
+          ansible.builtin.assert:
+            that:
+              - config_file.stat.mode == '0600'  # CHANGE_THIS
+            fail_msg: "Config file permissions incorrect: {{ config_file.stat.mode }}"
+            success_msg: "Config file permissions correct: 0600"
+
+        - name: Test - Configuration contains required settings
+          ansible.builtin.command:
+            cmd: grep -q "required_setting" /etc/platform/config.yml  # CHANGE_THIS
+          register: config_content
+          changed_when: false
+          failed_when: config_content.rc != 0
+
+        - name: Test - Log directory exists with correct permissions
+          ansible.builtin.stat:
+            path: /var/log/platform  # CHANGE_THIS
+          register: log_dir
+          failed_when: not log_dir.stat.exists or log_dir.stat.mode != '0750'
+
+      rescue:
+        - name: Record configuration test failure
+          ansible.builtin.set_fact:
+            failed_tests: "{{ failed_tests + ['Configuration'] }}"
+
+    # ========================================================================
+    # Test Category 4: Security
+    # ========================================================================
+    - name: Test Category - Security
+      block:
+        - name: Test - Sensitive files have restricted permissions
+          ansible.builtin.stat:
+            path: "{{ item }}"
+          register: sensitive_files
+          failed_when: >
+            not sensitive_files.stat.exists or
+            (sensitive_files.stat.mode | int(8)) > 384  # More permissive than 0600
+          loop:
+            - /etc/platform/secrets.yml  # CHANGE_THIS
+            - /etc/platform/credentials.conf  # CHANGE_THIS
+
+        - name: Test - Audit logging is enabled
+          ansible.builtin.command:
+            cmd: grep -q "audit_enabled: true" /etc/platform/config.yml  # CHANGE_THIS
+          register: audit_enabled
+          changed_when: false
+          failed_when: audit_enabled.rc != 0
+
+        - name: Test - Encryption is configured
+          ansible.builtin.command:
+            cmd: grep -q "encryption_enabled: true" /etc/platform/config.yml  # CHANGE_THIS
+          register: encryption_enabled
+          changed_when: false
+          failed_when: encryption_enabled.rc != 0
+
+        - name: Test - TLS minimum version is 1.2 or higher
+          ansible.builtin.command:
+            cmd: grep -E "tls_min_version.*(1\.[2-3]|TLSv1\.[2-3])" /etc/platform/config.yml  # CHANGE_THIS
+          register: tls_version
+          changed_when: false
+          failed_when: tls_version.rc != 0
+
+      rescue:
+        - name: Record security test failure
+          ansible.builtin.set_fact:
+            failed_tests: "{{ failed_tests + ['Security'] }}"
+
+    # ========================================================================
+    # Test Category 5: Connectivity
+    # ========================================================================
+    - name: Test Category - Connectivity
+      block:
+        - name: Test - Platform API is accessible
+          ansible.builtin.uri:
+            url: "https://{{ platform_hostname }}/api/health"  # CHANGE_THIS
+            validate_certs: true
+            status_code: 200
+            timeout: 10
+          register: api_health
+          retries: 3
+          delay: 5
+          until: api_health.status == 200
+
+        - name: Test - Platform API returns expected response
+          ansible.builtin.assert:
+            that:
+              - api_health.json is defined  # CHANGE_THIS
+              - api_health.json.status == "healthy"  # CHANGE_THIS
+            fail_msg: "API health check failed: {{ api_health.json }}"
+            success_msg: "API health check passed"
+
+        - name: Test - Required network ports are listening
+          ansible.builtin.wait_for:
+            port: "{{ item }}"
+            state: started
+            timeout: 5
+          loop:
+            - 443  # CHANGE_THIS
+            - 8080  # CHANGE_THIS
+
+      rescue:
+        - name: Record connectivity test failure
+          ansible.builtin.set_fact:
+            failed_tests: "{{ failed_tests + ['Connectivity'] }}"
+
+    # ========================================================================
+    # Test Category 6: Fourth Estate Compliance
+    # ========================================================================
+    - name: Test Category - Fourth Estate Compliance
+      block:
+        - name: Test - Fourth Estate mode is enabled
+          ansible.builtin.command:
+            cmd: grep -q "fourth_estate_enabled: true" /etc/platform/config.yml  # CHANGE_THIS
+          register: fourth_estate
+          changed_when: false
+          failed_when: fourth_estate.rc != 0
+          when: fourth_estate_enabled | default(true)
+
+        - name: Test - Journalist source protection is enabled
+          ansible.builtin.command:
+            cmd: grep -q "journalist_source_protection: true" /etc/platform/config.yml  # CHANGE_THIS
+          register: source_protection
+          changed_when: false
+          when: fourth_estate_enabled | default(true)
+
+        - name: Test - Data classification handling is configured
+          ansible.builtin.stat:
+            path: /etc/platform/classification_rules.yml  # CHANGE_THIS
+          register: classification_rules
+          when: fourth_estate_enabled | default(true)
+
+        - name: Test - Audit log retention meets compliance (730 days minimum)
+          ansible.builtin.shell:
+            cmd: grep "audit_log_retention_days" /etc/platform/config.yml | grep -oE '[0-9]+' # CHANGE_THIS
+          register: retention_days
+          changed_when: false
+          failed_when: retention_days.stdout | int < 730
+          when: fourth_estate_enabled | default(true)
+
+      rescue:
+        - name: Record compliance test failure
+          ansible.builtin.set_fact:
+            failed_tests: "{{ failed_tests + ['Compliance'] }}"
+
+    # ========================================================================
+    # Test Summary
+    # ========================================================================
+    - name: Generate test summary
+      ansible.builtin.set_fact:
+        test_summary:
+          total_categories: 6
+          failed_categories: "{{ failed_tests | length }}"
+          passed_categories: "{{ 6 - (failed_tests | length) }}"
+          failed_list: "{{ failed_tests }}"
+
+    - name: Display test results
+      ansible.builtin.debug:
+        msg:
+          - "=========================================="
+          - "[Platform Name] Deployment Test Results"
+          - "=========================================="
+          - "Total Test Categories: {{ test_summary.total_categories }}"
+          - "Passed: {{ test_summary.passed_categories }}"
+          - "Failed: {{ test_summary.failed_categories }}"
+          - "{% if test_summary.failed_categories > 0 %}Failed Categories: {{ test_summary.failed_list | join(', ') }}{% endif %}"
+          - "=========================================="
+          - "{% if test_summary.failed_categories == 0 %}✓ ALL TESTS PASSED{% else %}✗ TESTS FAILED - Review output above{% endif %}"
+          - "=========================================="
+
+    - name: Fail if any test category failed
+      ansible.builtin.fail:
+        msg: "{{ test_summary.failed_categories }} test category(ies) failed. See above for details."
+      when: test_summary.failed_categories > 0
