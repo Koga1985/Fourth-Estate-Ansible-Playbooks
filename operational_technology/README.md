@@ -42,7 +42,35 @@ Comprehensive OT/ICS security automation covering network segmentation, firewall
 - **ot_isa62443_compliance** - ISA/IEC 62443 controls
 - **ot_nist80082_compliance** - NIST 800-82 Rev 2
 
-## 🚀 Quick Start
+## 🚀 Quick Start (Drop-In Deployment)
+
+```bash
+# 1. Install dependencies
+ansible-galaxy collection install -r requirements.yml
+
+# 2. Configure your inventory
+cp inventory.example inventory
+# Edit inventory with your OT/ICS network details
+
+# 3. Deploy
+ansible-playbook -i inventory site.yml --ask-vault-pass
+```
+
+### Deployment Options
+
+```bash
+# Configure zone model
+ansible-playbook -i inventory site.yml --tags zones
+
+# Configure asset inventory
+ansible-playbook -i inventory site.yml --tags inventory
+
+# Configure security monitoring
+ansible-playbook -i inventory site.yml --tags security
+
+# Configure compliance
+ansible-playbook -i inventory site.yml --tags compliance
+```
 
 ### Prerequisites
 

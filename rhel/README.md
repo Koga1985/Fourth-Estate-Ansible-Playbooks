@@ -52,7 +52,37 @@ rhel/
     └── patch-management.yml    # Patch management
 ```
 
-## Quick Start
+## 🚀 Quick Start (Drop-In Deployment)
+
+```bash
+# 1. Install dependencies
+ansible-galaxy collection install -r requirements.yml
+
+# 2. Configure your inventory
+cp inventory.example inventory
+# Edit inventory with your RHEL servers
+
+# 3. Deploy
+ansible-playbook -i inventory site.yml --ask-vault-pass
+```
+
+### Deployment Options
+
+```bash
+# Apply system hardening
+ansible-playbook -i inventory site.yml --tags hardening
+
+# Configure firewall and SELinux
+ansible-playbook -i inventory site.yml --tags firewall
+
+# Configure patch management
+ansible-playbook -i inventory site.yml --tags patching
+
+# Configure audit logging
+ansible-playbook -i inventory site.yml --tags audit
+```
+
+## Manual Quick Start
 
 ### Prerequisites
 

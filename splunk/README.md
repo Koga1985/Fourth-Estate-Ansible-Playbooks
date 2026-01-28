@@ -1,5 +1,35 @@
 # Splunk Enterprise - Production-Ready Ansible Roles and Tasks
 
+## 🚀 Quick Start (Drop-In Deployment)
+
+```bash
+# 1. Install dependencies
+ansible-galaxy collection install -r requirements.yml
+
+# 2. Configure your inventory
+cp inventory.example inventory
+# Edit inventory with your Splunk servers
+
+# 3. Deploy
+ansible-playbook -i inventory site.yml --ask-vault-pass
+```
+
+### Deployment Options
+
+```bash
+# Install Splunk Enterprise
+ansible-playbook -i inventory site.yml --tags install
+
+# Apply security hardening
+ansible-playbook -i inventory site.yml --tags security
+
+# Deploy forwarders
+ansible-playbook -i inventory site.yml --tags forwarder
+
+# Configure monitoring
+ansible-playbook -i inventory site.yml --tags monitoring
+```
+
 ## Overview
 
 This directory contains production-ready, DoD STIG and NIST 800-53 compliant Ansible roles and tasks for deploying and managing Splunk Enterprise in Fourth Estate environments.

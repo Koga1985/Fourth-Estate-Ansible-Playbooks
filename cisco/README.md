@@ -2,6 +2,33 @@
 
 Comprehensive Ansible roles and playbooks for Cisco infrastructure automation, including Identity Services Engine (ISE) and Unified Computing System (UCS).
 
+## 🚀 Quick Start (Drop-In Deployment)
+
+```bash
+# 1. Install dependencies
+ansible-galaxy collection install -r requirements.yml
+
+# 2. Configure your inventory
+cp inventory.example inventory
+# Edit inventory with your Cisco devices
+
+# 3. Deploy
+ansible-playbook -i inventory site.yml --ask-vault-pass
+```
+
+### Deployment Options
+
+```bash
+# Deploy ISE policy configuration
+ansible-playbook -i inventory site.yml --tags ise,policy
+
+# Deploy UCS infrastructure
+ansible-playbook -i inventory site.yml --tags ucs,infrastructure
+
+# Apply UCS security hardening
+ansible-playbook -i inventory site.yml --tags ucs,security
+```
+
 ## Directory Structure
 
 ```

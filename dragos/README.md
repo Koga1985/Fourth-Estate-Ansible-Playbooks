@@ -28,7 +28,35 @@ Dragos Platform provides industrial cybersecurity threat detection and response.
 - **dragos_alert_integration** - SIEM/SOAR integration
 - **dragos_incident_playbooks** - Automated response workflows
 
-## 🚀 Quick Start
+## 🚀 Quick Start (Drop-In Deployment)
+
+```bash
+# 1. Install dependencies
+ansible-galaxy collection install -r requirements.yml
+
+# 2. Configure your inventory
+cp inventory.example inventory
+# Edit inventory with your Dragos platform details
+
+# 3. Deploy
+ansible-playbook -i inventory site.yml --ask-vault-pass
+```
+
+### Deployment Options
+
+```bash
+# Deploy sensors
+ansible-playbook -i inventory site.yml --tags sensors
+
+# Configure alerts
+ansible-playbook -i inventory site.yml --tags alerts
+
+# Configure integrations
+ansible-playbook -i inventory site.yml --tags integrations
+
+# Configure governance
+ansible-playbook -i inventory site.yml --tags governance
+```
 
 ### Prerequisites
 

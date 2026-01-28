@@ -1,7 +1,39 @@
-
 # ScienceLogic (SL1) Ansible Playbooks
 
 This folder contains Ansible playbooks and roles to automate ScienceLogic SL1 tasks: discovery, device import, device configuration, monitoring/rule management, and exports.
+
+## 🚀 Quick Start (Drop-In Deployment)
+
+```bash
+# 1. Install dependencies
+ansible-galaxy collection install -r requirements.yml
+
+# 2. Configure your inventory
+cp inventory.example inventory
+# Edit inventory with your SL1 platform details
+
+# 3. Deploy
+ansible-playbook -i inventory site.yml --ask-vault-pass
+```
+
+### Deployment Options
+
+```bash
+# Configure platform
+ansible-playbook -i inventory site.yml --tags config
+
+# Configure discovery
+ansible-playbook -i inventory site.yml --tags discovery
+
+# Configure monitoring
+ansible-playbook -i inventory site.yml --tags monitoring
+
+# Configure ITSM integration
+ansible-playbook -i inventory site.yml --tags itsm
+
+# Configure governance
+ansible-playbook -i inventory site.yml --tags governance
+```
 
 The README below is intended to be a complete reference so you can run and extend playbooks safely.
 
