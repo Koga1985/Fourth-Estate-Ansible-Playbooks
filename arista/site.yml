@@ -1,0 +1,78 @@
+---
+# Arista Networks Deployment Playbook
+# Entry point for Arista EOS and CVP automation
+#
+# Usage:
+#   ansible-galaxy collection install -r requirements.yml
+#   ansible-playbook -i inventory site.yml --ask-vault-pass
+
+- name: Arista Network Configuration
+  hosts: arista_switches
+  gather_facts: false
+
+  vars:
+    deploy_baseline: true
+    deploy_interfaces: true
+    deploy_routing: true
+    deploy_security: true
+    deploy_backup: true
+
+  tasks:
+    - name: Phase 1 - Platform Baseline
+      ansible.builtin.include_role:
+        name: arista_platform_baseline
+      when: deploy_baseline | bool
+      tags: ['baseline', 'phase1']
+
+    - name: Phase 2 - Interfaces & Fabric
+      ansible.builtin.include_role:
+        name: arista_interfaces_fabric
+      when: deploy_interfaces | bool
+      tags: ['interfaces', 'phase2']
+
+    - name: Phase 3 - Routing Baseline
+      ansible.builtin.include_role:
+        name: arista_routing_baseline
+      when: deploy_routing | bool
+      tags: ['routing', 'phase3']
+
+    - name: Phase 4 - ACL/QoS Security
+      ansible.builtin.include_role:
+        name: arista_acl_qos_security
+      when: deploy_security | bool
+      tags: ['security', 'phase4']
+
+    - name: Phase 5 - Backup & Restore
+      ansible.builtin.include_role:
+        name: arista_backup_restore
+      when: deploy_backup | bool
+      tags: ['backup', 'phase5']
+
+
+- name: CloudVision Portal Configuration
+  hosts: cvp
+  gather_facts: false
+
+  vars:
+    deploy_cvp: true
+
+  tasks:
+    - name: CVP Inventory Model
+      ansible.builtin.include_role:
+        name: arista_cvp_inventory_model
+      when: deploy_cvp | bool
+      tags: ['cvp']
+
+
+- name: Deployment Summary
+  hosts: localhost
+  gather_facts: false
+
+  tasks:
+    - name: Display summary
+      ansible.builtin.debug:
+        msg:
+          - "=== Arista Deployment Complete ==="
+          - "Fabric: {{ arista_fabric_name | default('DC1-Fabric') }}"
+          - "Switches: {{ groups['arista_switches'] | default([]) | length }}"
+      tags: ['always']

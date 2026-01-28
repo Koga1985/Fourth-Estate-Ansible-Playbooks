@@ -1,0 +1,135 @@
+---
+# Palo Alto Networks Deployment Playbook
+# Entry point for PAN-OS and Panorama automation
+#
+# Usage:
+#   ansible-galaxy collection install -r requirements.yml
+#   ansible-playbook -i inventory site.yml --ask-vault-pass
+
+- name: Palo Alto Networks Configuration
+  hosts: localhost
+  connection: local
+  gather_facts: true
+
+  vars:
+    deploy_baseline: true
+    deploy_objects: true
+    deploy_network: true
+    deploy_security: true
+    deploy_ssl_decryption: true
+    deploy_vpn_ipsec: true
+    deploy_vpn_remote: false
+    deploy_userid: true
+    deploy_logging: true
+    deploy_panorama: true
+
+  tasks:
+    # =========================================
+    # Phase 1: Platform Baseline
+    # =========================================
+    - name: Phase 1 - Platform Baseline
+      ansible.builtin.include_role:
+        name: pa_platform_baseline
+      when: deploy_baseline | bool
+      tags: ['baseline', 'phase1']
+
+    # =========================================
+    # Phase 2: Objects
+    # =========================================
+    - name: Phase 2 - Objects Catalog
+      ansible.builtin.include_role:
+        name: pa_objects_catalog
+      when: deploy_objects | bool
+      tags: ['objects', 'phase2']
+
+    - name: Phase 2 - PAN-OS Objects
+      ansible.builtin.include_role:
+        name: panos_objects
+      when: deploy_objects | bool
+      tags: ['objects', 'phase2']
+
+    # =========================================
+    # Phase 3: Network
+    # =========================================
+    - name: Phase 3 - Network Fabric
+      ansible.builtin.include_role:
+        name: pa_network_fabric
+      when: deploy_network | bool
+      tags: ['network', 'phase3']
+
+    - name: Phase 3 - PAN-OS Network Config
+      ansible.builtin.include_role:
+        name: panos_network_config
+      when: deploy_network | bool
+      tags: ['network', 'phase3']
+
+    # =========================================
+    # Phase 4: Security & Protection
+    # =========================================
+    - name: Phase 4 - Protection & QoS
+      ansible.builtin.include_role:
+        name: pa_protection_qos
+      when: deploy_security | bool
+      tags: ['security', 'phase4']
+
+    - name: Phase 4 - SSL Decryption
+      ansible.builtin.include_role:
+        name: pa_ssl_decryption
+      when: deploy_ssl_decryption | bool
+      tags: ['security', 'ssl', 'phase4']
+
+    # =========================================
+    # Phase 5: VPN
+    # =========================================
+    - name: Phase 5 - IPSec VPN
+      ansible.builtin.include_role:
+        name: pa_vpn_ipsec
+      when: deploy_vpn_ipsec | bool
+      tags: ['vpn', 'ipsec', 'phase5']
+
+    - name: Phase 5 - Remote Access VPN
+      ansible.builtin.include_role:
+        name: pa_vpn_remoteaccess
+      when: deploy_vpn_remote | bool
+      tags: ['vpn', 'remote', 'phase5']
+
+    # =========================================
+    # Phase 6: User-ID
+    # =========================================
+    - name: Phase 6 - User-ID Identity
+      ansible.builtin.include_role:
+        name: pa_userid_identity
+      when: deploy_userid | bool
+      tags: ['userid', 'phase6']
+
+    # =========================================
+    # Phase 7: Logging & Telemetry
+    # =========================================
+    - name: Phase 7 - Logging Telemetry
+      ansible.builtin.include_role:
+        name: pa_logging_telemetry
+      when: deploy_logging | bool
+      tags: ['logging', 'phase7']
+
+    # =========================================
+    # Phase 8: Panorama Fleet Management
+    # =========================================
+    - name: Phase 8 - Panorama Fleet Package
+      ansible.builtin.include_role:
+        name: panorama_fleet_package
+      when: deploy_panorama | bool
+      tags: ['panorama', 'phase8']
+
+    - name: Phase 8 - PAN-OS System Config
+      ansible.builtin.include_role:
+        name: panos_system_config
+      tags: ['system', 'phase8']
+
+    - name: Display summary
+      ansible.builtin.debug:
+        msg:
+          - "=== Palo Alto Networks Deployment Complete ==="
+          - "SSL Decryption: {{ 'Enabled' if deploy_ssl_decryption else 'Disabled' }}"
+          - "User-ID: {{ 'Enabled' if deploy_userid else 'Disabled' }}"
+          - "VPN IPSec: {{ 'Configured' if deploy_vpn_ipsec else 'Skipped' }}"
+      tags: ['always']

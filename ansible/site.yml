@@ -1,0 +1,178 @@
+---
+# Ansible Automation Platform Configuration Playbook
+# Entry point for AAP/Controller/Hub automation
+#
+# Usage:
+#   ansible-galaxy collection install -r requirements.yml
+#   ansible-playbook -i inventory site.yml --ask-vault-pass
+#
+# Tags:
+#   - controller: Controller configuration
+#   - hub: Private Automation Hub
+#   - ee: Execution Environments
+#   - rbac: Access control
+#   - workflows: Workflow templates
+
+- name: Ansible Automation Platform Configuration
+  hosts: localhost
+  connection: local
+  gather_facts: true
+
+  vars:
+    deploy_core: true
+    deploy_inventory: true
+    deploy_credentials: true
+    deploy_projects: true
+    deploy_templates: true
+    deploy_workflows: true
+    deploy_schedules: true
+    deploy_rbac: true
+    deploy_ee: true
+    deploy_hub: true
+    deploy_sso: true
+    deploy_backup: true
+
+  tasks:
+    # =========================================
+    # Phase 1: Core Configuration
+    # =========================================
+    - name: Phase 1 - Runtime Baseline
+      ansible.builtin.include_role:
+        name: ans_core_runtime_baseline
+      when: deploy_core | bool
+      tags: ['controller', 'core', 'phase1']
+
+    - name: Phase 1 - Secrets & Identity
+      ansible.builtin.include_role:
+        name: ans_core_secrets_identity
+      when: deploy_core | bool
+      tags: ['controller', 'core', 'phase1']
+
+    # =========================================
+    # Phase 2: Inventory Management
+    # =========================================
+    - name: Phase 2 - Inventory Model
+      ansible.builtin.include_role:
+        name: ans_ctrl_inventory_model
+      when: deploy_inventory | bool
+      tags: ['controller', 'inventory', 'phase2']
+
+    - name: Phase 2 - Inventory Hygiene
+      ansible.builtin.include_role:
+        name: ans_core_inventory_hygiene
+      when: deploy_inventory | bool
+      tags: ['controller', 'inventory', 'phase2']
+
+    # =========================================
+    # Phase 3: Content Management
+    # =========================================
+    - name: Phase 3 - PAH Bootstrap
+      ansible.builtin.include_role:
+        name: ans_content_pah_bootstrap
+      when: deploy_hub | bool
+      tags: ['hub', 'content', 'phase3']
+
+    - name: Phase 3 - Content Trust & Lock
+      ansible.builtin.include_role:
+        name: ans_content_trust_and_lock
+      when: deploy_hub | bool
+      tags: ['hub', 'content', 'phase3']
+
+    - name: Phase 3 - Content QA CI
+      ansible.builtin.include_role:
+        name: ans_content_qa_ci
+      when: deploy_hub | bool
+      tags: ['hub', 'content', 'phase3']
+
+    # =========================================
+    # Phase 4: Execution Environments
+    # =========================================
+    - name: Phase 4 - EE Factory
+      ansible.builtin.include_role:
+        name: ans_ee_factory
+      when: deploy_ee | bool
+      tags: ['ee', 'phase4']
+
+    # =========================================
+    # Phase 5: Controller Configuration
+    # =========================================
+    - name: Phase 5 - Job Lifecycle
+      ansible.builtin.include_role:
+        name: ans_ctrl_job_lifecycle
+      when: deploy_templates | bool
+      tags: ['controller', 'jobs', 'phase5']
+
+    - name: Phase 5 - Workflow Pipelines
+      ansible.builtin.include_role:
+        name: ans_ctrl_workflow_pipelines
+      when: deploy_workflows | bool
+      tags: ['controller', 'workflows', 'phase5']
+
+    - name: Phase 5 - Policy Guardrails
+      ansible.builtin.include_role:
+        name: ans_ctrl_policy_guardrails
+      when: deploy_templates | bool
+      tags: ['controller', 'policy', 'phase5']
+
+    # =========================================
+    # Phase 6: SSO & Access
+    # =========================================
+    - name: Phase 6 - SSO Directory Integration
+      ansible.builtin.include_role:
+        name: ans_access_sso_directory
+      when: deploy_sso | bool
+      tags: ['controller', 'sso', 'phase6']
+
+    # =========================================
+    # Phase 7: CI/CD Pipelines
+    # =========================================
+    - name: Phase 7 - CI Pipelines
+      ansible.builtin.include_role:
+        name: ans_ci_pipelines
+      tags: ['ci', 'phase7']
+
+    # =========================================
+    # Phase 8: Operations
+    # =========================================
+    - name: Phase 8 - Backup & Audit
+      ansible.builtin.include_role:
+        name: ans_ctrl_backup_and_audit
+      when: deploy_backup | bool
+      tags: ['controller', 'backup', 'phase8']
+
+    - name: Phase 8 - Artifacts Retention
+      ansible.builtin.include_role:
+        name: ans_ops_artifacts_retention
+      tags: ['operations', 'phase8']
+
+    - name: Phase 8 - Upgrade Window
+      ansible.builtin.include_role:
+        name: ans_ops_upgrade_window
+      tags: ['operations', 'phase8']
+
+    # =========================================
+    # Phase 9: Performance
+    # =========================================
+    - name: Phase 9 - Performance Scaling
+      ansible.builtin.include_role:
+        name: ans_perf_scaling
+      tags: ['performance', 'phase9']
+
+    # =========================================
+    # Deployment Summary
+    # =========================================
+    - name: Display deployment summary
+      ansible.builtin.debug:
+        msg:
+          - "=== AAP Configuration Complete ==="
+          - "Controller: {{ controller_hostname }}"
+          - "Hub: {{ ah_hostname | default('Not configured') }}"
+          - "Organization: {{ aap_organization }}"
+          - "Core: {{ 'Configured' if deploy_core else 'Skipped' }}"
+          - "Inventory: {{ 'Configured' if deploy_inventory else 'Skipped' }}"
+          - "Content/Hub: {{ 'Configured' if deploy_hub else 'Skipped' }}"
+          - "Execution Environments: {{ 'Configured' if deploy_ee else 'Skipped' }}"
+          - "Workflows: {{ 'Configured' if deploy_workflows else 'Skipped' }}"
+          - "SSO: {{ 'Configured' if deploy_sso else 'Skipped' }}"
+          - "Backup: {{ 'Configured' if deploy_backup else 'Skipped' }}"
+      tags: ['always']

@@ -1,0 +1,51 @@
+---
+# Illumio Deployment Playbook
+# Entry point for Illumio zero trust automation
+#
+# Usage:
+#   ansible-galaxy collection install -r requirements.yml
+#   ansible-playbook -i inventory site.yml --ask-vault-pass
+
+- name: Illumio Configuration
+  hosts: localhost
+  connection: local
+  gather_facts: true
+
+  vars:
+    deploy_pce: false
+    deploy_ven: true
+    deploy_policy: true
+    deploy_reporting: true
+
+  tasks:
+    - name: Phase 1 - PCE Installation
+      ansible.builtin.include_role:
+        name: illumio_pce_install
+      when: deploy_pce | bool
+      tags: ['pce', 'install', 'phase1']
+
+    - name: Phase 2 - VEN Fleet Deployment
+      ansible.builtin.include_role:
+        name: illumio_ven_fleet
+      when: deploy_ven | bool
+      tags: ['ven', 'phase2']
+
+    - name: Phase 3 - Policy Lifecycle
+      ansible.builtin.include_role:
+        name: illumio_policy_lifecycle
+      when: deploy_policy | bool
+      tags: ['policy', 'phase3']
+
+    - name: Phase 4 - Reporting Pack
+      ansible.builtin.include_role:
+        name: illumio_reporting_pack
+      when: deploy_reporting | bool
+      tags: ['reporting', 'phase4']
+
+    - name: Display summary
+      ansible.builtin.debug:
+        msg:
+          - "=== Illumio Deployment Complete ==="
+          - "PCE: {{ illumio_pce_url }}"
+          - "Enforcement Mode: {{ illumio_enforcement_mode | default('visibility_only') }}"
+      tags: ['always']
