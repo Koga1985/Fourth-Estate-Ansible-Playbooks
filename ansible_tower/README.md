@@ -565,6 +565,6 @@ When contributing to Tower/AAP automation:
 
 ---
 
-**Last Updated:** 2026-01-16
+**Last Updated:** 2026-02-06
 **Maintained By:** Fourth Estate Infrastructure Team
 **Versions Supported:** Ansible Tower 3.8+, Red Hat AAP 2.0+, AWX 21.0+

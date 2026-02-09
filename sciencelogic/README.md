@@ -1,6 +1,6 @@
-# ScienceLogic (SL1) Ansible Playbooks
+# ScienceLogic SL1 Ansible Automation
 
-This folder contains Ansible playbooks and roles to automate ScienceLogic SL1 tasks: discovery, device import, device configuration, monitoring/rule management, and exports.
+This directory contains **31 Ansible roles** for automating **ScienceLogic SL1** platform monitoring, discovery, device management, governance, and ITSM integration.
 
 ## 🚀 Quick Start (Drop-In Deployment)
 
@@ -34,24 +34,6 @@ ansible-playbook -i inventory site.yml --tags itsm
 # Configure governance
 ansible-playbook -i inventory site.yml --tags governance
 ```
-
-The README below is intended to be a complete reference so you can run and extend playbooks safely.
-
-## Table of contents
-
-- Overview
-- Prerequisites
-- Inventory & variables
-- Example playbooks
-
-- Discovery playbook (SL1 REST)
-
-- Create device example (SL1 REST)
-- Testing & validation
-- Security
-- Troubleshooting
-- Contributing and style
-- References
 
 ## Overview
 
@@ -197,5 +179,10 @@ Adapt the body and endpoints to match your SL1 API version and payload schema.
 
 ## References
 
-- ScienceLogic API docs: <https://docs.sciencelogic.com/> (replace with your local/docs URL)
+- ScienceLogic API docs: <https://docs.sciencelogic.com/>
 - Ansible `uri` module docs: <https://docs.ansible.com/ansible/latest/collections/ansible/builtin/uri_module.html>
+
+---
+
+**Last Updated:** 2026-02-06
+**Maintained By:** Fourth Estate Infrastructure Team

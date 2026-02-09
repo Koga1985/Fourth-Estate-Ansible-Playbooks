@@ -1,4 +1,4 @@
-# Ansible-Playbooks-2.0
+# Fourth Estate Ansible Playbooks
 
 An enterprise-grade collection of **516+ roles** and **2,500+ YAML files** for infrastructure automation across **39+ technology platforms** with emphasis on **DoD STIG, NIST 800-53, NIST 800-171, FedRAMP, and FISMA compliance**.
 
@@ -37,7 +37,7 @@ This repository provides production-ready Ansible automation for network infrast
 
 This repository provides enterprise-grade Ansible automation for organizations requiring:
 
-- **Multi-platform infrastructure automation** across 25+ technologies
+- **Multi-platform infrastructure automation** across 39+ technologies
 - **Security compliance** with DoD STIG and NIST 800-53/800-171 standards
 - **Fourth Estate operations** with specialized roles for free press/media infrastructure
 - **Production-ready automation** including Day-0/Day-1 deployment, monitoring, backup, and disaster recovery
@@ -99,6 +99,10 @@ Each top-level directory focuses on a specific technology platform and contains 
 - **ServiceNow** - CMDB integration, incident/change management, asset tracking (8 roles)
 - **Fortinet FortiGate** - Firewall, VPN, IPS/AV, high availability (12 roles)
 
+### 🛡️ Endpoint Security (2 platforms)
+- **CrowdStrike** - EDR agent deployment, management, and monitoring
+- **SentinelOne** - EDR agent deployment, management, and monitoring
+
 ### 🤖 Infrastructure Automation (2 platforms)
 - **Ansible Automation Platform** - Controller, AAP components, CI/CD, inventory, secrets (17 roles)
 - **Ansible Tower/AAP** - Installation, organizations, workflows, RBAC (8 roles)
@@ -114,7 +118,7 @@ Each top-level directory focuses on a specific technology platform and contains 
 The repository is organized by technology platform with consistent structure:
 
 ```text
-Ansible-Playbooks-2.0/
+Fourth-Estate-Ansible-Playbooks/
 ├── README.md                      # This file - main repository guide
 │
 ├── ansible/                       # Ansible Automation Platform (17 roles)
@@ -122,18 +126,22 @@ Ansible-Playbooks-2.0/
 │   ├── roles/
 │   └── tasks/
 │
+├── ansible_tower/                 # Ansible Tower / AAP (8 roles)
+│   ├── README.md
+│   └── roles/
+│
 ├── arista/                        # Arista EOS networking (6 roles)
 │   ├── README.md
 │   ├── roles/
 │   └── tasks/
 │
-├── aws/                           # Amazon Web Services (40+ roles) ⭐ NEW
+├── aws/                           # Amazon Web Services (40+ roles)
 │   ├── README.md
 │   ├── roles/
 │   ├── playbooks/
 │   └── tasks/
 │
-├── checkpoint/                    # Check Point firewalls (6 roles)
+├── azure/                         # Microsoft Azure (30+ roles)
 │   ├── README.md
 │   ├── roles/
 │   └── tasks/
@@ -144,7 +152,7 @@ Ansible-Playbooks-2.0/
 │   ├── roles/
 │   └── tasks/
 │
-├── cisco/                         # Cisco ISE & UCS (33 roles)
+├── cisco/                         # Cisco ISE & UCS (35+ roles)
 │   ├── README.md
 │   ├── roles/
 │   └── tasks/
@@ -153,10 +161,33 @@ Ansible-Playbooks-2.0/
 │   ├── README.md
 │   └── roles/
 │
-├── cohesity/                      # Cohesity backup
-│   └── tasks/
+├── cohesity/                      # Cohesity backup (6 roles)
+│   ├── README.md
+│   └── roles/
+│
+├── crowdstrike/                   # CrowdStrike EDR
+│   ├── README.md
+│   └── roles/
+│
+├── databases/                     # Database platforms
+│   ├── README.md
+│   ├── postgresql/                # PostgreSQL (8 roles)
+│   ├── mysql/                     # MySQL/MariaDB (8 roles)
+│   └── oracle/                    # Oracle Database (8 roles)
 │
 ├── dragos/                        # Dragos OT monitoring (12 roles)
+│   ├── README.md
+│   └── roles/
+│
+├── elk_stack/                     # ELK Stack (10 roles)
+│   ├── README.md
+│   └── roles/
+│
+├── f5_bigip/                      # F5 BIG-IP (12 roles)
+│   ├── README.md
+│   └── roles/
+│
+├── fortinet/                      # Fortinet FortiGate (12 roles)
 │   ├── README.md
 │   └── roles/
 │
@@ -165,13 +196,17 @@ Ansible-Playbooks-2.0/
 │   ├── roles/
 │   └── tasks/
 │
+├── hashicorp_vault/               # HashiCorp Vault (10 roles)
+│   ├── README.md
+│   └── roles/
+│
 ├── illumio/                       # Illumio micro-segmentation (3 roles)
 │   ├── README.md
 │   ├── roles/
 │   ├── playbooks/
 │   └── tasks/
 │
-├── infoblocks/                    # Infoblox DNS/DHCP (10 roles)
+├── infoblox/                      # Infoblox DNS/DHCP (10 roles)
 │   ├── README.md
 │   ├── day0_deploy_config/        # Day-0 deployment framework
 │   ├── roles/
@@ -183,6 +218,10 @@ Ansible-Playbooks-2.0/
 │   ├── playbook-cluster-hardening.yml
 │   ├── playbook-deploy-app.yml
 │   └── playbook-full-setup.yml
+│
+├── netapp/                        # NetApp ONTAP (12 roles)
+│   ├── README.md
+│   └── roles/
 │
 ├── openshift/                     # Red Hat OpenShift (45 roles)
 │   ├── README.md
@@ -205,16 +244,16 @@ Ansible-Playbooks-2.0/
 │   ├── IMPLEMENTATION_SUMMARY.md
 │   ├── site.yml                   # Master playbook
 │   ├── policies/                  # NIST control implementations
-│   │   ├── access_control/
-│   │   ├── identification_auth/
-│   │   ├── audit_accountability/
-│   │   └── system_communications/
 │   ├── library/                   # Reusable policy modules
 │   ├── tests/                     # Policy validation tests
 │   ├── artifacts/                 # Compliance reports
 │   └── inventory/                 # Example inventories
 │
-├── pure/                          # Pure Storage (7 roles)
+├── prometheus_grafana/            # Prometheus & Grafana (8 roles)
+│   ├── README.md
+│   └── roles/
+│
+├── pure_storage/                  # Pure Storage (7 roles)
 │   ├── README.md
 │   └── roles/
 │
@@ -228,27 +267,39 @@ Ansible-Playbooks-2.0/
 │   ├── roles/
 │   └── tasks/
 │
+├── sentinelone/                   # SentinelOne EDR
+│   ├── README.md
+│   └── roles/
+│
+├── servicenow/                    # ServiceNow CMDB (8 roles)
+│   ├── README.md
+│   └── roles/
+│
 ├── splunk/                        # Splunk logging (5 roles)
 │   ├── README.md
 │   ├── roles/
 │   └── playbooks/
+│
+├── tenable/                       # Tenable Security Center (8 roles)
+│   ├── README.md
+│   └── roles/
 │
 ├── vast/                          # VAST Data storage (4 roles)
 │   ├── README.md
 │   ├── roles/
 │   └── inventories/
 │
-├── veeam/                         # Veeam backup (6 roles) ⭐ ENHANCED
+├── veeam/                         # Veeam backup (6 roles)
 │   ├── README.md
 │   ├── roles/
 │   └── playbooks/
 │
-├── vmware/                        # VMware vSphere + NSX-T (35+ roles) ⭐ ENHANCED
+├── vmware/                        # VMware vSphere + NSX-T (35+ roles)
 │   ├── README.md
 │   ├── roles/
 │   └── tasks/
 │
-└── windows/                       # Windows Server (20+ roles) ⭐ NEW
+└── windows/                       # Windows Server (20+ roles)
     ├── README.md
     ├── roles/
     ├── playbooks/
@@ -661,208 +712,13 @@ Consult official vendor documentation:
 
 ---
 
-## 🎉 Phase 1 Implementation Complete (January 2026)
+## Development History
 
-Phase 1 of the repository enhancement roadmap has been successfully completed, adding critical infrastructure automation capabilities:
+This repository was built in three phases during January 2026:
 
-### ⭐ New Platforms Added (70+ new roles)
-
-1. **Amazon Web Services (AWS)** - 40+ roles
-   - Complete AWS automation across IAM, VPC, EC2, EKS, S3, RDS, Lambda, and more
-   - FedRAMP compliance controls for AWS GovCloud
-   - Comprehensive security with KMS encryption, GuardDuty, Security Hub
-
-2. **Microsoft Windows Server** - 20+ roles
-   - DoD STIG hardening automation
-   - Active Directory domain services
-   - Group Policy management and enforcement
-   - DHCP/DNS, IIS, Windows Server Backup, WSUS
-
-3. **VMware NSX-T Software-Defined Networking** - 8+ roles
-   - NSX-T Manager deployment
-   - Distributed firewall and security policies
-   - Load balancer configuration
-   - Network segments and Tier-0/Tier-1 gateways
-
-### 🔧 Enhanced Platforms (12+ new roles)
-
-1. **Veeam Backup & Replication** - 6 roles (previously tasks only)
-   - Backup server installation
-   - Backup job configuration
-   - Restore operations automation
-   - Replication and cloud tier setup
-
-2. **Cohesity Data Platform** - 6 roles (previously tasks only)
-   - Cluster configuration
-   - Protection policy management
-   - Recovery workflows
-   - Cloud archive configuration
-
-### 🔄 CI/CD Pipeline Implemented
-
-- **GitHub Actions Workflows:**
-  - `lint.yml` - YAML, Ansible, Markdown, and shell script linting
-  - `syntax-check.yml` - Ansible playbook syntax validation
-  - `security-scan.yml` - Secret scanning, dependency checks, compliance verification
-- **Linter Configurations:** `.yamllint.yml` and `.markdownlint.json`
-- **Automated Testing:** Multi-platform syntax checking across all technologies
-
-### 📈 Updated Repository Statistics
-
-- **Total Roles:** 360+ (was 288+)
-- **Technology Platforms:** 28+ (was 25+)
-- **Operating Systems:** RHEL + Windows Server
-- **Cloud Platforms:** AWS + GCP + VMware vSphere
-- **CI/CD:** Fully automated testing pipeline
-
----
-
-## 🚀 Phase 2 Implementation Complete (January 2026)
-
-Phase 2 of the repository enhancement roadmap has been successfully completed, adding enterprise-critical platforms and significantly expanding automation coverage:
-
-### ⭐ New Platforms Added (111+ new roles)
-
-1. **Microsoft Azure** - 45+ roles
-   - Complete Azure automation: Azure AD, VNets, VMs, AKS, Key Vault
-   - Security: Azure Sentinel SIEM, Security Center, Defender for Cloud
-   - Government: Azure Government Cloud with FedRAMP compliance
-   - Databases: SQL Database, Cosmos DB, PostgreSQL, MySQL
-
-2. **Database Automation** - 24 roles across 3 platforms
-   - **PostgreSQL** (8 roles) - Installation, replication, pgPool, Barman backup
-   - **MySQL/MariaDB** (8 roles) - Installation, replication, Galera cluster, XtraBackup
-   - **Oracle Database** (8 roles) - Installation, Data Guard, RAC, RMAN, Flashback
-
-3. **NetApp ONTAP Storage** - 12 roles
-   - Cluster and SVM management
-   - Volume/LUN provisioning, NFS/CIFS shares
-   - SnapMirror replication and SnapVault backup
-   - Performance tuning and security hardening
-
-4. **Fortinet FortiGate** - 12 roles
-   - System configuration and firewall policies
-   - IPsec and SSL VPN configuration
-   - High availability and routing
-   - Security profiles (IPS, AV, Web Filter)
-
-5. **Monitoring Stack** - 18 roles across 2 platforms
-   - **Prometheus/Grafana** (8 roles) - Metrics collection, alerting, dashboarding
-   - **ELK Stack** (10 roles) - Elasticsearch, Logstash, Kibana, Filebeat, Metricbeat
-
-### 🔐 Expanded Policy as Code (14+ new policies)
-
-Added 4 new NIST 800-53 control families:
-- **Configuration Management (CM)** - CM-2, CM-3, CM-6, CM-7
-- **System & Information Integrity (SI)** - SI-2, SI-3, SI-4, SI-7
-- **Incident Response (IR)** - IR-4, IR-5, IR-6
-- **Contingency Planning (CP)** - CP-2, CP-9, CP-10
-
-Total Policy as Code coverage: **8 control families**, **18+ policies**
-
-### 📈 Updated Repository Statistics
-
-**Before Phase 2:**
-- 360 roles
-- 28+ technologies
-- 3 cloud platforms
-- 1 database platform
-
-**After Phase 2:**
-- **470+ roles** (+110 roles, +31% growth)
-- **34+ technologies** (+6 platforms)
-- **4 cloud platforms** (AWS, Azure, GCP, vSphere)
-- **4 database platforms** (PostgreSQL, MySQL, Oracle, + cloud DBs)
-- **3 storage platforms** (Pure, VAST, NetApp)
-- **2 monitoring stacks** (Prometheus/Grafana, ELK)
-- **8 NIST control families** in Policy as Code
-
----
-
-## 🎯 Phase 3 Implementation Complete (January 2026)
-
-Phase 3 of the repository enhancement roadmap has been successfully completed, adding enterprise automation and integration platforms to complete the comprehensive infrastructure automation suite:
-
-### ⭐ New Platforms Added (46+ new roles)
-
-1. **F5 BIG-IP Load Balancer** - 12 roles
-   - System and network configuration
-   - Virtual servers, pools, nodes, and health monitors
-   - SSL certificate management and profiles
-   - iRules for traffic manipulation
-   - Application Security Manager (WAF)
-   - High availability (active/standby, active/active)
-
-2. **Tenable Security Center** - 8 roles
-   - Security Center installation and configuration
-   - Scan zone and policy management
-   - Automated vulnerability scanning and scheduling
-   - Compliance checks (NIST 800-53, DISA STIG, CIS)
-   - Automated reporting and remediation workflows
-
-3. **ServiceNow CMDB Integration** - 8 roles
-   - CMDB configuration and CI discovery
-   - Automated CI synchronization from infrastructure
-   - Incident management automation
-   - Change request workflows
-   - Asset lifecycle management
-   - Integration with monitoring and ticketing systems
-
-4. **HashiCorp Vault** - 10 roles
-   - Vault installation and HA clustering
-   - Secrets engines (KV, Transit, PKI, Database)
-   - Dynamic database credentials
-   - Authentication methods (LDAP, AWS, Kubernetes, AppRole)
-   - Policy management and ACLs
-   - PKI for certificate management
-   - Audit logging and compliance
-
-5. **Ansible Tower / AAP** - 8 roles
-   - Tower/AAP installation and configuration
-   - Organization and project management
-   - Inventory management (static and dynamic)
-   - Job template creation and scheduling
-   - Workflow automation
-   - RBAC and team management
-
-### 📈 Updated Repository Statistics
-
-**Before Phase 3:**
-- 470 roles
-- 34+ technologies
-- 4 cloud platforms
-- 2 monitoring stacks
-
-**After Phase 3:**
-- **516+ roles** (+46 roles, +10% growth)
-- **39+ technologies** (+5 platforms)
-- **Complete automation suite** including:
-  - 4 cloud platforms (AWS, Azure, GCP, vSphere)
-  - 4 database platforms (PostgreSQL, MySQL, Oracle, + cloud DBs)
-  - 3 storage platforms (Pure, VAST, NetApp)
-  - 2 monitoring stacks (Prometheus/Grafana, ELK)
-  - Security scanning and vulnerability management (Tenable)
-  - Secrets management (HashiCorp Vault)
-  - ITSM integration (ServiceNow)
-  - Load balancing (F5 BIG-IP)
-  - Automation platform (Ansible Tower/AAP)
-
-### 🏆 Repository Completion Status
-
-With Phase 3 complete, this repository now provides enterprise-grade automation for:
-- ✅ **Multi-cloud infrastructure** (AWS, Azure, GCP, Private Cloud)
-- ✅ **Security & compliance** (STIG, NIST, FedRAMP, Policy as Code)
-- ✅ **Database platforms** (PostgreSQL, MySQL, Oracle)
-- ✅ **Storage systems** (Pure, VAST, NetApp)
-- ✅ **Network & security** (Cisco, Palo Alto, F5, Fortinet, Check Point)
-- ✅ **Container orchestration** (Kubernetes, OpenShift, AKS, EKS)
-- ✅ **Backup & recovery** (Veeam, Cohesity)
-- ✅ **Monitoring & observability** (Prometheus, Grafana, ELK, Splunk)
-- ✅ **Security scanning** (Tenable, vulnerability management)
-- ✅ **Secrets management** (HashiCorp Vault)
-- ✅ **ITSM integration** (ServiceNow)
-- ✅ **Operational technology** (Dragos, Claroty)
-- ✅ **CI/CD automation** (GitHub Actions, Ansible Tower/AAP)
+- **Phase 1** - Added AWS (40+ roles), Windows Server (20+ roles), VMware NSX-T (8 roles), plus enhanced Veeam and Cohesity from task-only to full roles
+- **Phase 2** - Added Azure (30+ roles), database platforms (PostgreSQL, MySQL, Oracle), NetApp ONTAP, Fortinet FortiGate, Prometheus/Grafana, ELK Stack, and expanded Policy as Code to 8 NIST control families
+- **Phase 3** - Added F5 BIG-IP, Tenable Security Center, ServiceNow CMDB, HashiCorp Vault, and Ansible Tower/AAP to complete the enterprise automation suite
 
 ---
 
@@ -931,5 +787,5 @@ ansible-playbook vmware/playbooks/esxi_stig_hardening.yml -i inventory/vmware.ym
 
 **Repository Maintained By:** Fourth Estate Infrastructure Team
 **Classification:** UNCLASSIFIED
-**Last Updated:** 2026-01-16
+**Last Updated:** 2026-02-06
 **License:** See LICENSE file

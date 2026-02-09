@@ -1,10 +1,42 @@
-# SentinelOne EDR - Production-Ready Ansible Roles and Tasks
+# SentinelOne EDR Ansible Automation
+
+This directory contains production-ready, DoD STIG and NIST 800-53 compliant Ansible roles and tasks for deploying and managing SentinelOne EDR in Fourth Estate environments.
+
+## 🚀 Quick Start (Drop-In Deployment)
+
+```bash
+# 1. Install dependencies
+ansible-galaxy collection install -r requirements.yml
+
+# 2. Configure your inventory
+cp inventory.example inventory
+# Edit inventory with your target hosts
+
+# 3. Deploy SentinelOne agents
+ansible-playbook -i inventory site.yml --ask-vault-pass
+```
+
+### Deployment Options
+
+```bash
+# Deploy agents only
+ansible-playbook -i inventory site.yml --tags install
+
+# Apply security hardening
+ansible-playbook -i inventory site.yml --tags security
+
+# Configure policies
+ansible-playbook -i inventory site.yml --tags policy
+
+# Run health checks
+ansible-playbook -i inventory site.yml --tags monitoring
+```
 
 ## Overview
 
-This directory contains production-ready, DoD STIG and NIST 800-53 compliant Ansible roles and tasks for deploying and managing SentinelOne EDR in Fourth Estate environments. SentinelOne provides AI-powered endpoint detection and response (EDR), autonomous threat remediation, and real-time protection against advanced cyber threats.
+SentinelOne provides AI-powered endpoint detection and response (EDR), autonomous threat remediation, and real-time protection against advanced cyber threats.
 
-## Compliance Standards
+## 📋 Compliance Standards
 
 All roles and tasks have been developed to meet the following compliance frameworks:
 
@@ -445,9 +477,7 @@ EventType = "File Modification" AND FilePath StartsWith "/etc/"
 
 Proprietary - Fourth Estate Internal Use Only
 
-## Contact
+---
 
-For support, contact the Fourth Estate Security Operations Center (SOC):
-- Email: soc@fourth-estate.gov
-- Phone: +1-555-SOC-4TH (555-762-448)
-- Emergency: +1-555-IR-TEAM (555-478-326)
+**Last Updated:** 2026-02-06
+**Maintained By:** Fourth Estate Infrastructure Team

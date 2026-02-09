@@ -639,3 +639,8 @@ While these playbooks are designed to meet DoD STIG and NIST compliance requirem
 5. Adjust configurations based on organizational policies
 
 Compliance is an ongoing process requiring regular updates and validation.
+
+---
+
+**Last Updated:** 2026-02-06
+**Maintained By:** Fourth Estate Infrastructure Team

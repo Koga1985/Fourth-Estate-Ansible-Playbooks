@@ -1,10 +1,42 @@
-# CrowdStrike Falcon EDR - Production-Ready Ansible Roles and Tasks
+# CrowdStrike Falcon EDR Ansible Automation
+
+This directory contains production-ready, DoD STIG and NIST 800-53 compliant Ansible roles and tasks for deploying and managing CrowdStrike Falcon EDR in Fourth Estate environments.
+
+## 🚀 Quick Start (Drop-In Deployment)
+
+```bash
+# 1. Install dependencies
+ansible-galaxy collection install -r requirements.yml
+
+# 2. Configure your inventory
+cp inventory.example inventory
+# Edit inventory with your target hosts
+
+# 3. Deploy Falcon sensors
+ansible-playbook -i inventory site.yml --ask-vault-pass
+```
+
+### Deployment Options
+
+```bash
+# Deploy sensors only
+ansible-playbook -i inventory site.yml --tags install
+
+# Apply security hardening
+ansible-playbook -i inventory site.yml --tags security
+
+# Configure prevention policies
+ansible-playbook -i inventory site.yml --tags policy
+
+# Run health checks
+ansible-playbook -i inventory site.yml --tags monitoring
+```
 
 ## Overview
 
-This directory contains production-ready, DoD STIG and NIST 800-53 compliant Ansible roles and tasks for deploying and managing CrowdStrike Falcon EDR in Fourth Estate environments. CrowdStrike Falcon provides advanced endpoint detection and response (EDR) capabilities, threat intelligence, and real-time protection against sophisticated cyber threats.
+CrowdStrike Falcon provides advanced endpoint detection and response (EDR) capabilities, threat intelligence, and real-time protection against sophisticated cyber threats.
 
-## Compliance Standards
+## 📋 Compliance Standards
 
 All roles and tasks have been developed to meet the following compliance frameworks:
 
@@ -383,9 +415,7 @@ systemctl restart falcon-sensor
 
 Proprietary - Fourth Estate Internal Use Only
 
-## Contact
+---
 
-For support, contact the Fourth Estate Security Operations Center (SOC):
-- Email: soc@fourth-estate.gov
-- Phone: +1-555-SOC-4TH (555-762-448)
-- Emergency: +1-555-IR-TEAM (555-478-326)
+**Last Updated:** 2026-02-06
+**Maintained By:** Fourth Estate Infrastructure Team

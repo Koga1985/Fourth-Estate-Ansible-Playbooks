@@ -104,5 +104,5 @@ ansible-playbook roles/arista_backup_restore/playbook.yml \
 
 ---
 
-**Last Updated:** 2026-01-15
+**Last Updated:** 2026-02-06
 **Maintained By:** Fourth Estate Infrastructure Team

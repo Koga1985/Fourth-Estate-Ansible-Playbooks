@@ -452,3 +452,8 @@ MIT License - See LICENSE file for details
 - [NIST 800-53 Controls](https://csrc.nist.gov/publications/detail/sp/800-53/rev-5/final)
 - [NIST 800-171](https://csrc.nist.gov/publications/detail/sp/800-171/rev-2/final)
 - [Ansible Documentation](https://docs.ansible.com)
+
+---
+
+**Last Updated:** 2026-02-06
+**Maintained By:** Fourth Estate Infrastructure Team

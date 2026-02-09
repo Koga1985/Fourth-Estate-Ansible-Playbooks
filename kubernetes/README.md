@@ -290,3 +290,8 @@ For issues and questions:
 - [NIST SP 800-190](https://csrc.nist.gov/publications/detail/sp/800-190/final)
 - [Kubernetes Pod Security Standards](https://kubernetes.io/docs/concepts/security/pod-security-standards/)
 - [CIS Kubernetes Benchmark](https://www.cisecurity.org/benchmark/kubernetes)
+
+---
+
+**Last Updated:** 2026-02-06
+**Maintained By:** Fourth Estate Infrastructure Team

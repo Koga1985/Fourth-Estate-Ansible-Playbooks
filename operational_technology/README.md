@@ -188,6 +188,6 @@ ansible-playbook playbooks/ot_isa62443_compliance.yml \
 
 ---
 
-**Last Updated:** 2026-01-15
+**Last Updated:** 2026-02-06
 **Maintained By:** Fourth Estate Infrastructure Team
 **⚠️ CRITICAL: All OT changes require change control approval**
