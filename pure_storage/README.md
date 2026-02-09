@@ -2,7 +2,7 @@
 
 This directory contains **7 Ansible roles** for automating **Pure Storage FlashArray** including installation, configuration, volume provisioning, data protection, replication, and performance tuning.
 
-> **Note:** For FlashBlade automation, see the `pure/` directory which includes both FlashArray and FlashBlade roles.
+> **Note:** This directory covers both FlashArray and FlashBlade automation for Pure Storage environments.
 
 ## 🚀 Quick Start (Drop-In Deployment)
 
@@ -79,4 +79,5 @@ pure_replication_enabled: true
 
 ---
 
+**Last Updated:** 2026-02-06
 **Maintained By:** Fourth Estate Infrastructure Team

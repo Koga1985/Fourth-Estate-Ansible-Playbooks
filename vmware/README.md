@@ -268,3 +268,8 @@ Tips:
 ## License
 
 MIT (unless otherwise noted in specific roles or upstream modules).
+
+---
+
+**Last Updated:** 2026-02-06
+**Maintained By:** Fourth Estate Infrastructure Team

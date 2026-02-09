@@ -2,7 +2,7 @@
 
 This directory contains **3 Ansible roles** for basic **Infoblox** DDI (DNS, DHCP, IPAM) automation.
 
-> **Note:** For comprehensive Infoblox automation with 10+ roles including grid management, DNSSEC, RPZ, and compliance, see the `infoblocks/` directory.
+> **Note:** This directory provides the core Infoblox DDI automation roles. Additional roles for grid management, DNSSEC, RPZ, and compliance are available in the extended role set.
 
 ## 🚀 Quick Start (Drop-In Deployment)
 
@@ -55,4 +55,5 @@ nios_wapi_version: "2.12"
 
 ---
 
+**Last Updated:** 2026-02-06
 **Maintained By:** Fourth Estate Infrastructure Team

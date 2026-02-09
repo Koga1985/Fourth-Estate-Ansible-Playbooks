@@ -338,3 +338,8 @@ MIT
 ## Author
 
 Created for Fourth Estate production deployments.
+
+---
+
+**Last Updated:** 2026-02-06
+**Maintained By:** Fourth Estate Infrastructure Team

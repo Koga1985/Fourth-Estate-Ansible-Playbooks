@@ -63,4 +63,5 @@ fortigate_vpn_authentication: "sha256"
 
 ---
 
+**Last Updated:** 2026-02-06
 **Maintained By:** Fourth Estate Infrastructure Team

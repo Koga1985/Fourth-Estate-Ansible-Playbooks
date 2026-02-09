@@ -455,6 +455,6 @@ When contributing to OpenShift automation:
 
 ---
 
-**Last Updated:** 2026-01-15
+**Last Updated:** 2026-02-06
 **Maintained By:** Fourth Estate Infrastructure Team
 **OpenShift Versions Supported:** 4.12, 4.13, 4.14, 4.15

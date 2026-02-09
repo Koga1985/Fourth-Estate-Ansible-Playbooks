@@ -557,6 +557,6 @@ When contributing to Vault automation:
 
 ---
 
-**Last Updated:** 2026-01-16
+**Last Updated:** 2026-02-06
 **Maintained By:** Fourth Estate Infrastructure Team
 **Vault Versions Supported:** 1.13+, 1.14+, 1.15+
