@@ -1,6 +1,6 @@
 # Cisco Ansible Automation
 
-Comprehensive Ansible roles and playbooks for Cisco infrastructure automation, including Identity Services Engine (ISE) and Unified Computing System (UCS).
+Comprehensive Ansible roles and playbooks for Cisco infrastructure automation, including Application Centric Infrastructure (ACI), Identity Services Engine (ISE), and Unified Computing System (UCS).
 
 ## 🚀 Quick Start (Drop-In Deployment)
 
@@ -19,6 +19,15 @@ ansible-playbook -i inventory site.yml --ask-vault-pass
 ### Deployment Options
 
 ```bash
+# Deploy ACI fabric
+ansible-playbook -i inventory site.yml --tags aci,fabric
+
+# Deploy ACI tenant configuration
+ansible-playbook -i inventory site.yml --tags aci,tenant
+
+# Apply ACI security hardening
+ansible-playbook -i inventory site.yml --tags aci,security
+
 # Deploy ISE policy configuration
 ansible-playbook -i inventory site.yml --tags ise,policy
 
@@ -37,15 +46,100 @@ cisco/
 │   ├── ucs_fourth_estate_production.yml
 │   └── README.md
 ├── roles/              # Ansible roles
-│   ├── ise_*/          # ISE roles (existing)
+│   ├── aci_fabric_deploy/             # ACI fabric initial deployment
+│   ├── aci_tenant_config/             # ACI tenant, VRF, BD, EPG, contracts
+│   ├── aci_network_config/            # ACI L3Out/L2Out external connectivity
+│   ├── aci_security_hardening/        # ACI security hardening (DoD STIG)
+│   ├── aci_monitoring/                # ACI SNMP, syslog, Call Home, health
+│   ├── ise_*/                         # ISE roles (28 roles)
 │   ├── ucs_prod_infrastructure/       # UCS infrastructure deployment
-│   ├── ucs_security_hardening/        # Security hardening (DoD STIG)
-│   ├── ucs_prod_networking/           # Networking configuration
-│   ├── ucs_prod_monitoring/           # Monitoring and compliance
-│   └── ucs_prod_backup_dr/            # Backup and disaster recovery
+│   ├── ucs_security_hardening/        # UCS security hardening (DoD STIG)
+│   ├── ucs_prod_networking/           # UCS networking configuration
+│   ├── ucs_prod_monitoring/           # UCS monitoring and compliance
+│   └── ucs_prod_backup_dr/            # UCS backup and disaster recovery
 └── tasks/              # Reusable task files
     └── ucs_fourth_estate_deploy.yml
 ```
+
+## ACI Roles for Fourth Estate
+
+### Overview
+
+The ACI roles provide production-ready automation for deploying Cisco Application Centric Infrastructure (ACI) fabric for Fourth Estate organizations. All roles implement a phased deployment pipeline and include DoD STIG and NIST 800-53 compliance controls. All roles default to dry-run mode (`apply_changes: false`).
+
+### Roles
+
+#### 1. aci_fabric_deploy
+
+**Purpose:** Phase 1 — ACI fabric initial deployment
+
+**Features:**
+- APIC cluster configuration (system name, OOB management, NTP, DNS, syslog)
+- Spine and leaf node registration with discovery retry logic
+- Fabric-wide policies (node control, link level, ISIS redistribution, COOP group)
+- Endpoint security (loop protection, rogue endpoint control)
+- VLAN pools, physical/L3 domains, and Attachable Entity Profiles (AEP)
+- Leaf/spine switch profiles, interface policy groups, and vPC protection groups
+
+**Documentation:** `roles/aci_fabric_deploy/README.md`
+
+#### 2. aci_tenant_config
+
+**Purpose:** Phase 2 — Tenant, VRF, bridge domain, EPG, and contract configuration
+
+**Features:**
+- Tenant creation for production, development, management, and DMZ domains
+- VRF provisioning with policy enforcement and preferred group settings
+- Bridge domain and subnet (gateway) configuration
+- Application profile and EPG creation with intra-EPG isolation
+- Filter, contract, and contract subject creation
+- Optional static path bindings to physical ports, port-channels, and vPC interfaces
+
+**Documentation:** `roles/aci_tenant_config/README.md`
+
+#### 3. aci_network_config
+
+**Purpose:** Phase 3 — L3Out/L2Out external network connectivity
+
+**Features:**
+- L3Out with logical node/interface profiles and routed sub-interfaces
+- L2Out bridged external connectivity with external EPGs
+- Static route configuration with primary and backup next-hops
+- BGP peer configuration with MD5 authentication
+- OSPF interface policy and area configuration
+
+**Documentation:** `roles/aci_network_config/README.md`
+
+#### 4. aci_security_hardening
+
+**Purpose:** Phase 4 — DoD STIG and NIST 800-53 security hardening
+
+**Features:**
+- STIG Category I, II, III controls for Cisco ACI
+- Password complexity and session timeout enforcement
+- Insecure protocol disabling (Telnet, SNMPv1/v2c)
+- RBAC configuration and privilege separation
+- Audit logging and syslog forwarding
+- TLS 1.2+ enforcement and FIPS-mode settings
+- Compliance reporting
+
+**Documentation:** `roles/aci_security_hardening/README.md`
+
+#### 5. aci_monitoring
+
+**Purpose:** Phase 5 — SNMP, syslog, Call Home, health, and fault management
+
+**Features:**
+- SNMPv3 policy with SHA authentication and AES-128 privacy
+- SNMP trap destinations and client group source-IP restrictions
+- Syslog remote destinations with severity filtering
+- Cisco Call Home smart notification configuration
+- Fabric health score monitoring with configurable thresholds
+- Fault management with severity-based reporting (critical, major, minor, warning)
+
+**Documentation:** `roles/aci_monitoring/README.md`
+
+---
 
 ## UCS Roles for Fourth Estate
 
@@ -136,8 +230,8 @@ The UCS roles provide production-ready automation for deploying Cisco UCS infras
 
 1. Install required collections:
 ```bash
-ansible-galaxy collection install cisco.ucs
-pip install ucsmsdk
+ansible-galaxy collection install -r requirements.yml
+pip install acicobra acimodel ciscoisesdk ucsmsdk intersight requests
 ```
 
 2. Create vault for credentials:
@@ -147,9 +241,17 @@ ansible-vault create group_vars/all/vault.yml
 
 Add the following variables:
 ```yaml
+# ACI
+vault_aci_apic_hostname: "apic.example.com"
+vault_aci_apic_username: "admin"
+vault_aci_apic_password: "your-password"
+
+# UCS
 vault_ucs_hostname: "ucs-manager.example.com"
 vault_ucs_username: "admin"
 vault_ucs_password: "your-password"
+
+# Shared
 vault_fourth_estate_contact: "Contact Name"
 vault_fourth_estate_email: "contact@example.com"
 vault_backup_server: "backup.example.com"
@@ -330,10 +432,12 @@ MIT
 
 ## References
 
+- [Cisco ACI Documentation](https://www.cisco.com/c/en/us/support/cloud-systems-management/application-policy-infrastructure-controller-apic/index.html)
+- [Cisco ACI Ansible Collection](https://galaxy.ansible.com/cisco/aci)
 - [Cisco UCS Documentation](https://www.cisco.com/c/en/us/support/servers-unified-computing/index.html)
-- [DoD STIG for Cisco UCS](https://public.cyber.mil/stigs/)
-- [NIST 800-53 Controls](https://nvd.nist.gov/800-53)
 - [Cisco UCS Ansible Collection](https://galaxy.ansible.com/cisco/ucs)
+- [DoD STIG for Cisco Devices](https://public.cyber.mil/stigs/)
+- [NIST 800-53 Controls](https://nvd.nist.gov/800-53)
 
 ## Author
 
@@ -341,5 +445,5 @@ Created for Fourth Estate production deployments.
 
 ---
 
-**Last Updated:** 2026-02-06
+**Last Updated:** 2026-03-13
 **Maintained By:** Fourth Estate Infrastructure Team
