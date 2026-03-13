@@ -1,0 +1,226 @@
+---
+# tasks file for aci_security_hardening - TLS and Cryptographic Controls
+# DoD STIG CAT I - Enforce HTTPS/TLS 1.2+, disable HTTP/Telnet, configure SSH
+# NIST SC-8, SC-28 | STIG CISC-ND-001440, CISC-ND-001400
+
+- name: PHASE 4 - CISC-ND-001440 - Disable HTTP, enforce HTTPS only
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    path: /api/mo/uni/fabric/comm-default/http.json
+    method: "{{ 'post' if apply_changes | bool else 'get' }}"
+    content:
+      commHttp:
+        attributes:
+          dn: uni/fabric/comm-default/http
+          adminSt: "{{ 'disabled' if not aci_http_enabled else 'enabled' }}"
+          port: "80"
+  register: http_disable_result
+  tags:
+    - aci
+    - security
+    - stig
+    - stig_cat1
+    - nist_sc
+    - crypto
+    - tls
+    - phase4
+
+- name: PHASE 4 - CISC-ND-001440 - Enable HTTPS
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    path: /api/mo/uni/fabric/comm-default/https.json
+    method: "{{ 'post' if apply_changes | bool else 'get' }}"
+    content:
+      commHttps:
+        attributes:
+          dn: uni/fabric/comm-default/https
+          adminSt: "{{ 'enabled' if aci_https_enabled else 'disabled' }}"
+          port: "443"
+          tlsProtocols: "{{ aci_min_tls_version }}"
+          cipherSuite: "{{ aci_allowed_ciphers | join(',') }}"
+          visibilityTimeout: "30"
+          dhParamFlag: "no"
+          keyRingName: "default"
+          clientCertAuthState: "disabled"
+  register: https_enable_result
+  tags:
+    - aci
+    - security
+    - stig
+    - stig_cat1
+    - nist_sc
+    - crypto
+    - tls
+    - phase4
+
+- name: PHASE 4 - CISC-ND-001440 - Configure minimum TLS version to TLS 1.2
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    path: /api/mo/uni/fabric/comm-default/https.json
+    method: "{{ 'post' if apply_changes | bool else 'get' }}"
+    content:
+      commHttps:
+        attributes:
+          dn: uni/fabric/comm-default/https
+          tlsProtocols: "{{ aci_min_tls_version }}"
+  register: tls_version_result
+  tags:
+    - aci
+    - security
+    - stig
+    - stig_cat1
+    - nist_sc
+    - crypto
+    - tls
+    - phase4
+
+- name: PHASE 4 - CISC-ND-001440 - Configure allowed TLS cipher suites
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    path: /api/mo/uni/fabric/comm-default/https.json
+    method: "{{ 'post' if apply_changes | bool else 'get' }}"
+    content:
+      commHttps:
+        attributes:
+          dn: uni/fabric/comm-default/https
+          cipherSuite: "{{ aci_allowed_ciphers | join(',') }}"
+  register: cipher_suite_result
+  tags:
+    - aci
+    - security
+    - stig
+    - stig_cat1
+    - nist_sc
+    - crypto
+    - tls
+    - phase4
+
+- name: PHASE 4 - CISC-ND-001400 - Disable Telnet, enforce SSH only
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    path: /api/mo/uni/fabric/comm-default/telnet.json
+    method: "{{ 'post' if apply_changes | bool else 'get' }}"
+    content:
+      commTelnet:
+        attributes:
+          dn: uni/fabric/comm-default/telnet
+          adminSt: "{{ 'disabled' if not aci_telnet_enabled else 'enabled' }}"
+          port: "23"
+  register: telnet_disable_result
+  tags:
+    - aci
+    - security
+    - stig
+    - stig_cat1
+    - nist_sc
+    - crypto
+    - ssh
+    - phase4
+
+- name: PHASE 4 - CISC-ND-001400 - Enable SSH and configure SSH settings
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    path: /api/mo/uni/fabric/comm-default/ssh.json
+    method: "{{ 'post' if apply_changes | bool else 'get' }}"
+    content:
+      commSsh:
+        attributes:
+          dn: uni/fabric/comm-default/ssh
+          adminSt: "{{ 'enabled' if aci_ssh_enabled else 'disabled' }}"
+          port: "22"
+          sshCiphers: "{{ aci_ssh_ciphers | join(',') }}"
+          sshKexAlgos: "{{ aci_ssh_kex_algos | join(',') }}"
+          sshMacs: "{{ aci_ssh_macs | join(',') }}"
+  register: ssh_config_result
+  tags:
+    - aci
+    - security
+    - stig
+    - stig_cat1
+    - nist_sc
+    - crypto
+    - ssh
+    - phase4
+
+- name: PHASE 4 - Display crypto/TLS configuration summary
+  ansible.builtin.debug:
+    msg:
+      - "=== STIG CAT I - Crypto/TLS Configuration ==="
+      - "CISC-ND-001440 - HTTP disabled:     {{ not aci_http_enabled | bool }}"
+      - "CISC-ND-001440 - HTTPS enabled:     {{ aci_https_enabled | bool }}"
+      - "CISC-ND-001440 - Min TLS version:   {{ aci_min_tls_version }}"
+      - "CISC-ND-001400 - Telnet disabled:   {{ not aci_telnet_enabled | bool }}"
+      - "CISC-ND-001400 - SSH enabled:       {{ aci_ssh_enabled | bool }}"
+      - "Cipher suites:                      {{ aci_allowed_ciphers | length }} configured"
+      - "SSH ciphers:                        {{ aci_ssh_ciphers | length }} configured"
+      - "Apply changes:                      {{ apply_changes | bool }}"
+  tags:
+    - aci
+    - security
+    - stig
+    - stig_cat1
+    - nist_sc
+    - crypto
+    - tls
+    - phase4
+
+- name: PHASE 4 - Save crypto/TLS configuration artifact
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/aci_stig_crypto_tls.json"
+    mode: "0640"
+    content: "{{ crypto_artifact | to_nice_json }}"
+  vars:
+    crypto_artifact:
+      timestamp: "{{ ansible_date_time.iso8601 }}"
+      apic_host: "{{ aci_host }}"
+      apply_changes: "{{ apply_changes | bool }}"
+      stig_controls:
+        - id: "CISC-ND-001440"
+          description: "HTTP disabled, HTTPS enforced, TLS 1.2+ configured"
+          http_disabled: "{{ not aci_http_enabled | bool }}"
+          https_enabled: "{{ aci_https_enabled | bool }}"
+          min_tls_version: "{{ aci_min_tls_version }}"
+          cipher_count: "{{ aci_allowed_ciphers | length }}"
+          status: "configured"
+        - id: "CISC-ND-001400"
+          description: "Telnet disabled, SSH enforced"
+          telnet_disabled: "{{ not aci_telnet_enabled | bool }}"
+          ssh_enabled: "{{ aci_ssh_enabled | bool }}"
+          ssh_cipher_count: "{{ aci_ssh_ciphers | length }}"
+          ssh_kex_count: "{{ aci_ssh_kex_algos | length }}"
+          ssh_mac_count: "{{ aci_ssh_macs | length }}"
+          status: "configured"
+      compliance_frameworks: "{{ compliance_frameworks }}"
+  tags:
+    - aci
+    - security
+    - stig
+    - stig_cat1
+    - nist_sc
+    - crypto
+    - tls
+    - phase4

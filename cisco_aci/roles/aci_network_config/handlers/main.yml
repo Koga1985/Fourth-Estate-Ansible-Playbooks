@@ -1,0 +1,49 @@
+---
+# handlers file for aci_network_config
+# Backup, fault query, and deployment completion notification handlers
+
+- name: backup aci configuration
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    path: /api/mo/uni/fabric/configexp-FourthEstate-Backup.json
+    method: post
+    content:
+      configExportP:
+        attributes:
+          dn: uni/fabric/configexp-FourthEstate-Backup
+          name: "FourthEstate-Backup"
+          adminSt: "triggered"
+          format: "json"
+          includeSecureFields: "yes"
+          snapshot: "yes"
+  when: apply_changes | bool
+
+- name: query aci faults
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    path: /api/class/faultInst.json?query-target-filter=eq(faultInst.severity,"critical")&page-size=20
+    method: get
+  register: aci_handler_faults
+  failed_when: false
+
+- name: notify deployment complete
+  ansible.builtin.debug:
+    msg:
+      - "================================================================"
+      - " ACI Network Configuration Complete - Fourth Estate"
+      - "================================================================"
+      - " APIC Host:     {{ aci_host }}"
+      - " Mode:          {{ 'CHANGES APPLIED' if apply_changes | bool else 'DRY RUN ONLY' }}"
+      - " L3Outs:        {{ aci_l3outs | length }}"
+      - " Static Routes: {{ aci_static_routes | length }}"
+      - " Timestamp:     {{ ansible_date_time.iso8601 }}"
+      - " Artifacts:     {{ artifacts_dir }}"
+      - "================================================================"

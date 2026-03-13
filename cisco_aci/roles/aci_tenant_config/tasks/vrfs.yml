@@ -1,0 +1,71 @@
+---
+# tasks file for aci_tenant_config - VRF Configuration
+# Creates VRFs per tenant using cisco.aci.aci_vrf
+
+- name: PHASE 2 - Create VRFs in each tenant
+  cisco.aci.aci_vrf:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    tenant: "{{ item.tenant }}"
+    vrf: "{{ item.name }}"
+    description: "{{ item.description | default('') }}"
+    policy_control_preference: "{{ item.policy_control_preference | default('enforced') }}"
+    policy_control_direction: "{{ item.policy_control_direction | default('ingress') }}"
+    preferred_group: "{{ item.preferred_group | default(false) | ternary('enabled', 'disabled') }}"
+    state: "{{ 'present' if apply_changes | bool else 'query' }}"
+  loop: "{{ aci_vrfs }}"
+  loop_control:
+    label: "{{ item.tenant }}/{{ item.name }}"
+  register: vrf_creation_results
+  tags:
+    - aci
+    - tenants
+    - vrfs
+    - phase2
+
+- name: PHASE 2 - Query VRFs for validation
+  cisco.aci.aci_vrf:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    state: query
+  register: aci_vrf_query_all
+  tags:
+    - aci
+    - tenants
+    - vrfs
+    - phase2
+    - validation
+
+- name: PHASE 2 - Display VRF configuration summary
+  ansible.builtin.debug:
+    msg:
+      - "=== VRF Configuration Summary ==="
+      - "Configured VRFs: {{ aci_vrfs | length }}"
+      - "Apply changes:   {{ apply_changes | bool }}"
+  tags:
+    - aci
+    - tenants
+    - vrfs
+    - phase2
+
+- name: PHASE 2 - Save VRF configuration artifact
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/aci_vrfs.json"
+    mode: "0640"
+    content: "{{ vrfs_artifact | to_nice_json }}"
+  vars:
+    vrfs_artifact:
+      timestamp: "{{ ansible_date_time.iso8601 }}"
+      configured_vrfs: "{{ aci_vrfs }}"
+      apply_changes: "{{ apply_changes | bool }}"
+  tags:
+    - aci
+    - tenants
+    - vrfs
+    - phase2

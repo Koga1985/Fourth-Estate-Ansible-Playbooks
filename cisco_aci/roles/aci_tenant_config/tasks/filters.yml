@@ -1,0 +1,97 @@
+---
+# tasks file for aci_tenant_config - Filter Configuration
+# Creates filters and filter entries using cisco.aci.aci_filter and aci_filter_entry
+
+- name: PHASE 2 - Create filters
+  cisco.aci.aci_filter:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    tenant: "{{ item.tenant }}"
+    filter: "{{ item.name }}"
+    description: "{{ item.description | default('') }}"
+    state: "{{ 'present' if apply_changes | bool else 'query' }}"
+  loop: "{{ aci_filters }}"
+  loop_control:
+    label: "{{ item.tenant }}/{{ item.name }}"
+  register: filter_creation_results
+  tags:
+    - aci
+    - tenants
+    - filters
+    - phase2
+
+- name: PHASE 2 - Create filter entries
+  cisco.aci.aci_filter_entry:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    tenant: "{{ item.0.tenant }}"
+    filter: "{{ item.0.name }}"
+    entry: "{{ item.1.name }}"
+    ether_type: "{{ item.1.ether_type | default('ip') }}"
+    ip_protocol: "{{ item.1.ip_protocol | default(omit) }}"
+    dst_port: "{{ item.1.dst_port | default(omit) }}"
+    dst_port_start: "{{ item.1.dst_port_start | default(omit) }}"
+    dst_port_end: "{{ item.1.dst_port_end | default(omit) }}"
+    stateful: "{{ item.1.stateful | default(false) }}"
+    description: "{{ item.1.description | default('') }}"
+    state: "{{ 'present' if apply_changes | bool else 'query' }}"
+  loop: "{{ aci_filters | subelements('filter_entries') }}"
+  loop_control:
+    label: "{{ item.0.tenant }}/{{ item.0.name }}/{{ item.1.name }}"
+  register: filter_entry_results
+  tags:
+    - aci
+    - tenants
+    - filters
+    - phase2
+
+- name: PHASE 2 - Query filters for validation
+  cisco.aci.aci_filter:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    state: query
+  register: aci_filter_query_all
+  tags:
+    - aci
+    - tenants
+    - filters
+    - phase2
+    - validation
+
+- name: PHASE 2 - Display filter configuration summary
+  ansible.builtin.debug:
+    msg:
+      - "=== Filter Configuration Summary ==="
+      - "Configured filters:       {{ aci_filters | length }}"
+      - "Total filter entries:     {{ aci_filters | map(attribute='filter_entries') | map('length') | sum }}"
+      - "Apply changes:            {{ apply_changes | bool }}"
+  tags:
+    - aci
+    - tenants
+    - filters
+    - phase2
+
+- name: PHASE 2 - Save filter configuration artifact
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/aci_filters.json"
+    mode: "0640"
+    content: "{{ filters_artifact | to_nice_json }}"
+  vars:
+    filters_artifact:
+      timestamp: "{{ ansible_date_time.iso8601 }}"
+      configured_filters: "{{ aci_filters }}"
+      apply_changes: "{{ apply_changes | bool }}"
+  tags:
+    - aci
+    - tenants
+    - filters
+    - phase2

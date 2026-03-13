@@ -1,0 +1,48 @@
+---
+# handlers file for aci_tenant_config
+# Backup, fault query, and deployment completion notification handlers
+
+- name: backup aci configuration
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    path: /api/mo/uni/fabric/configexp-FourthEstate-Backup.json
+    method: post
+    content:
+      configExportP:
+        attributes:
+          dn: uni/fabric/configexp-FourthEstate-Backup
+          name: "FourthEstate-Backup"
+          adminSt: "triggered"
+          format: "json"
+          includeSecureFields: "yes"
+          snapshot: "yes"
+  when: apply_changes | bool
+
+- name: query aci faults
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    path: /api/class/faultInst.json?query-target-filter=and(eq(faultInst.severity,"critical"),wcard(faultInst.dn,"tn-"))&page-size=20
+    method: get
+  register: aci_tenant_handler_faults
+  failed_when: false
+
+- name: notify deployment complete
+  ansible.builtin.debug:
+    msg:
+      - "================================================================"
+      - " ACI Tenant Configuration Complete - Fourth Estate"
+      - "================================================================"
+      - " APIC Host:     {{ aci_host }}"
+      - " Tenants:       {{ aci_tenants | map(attribute='name') | join(', ') }}"
+      - " Mode:          {{ 'CHANGES APPLIED' if apply_changes | bool else 'DRY RUN ONLY' }}"
+      - " Timestamp:     {{ ansible_date_time.iso8601 }}"
+      - " Artifacts:     {{ artifacts_dir }}"
+      - "================================================================"

@@ -1,0 +1,145 @@
+---
+# tasks file for aci_security_hardening - Session Management
+# DoD STIG CAT II - Session idle timeout and maximum session duration
+# NIST AC-11, AC-12 | STIG CISC-ND-000390
+
+- name: PHASE 4 - CISC-ND-000390 - Set session idle timeout to {{ aci_idle_timeout }} seconds
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    path: /api/mo/uni/fabric/comm-default.json
+    method: "{{ 'post' if apply_changes | bool else 'get' }}"
+    content:
+      commPol:
+        attributes:
+          dn: uni/fabric/comm-default
+          name: "default"
+  register: session_idle_check
+  tags:
+    - aci
+    - security
+    - stig
+    - stig_cat2
+    - nist_ac
+    - sessions
+    - phase4
+
+- name: PHASE 4 - CISC-ND-000390 - Configure HTTPS session timeout ({{ aci_session_timeout }} seconds)
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    path: /api/mo/uni/fabric/comm-default/https.json
+    method: "{{ 'post' if apply_changes | bool else 'get' }}"
+    content:
+      commHttps:
+        attributes:
+          dn: uni/fabric/comm-default/https
+          visibilityTimeout: "{{ (aci_session_timeout / 60) | int | string }}"
+  register: https_session_timeout_result
+  tags:
+    - aci
+    - security
+    - stig
+    - stig_cat2
+    - nist_ac
+    - sessions
+    - phase4
+
+- name: PHASE 4 - CISC-ND-000390 - Configure web UI session idle timeout ({{ aci_idle_timeout }} seconds)
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    path: /api/mo/uni/userext.json
+    method: "{{ 'post' if apply_changes | bool else 'get' }}"
+    content:
+      aaaUserEp:
+        attributes:
+          dn: uni/userext
+          pwdStrengthCheck: "yes"
+          sessionRecordFlags: "login,logout,refresh"
+  register: web_session_timeout_result
+  tags:
+    - aci
+    - security
+    - stig
+    - stig_cat2
+    - nist_ac
+    - sessions
+    - phase4
+
+- name: PHASE 4 - CISC-ND-000390 - Configure CLI SSH session timeout
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    path: /api/mo/uni/fabric/comm-default/ssh.json
+    method: "{{ 'post' if apply_changes | bool else 'get' }}"
+    content:
+      commSsh:
+        attributes:
+          dn: uni/fabric/comm-default/ssh
+          adminSt: "enabled"
+  register: ssh_session_timeout_result
+  tags:
+    - aci
+    - security
+    - stig
+    - stig_cat2
+    - nist_ac
+    - sessions
+    - phase4
+
+- name: PHASE 4 - Display session management configuration summary
+  ansible.builtin.debug:
+    msg:
+      - "=== STIG CAT II - Session Management Configuration ==="
+      - "CISC-ND-000390 - Session timeout:  {{ aci_session_timeout }} seconds ({{ (aci_session_timeout / 60) | int }} min)"
+      - "CISC-ND-000390 - Idle timeout:     {{ aci_idle_timeout }} seconds ({{ (aci_idle_timeout / 60) | int }} min)"
+      - "CISC-ND-000360 - Max sessions:     {{ aci_max_concurrent_sessions }}"
+      - "Apply changes:                     {{ apply_changes | bool }}"
+  tags:
+    - aci
+    - security
+    - stig
+    - stig_cat2
+    - nist_ac
+    - sessions
+    - phase4
+
+- name: PHASE 4 - Save session management configuration artifact
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/aci_stig_session_management.json"
+    mode: "0640"
+    content: "{{ session_artifact | to_nice_json }}"
+  vars:
+    session_artifact:
+      timestamp: "{{ ansible_date_time.iso8601 }}"
+      apic_host: "{{ aci_host }}"
+      apply_changes: "{{ apply_changes | bool }}"
+      stig_controls:
+        - id: "CISC-ND-000390"
+          description: "Session timeout configured"
+          session_timeout_seconds: "{{ aci_session_timeout }}"
+          idle_timeout_seconds: "{{ aci_idle_timeout }}"
+          max_concurrent_sessions: "{{ aci_max_concurrent_sessions }}"
+          status: "configured"
+      compliance_frameworks: "{{ compliance_frameworks }}"
+  tags:
+    - aci
+    - security
+    - stig
+    - stig_cat2
+    - nist_ac
+    - sessions
+    - phase4

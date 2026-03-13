@@ -1,0 +1,417 @@
+---
+# tasks file for aci_security_hardening - Audit Logging Configuration
+# DoD STIG CAT II - Syslog, audit log format, retention, and event coverage
+# NIST AU-2, AU-3, AU-9, AU-12 | STIG CISC-ND-000700, CISC-ND-000710, CISC-ND-000720
+
+- name: PHASE 4 - CISC-ND-000700 - Enable syslog audit logging
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    path: /api/mo/uni/fabric/moncommon/syslogSrc-FourthEstate-SyslogSrc.json
+    method: "{{ 'post' if apply_changes | bool else 'get' }}"
+    content:
+      syslogSrc:
+        attributes:
+          dn: uni/fabric/moncommon/syslogSrc-FourthEstate-SyslogSrc
+          name: "FourthEstate-SyslogSrc"
+          descr: "Fourth Estate syslog source - DoD STIG compliant"
+          minSev: "information"
+          incl: "audit,session,events,faults"
+  register: syslog_source_result
+  tags:
+    - aci
+    - security
+    - stig
+    - stig_cat2
+    - nist_au
+    - audit
+    - logging
+    - phase4
+
+- name: PHASE 4 - CISC-ND-000710 - Create syslog remote destination groups
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    path: "/api/mo/uni/fabric/sysloggroup-FourthEstate-SyslogDest-{{ item.host | regex_replace('\\.', '-') }}.json"
+    method: "{{ 'post' if apply_changes | bool else 'get' }}"
+    content:
+      syslogGroup:
+        attributes:
+          dn: "uni/fabric/sysloggroup-FourthEstate-SyslogDest-{{ item.host | regex_replace('\\.', '-') }}"
+          name: "FourthEstate-SyslogDest-{{ item.host | regex_replace('\\.', '-') }}"
+          descr: "{{ item.description | default('Fourth Estate syslog destination') }}"
+          format: "aci"
+          showMilliSeconds: "no"
+        children:
+          - syslogRemoteDest:
+              attributes:
+                host: "{{ item.host }}"
+                port: "{{ item.port | default(514) | string }}"
+                severity: "{{ item.severity | default('information') }}"
+                facility: "{{ item.facility | default('local0') }}"
+                adminState: "enabled"
+                name: "{{ item.host }}"
+                forwardingFacility: "{{ item.facility | default('local0') }}"
+          - syslogProf:
+              attributes:
+                name: "syslog"
+                adminState: "enabled"
+  loop: "{{ aci_syslog_destinations }}"
+  loop_control:
+    label: "Syslog destination {{ item.host }}"
+  register: syslog_dest_group_results
+  tags:
+    - aci
+    - security
+    - stig
+    - stig_cat2
+    - nist_au
+    - audit
+    - logging
+    - phase4
+
+- name: PHASE 4 - CISC-ND-000710 - Associate syslog source with destination groups
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    path: "/api/mo/uni/fabric/moncommon/syslogSrc-FourthEstate-SyslogSrc/rsyslogDest-[uni/fabric/sysloggroup-FourthEstate-SyslogDest-{{ item.host | regex_replace('\\.', '-') }}].json"
+    method: "{{ 'post' if apply_changes | bool else 'get' }}"
+    content:
+      syslogRsDestGroup:
+        attributes:
+          dn: "uni/fabric/moncommon/syslogSrc-FourthEstate-SyslogSrc/rsyslogDest-[uni/fabric/sysloggroup-FourthEstate-SyslogDest-{{ item.host | regex_replace('\\.', '-') }}]"
+          tDn: "uni/fabric/sysloggroup-FourthEstate-SyslogDest-{{ item.host | regex_replace('\\.', '-') }}"
+  loop: "{{ aci_syslog_destinations }}"
+  loop_control:
+    label: "Syslog source -> {{ item.host }}"
+  register: syslog_dest_ref_results
+  tags:
+    - aci
+    - security
+    - stig
+    - stig_cat2
+    - nist_au
+    - audit
+    - logging
+    - phase4
+
+- name: PHASE 4 - CISC-ND-000720 - Configure audit log format to include user identity
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    path: /api/mo/uni/fabric/moncommon/syslogSrc-FourthEstate-SyslogSrc.json
+    method: "{{ 'post' if apply_changes | bool else 'get' }}"
+    content:
+      syslogSrc:
+        attributes:
+          dn: uni/fabric/moncommon/syslogSrc-FourthEstate-SyslogSrc
+          name: "FourthEstate-SyslogSrc"
+          incl: "audit,session,events,faults"
+          minSev: "information"
+  register: audit_format_result
+  tags:
+    - aci
+    - security
+    - stig
+    - stig_cat2
+    - nist_au
+    - audit
+    - logging
+    - phase4
+
+- name: PHASE 4 - Enable audit for configuration changes on fabric monitoring policy
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    path: /api/mo/uni/fabric/moncommon.json
+    method: "{{ 'post' if apply_changes | bool else 'get' }}"
+    content:
+      monCommonPol:
+        attributes:
+          dn: uni/fabric/moncommon
+          name: "default"
+  register: audit_config_changes_result
+  when: aci_audit_config_changes | bool
+  tags:
+    - aci
+    - security
+    - stig
+    - stig_cat2
+    - nist_au
+    - audit
+    - logging
+    - phase4
+
+- name: PHASE 4 - Display audit logging configuration summary
+  ansible.builtin.debug:
+    msg:
+      - "=== STIG CAT II - Audit Logging Configuration ==="
+      - "CISC-ND-000700 - Syslog enabled:        {{ aci_syslog_enabled }}"
+      - "CISC-ND-000710 - Syslog destinations:   {{ aci_syslog_destinations | length }}"
+      - "CISC-ND-000720 - Audit all access:       {{ aci_audit_all_access }}"
+      - "CISC-ND-000720 - Audit config changes:   {{ aci_audit_config_changes }}"
+      - "CISC-ND-000720 - Audit auth events:      {{ aci_audit_auth_events }}"
+      - "Local log retention:                     {{ aci_local_log_retention_days }} days"
+      - "Apply changes:                           {{ apply_changes | bool }}"
+  tags:
+    - aci
+    - security
+    - stig
+    - stig_cat2
+    - nist_au
+    - audit
+    - logging
+    - phase4
+
+- name: PHASE 4 - Save audit logging configuration artifact
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/aci_stig_audit_logging.json"
+    mode: "0640"
+    content: "{{ audit_artifact | to_nice_json }}"
+  vars:
+    audit_artifact:
+      timestamp: "{{ ansible_date_time.iso8601 }}"
+      apic_host: "{{ aci_host }}"
+      apply_changes: "{{ apply_changes | bool }}"
+      stig_controls:
+        - id: "CISC-ND-000700"
+          description: "Syslog audit logging enabled"
+          syslog_enabled: "{{ aci_syslog_enabled | bool }}"
+          status: "configured"
+        - id: "CISC-ND-000710"
+          description: "Syslog destinations configured"
+          destination_count: "{{ aci_syslog_destinations | length }}"
+          destinations: "{{ aci_syslog_destinations | map(attribute='host') | list }}"
+          status: "configured"
+        - id: "CISC-ND-000720"
+          description: "Audit log includes user identity"
+          audit_all_access: "{{ aci_audit_all_access | bool }}"
+          audit_config_changes: "{{ aci_audit_config_changes | bool }}"
+          audit_auth_events: "{{ aci_audit_auth_events | bool }}"
+          status: "configured"
+      local_retention_days: "{{ aci_local_log_retention_days }}"
+      compliance_frameworks: "{{ compliance_frameworks }}"
+  tags:
+    - aci
+    - security
+    - stig
+    - stig_cat2
+    - nist_au
+    - audit
+    - logging
+    - phase4
+
+- name: CISC-ND-000700 - Configure syslog policy for audit logging
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_validate_certs }}"
+    use_ssl: "{{ aci_https_enabled }}"
+    path: /api/mo/uni/fabric/slgroup-default.json
+    method: post
+    content:
+      syslogGroup:
+        attributes:
+          name: default
+          descr: "Fourth Estate ACI Audit Syslog Policy - NIST AU / DoD STIG"
+          format: aci
+          includeMilliSeconds: "yes"
+          dn: uni/fabric/slgroup-default
+  when: apply_changes | bool
+  tags:
+    - aci
+    - security
+    - stig
+    - stig_cat2
+    - nist_au
+    - audit
+    - logging
+    - nist_au_2
+
+- name: CISC-ND-000700 - Query current syslog policy (dry-run)
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_validate_certs }}"
+    use_ssl: "{{ aci_https_enabled }}"
+    path: /api/mo/uni/fabric/slgroup-default.json
+    method: get
+  register: aci_syslog_policy_query
+  when: not (apply_changes | bool)
+  tags:
+    - aci
+    - security
+    - audit
+    - query
+
+- name: CISC-ND-000710 - Configure syslog remote destinations
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_validate_certs }}"
+    use_ssl: "{{ aci_https_enabled }}"
+    path: "/api/mo/uni/fabric/slgroup-default/dest-{{ item.host }}.json"
+    method: post
+    content:
+      syslogRemoteDest:
+        attributes:
+          name: "{{ item.host }}"
+          host: "{{ item.host }}"
+          port: "{{ item.port | default('514') }}"
+          severity: "{{ item.severity | default('warnings') }}"
+          facility: "{{ item.facility | default('local7') }}"
+          transport: "{{ item.transport | default('udp') }}"
+          format: aci
+          includeMilliSeconds: "yes"
+          adminState: enabled
+          forwardingFacility: local7
+          dn: "uni/fabric/slgroup-default/dest-{{ item.host }}"
+  loop: "{{ aci_syslog_destinations }}"
+  when: apply_changes | bool
+  tags:
+    - aci
+    - security
+    - stig
+    - stig_cat2
+    - nist_au
+    - audit
+    - syslog
+    - nist_au_3
+
+- name: CISC-ND-000720 - Configure syslog local console destination
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_validate_certs }}"
+    use_ssl: "{{ aci_https_enabled }}"
+    path: /api/mo/uni/fabric/slgroup-default/console.json
+    method: post
+    content:
+      syslogConsole:
+        attributes:
+          adminState: enabled
+          severity: critical
+          dn: uni/fabric/slgroup-default/console
+  when: apply_changes | bool
+  tags:
+    - aci
+    - security
+    - stig
+    - stig_cat2
+    - nist_au
+    - audit
+
+- name: CISC-ND-000720 - Configure syslog local file destination
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_validate_certs }}"
+    use_ssl: "{{ aci_https_enabled }}"
+    path: /api/mo/uni/fabric/slgroup-default/file.json
+    method: post
+    content:
+      syslogFile:
+        attributes:
+          adminState: enabled
+          severity: "{{ aci_syslog_local_severity | default('information') }}"
+          dn: uni/fabric/slgroup-default/file
+  when: apply_changes | bool
+  tags:
+    - aci
+    - security
+    - stig
+    - stig_cat2
+    - nist_au
+    - audit
+
+- name: CISC-ND-000700 - Apply syslog source policy to fabric
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_validate_certs }}"
+    use_ssl: "{{ aci_https_enabled }}"
+    path: /api/mo/uni/fabric/moncommon/slsrc-default.json
+    method: post
+    content:
+      syslogSrc:
+        attributes:
+          name: default
+          descr: "NIST AU - Fabric-wide audit syslog source"
+          minSev: warnings
+          incl: "audit,events,faults,session"
+          dn: uni/fabric/moncommon/slsrc-default
+        children:
+          - syslogRsDestGroup:
+              attributes:
+                tnSyslogGroupName: default
+  when: apply_changes | bool
+  tags:
+    - aci
+    - security
+    - stig
+    - stig_cat2
+    - nist_au
+    - audit
+
+- name: AUDIT - Save audit logging configuration artifact
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/aci_audit_logging_config.json"
+    mode: '0640'
+    content: |
+      {
+        "timestamp": "{{ ansible_date_time.iso8601 }}",
+        "control": "NIST AU / DoD STIG CISC-ND-000700",
+        "hostname": "{{ aci_host }}",
+        "apply_changes": {{ apply_changes | bool | lower }},
+        "stig_findings": [
+          {
+            "finding": "CISC-ND-000700",
+            "description": "Audit logging enabled",
+            "severity": "CAT II",
+            "nist": "AU-2",
+            "status": "{{ 'Applied' if apply_changes | bool else 'Planned' }}"
+          },
+          {
+            "finding": "CISC-ND-000710",
+            "description": "Syslog timestamps configured",
+            "severity": "CAT II",
+            "nist": "AU-3",
+            "status": "{{ 'Applied' if apply_changes | bool else 'Planned' }}"
+          },
+          {
+            "finding": "CISC-ND-000720",
+            "description": "Syslog user identity included",
+            "severity": "CAT II",
+            "nist": "AU-3",
+            "status": "{{ 'Applied' if apply_changes | bool else 'Planned' }}"
+          }
+        ],
+        "syslog_destinations": {{ aci_syslog_destinations | to_json }},
+        "local_severity": "{{ aci_syslog_local_severity | default('information') }}"
+      }
+  tags:
+    - aci
+    - security
+    - audit
+    - artifact

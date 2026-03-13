@@ -1,0 +1,245 @@
+---
+# defaults file for aci_network_config
+# Cisco ACI Network Connectivity - L3Out, L2Out, external EPGs, static routes, BGP/OSPF peering
+
+# ============================================================
+# APIC Connection Parameters
+# ============================================================
+aci_host: "{{ vault_aci_apic_hostname }}"
+aci_username: "{{ vault_aci_apic_username }}"
+aci_password: "{{ vault_aci_apic_password }}"
+aci_verify_ssl: true
+aci_use_proxy: false
+aci_timeout: 30
+aci_port: 443
+
+# ============================================================
+# Deployment Control
+# ============================================================
+apply_changes: false
+artifacts_dir: "/tmp/aci-artifacts"
+
+# ============================================================
+# Fourth Estate Organization
+# ============================================================
+fourth_estate_org: "FourthEstate"
+fourth_estate_contact: "{{ vault_fourth_estate_contact }}"
+fourth_estate_environment: "production"
+fourth_estate_region: "primary"
+
+# ============================================================
+# Feature Toggles
+# ============================================================
+enable_l3out: true
+enable_l2out: false
+enable_external_epgs: true
+enable_static_routes: true
+enable_bgp_peers: true
+enable_ospf_peers: false
+
+# ============================================================
+# L3Out Configurations
+# ============================================================
+aci_l3outs:
+  - name: "L3Out-Core-Routing"
+    tenant: "FourthEstate-Prod"
+    vrf: "Prod-VRF"
+    domain: "L3Dom-External"
+    description: "Core external routing L3Out"
+    ospf_area: "0.0.0.0"
+    ospf_area_type: "regular"
+    bgp_enabled: true
+    ospf_enabled: false
+    node_profile: "NodeProfile-Core"
+    interface_profile: "IntProfile-Core"
+    nodes:
+      - node_dn: "topology/pod-1/node-201"
+        router_id: "10.0.0.201"
+        loopback: true
+      - node_dn: "topology/pod-1/node-202"
+        router_id: "10.0.0.202"
+        loopback: true
+    paths:
+      - path_dn: "topology/pod-1/paths-201/pathep-[eth1/1]"
+        encap: "vlan-100"
+        addr: "10.10.100.1/30"
+        description: "Uplink to core router - Leaf 201 eth1/1"
+      - path_dn: "topology/pod-1/paths-202/pathep-[eth1/1]"
+        encap: "vlan-100"
+        addr: "10.10.100.5/30"
+        description: "Uplink to core router - Leaf 202 eth1/1"
+    bgp_peers:
+      - peer_ip: "10.10.100.2"
+        remote_asn: 65000
+        local_asn: 65100
+        password: "{{ vault_aci_bgp_peer_password }}"
+        description: "Core router BGP peer - Leaf 201"
+        path_dn: "topology/pod-1/paths-201/pathep-[eth1/1]"
+      - peer_ip: "10.10.100.6"
+        remote_asn: 65000
+        local_asn: 65100
+        password: "{{ vault_aci_bgp_peer_password }}"
+        description: "Core router BGP peer - Leaf 202"
+        path_dn: "topology/pod-1/paths-202/pathep-[eth1/1]"
+    external_epgs:
+      - name: "ExtEPG-Internet"
+        description: "Internet external EPG"
+        subnets:
+          - prefix: "0.0.0.0/0"
+            scope: "import-security"
+        provided_contracts: []
+        consumed_contracts:
+          - "Contract-Internet-Access"
+      - name: "ExtEPG-Corporate"
+        description: "Corporate network external EPG"
+        subnets:
+          - prefix: "10.0.0.0/8"
+            scope: "import-security,export-rtctrl"
+        provided_contracts:
+          - "Contract-Corporate-Services"
+        consumed_contracts: []
+
+  - name: "L3Out-DMZ-Routing"
+    tenant: "FourthEstate-DMZ"
+    vrf: "DMZ-VRF"
+    domain: "L3Dom-External"
+    description: "DMZ external routing L3Out"
+    ospf_area: "0.0.0.0"
+    ospf_area_type: "regular"
+    bgp_enabled: false
+    ospf_enabled: true
+    node_profile: "NodeProfile-DMZ"
+    interface_profile: "IntProfile-DMZ"
+    nodes:
+      - node_dn: "topology/pod-1/node-203"
+        router_id: "10.0.0.203"
+        loopback: true
+      - node_dn: "topology/pod-1/node-204"
+        router_id: "10.0.0.204"
+        loopback: true
+    paths:
+      - path_dn: "topology/pod-1/paths-203/pathep-[eth1/2]"
+        encap: "vlan-200"
+        addr: "172.16.200.1/30"
+        description: "Uplink to DMZ firewall - Leaf 203 eth1/2"
+      - path_dn: "topology/pod-1/paths-204/pathep-[eth1/2]"
+        encap: "vlan-200"
+        addr: "172.16.200.5/30"
+        description: "Uplink to DMZ firewall - Leaf 204 eth1/2"
+    bgp_peers: []
+    external_epgs:
+      - name: "ExtEPG-DMZ-External"
+        description: "DMZ external networks"
+        subnets:
+          - prefix: "0.0.0.0/0"
+            scope: "import-security"
+        provided_contracts: []
+        consumed_contracts:
+          - "Contract-DMZ-Outbound"
+
+# ============================================================
+# L2Out Configurations
+# ============================================================
+aci_l2outs:
+  - name: "L2Out-Legacy-VLAN"
+    tenant: "FourthEstate-Prod"
+    domain: "PhysDom-Prod"
+    description: "L2Out for legacy VLAN bridging"
+    paths:
+      - path_dn: "topology/pod-1/paths-201/pathep-[eth1/10]"
+        encap: "vlan-150"
+    external_epgs:
+      - name: "L2ExtEPG-Legacy"
+        description: "Legacy VLAN external EPG"
+
+# ============================================================
+# Standalone External EPG Configurations
+# (for external EPGs not defined inline with L3Out)
+# ============================================================
+aci_external_epgs: []
+# Example:
+# aci_external_epgs:
+#   - name: "ExtEPG-Management"
+#     tenant: "FourthEstate-Mgmt"
+#     l3out: "L3Out-Management"
+#     description: "Management network external EPG"
+#     subnets:
+#       - prefix: "192.168.10.0/24"
+#         scope: "import-security"
+#     provided_contracts: []
+#     consumed_contracts:
+#       - "Contract-MGMT-Access"
+
+# ============================================================
+# Static Route Configurations
+# ============================================================
+aci_static_routes:
+  - tenant: "FourthEstate-Prod"
+    vrf: "Prod-VRF"
+    node_dn: "topology/pod-1/node-201"
+    prefix: "192.168.100.0/24"
+    description: "Static route to remote site A"
+    next_hops:
+      - next_hop: "10.10.100.2"
+        preference: 1
+        description: "Primary next hop - core router"
+      - next_hop: "10.10.100.6"
+        preference: 100
+        description: "Backup next hop - secondary router"
+  - tenant: "FourthEstate-Prod"
+    vrf: "Prod-VRF"
+    node_dn: "topology/pod-1/node-202"
+    prefix: "192.168.100.0/24"
+    description: "Static route to remote site A - node 202"
+    next_hops:
+      - next_hop: "10.10.100.6"
+        preference: 1
+        description: "Primary next hop - core router"
+      - next_hop: "10.10.100.2"
+        preference: 100
+        description: "Backup next hop - primary router"
+
+# ============================================================
+# OSPF Interface Policy Settings
+# ============================================================
+aci_ospf_interface_policies:
+  - name: "OSPF-P2P-Policy"
+    tenant: "FourthEstate-Prod"
+    network_type: "p2p"
+    hello_interval: 10
+    dead_interval: 40
+    retransmit_interval: 5
+    transmit_delay: 1
+    priority: 1
+    description: "OSPF point-to-point interface policy"
+  - name: "OSPF-Broadcast-Policy"
+    tenant: "FourthEstate-Prod"
+    network_type: "bcast"
+    hello_interval: 10
+    dead_interval: 40
+    retransmit_interval: 5
+    transmit_delay: 1
+    priority: 1
+    description: "OSPF broadcast interface policy"
+
+# ============================================================
+# OSPF Area Configurations (per L3Out requiring OSPF)
+# ============================================================
+aci_ospf_configs:
+  - l3out_name: "L3Out-DMZ-Routing"
+    tenant: "FourthEstate-DMZ"
+    area_id: "0.0.0.0"
+    area_type: "regular"
+    area_cost: 1
+    interface_policy: "OSPF-P2P-Policy"
+    description: "OSPF area 0 for DMZ L3Out"
+
+# ============================================================
+# Compliance Frameworks
+# ============================================================
+compliance_frameworks:
+  - "dod_stig"
+  - "nist_800_53"
+  - "nist_800_171"
+  - "fisma_moderate"
+  - "fisma_high"

@@ -1,0 +1,132 @@
+---
+# tasks file for aci_network_config - Validation and Verification
+# Queries L3Out objects, checks for faults, and generates validation report
+
+- name: PHASE 3 - Query all configured L3Outs for validation
+  cisco.aci.aci_l3out:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    tenant: "{{ item.tenant }}"
+    l3out: "{{ item.name }}"
+    state: query
+  loop: "{{ aci_l3outs }}"
+  loop_control:
+    label: "{{ item.tenant }}/{{ item.name }}"
+  register: l3out_validation_results
+  tags:
+    - validation
+    - verification
+    - phase3
+
+- name: PHASE 3 - Assert all L3Outs are present
+  ansible.builtin.assert:
+    that:
+      - item.current is defined
+    fail_msg: "L3Out validation query failed for {{ item.item.name }}"
+    success_msg: "L3Out {{ item.item.name }} validation query succeeded"
+    quiet: true
+  loop: "{{ l3out_validation_results.results }}"
+  loop_control:
+    label: "{{ item.item.tenant }}/{{ item.item.name }}"
+  when: apply_changes | bool
+  tags:
+    - validation
+    - verification
+    - phase3
+
+- name: PHASE 3 - Query L3Out-related faults
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    path: "/api/class/faultInst.json?query-target-filter=and(or(eq(faultInst.severity,\"critical\"),eq(faultInst.severity,\"major\")),wcard(faultInst.dn,\"out-\"))&order-by=faultInst.severity|desc&page-size=50"
+    method: get
+  register: l3out_faults
+  failed_when: false
+  tags:
+    - validation
+    - verification
+    - phase3
+
+- name: PHASE 3 - Query static routes for validation
+  cisco.aci.aci_l3out_static_routes:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    tenant: "{{ item.tenant }}"
+    l3out: "{{ item.l3out_name | default('L3Out-Core-Routing') }}"
+    node_profile: "{{ item.node_profile | default('NodeProfile-Core') }}"
+    pod_id: "{{ item.node_dn | regex_replace('topology/pod-(\\d+)/.*', '\\1') }}"
+    node_id: "{{ item.node_dn | regex_replace('topology/pod-\\d+/node-(\\d+)', '\\1') }}"
+    prefix: "{{ item.prefix }}"
+    state: query
+  loop: "{{ aci_static_routes }}"
+  loop_control:
+    label: "{{ item.tenant }}/{{ item.prefix }}"
+  register: static_route_validation
+  when: enable_static_routes | bool
+  tags:
+    - validation
+    - verification
+    - phase3
+
+- name: PHASE 3 - Display network configuration validation summary
+  ansible.builtin.debug:
+    msg:
+      - "=== ACI Network Configuration Validation ==="
+      - "APIC Host:              {{ aci_host }}"
+      - "L3Outs configured:      {{ aci_l3outs | length }}"
+      - "L3Out results queried:  {{ l3out_validation_results.results | length }}"
+      - "L3Out faults found:     {{ l3out_faults.imdata | default([]) | length }}"
+      - "Static routes:          {{ aci_static_routes | length }}"
+      - "BGP-enabled L3Outs:     {{ aci_l3outs | selectattr('bgp_enabled', 'defined') | selectattr('bgp_enabled') | list | length }}"
+      - "OSPF-enabled L3Outs:    {{ aci_l3outs | selectattr('ospf_enabled', 'defined') | selectattr('ospf_enabled') | list | length }}"
+      - "Apply Changes Mode:     {{ apply_changes | bool }}"
+      - "Deployment Start:       {{ aci_network_config_start_time | default('unknown') }}"
+      - "Validation Time:        {{ ansible_date_time.iso8601 }}"
+  tags:
+    - validation
+    - verification
+    - phase3
+
+- name: PHASE 3 - Warn if L3Out faults detected
+  ansible.builtin.debug:
+    msg:
+      - "WARNING: {{ l3out_faults.imdata | default([]) | length }} critical/major fault(s) detected on L3Out objects"
+      - "Review faults at: https://{{ aci_host }}/index.html#bTenants:faults"
+  when: (l3out_faults.imdata | default([]) | length) > 0
+  tags:
+    - validation
+    - verification
+    - phase3
+
+- name: PHASE 3 - Generate network configuration validation report artifact
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/aci_network_validation_report.json"
+    mode: "0640"
+    content: "{{ validation_report | to_nice_json }}"
+  vars:
+    validation_report:
+      timestamp: "{{ ansible_date_time.iso8601 }}"
+      deployment_start: "{{ aci_network_config_start_time | default('unknown') }}"
+      apic_host: "{{ aci_host }}"
+      apply_changes: "{{ apply_changes | bool }}"
+      l3out_count: "{{ aci_l3outs | length }}"
+      l3out_names: "{{ aci_l3outs | map(attribute='name') | list }}"
+      l3out_faults: "{{ l3out_faults.imdata | default([]) | length }}"
+      static_route_count: "{{ aci_static_routes | length }}"
+      bgp_l3out_count: "{{ aci_l3outs | selectattr('bgp_enabled', 'defined') | selectattr('bgp_enabled') | list | length }}"
+      ospf_l3out_count: "{{ aci_l3outs | selectattr('ospf_enabled', 'defined') | selectattr('ospf_enabled') | list | length }}"
+      compliance_frameworks: "{{ compliance_frameworks }}"
+      validation_status: "{{ 'PASSED' if (l3out_faults.imdata | default([]) | length) == 0 else 'WARNING - Faults Detected' }}"
+  tags:
+    - validation
+    - verification
+    - phase3

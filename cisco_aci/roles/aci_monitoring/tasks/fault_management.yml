@@ -1,0 +1,199 @@
+---
+# tasks file for aci_monitoring - Fault Management
+# Queries faults by severity, counts them, generates fault report, warns/fails on critical faults
+
+- name: PHASE 5 - Query all current active faults
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    path: "/api/class/faultInst.json?order-by=faultInst.severity|desc&page-size={{ aci_fault_page_size }}"
+    method: get
+  register: all_faults_result
+  failed_when: false
+  tags:
+    - aci
+    - monitoring
+    - faults
+    - phase5
+
+- name: PHASE 5 - Query critical faults
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    path: "/api/class/faultInst.json?query-target-filter=eq(faultInst.severity,\"critical\")&order-by=faultInst.lastTransition|desc&page-size={{ aci_fault_page_size }}"
+    method: get
+  register: critical_faults_result
+  failed_when: false
+  tags:
+    - aci
+    - monitoring
+    - faults
+    - phase5
+
+- name: PHASE 5 - Query major faults
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    path: "/api/class/faultInst.json?query-target-filter=eq(faultInst.severity,\"major\")&order-by=faultInst.lastTransition|desc&page-size={{ aci_fault_page_size }}"
+    method: get
+  register: major_faults_result
+  failed_when: false
+  tags:
+    - aci
+    - monitoring
+    - faults
+    - phase5
+
+- name: PHASE 5 - Query minor faults
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    path: "/api/class/faultInst.json?query-target-filter=eq(faultInst.severity,\"minor\")&order-by=faultInst.lastTransition|desc&page-size={{ aci_fault_page_size }}"
+    method: get
+  register: minor_faults_result
+  failed_when: false
+  tags:
+    - aci
+    - monitoring
+    - faults
+    - phase5
+
+- name: PHASE 5 - Query warning faults
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    path: "/api/class/faultInst.json?query-target-filter=eq(faultInst.severity,\"warning\")&order-by=faultInst.lastTransition|desc&page-size={{ aci_fault_page_size }}"
+    method: get
+  register: warning_faults_result
+  failed_when: false
+  tags:
+    - aci
+    - monitoring
+    - faults
+    - phase5
+
+- name: PHASE 5 - Set fault count facts by severity
+  ansible.builtin.set_fact:
+    fault_count_critical: "{{ critical_faults_result.imdata | default([]) | length }}"
+    fault_count_major: "{{ major_faults_result.imdata | default([]) | length }}"
+    fault_count_minor: "{{ minor_faults_result.imdata | default([]) | length }}"
+    fault_count_warning: "{{ warning_faults_result.imdata | default([]) | length }}"
+    fault_count_total: "{{ all_faults_result.imdata | default([]) | length }}"
+  tags:
+    - aci
+    - monitoring
+    - faults
+    - phase5
+
+- name: PHASE 5 - Warn if major faults are detected
+  ansible.builtin.debug:
+    msg:
+      - "WARNING: {{ fault_count_major }} major fault(s) detected in ACI fabric"
+      - "Review major faults at: https://{{ aci_host }}/index.html"
+  when:
+    - aci_fault_warn_on_major | bool
+    - fault_count_major | int > 0
+  tags:
+    - aci
+    - monitoring
+    - faults
+    - phase5
+
+- name: PHASE 5 - Warn if critical faults are detected (non-failing)
+  ansible.builtin.debug:
+    msg:
+      - "CRITICAL ALERT: {{ fault_count_critical }} critical fault(s) detected in ACI fabric"
+      - "Immediate attention required!"
+      - "Review critical faults at: https://{{ aci_host }}/index.html"
+  when:
+    - not (aci_fault_fail_on_critical | bool)
+    - fault_count_critical | int > 0
+  tags:
+    - aci
+    - monitoring
+    - faults
+    - phase5
+
+- name: PHASE 5 - Fail if critical faults exist and configured to fail
+  ansible.builtin.fail:
+    msg: "CRITICAL: {{ fault_count_critical }} critical fault(s) detected in ACI fabric - deployment blocked by fault_fail_on_critical policy"
+  when:
+    - aci_fault_fail_on_critical | bool
+    - fault_count_critical | int > 0
+  tags:
+    - aci
+    - monitoring
+    - faults
+    - phase5
+
+- name: PHASE 5 - Display fault management summary
+  ansible.builtin.debug:
+    msg:
+      - "==================================================================="
+      - " ACI Fault Management Summary - Fourth Estate"
+      - "==================================================================="
+      - " APIC Host:    {{ aci_host }}"
+      - " Timestamp:    {{ ansible_date_time.iso8601 }}"
+      - "-------------------------------------------------------------------"
+      - " Fault Counts by Severity:"
+      - "   Critical:  {{ fault_count_critical }}"
+      - "   Major:     {{ fault_count_major }}"
+      - "   Minor:     {{ fault_count_minor }}"
+      - "   Warning:   {{ fault_count_warning }}"
+      - "   Total:     {{ fault_count_total }}"
+      - "-------------------------------------------------------------------"
+      - " Overall Status: {{ 'CRITICAL FAULTS PRESENT' if fault_count_critical | int > 0 else ('MAJOR FAULTS PRESENT' if fault_count_major | int > 0 else ('MINOR/WARNING FAULTS' if (fault_count_minor | int + fault_count_warning | int) > 0 else 'CLEAN - No active faults')) }}"
+      - "==================================================================="
+  tags:
+    - aci
+    - monitoring
+    - faults
+    - phase5
+
+- name: PHASE 5 - Generate fault management report artifact
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/aci_fault_report.json"
+    mode: "0640"
+    content: "{{ fault_report | to_nice_json }}"
+  vars:
+    fault_report:
+      timestamp: "{{ ansible_date_time.iso8601 }}"
+      apic_host: "{{ aci_host }}"
+      apply_changes: "{{ apply_changes | bool }}"
+      fault_counts:
+        critical: "{{ fault_count_critical }}"
+        major: "{{ fault_count_major }}"
+        minor: "{{ fault_count_minor }}"
+        warning: "{{ fault_count_warning }}"
+        total: "{{ fault_count_total }}"
+      fault_status: "{{ 'CRITICAL' if fault_count_critical | int > 0 else ('MAJOR' if fault_count_major | int > 0 else ('MINOR' if fault_count_minor | int > 0 else ('WARNING' if fault_count_warning | int > 0 else 'CLEAN'))) }}"
+      critical_faults: "{{ critical_faults_result.imdata | default([]) }}"
+      major_faults: "{{ major_faults_result.imdata | default([]) }}"
+      fault_policy:
+        fail_on_critical: "{{ aci_fault_fail_on_critical | bool }}"
+        warn_on_major: "{{ aci_fault_warn_on_major | bool }}"
+        suppress_acknowledged: "{{ aci_suppress_acknowledged | bool }}"
+        page_size: "{{ aci_fault_page_size }}"
+      fourth_estate_org: "{{ fourth_estate_org }}"
+      fourth_estate_environment: "{{ fourth_estate_environment }}"
+      compliance_note: "Fault management audit trail - NIST 800-53 SI-4, SI-5, AU-6"
+  tags:
+    - aci
+    - monitoring
+    - faults
+    - phase5

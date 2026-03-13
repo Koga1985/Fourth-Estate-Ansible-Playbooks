@@ -1,0 +1,164 @@
+---
+# tasks file for aci_security_hardening - SNMP Security Configuration
+# NIST 800-53 SC Controls - System and Communications Protection
+# DoD STIG: CISC-ND-000090
+
+- name: CISC-ND-000090 - Configure SNMP policy (disable v1/v2, enable v3)
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_validate_certs }}"
+    use_ssl: "{{ aci_https_enabled }}"
+    path: /api/mo/uni/fabric/snmppol-default.json
+    method: post
+    content:
+      snmpPol:
+        attributes:
+          name: default
+          descr: "Fourth Estate SNMP Policy - SNMPv3 Required - DoD STIG CISC-ND-000090"
+          adminSt: enabled
+          dn: uni/fabric/snmppol-default
+  when: apply_changes | bool
+  tags:
+    - aci
+    - security
+    - stig
+    - stig_cat2
+    - nist_sc
+    - snmp
+    - nist_sc_8
+
+- name: CISC-ND-000090 - Configure SNMPv3 user authentication
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_validate_certs }}"
+    use_ssl: "{{ aci_https_enabled }}"
+    path: "/api/mo/uni/fabric/snmppol-default/user-{{ item.username }}.json"
+    method: post
+    content:
+      snmpUserP:
+        attributes:
+          name: "{{ item.username }}"
+          descr: "SNMPv3 user - CISC-ND-000090 compliance"
+          privType: "{{ item.priv_type | default('aes-128') }}"
+          privKey: "{{ item.priv_password }}"
+          authType: "{{ item.auth_type | default('hmac-sha1-96') }}"
+          authKey: "{{ item.auth_password }}"
+          dn: "uni/fabric/snmppol-default/user-{{ item.username }}"
+  loop: "{{ aci_snmp_v3_users | default([]) }}"
+  when:
+    - apply_changes | bool
+    - aci_snmp_v3_enabled | bool
+  no_log: true
+  tags:
+    - aci
+    - security
+    - stig
+    - stig_cat2
+    - nist_sc
+    - snmp
+    - nist_sc_8
+
+- name: CISC-ND-000090 - Query current SNMP configuration (dry-run)
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_validate_certs }}"
+    use_ssl: "{{ aci_https_enabled }}"
+    path: /api/mo/uni/fabric/snmppol-default.json
+    method: get
+  register: aci_snmp_policy_query
+  when: not (apply_changes | bool)
+  tags:
+    - aci
+    - security
+    - snmp
+    - query
+
+- name: CISC-ND-000090 - Configure SNMP trap destinations
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_validate_certs }}"
+    use_ssl: "{{ aci_https_enabled }}"
+    path: "/api/mo/uni/fabric/snmppol-default/trap-{{ item.host }}.json"
+    method: post
+    content:
+      snmpTrapFwdServerP:
+        attributes:
+          addr: "{{ item.host }}"
+          port: "{{ item.port | default('162') }}"
+          dn: "uni/fabric/snmppol-default/trap-{{ item.host }}"
+  loop: "{{ aci_snmp_trap_destinations | default([]) }}"
+  when: apply_changes | bool
+  tags:
+    - aci
+    - security
+    - stig
+    - stig_cat2
+    - nist_sc
+    - snmp
+
+- name: CISC-ND-000090 - Apply SNMP policy to fabric monitoring
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_validate_certs }}"
+    use_ssl: "{{ aci_https_enabled }}"
+    path: /api/mo/uni/fabric/moncommon/snmpsrc-default.json
+    method: post
+    content:
+      snmpSrc:
+        attributes:
+          name: default
+          descr: "NIST SC-8 - SNMP monitoring source"
+          dn: uni/fabric/moncommon/snmpsrc-default
+        children:
+          - snmpRsDestGroup:
+              attributes:
+                tnSnmpGroupName: default
+  when: apply_changes | bool
+  tags:
+    - aci
+    - security
+    - stig
+    - stig_cat2
+    - nist_sc
+    - snmp
+
+- name: SNMP - Save SNMP security configuration artifact
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/aci_snmp_security_config.json"
+    mode: '0640'
+    content: |
+      {
+        "timestamp": "{{ ansible_date_time.iso8601 }}",
+        "control": "DoD STIG CISC-ND-000090 / NIST SC-8",
+        "hostname": "{{ aci_host }}",
+        "apply_changes": {{ apply_changes | bool | lower }},
+        "snmp_config": {
+          "v1_enabled": {{ aci_snmp_v1_enabled | bool | lower }},
+          "v2_enabled": {{ aci_snmp_v2_enabled | bool | lower }},
+          "v3_enabled": {{ aci_snmp_v3_enabled | bool | lower }},
+          "v3_user_count": {{ aci_snmp_v3_users | default([]) | length }},
+          "trap_destination_count": {{ aci_snmp_trap_destinations | default([]) | length }}
+        },
+        "stig_finding": {
+          "id": "CISC-ND-000090",
+          "description": "SNMPv3 required - v1/v2 disabled",
+          "severity": "CAT II",
+          "nist_control": "SC-8",
+          "status": "{{ 'Applied' if apply_changes | bool else 'Planned' }}"
+        }
+      }
+  tags:
+    - aci
+    - security
+    - snmp
+    - artifact

@@ -1,0 +1,181 @@
+---
+# tasks file for aci_monitoring - Call Home Configuration
+# Configures Cisco Call Home policy, SMTP settings, profile, destinations, and smart licensing
+
+- name: PHASE 5 - Configure Call Home policy on ACI fabric
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    path: /api/mo/uni/fabric/callhome.json
+    method: "{{ 'post' if apply_changes | bool else 'get' }}"
+    content:
+      callhomePol:
+        attributes:
+          dn: uni/fabric/callhome
+          adminState: "{{ 'enabled' if aci_callhome_enabled | bool else 'disabled' }}"
+          custContractId: "{{ aci_callhome_contract_id }}"
+          custCustomerId: "{{ aci_callhome_customer_id }}"
+          custSiteId: "{{ aci_callhome_site_id }}"
+          custContactEmail: "{{ aci_callhome_email }}"
+          custContact: "{{ aci_callhome_contact }}"
+          custPhone: "{{ aci_callhome_phone }}"
+          custAddr: "{{ aci_callhome_street_address }}"
+          custOrg: "{{ aci_callhome_org_name }}"
+          from: "{{ aci_callhome_from_email }}"
+          replyTo: "{{ aci_callhome_reply_email }}"
+          descr: "Fourth Estate ACI Call Home - automated fault notification"
+  register: callhome_policy_result
+  tags:
+    - aci
+    - monitoring
+    - callhome
+    - phase5
+
+- name: PHASE 5 - Configure Call Home SMTP server settings
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    path: /api/mo/uni/fabric/callhome/smtp.json
+    method: "{{ 'post' if apply_changes | bool else 'get' }}"
+    content:
+      callhomeSmtp:
+        attributes:
+          dn: uni/fabric/callhome/smtp
+          host: "{{ aci_callhome_smtp_server }}"
+          port: "{{ aci_callhome_smtp_port | default(25) }}"
+          secPort: "465"
+  register: callhome_smtp_result
+  tags:
+    - aci
+    - monitoring
+    - callhome
+    - phase5
+
+- name: PHASE 5 - Configure Call Home destination profile (full-text)
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    path: /api/mo/uni/fabric/callhome/prof-FourthEstate-CallHome.json
+    method: "{{ 'post' if apply_changes | bool else 'get' }}"
+    content:
+      callhomeDestProfile:
+        attributes:
+          dn: uni/fabric/callhome/prof-FourthEstate-CallHome
+          name: "FourthEstate-CallHome"
+          format: "fullTxt"
+          maxMsgSz: "500000"
+          reportTypes: "all"
+          level: "debug"
+          descr: "Fourth Estate Call Home destination profile - all severity levels"
+  register: callhome_profile_result
+  tags:
+    - aci
+    - monitoring
+    - callhome
+    - phase5
+
+- name: PHASE 5 - Configure Call Home email destination
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    path: /api/mo/uni/fabric/callhome/prof-FourthEstate-CallHome/dest.json
+    method: "{{ 'post' if apply_changes | bool else 'get' }}"
+    content:
+      callhomeDest:
+        attributes:
+          dn: uni/fabric/callhome/prof-FourthEstate-CallHome/dest
+          email: "{{ aci_callhome_email }}"
+          protocol: "email"
+  register: callhome_dest_result
+  tags:
+    - aci
+    - monitoring
+    - callhome
+    - phase5
+
+- name: PHASE 5 - Configure Call Home source (bind to fabric monitoring)
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    path: /api/mo/uni/fabric/moncommon/callhomesrc-FourthEstate-CallHome.json
+    method: "{{ 'post' if apply_changes | bool else 'get' }}"
+    content:
+      callhomeSrc:
+        attributes:
+          dn: uni/fabric/moncommon/callhomesrc-FourthEstate-CallHome
+          name: "FourthEstate-CallHome"
+          incl: "all"
+          minSev: "minor"
+          descr: "Fourth Estate Call Home source - minor severity and above"
+        children:
+          - callhomeRsDestProfile:
+              attributes:
+                tnCallhomeDestProfileName: "FourthEstate-CallHome"
+  register: callhome_source_result
+  tags:
+    - aci
+    - monitoring
+    - callhome
+    - phase5
+
+- name: PHASE 5 - Configure Call Home smart licensing integration
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    path: /api/mo/uni/fabric/smartlic.json
+    method: "{{ 'post' if apply_changes | bool else 'get' }}"
+    content:
+      smartLicP:
+        attributes:
+          dn: uni/fabric/smartlic
+          descr: "Fourth Estate Smart Licensing integration"
+  register: callhome_smartlic_result
+  failed_when: false
+  tags:
+    - aci
+    - monitoring
+    - callhome
+    - smartlicensing
+    - phase5
+
+- name: PHASE 5 - Save Call Home configuration artifact
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/aci_callhome_config.json"
+    mode: "0640"
+    content: "{{ callhome_artifact | to_nice_json }}"
+  vars:
+    callhome_artifact:
+      timestamp: "{{ ansible_date_time.iso8601 }}"
+      apic_host: "{{ aci_host }}"
+      apply_changes: "{{ apply_changes | bool }}"
+      callhome_enabled: "{{ aci_callhome_enabled | bool }}"
+      callhome_org: "{{ aci_callhome_org_name }}"
+      callhome_email: "{{ aci_callhome_email }}"
+      smtp_server: "{{ aci_callhome_smtp_server }}"
+      smtp_port: "{{ aci_callhome_smtp_port }}"
+      destination_profile: "FourthEstate-CallHome"
+      policy_status: "{{ callhome_policy_result.imdata | default([]) | length }}"
+      compliance_note: "Call Home - Cisco TAC automated fault notification and smart licensing"
+  tags:
+    - aci
+    - monitoring
+    - callhome
+    - phase5

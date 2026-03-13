@@ -1,0 +1,209 @@
+---
+# tasks file for aci_monitoring - Syslog Configuration
+# Configures syslog policy, remote destinations, local file logging, severity levels, and format
+
+- name: PHASE 5 - Configure syslog policy on ACI fabric
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    path: /api/mo/uni/fabric/slgroup-FourthEstate-Syslog.json
+    method: "{{ 'post' if apply_changes | bool else 'get' }}"
+    content:
+      syslogGroup:
+        attributes:
+          dn: uni/fabric/slgroup-FourthEstate-Syslog
+          name: "FourthEstate-Syslog"
+          descr: "Fourth Estate ACI Syslog Policy - centralized logging"
+          format: "aci"
+          includeMilliSeconds: "{{ 'yes' if aci_syslog_include_ms | bool else 'no' }}"
+          showMilliSeconds: "{{ 'yes' if aci_syslog_include_ms | bool else 'no' }}"
+  register: syslog_policy_result
+  tags:
+    - aci
+    - monitoring
+    - syslog
+    - logging
+    - phase5
+
+- name: PHASE 5 - Configure syslog remote destinations
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    path: "/api/mo/uni/fabric/slgroup-FourthEstate-Syslog/rdst-{{ item.host }}.json"
+    method: "{{ 'post' if apply_changes | bool else 'get' }}"
+    content:
+      syslogRemoteDest:
+        attributes:
+          dn: "uni/fabric/slgroup-FourthEstate-Syslog/rdst-{{ item.host }}"
+          host: "{{ item.host }}"
+          port: "{{ item.port | default(514) }}"
+          severity: "{{ item.severity | default('warnings') }}"
+          facility: "{{ item.facility | default('local7') }}"
+          transport: "{{ item.transport | default('udp') }}"
+          adminState: "enabled"
+          forwardingFacility: "{{ item.facility | default('local7') }}"
+          descr: "{{ item.description | default('Syslog remote destination - Fourth Estate') }}"
+  loop: "{{ aci_syslog_destinations }}"
+  loop_control:
+    label: "{{ item.host }}:{{ item.port | default(514) }}"
+  register: syslog_remote_dest_result
+  tags:
+    - aci
+    - monitoring
+    - syslog
+    - logging
+    - phase5
+
+- name: PHASE 5 - Configure syslog local file destination
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    path: /api/mo/uni/fabric/slgroup-FourthEstate-Syslog/ldst.json
+    method: "{{ 'post' if apply_changes | bool else 'get' }}"
+    content:
+      syslogLocalDest:
+        attributes:
+          dn: uni/fabric/slgroup-FourthEstate-Syslog/ldst
+          adminState: "enabled"
+          severity: "{{ aci_syslog_local_severity }}"
+          descr: "Fourth Estate ACI local syslog file destination"
+  register: syslog_local_dest_result
+  tags:
+    - aci
+    - monitoring
+    - syslog
+    - logging
+    - phase5
+
+- name: PHASE 5 - Configure syslog console destination (critical events only)
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    path: /api/mo/uni/fabric/slgroup-FourthEstate-Syslog/cdst.json
+    method: "{{ 'post' if apply_changes | bool else 'get' }}"
+    content:
+      syslogConsoleDest:
+        attributes:
+          dn: uni/fabric/slgroup-FourthEstate-Syslog/cdst
+          adminState: "enabled"
+          severity: "critical"
+          descr: "Fourth Estate ACI console syslog - critical only"
+  register: syslog_console_dest_result
+  tags:
+    - aci
+    - monitoring
+    - syslog
+    - logging
+    - phase5
+
+- name: PHASE 5 - Configure syslog severity level source bindings
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    path: /api/mo/uni/fabric/moncommon/slsrc-FourthEstate-Syslog.json
+    method: "{{ 'post' if apply_changes | bool else 'get' }}"
+    content:
+      syslogSrc:
+        attributes:
+          dn: uni/fabric/moncommon/slsrc-FourthEstate-Syslog
+          name: "FourthEstate-Syslog"
+          incl: "all"
+          minSev: "warnings"
+          descr: "Fourth Estate syslog source - fabric-wide events"
+        children:
+          - syslogRsDestGroup:
+              attributes:
+                tnSyslogGroupName: "FourthEstate-Syslog"
+  register: syslog_source_result
+  tags:
+    - aci
+    - monitoring
+    - syslog
+    - logging
+    - phase5
+
+- name: PHASE 5 - Configure syslog format to include timestamps and username
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    path: /api/mo/uni/fabric/slgroup-FourthEstate-Syslog.json
+    method: "{{ 'post' if apply_changes | bool else 'get' }}"
+    content:
+      syslogGroup:
+        attributes:
+          dn: uni/fabric/slgroup-FourthEstate-Syslog
+          name: "FourthEstate-Syslog"
+          format: "aci"
+          includeMilliSeconds: "{{ 'yes' if aci_syslog_include_ms | bool else 'no' }}"
+  register: syslog_format_result
+  tags:
+    - aci
+    - monitoring
+    - syslog
+    - logging
+    - phase5
+
+- name: PHASE 5 - Bind syslog policy to fabric monitoring policy
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    path: /api/mo/uni/fabric/moncommon.json
+    method: "{{ 'post' if apply_changes | bool else 'get' }}"
+    content:
+      monCommonPol:
+        attributes:
+          dn: uni/fabric/moncommon
+          name: "default"
+  register: syslog_bind_result
+  tags:
+    - aci
+    - monitoring
+    - syslog
+    - logging
+    - phase5
+
+- name: PHASE 5 - Save syslog configuration artifact
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/aci_syslog_config.json"
+    mode: "0640"
+    content: "{{ syslog_artifact | to_nice_json }}"
+  vars:
+    syslog_artifact:
+      timestamp: "{{ ansible_date_time.iso8601 }}"
+      apic_host: "{{ aci_host }}"
+      apply_changes: "{{ apply_changes | bool }}"
+      syslog_enabled: "{{ aci_syslog_enabled | bool }}"
+      syslog_policy: "FourthEstate-Syslog"
+      remote_destination_count: "{{ aci_syslog_destinations | length }}"
+      remote_destinations: "{{ aci_syslog_destinations | map(attribute='host') | list }}"
+      local_severity: "{{ aci_syslog_local_severity }}"
+      include_milliseconds: "{{ aci_syslog_include_ms | bool }}"
+      policy_result_count: "{{ syslog_policy_result.imdata | default([]) | length }}"
+      compliance_note: "Syslog to centralized SIEM - NIST 800-53 AU-2, AU-3, AU-9, SI-4"
+  tags:
+    - aci
+    - monitoring
+    - syslog
+    - logging
+    - phase5

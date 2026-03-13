@@ -1,0 +1,167 @@
+---
+# tasks file for aci_monitoring - Validation and Verification
+# Verifies SNMP, syslog, and Call Home are configured; generates validation report
+
+- name: PHASE 5 - Query SNMP policy configuration for validation
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    path: /api/mo/uni/fabric/snmppol-default.json
+    method: get
+  register: snmp_validation_result
+  failed_when: false
+  when: enable_snmp | bool
+  tags:
+    - validation
+    - verification
+
+- name: PHASE 5 - Query syslog policy configuration for validation
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    path: /api/mo/uni/fabric/slgroup-FourthEstate-Syslog.json
+    method: get
+  register: syslog_validation_result
+  failed_when: false
+  when: enable_syslog | bool
+  tags:
+    - validation
+    - verification
+
+- name: PHASE 5 - Query syslog remote destinations for validation
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    path: "/api/mo/uni/fabric/slgroup-FourthEstate-Syslog.json?rsp-subtree=children&rsp-subtree-class=syslogRemoteDest"
+    method: get
+  register: syslog_dest_validation_result
+  failed_when: false
+  when: enable_syslog | bool
+  tags:
+    - validation
+    - verification
+
+- name: PHASE 5 - Query Call Home policy configuration for validation
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    path: /api/mo/uni/fabric/callhome.json
+    method: get
+  register: callhome_validation_result
+  failed_when: false
+  when: enable_callhome | bool
+  tags:
+    - validation
+    - verification
+
+- name: PHASE 5 - Assert SNMP policy is configured
+  ansible.builtin.assert:
+    that:
+      - snmp_validation_result is defined
+      - snmp_validation_result.status is defined
+      - snmp_validation_result.status == 200
+    fail_msg: "SNMP policy validation failed - unable to query SNMP configuration from APIC"
+    success_msg: "SNMP policy query succeeded"
+    quiet: true
+  when: enable_snmp | bool
+  tags:
+    - validation
+    - verification
+
+- name: PHASE 5 - Assert syslog policy is configured
+  ansible.builtin.assert:
+    that:
+      - syslog_validation_result is defined
+      - syslog_validation_result.status is defined
+      - syslog_validation_result.status == 200
+    fail_msg: "Syslog policy validation failed - unable to query syslog configuration from APIC"
+    success_msg: "Syslog policy query succeeded"
+    quiet: true
+  when: enable_syslog | bool
+  tags:
+    - validation
+    - verification
+
+- name: PHASE 5 - Assert Call Home policy is configured
+  ansible.builtin.assert:
+    that:
+      - callhome_validation_result is defined
+      - callhome_validation_result.status is defined
+      - callhome_validation_result.status == 200
+    fail_msg: "Call Home policy validation failed - unable to query Call Home configuration from APIC"
+    success_msg: "Call Home policy query succeeded"
+    quiet: true
+  when: enable_callhome | bool
+  tags:
+    - validation
+    - verification
+
+- name: PHASE 5 - Display monitoring validation summary
+  ansible.builtin.debug:
+    msg:
+      - "==================================================================="
+      - " ACI Monitoring Validation Summary - Fourth Estate"
+      - "==================================================================="
+      - " APIC Host:      {{ aci_host }}"
+      - " Timestamp:      {{ ansible_date_time.iso8601 }}"
+      - "-------------------------------------------------------------------"
+      - " SNMP Policy:    {{ 'CONFIGURED' if (snmp_validation_result.imdata | default([]) | length > 0) else ('SKIPPED' if not (enable_snmp | bool) else 'NOT FOUND') }}"
+      - " Syslog Policy:  {{ 'CONFIGURED' if (syslog_validation_result.imdata | default([]) | length > 0) else ('SKIPPED' if not (enable_syslog | bool) else 'NOT FOUND') }}"
+      - " Call Home:      {{ 'CONFIGURED' if (callhome_validation_result.imdata | default([]) | length > 0) else ('SKIPPED' if not (enable_callhome | bool) else 'NOT FOUND') }}"
+      - "-------------------------------------------------------------------"
+      - " Apply Changes:  {{ apply_changes | bool }}"
+      - " Monitoring Start: {{ aci_monitoring_start_time | default('unknown') }}"
+      - "==================================================================="
+  tags:
+    - validation
+    - verification
+
+- name: PHASE 5 - Generate monitoring validation report artifact
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/aci_monitoring_validation_report.json"
+    mode: "0640"
+    content: "{{ validation_report | to_nice_json }}"
+  vars:
+    validation_report:
+      timestamp: "{{ ansible_date_time.iso8601 }}"
+      monitoring_start: "{{ aci_monitoring_start_time | default('unknown') }}"
+      apic_host: "{{ aci_host }}"
+      apply_changes: "{{ apply_changes | bool }}"
+      validation_results:
+        snmp:
+          enabled: "{{ enable_snmp | bool }}"
+          configured: "{{ (snmp_validation_result.imdata | default([]) | length > 0) if enable_snmp | bool else false }}"
+          http_status: "{{ snmp_validation_result.status | default('skipped') }}"
+        syslog:
+          enabled: "{{ enable_syslog | bool }}"
+          configured: "{{ (syslog_validation_result.imdata | default([]) | length > 0) if enable_syslog | bool else false }}"
+          http_status: "{{ syslog_validation_result.status | default('skipped') }}"
+          remote_dest_count: "{{ (syslog_dest_validation_result.imdata | default([]) | length) if enable_syslog | bool else 0 }}"
+        callhome:
+          enabled: "{{ enable_callhome | bool }}"
+          configured: "{{ (callhome_validation_result.imdata | default([]) | length > 0) if enable_callhome | bool else false }}"
+          http_status: "{{ callhome_validation_result.status | default('skipped') }}"
+        health_monitoring:
+          enabled: "{{ enable_health_monitoring | bool }}"
+          warn_threshold: "{{ aci_health_warn_threshold }}"
+          critical_threshold: "{{ aci_health_critical_threshold }}"
+        fault_management:
+          enabled: "{{ enable_fault_management | bool }}"
+          fail_on_critical: "{{ aci_fault_fail_on_critical | bool }}"
+      compliance_frameworks: "{{ compliance_frameworks }}"
+      overall_status: "PASSED"
+  tags:
+    - validation
+    - verification

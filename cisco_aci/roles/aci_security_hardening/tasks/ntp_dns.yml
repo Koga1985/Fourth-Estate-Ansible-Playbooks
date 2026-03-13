@@ -1,0 +1,231 @@
+---
+# tasks file for aci_security_hardening - NTP and DNS Configuration
+# NIST 800-53 AU Controls - Audit Accountability (time synchronization)
+# DoD STIG: CISC-ND-001290, CISC-ND-001420
+
+- name: CISC-ND-001290 - Create NTP policy
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_validate_certs }}"
+    use_ssl: "{{ aci_https_enabled }}"
+    path: /api/mo/uni/fabric/time-FourthEstateNTP.json
+    method: post
+    content:
+      datetimePol:
+        attributes:
+          name: FourthEstateNTP
+          descr: "Fourth Estate NTP Policy - DoD STIG CISC-ND-001290"
+          adminSt: enabled
+          authSt: "{{ 'enabled' if aci_ntp_authenticate | bool else 'disabled' }}"
+          serverState: enabled
+          masterMode: disabled
+          dn: uni/fabric/time-FourthEstateNTP
+  when: apply_changes | bool
+  tags:
+    - aci
+    - security
+    - stig
+    - stig_cat2
+    - stig_cat3
+    - nist_au
+    - ntp
+    - nist_au_8
+
+- name: CISC-ND-001290 - Configure NTP servers
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_validate_certs }}"
+    use_ssl: "{{ aci_https_enabled }}"
+    path: "/api/mo/uni/fabric/time-FourthEstateNTP/ntpprov-{{ item.name | replace('.', '_') }}.json"
+    method: post
+    content:
+      datetimeNtpProv:
+        attributes:
+          name: "{{ item.name }}"
+          preferred: "{{ item.preferred | default('no') }}"
+          minPoll: "4"
+          maxPoll: "6"
+          trueChimer: false
+          epgDn: uni/tn-mgmt/mgmtp-default/oob-default
+          dn: "uni/fabric/time-FourthEstateNTP/ntpprov-{{ item.name | replace('.', '_') }}"
+  loop: "{{ aci_ntp_servers }}"
+  when: apply_changes | bool
+  tags:
+    - aci
+    - security
+    - stig
+    - stig_cat2
+    - stig_cat3
+    - nist_au
+    - ntp
+    - nist_au_8
+
+- name: CISC-ND-001420 - Configure NTP authentication key
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_validate_certs }}"
+    use_ssl: "{{ aci_https_enabled }}"
+    path: /api/mo/uni/fabric/time-FourthEstateNTP/key-1.json
+    method: post
+    content:
+      datetimeKey:
+        attributes:
+          id: "1"
+          key: "{{ aci_ntp_key }}"
+          authType: sha1
+          trusted: "yes"
+          dn: uni/fabric/time-FourthEstateNTP/key-1
+  when:
+    - apply_changes | bool
+    - aci_ntp_authenticate | bool
+  no_log: true
+  tags:
+    - aci
+    - security
+    - stig
+    - stig_cat2
+    - nist_au
+    - ntp
+    - nist_au_8
+
+- name: CISC-ND-001290 - Apply NTP policy to fabric nodes
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_validate_certs }}"
+    use_ssl: "{{ aci_https_enabled }}"
+    path: /api/mo/uni/fabric/funcprof/grp-default.json
+    method: post
+    content:
+      fabricFuncP:
+        attributes:
+          dn: uni/fabric/funcprof
+        children:
+          - fabricNodeBlk:
+              attributes:
+                name: default
+                from_: "101"
+                to_: "199"
+          - datetimeRsNtpProvGrp:
+              attributes:
+                tnDatetimePol: FourthEstateNTP
+  when: apply_changes | bool
+  tags:
+    - aci
+    - security
+    - stig
+    - stig_cat2
+    - nist_au
+    - ntp
+
+- name: CISC-ND-001290 - Query current NTP configuration (dry-run)
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_validate_certs }}"
+    use_ssl: "{{ aci_https_enabled }}"
+    path: /api/class/datetimePol.json
+    method: get
+  register: aci_ntp_policy_query
+  when: not (apply_changes | bool)
+  tags:
+    - aci
+    - security
+    - ntp
+    - query
+
+- name: DNS - Create DNS profile
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_validate_certs }}"
+    use_ssl: "{{ aci_https_enabled }}"
+    path: /api/mo/uni/fabric/dnsp-default.json
+    method: post
+    content:
+      dnsProfile:
+        attributes:
+          name: default
+          descr: "Fourth Estate DNS Configuration"
+          IPVerPreference: IPv4
+          dn: uni/fabric/dnsp-default
+  when: apply_changes | bool
+  tags:
+    - aci
+    - security
+    - dns
+
+- name: DNS - Configure DNS servers
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_validate_certs }}"
+    use_ssl: "{{ aci_https_enabled }}"
+    path: "/api/mo/uni/fabric/dnsp-default/prov-[{{ item }}].json"
+    method: post
+    content:
+      dnsProv:
+        attributes:
+          addr: "{{ item }}"
+          preferred: "{{ 'yes' if loop.index == 1 else 'no' }}"
+          dn: "uni/fabric/dnsp-default/prov-[{{ item }}]"
+  loop: "{{ aci_dns_servers }}"
+  loop_control:
+    index_var: loop
+  when: apply_changes | bool
+  tags:
+    - aci
+    - security
+    - dns
+
+- name: NTP/DNS - Save configuration artifact
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/aci_ntp_dns_config.json"
+    mode: '0640'
+    content: |
+      {
+        "timestamp": "{{ ansible_date_time.iso8601 }}",
+        "controls": ["CISC-ND-001290", "CISC-ND-001420"],
+        "hostname": "{{ aci_host }}",
+        "apply_changes": {{ apply_changes | bool | lower }},
+        "ntp_config": {
+          "policy_name": "FourthEstateNTP",
+          "authentication_enabled": {{ aci_ntp_authenticate | bool | lower }},
+          "servers": {{ aci_ntp_servers | to_json }}
+        },
+        "dns_config": {
+          "servers": {{ aci_dns_servers | to_json }}
+        },
+        "stig_findings": [
+          {
+            "id": "CISC-ND-001290",
+            "description": "NTP configured with DoD-approved servers",
+            "severity": "CAT III",
+            "nist": "AU-8",
+            "status": "{{ 'Applied' if apply_changes | bool else 'Planned' }}"
+          },
+          {
+            "id": "CISC-ND-001420",
+            "description": "NTP authentication enabled",
+            "severity": "CAT II",
+            "nist": "AU-8(1)",
+            "status": "{{ 'Applied' if apply_changes | bool and aci_ntp_authenticate | bool else 'Planned' if aci_ntp_authenticate | bool else 'Skipped' }}"
+          }
+        ]
+      }
+  tags:
+    - aci
+    - security
+    - ntp
+    - dns
+    - artifact

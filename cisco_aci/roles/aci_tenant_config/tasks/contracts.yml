@@ -1,0 +1,119 @@
+---
+# tasks file for aci_tenant_config - Contract Configuration
+# Creates contracts, contract subjects, and subject-to-filter bindings
+
+- name: PHASE 2 - Create contracts
+  cisco.aci.aci_contract:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    tenant: "{{ item.tenant }}"
+    contract: "{{ item.name }}"
+    description: "{{ item.description | default('') }}"
+    scope: "{{ item.scope | default('tenant') }}"
+    state: "{{ 'present' if apply_changes | bool else 'query' }}"
+  loop: "{{ aci_contracts }}"
+  loop_control:
+    label: "{{ item.tenant }}/{{ item.name }}"
+  register: contract_creation_results
+  notify:
+    - backup aci configuration
+  tags:
+    - aci
+    - tenants
+    - contracts
+    - phase2
+
+- name: PHASE 2 - Create contract subjects
+  cisco.aci.aci_contract_subject:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    tenant: "{{ item.0.tenant }}"
+    contract: "{{ item.0.name }}"
+    subject: "{{ item.1.name }}"
+    bidirectional_filter_chains: "{{ item.1.bidirectional | default(true) }}"
+    apply_both_directions: "{{ item.1.apply_both_directions | default(true) }}"
+    state: "{{ 'present' if apply_changes | bool else 'query' }}"
+  loop: "{{ aci_contracts | subelements('subjects') }}"
+  loop_control:
+    label: "{{ item.0.tenant }}/{{ item.0.name }}/{{ item.1.name }}"
+  register: contract_subject_results
+  tags:
+    - aci
+    - tenants
+    - contracts
+    - phase2
+
+- name: PHASE 2 - Bind filters to contract subjects
+  cisco.aci.aci_contract_subject_to_filter:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    tenant: "{{ item.0.tenant }}"
+    contract: "{{ item.0.name }}"
+    subject: "{{ item.1.name }}"
+    filter: "{{ item.1.filter }}"
+    state: "{{ 'present' if apply_changes | bool else 'query' }}"
+  loop: "{{ aci_contracts | subelements('subjects') }}"
+  loop_control:
+    label: "{{ item.0.name }}/{{ item.1.name }} -> {{ item.1.filter }}"
+  when: item.1.filter is defined
+  register: subject_filter_results
+  tags:
+    - aci
+    - tenants
+    - contracts
+    - filters
+    - phase2
+
+- name: PHASE 2 - Query contracts for validation
+  cisco.aci.aci_contract:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    state: query
+  register: aci_contract_query_all
+  tags:
+    - aci
+    - tenants
+    - contracts
+    - phase2
+    - validation
+
+- name: PHASE 2 - Display contract configuration summary
+  ansible.builtin.debug:
+    msg:
+      - "=== Contract Configuration Summary ==="
+      - "Configured contracts: {{ aci_contracts | length }}"
+      - "Total subjects:       {{ aci_contracts | map(attribute='subjects') | map('length') | sum }}"
+      - "Apply changes:        {{ apply_changes | bool }}"
+  tags:
+    - aci
+    - tenants
+    - contracts
+    - phase2
+
+- name: PHASE 2 - Save contract configuration artifact
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/aci_contracts.json"
+    mode: "0640"
+    content: "{{ contracts_artifact | to_nice_json }}"
+  vars:
+    contracts_artifact:
+      timestamp: "{{ ansible_date_time.iso8601 }}"
+      configured_contracts: "{{ aci_contracts }}"
+      apply_changes: "{{ apply_changes | bool }}"
+  tags:
+    - aci
+    - tenants
+    - contracts
+    - phase2

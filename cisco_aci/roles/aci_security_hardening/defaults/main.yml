@@ -1,0 +1,359 @@
+---
+# defaults file for aci_security_hardening
+# Cisco ACI Security Hardening - DoD STIG and NIST 800-53 compliance
+
+# ============================================================
+# APIC Connection Parameters
+# ============================================================
+aci_host: "{{ vault_aci_apic_hostname }}"
+aci_username: "{{ vault_aci_apic_username }}"
+aci_password: "{{ vault_aci_apic_password }}"
+aci_verify_ssl: true
+aci_use_proxy: false
+aci_timeout: 30
+aci_port: 443
+
+# ============================================================
+# Deployment Control
+# ============================================================
+apply_changes: false
+artifacts_dir: "/tmp/aci-artifacts"
+
+# ============================================================
+# Fourth Estate Organization
+# ============================================================
+fourth_estate_org: "FourthEstate"
+fourth_estate_contact: "{{ vault_fourth_estate_contact }}"
+fourth_estate_environment: "production"
+fourth_estate_region: "primary"
+
+# ============================================================
+# STIG Category Feature Toggles
+# ============================================================
+stig_cat1_enabled: true
+stig_cat2_enabled: true
+stig_cat3_enabled: true
+
+# ============================================================
+# Module Feature Toggles
+# ============================================================
+enable_auth_hardening: true
+enable_access_control: true
+enable_audit_logging: true
+enable_crypto_tls: true
+enable_session_management: true
+enable_banners: true
+enable_ntp_dns: true
+enable_snmp_security: true
+enable_compliance_report: true
+
+# ============================================================
+# Authentication Configuration
+# NIST IA-2, IA-5 | STIG CISC-ND-001190, CISC-ND-000530
+# ============================================================
+aci_auth_realm_type: "ldap"  # Options: ldap, radius, tacacs, local
+
+# LDAP Authentication Providers (STIG CISC-ND-001190)
+aci_ldap_servers:
+  - host: "{{ vault_aci_ldap_host_1 }}"
+    port: 636
+    use_ssl: true
+    base_dn: "{{ vault_aci_ldap_base_dn }}"
+    bind_dn: "{{ vault_aci_ldap_bind_dn }}"
+    bind_password: "{{ vault_aci_ldap_bind_password }}"
+    description: "Primary LDAP authentication server"
+    rootdn: "{{ vault_aci_ldap_base_dn }}"
+    filter_type: "default"
+    timeout: 30
+    retries: 1
+  - host: "{{ vault_aci_ldap_host_2 }}"
+    port: 636
+    use_ssl: true
+    base_dn: "{{ vault_aci_ldap_base_dn }}"
+    bind_dn: "{{ vault_aci_ldap_bind_dn }}"
+    bind_password: "{{ vault_aci_ldap_bind_password }}"
+    description: "Secondary LDAP authentication server"
+    rootdn: "{{ vault_aci_ldap_base_dn }}"
+    filter_type: "default"
+    timeout: 30
+    retries: 1
+
+# RADIUS Authentication Providers (STIG CISC-ND-001190)
+aci_radius_servers: []
+# Example:
+# aci_radius_servers:
+#   - host: "{{ vault_aci_radius_host_1 }}"
+#     key: "{{ vault_aci_radius_key }}"
+#     auth_port: 1812
+#     timeout: 5
+#     retries: 1
+#     description: "Primary RADIUS server"
+
+# TACACS+ Authentication Providers (STIG CISC-ND-001190)
+aci_tacacs_servers: []
+# Example:
+# aci_tacacs_servers:
+#   - host: "{{ vault_aci_tacacs_host_1 }}"
+#     key: "{{ vault_aci_tacacs_key }}"
+#     port: 49
+#     timeout: 5
+#     retries: 1
+#     description: "Primary TACACS+ server"
+
+# Authentication Login Domain
+aci_auth_login_domain: "FourthEstate-LDAP"
+aci_auth_default_realm: "ldap"
+
+# ============================================================
+# Password Policy (STIG CAT I)
+# NIST IA-5 | STIG CISC-ND-000530, CISC-ND-000570
+# ============================================================
+aci_password_min_length: 15
+aci_password_min_uppercase: 1
+aci_password_min_lowercase: 1
+aci_password_min_digits: 1
+aci_password_min_special: 1
+aci_password_history_count: 5
+aci_password_expiry_days: 60
+aci_password_no_change_interval: 24
+aci_password_strength_check: true
+
+# ============================================================
+# Account Lockout Policy (STIG CAT II)
+# NIST AC-7 | STIG CISC-ND-000370
+# ============================================================
+aci_lockout_enabled: true
+aci_lockout_max_attempts: 3
+aci_lockout_window_seconds: 300
+aci_lockout_duration_seconds: 1800
+
+# ============================================================
+# Session Management (STIG CAT II)
+# NIST AC-11, AC-12 | STIG CISC-ND-000390
+# ============================================================
+aci_session_timeout: 600    # 10 minutes - maximum session duration
+aci_idle_timeout: 300       # 5 minutes - idle/inactivity timeout
+aci_max_concurrent_sessions: 10
+
+# ============================================================
+# TLS and Cryptographic Controls (STIG CAT I)
+# NIST SC-8, SC-28 | STIG CISC-ND-001440, CISC-ND-001400
+# ============================================================
+aci_https_enabled: true
+aci_http_enabled: false         # DISABLED per STIG CISC-ND-001440
+aci_min_tls_version: "tls1.2"  # TLS 1.2 minimum per STIG CISC-ND-001440
+
+aci_allowed_ciphers:
+  - "TLS_RSA_WITH_AES_256_CBC_SHA"
+  - "TLS_RSA_WITH_AES_128_CBC_SHA"
+  - "TLS_RSA_WITH_AES_256_CBC_SHA256"
+  - "TLS_RSA_WITH_AES_128_CBC_SHA256"
+  - "TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA384"
+  - "TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA256"
+  - "TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384"
+  - "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256"
+
+aci_key_exchange_algos:
+  - "DHE-RSA-AES256-SHA256"
+  - "ECDHE-RSA-AES256-GCM-SHA384"
+  - "ECDHE-RSA-AES128-GCM-SHA256"
+
+# ============================================================
+# SSH Configuration (STIG CAT II)
+# NIST AC-17, SC-8 | STIG CISC-ND-001400
+# ============================================================
+aci_ssh_enabled: true
+aci_telnet_enabled: false       # DISABLED per STIG CISC-ND-001400
+
+aci_ssh_ciphers:
+  - "aes256-ctr"
+  - "aes192-ctr"
+  - "aes128-ctr"
+  - "aes256-gcm@openssh.com"
+  - "aes128-gcm@openssh.com"
+
+aci_ssh_kex_algos:
+  - "diffie-hellman-group-exchange-sha256"
+  - "ecdh-sha2-nistp256"
+  - "ecdh-sha2-nistp384"
+  - "ecdh-sha2-nistp521"
+
+aci_ssh_macs:
+  - "hmac-sha2-256"
+  - "hmac-sha2-512"
+  - "hmac-sha2-256-etm@openssh.com"
+  - "hmac-sha2-512-etm@openssh.com"
+
+# ============================================================
+# SNMP Configuration (STIG CAT II)
+# NIST SC-8 | STIG CISC-ND-000090
+# ============================================================
+aci_snmp_v1_enabled: false      # DISABLED per STIG CISC-ND-000090
+aci_snmp_v2_enabled: false      # DISABLED per STIG CISC-ND-000090
+aci_snmp_v3_enabled: true       # REQUIRED per STIG CISC-ND-000090
+
+aci_snmp_v3_users:
+  - username: "snmpv3-monitor"
+    auth_type: "SHA"
+    auth_password: "{{ vault_aci_snmp_auth_password }}"
+    priv_type: "AES128"
+    priv_password: "{{ vault_aci_snmp_priv_password }}"
+    description: "SNMPv3 monitoring user (auth+priv)"
+
+aci_snmp_trap_destinations:
+  - host: "{{ vault_snmp_trap_host }}"
+    port: 162
+    version: "v3"
+    user: "snmpv3-monitor"
+    security_level: "auth-priv"
+    description: "Primary SNMP trap destination"
+
+# SNMP access control - restrict to management subnet
+aci_snmp_allowed_clients:
+  - "{{ vault_snmp_management_subnet }}"
+
+# ============================================================
+# Audit Logging Configuration (STIG CAT II)
+# NIST AU-2, AU-3, AU-9, AU-12 | STIG CISC-ND-000700/710/720
+# ============================================================
+aci_syslog_enabled: true
+
+aci_syslog_destinations:
+  - host: "{{ vault_syslog_server_primary }}"
+    port: 514
+    severity: "information"
+    facility: "local0"
+    description: "Primary syslog server"
+  - host: "{{ vault_syslog_server_secondary }}"
+    port: 514
+    severity: "information"
+    facility: "local0"
+    description: "Secondary syslog server"
+
+aci_audit_all_access: true
+aci_audit_config_changes: true
+aci_audit_auth_events: true
+aci_local_log_retention_days: 90
+
+# ============================================================
+# NTP Configuration (STIG CAT II/III)
+# NIST AU-8 | STIG CISC-ND-001290, CISC-ND-001420
+# ============================================================
+aci_ntp_enabled: true
+aci_ntp_authenticate: true
+aci_ntp_key: "{{ vault_aci_ntp_key }}"
+aci_ntp_key_id: 1
+
+aci_ntp_servers:
+  - name: "time.nist.gov"
+    preferred: true
+    use_dhcp: false
+    description: "NIST Primary NTP"
+  - name: "time-a-g.nist.gov"
+    preferred: false
+    use_dhcp: false
+    description: "NIST Secondary NTP"
+
+# DNS Configuration
+aci_dns_servers:
+  - address: "{{ vault_dns_server_primary }}"
+    preferred: true
+    description: "Primary DNS server"
+  - address: "{{ vault_dns_server_secondary }}"
+    preferred: false
+    description: "Secondary DNS server"
+
+aci_dns_search_domains:
+  - domain: "fourthestate.local"
+    default: true
+
+# ============================================================
+# DoD Login Banner (STIG CAT III)
+# NIST AC-8 | STIG CISC-ND-000080
+# ============================================================
+aci_login_banner: |
+  You are accessing a U.S. Government (USG) Information System (IS) that is
+  provided for USG-authorized use only. By using this IS (which includes any
+  device attached to this IS), you consent to the following conditions:
+  -The USG routinely intercepts and monitors communications on this IS for
+  purposes including, but not limited to, penetration testing, COMSEC monitoring,
+  network operations and defense, personnel misconduct (PM), law enforcement (LE),
+  and counterintelligence (CI) investigations.
+  -At any time, the USG may inspect and seize data stored on this IS.
+  -Communications using, or data stored on, this IS are not private, are subject
+  to routine monitoring, interception, and search, and may be disclosed or used
+  for any USG-authorized purpose.
+  -This IS includes security measures (e.g., authentication and access controls)
+  to protect USG interests--not for your personal benefit or privacy.
+  -Notwithstanding the above, using this IS does not constitute consent to PM, LE
+  or CI investigative searching or monitoring of the content of privileged
+  communications, or work product, related to personal representation or services
+  by attorneys, psychotherapists, or clergy, and their assistants. Such
+  communications and work product are private and confidential. See User Agreement
+  for details.
+
+# ============================================================
+# System Information (STIG CAT III)
+# NIST CM-8 | STIG CISC-ND-001470
+# ============================================================
+aci_system_contact: "{{ vault_aci_system_contact }}"
+aci_system_location: "{{ vault_aci_system_location }}"
+aci_system_description: "Fourth Estate ACI Fabric - DoD STIG Compliant"
+
+# ============================================================
+# RBAC and Security Domains
+# NIST AC-2, AC-3, AC-6 | STIG CISC-ND-000360
+# ============================================================
+aci_security_domains:
+  - name: "FourthEstate-NetOps"
+    description: "Network operations security domain"
+  - name: "FourthEstate-SecOps"
+    description: "Security operations security domain"
+  - name: "FourthEstate-ReadOnly"
+    description: "Read-only audit security domain"
+
+# Local service accounts (break-glass and automation only)
+aci_local_users:
+  - username: "break-glass-admin"
+    description: "Emergency break-glass local account"
+    expiry: "never"
+    email: "{{ vault_aci_system_contact }}"
+    first_name: "Break"
+    last_name: "Glass"
+    phone: ""
+    roles:
+      - name: "admin"
+        priv_type: "writePriv"
+        domain: "all"
+  - username: "ansible-automation"
+    description: "Ansible automation service account"
+    expiry: "never"
+    email: "{{ vault_aci_system_contact }}"
+    first_name: "Ansible"
+    last_name: "Automation"
+    phone: ""
+    roles:
+      - name: "admin"
+        priv_type: "writePriv"
+        domain: "all"
+
+# RBAC user role mappings from LDAP groups
+aci_user_roles:
+  - name: "admin"
+    description: "Full administrative access"
+  - name: "ops"
+    description: "Operations read-write access"
+  - name: "read-only"
+    description: "Read-only access for auditors"
+  - name: "tenant-admin"
+    description: "Tenant-scoped administrative access"
+
+# ============================================================
+# Compliance Frameworks
+# ============================================================
+compliance_frameworks:
+  - "dod_stig"
+  - "nist_800_53"
+  - "nist_800_171"
+  - "fisma_moderate"
+  - "fisma_high"

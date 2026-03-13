@@ -6,10 +6,10 @@ This repository provides production-ready Ansible automation for network infrast
 
 ## 📊 Repository Statistics
 
-- **Total Roles:** 516+ (Phase 1: 360, Phase 2: 470, Phase 3: 516)
-- **Total YAML Files:** 2,500+
-- **README Documentation Files:** 320+
-- **Technology Platforms:** 39+ (started with 25)
+- **Total Roles:** 521+ (Phase 1: 360, Phase 2: 470, Phase 3: 516, Phase 4: 521)
+- **Total YAML Files:** 2,550+
+- **README Documentation Files:** 330+
+- **Technology Platforms:** 40+ (started with 25)
 - **Compliance Frameworks:** DoD STIG, NIST 800-53 Rev 5, NIST 800-171, FedRAMP, FISMA, CIS Benchmarks
 - **Cloud Platforms:** 4 (AWS, Azure, GCP, VMware vSphere)
 - **Database Platforms:** 4 (PostgreSQL, MySQL, Oracle, Cloud Databases)
@@ -48,9 +48,10 @@ Each top-level directory focuses on a specific technology platform and contains 
 
 ## Supported Technologies
 
-### 🌐 Network & Security (14 platforms)
+### 🌐 Network & Security (15 platforms)
 - **Cisco ISE** (Identity Services Engine) - 30+ roles for policy, posture, guest services, profiling
 - **Cisco UCS** (Unified Computing System) - Infrastructure, security, networking, monitoring, DR
+- **Cisco ACI** (Application Centric Infrastructure) - Fabric deploy, tenant config, L3Out/L2Out, DoD STIG/NIST hardening, monitoring (5 roles) ⭐ NEW
 - **Palo Alto Networks** - PAN-OS firewalls, Panorama management, VPN, QoS (10 roles)
 - **Check Point** - Firewalls, access policies, threat prevention, identity awareness (6 roles)
 - **Arista EOS** - Network switches, CVP, routing, fabric, baseline configuration (6 roles)
@@ -156,6 +157,20 @@ Fourth-Estate-Ansible-Playbooks/
 ├── cisco/                         # Cisco ISE & UCS (35+ roles)
 │   ├── README.md
 │   ├── roles/
+│   └── tasks/
+│
+├── cisco_aci/                     # Cisco ACI - Application Centric Infrastructure (5 roles)
+│   ├── README.md
+│   ├── site.yml                   # Entry-point playbook
+│   ├── requirements.yml
+│   ├── inventory.example
+│   ├── roles/
+│   │   ├── aci_fabric_deploy/     # Fabric infrastructure deployment
+│   │   ├── aci_tenant_config/     # Tenant, VRF, BD, EPG, contracts
+│   │   ├── aci_network_config/    # L3Out, L2Out, external connectivity
+│   │   ├── aci_security_hardening/ # DoD STIG and NIST 800-53 hardening
+│   │   └── aci_monitoring/        # SNMP, syslog, health monitoring
+│   ├── playbooks/                 # Phased deployment playbooks
 │   └── tasks/
 │
 ├── claroty/                       # Claroty OT security (11 roles)

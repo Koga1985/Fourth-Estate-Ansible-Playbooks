@@ -1,0 +1,151 @@
+---
+# Cisco ACI Platform Deployment Playbook
+# Entry point for Cisco Application Centric Infrastructure (ACI) automation
+#
+# Usage:
+#   ansible-galaxy collection install -r requirements.yml
+#   ansible-playbook -i inventory site.yml --ask-vault-pass
+#
+# Dry-run (default - no changes applied):
+#   ansible-playbook -i inventory site.yml --ask-vault-pass
+#
+# Apply changes:
+#   ansible-playbook -i inventory site.yml -e "apply_changes=true" --ask-vault-pass
+#
+# Tags:
+#   - fabric:     ACI fabric infrastructure (APIC, spine, leaf, policies)
+#   - tenants:    Tenant, VRF, BD, EPG, and contract configuration
+#   - network:    L3Out, L2Out, and external network connectivity
+#   - security:   DoD STIG and NIST 800-53 hardening
+#   - monitoring: SNMP, syslog, health monitoring
+#   - phase1:     Fabric deployment phase
+#   - phase2:     Tenant configuration phase
+#   - phase3:     Network connectivity phase
+#   - phase4:     Security hardening phase
+#   - phase5:     Monitoring and observability phase
+
+- name: Cisco ACI Fabric Infrastructure
+  hosts: localhost
+  connection: local
+  gather_facts: true
+
+  vars:
+    # Deployment control - set to true to apply changes
+    apply_changes: false
+
+    # Artifacts directory
+    artifacts_dir: "/tmp/aci-artifacts"
+
+    # Feature toggles - Fabric
+    deploy_aci_fabric: true
+    deploy_aci_tenants: true
+    deploy_aci_network: true
+    deploy_aci_security: true
+    deploy_aci_monitoring: true
+
+    # Compliance frameworks
+    compliance_frameworks:
+      - "dod_stig"
+      - "nist_800_53"
+      - "nist_800_171"
+      - "fisma_moderate"
+      - "fisma_high"
+
+  pre_tasks:
+    - name: Display ACI deployment banner
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - " Cisco ACI Fourth Estate Deployment"
+          - "================================================================"
+          - " APIC Host: {{ aci_host | default(vault_aci_apic_hostname) }}"
+          - " Apply Changes: {{ apply_changes }}"
+          - " Artifacts Dir: {{ artifacts_dir }}"
+          - " Compliance: {{ compliance_frameworks | join(', ') }}"
+          - "================================================================"
+          - " {{ 'DRY RUN MODE - No changes will be applied' if not (apply_changes | bool) else 'LIVE MODE - Changes WILL be applied' }}"
+          - "================================================================"
+      tags: ['always']
+
+    - name: Create artifacts directory
+      ansible.builtin.file:
+        path: "{{ artifacts_dir }}"
+        state: directory
+        mode: '0750'
+      tags: ['always']
+
+  tasks:
+    # =========================================
+    # Phase 1: ACI Fabric Infrastructure
+    # =========================================
+    - name: Phase 1 - ACI Fabric Deployment
+      ansible.builtin.include_role:
+        name: aci_fabric_deploy
+      when: deploy_aci_fabric | bool
+      tags: ['aci', 'fabric', 'infrastructure', 'phase1']
+
+    # =========================================
+    # Phase 2: Tenant Configuration
+    # =========================================
+    - name: Phase 2 - ACI Tenant Configuration
+      ansible.builtin.include_role:
+        name: aci_tenant_config
+      when: deploy_aci_tenants | bool
+      tags: ['aci', 'tenants', 'phase2']
+
+    # =========================================
+    # Phase 3: Network Connectivity
+    # =========================================
+    - name: Phase 3 - ACI Network Connectivity
+      ansible.builtin.include_role:
+        name: aci_network_config
+      when: deploy_aci_network | bool
+      tags: ['aci', 'network', 'connectivity', 'phase3']
+
+    # =========================================
+    # Phase 4: Security Hardening (STIG/NIST)
+    # =========================================
+    - name: Phase 4 - ACI Security Hardening
+      ansible.builtin.include_role:
+        name: aci_security_hardening
+      when: deploy_aci_security | bool
+      tags: ['aci', 'security', 'hardening', 'stig', 'nist', 'phase4']
+
+    # =========================================
+    # Phase 5: Monitoring and Observability
+    # =========================================
+    - name: Phase 5 - ACI Monitoring
+      ansible.builtin.include_role:
+        name: aci_monitoring
+      when: deploy_aci_monitoring | bool
+      tags: ['aci', 'monitoring', 'observability', 'phase5']
+
+
+- name: ACI Deployment Summary
+  hosts: localhost
+  gather_facts: false
+
+  vars:
+    apply_changes: false
+    deploy_aci_fabric: true
+    deploy_aci_tenants: true
+    deploy_aci_network: true
+    deploy_aci_security: true
+    deploy_aci_monitoring: true
+
+  tasks:
+    - name: Display deployment summary
+      ansible.builtin.debug:
+        msg:
+          - "=== Cisco ACI Platform Deployment Complete ==="
+          - "Mode: {{ apply_changes | default(false) | bool | ternary('APPLIED', 'DRY RUN') }}"
+          - "--- Deployment Phases ---"
+          - "Fabric Infrastructure: {{ 'Deployed' if deploy_aci_fabric | default(true) | bool else 'Skipped' }}"
+          - "Tenant Configuration:  {{ 'Configured' if deploy_aci_tenants | default(true) | bool else 'Skipped' }}"
+          - "Network Connectivity:  {{ 'Configured' if deploy_aci_network | default(true) | bool else 'Skipped' }}"
+          - "Security Hardening:    {{ 'Hardened (STIG/NIST)' if deploy_aci_security | default(true) | bool else 'Skipped' }}"
+          - "Monitoring:            {{ 'Configured' if deploy_aci_monitoring | default(true) | bool else 'Skipped' }}"
+          - "--- Artifacts ---"
+          - "Review artifacts in /tmp/aci-artifacts/"
+          - "To apply changes, run: -e 'apply_changes=true'"
+      tags: ['always']

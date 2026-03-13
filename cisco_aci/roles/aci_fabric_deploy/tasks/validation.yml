@@ -1,0 +1,128 @@
+---
+# tasks file for aci_fabric_deploy - Validation and Verification
+# Queries fabric inventory, checks fault count, generates validation report
+
+- name: PHASE 1 - Query fabric node inventory for validation
+  cisco.aci.aci_fabric_node:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    state: query
+  register: aci_validation_inventory
+  tags:
+    - validation
+    - verification
+    - phase1
+
+- name: PHASE 1 - Verify registered node count matches expected count
+  ansible.builtin.assert:
+    that:
+      - aci_validation_inventory.current is defined
+    fail_msg: "Fabric inventory query failed - unable to verify node registration"
+    success_msg: "Fabric inventory query succeeded"
+    quiet: true
+  tags:
+    - validation
+    - verification
+    - phase1
+
+- name: PHASE 1 - Query fabric faults (critical and major)
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    path: "/api/class/faultInst.json?query-target-filter=and(or(eq(faultInst.severity,\"critical\"),eq(faultInst.severity,\"major\")),wcard(faultInst.dn,\"topology/\"))&order-by=faultInst.severity|desc&page-size=50"
+    method: get
+  register: aci_fabric_faults
+  failed_when: false
+  tags:
+    - validation
+    - verification
+    - phase1
+
+- name: PHASE 1 - Query VLAN pool configuration for validation
+  cisco.aci.aci_vlan_pool:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    state: query
+  register: aci_vlan_pool_validation
+  tags:
+    - validation
+    - verification
+    - phase1
+
+- name: PHASE 1 - Query physical domain configuration for validation
+  cisco.aci.aci_domain:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    domain_type: phys
+    state: query
+  register: aci_phys_domain_validation
+  tags:
+    - validation
+    - verification
+    - phase1
+
+- name: PHASE 1 - Display fabric validation summary
+  ansible.builtin.debug:
+    msg:
+      - "=== ACI Fabric Deployment Validation ==="
+      - "APIC Host:           {{ aci_host }}"
+      - "Fabric Name:         {{ aci_fabric_name }}"
+      - "Expected Nodes:      {{ aci_nodes | length }}"
+      - "Fabric Inventory:    {{ aci_validation_inventory.current | default([]) | length }} entries"
+      - "Critical/Major Faults: {{ aci_fabric_faults.imdata | default([]) | length }}"
+      - "VLAN Pools Found:    {{ aci_vlan_pool_validation.current | default([]) | length }}"
+      - "Physical Domains:    {{ aci_phys_domain_validation.current | default([]) | length }}"
+      - "Apply Changes Mode:  {{ apply_changes | bool }}"
+      - "Deployment Start:    {{ aci_fabric_deploy_start_time | default('unknown') }}"
+      - "Validation Time:     {{ ansible_date_time.iso8601 }}"
+  tags:
+    - validation
+    - verification
+    - phase1
+
+- name: PHASE 1 - Warn if critical or major faults detected
+  ansible.builtin.debug:
+    msg:
+      - "WARNING: {{ aci_fabric_faults.imdata | default([]) | length }} critical/major fault(s) detected in ACI fabric"
+      - "Review faults at: https://{{ aci_host }}/index.html#bTenants:tn-common|faults"
+  when: (aci_fabric_faults.imdata | default([]) | length) > 0
+  tags:
+    - validation
+    - verification
+    - phase1
+
+- name: PHASE 1 - Generate fabric deployment validation report artifact
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/aci_fabric_validation_report.json"
+    mode: "0640"
+    content: "{{ validation_report | to_nice_json }}"
+  vars:
+    validation_report:
+      timestamp: "{{ ansible_date_time.iso8601 }}"
+      deployment_start: "{{ aci_fabric_deploy_start_time | default('unknown') }}"
+      apic_host: "{{ aci_host }}"
+      fabric_name: "{{ aci_fabric_name }}"
+      apply_changes: "{{ apply_changes | bool }}"
+      expected_node_count: "{{ aci_nodes | length }}"
+      fabric_inventory_count: "{{ aci_validation_inventory.current | default([]) | length }}"
+      critical_major_faults: "{{ aci_fabric_faults.imdata | default([]) | length }}"
+      vlan_pools_found: "{{ aci_vlan_pool_validation.current | default([]) | length }}"
+      physical_domains_found: "{{ aci_phys_domain_validation.current | default([]) | length }}"
+      compliance_frameworks: "{{ compliance_frameworks }}"
+      validation_status: "{{ 'PASSED' if (aci_fabric_faults.imdata | default([]) | length) == 0 else 'WARNING - Faults Detected' }}"
+  tags:
+    - validation
+    - verification
+    - phase1

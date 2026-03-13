@@ -1,0 +1,230 @@
+---
+# tasks file for aci_fabric_deploy - APIC Cluster Configuration
+# Configures APIC system settings, OOB management, NTP, DNS, and syslog
+
+- name: PHASE 1 - Configure APIC fabric system name
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    path: /api/mo/uni/fabric.json
+    method: post
+    content:
+      fabricInst:
+        attributes:
+          dn: uni/fabric
+          name: "{{ aci_fabric_name }}"
+  when: apply_changes | bool
+  notify:
+    - backup aci configuration
+  tags:
+    - aci
+    - apic
+    - cluster
+    - phase1
+
+- name: PHASE 1 - Configure APIC system OOB management (dry-run query)
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    path: /api/node/mo/uni/fabric/oob.json
+    method: get
+  register: aci_oob_query
+  when: not (apply_changes | bool)
+  tags:
+    - aci
+    - apic
+    - cluster
+    - phase1
+
+- name: PHASE 1 - Configure NTP policy on APIC
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    path: /api/mo/uni/fabric/time-FourthEstate-NTP.json
+    method: post
+    content:
+      datetimePol:
+        attributes:
+          dn: uni/fabric/time-FourthEstate-NTP
+          name: "FourthEstate-NTP"
+          adminSt: "enabled"
+          authSt: "disabled"
+          serverState: "enabled"
+        children:
+          - datetimeNtpProv:
+              attributes:
+                name: "{{ item.server }}"
+                preferred: "{{ 'yes' if item.preferred else 'no' }}"
+                descr: "{{ item.description | default('') }}"
+  loop: "{{ aci_ntp_servers }}"
+  loop_control:
+    label: "{{ item.server }}"
+  when: apply_changes | bool
+  tags:
+    - aci
+    - apic
+    - cluster
+    - ntp
+    - phase1
+
+- name: PHASE 1 - Query existing NTP configuration (dry-run)
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    path: /api/mo/uni/fabric/time-FourthEstate-NTP.json
+    method: get
+  register: aci_ntp_query
+  when: not (apply_changes | bool)
+  tags:
+    - aci
+    - apic
+    - cluster
+    - ntp
+    - phase1
+
+- name: PHASE 1 - Configure DNS policy on APIC
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    path: /api/mo/uni/fabric/dnsp-FourthEstate-DNS.json
+    method: post
+    content:
+      dnsProfile:
+        attributes:
+          dn: uni/fabric/dnsp-FourthEstate-DNS
+          name: "FourthEstate-DNS"
+          IPVerPreference: "IPv4"
+        children: >-
+          {{
+            aci_dns_servers | map('dict2items') | map('items2dict') | map(attribute='items') | list |
+            map('community.general.dict_kv', 'dnsProv') | list |
+            aci_dns_servers | map('regex_replace', '.*', '') | list
+          }}
+  when: apply_changes | bool
+  tags:
+    - aci
+    - apic
+    - cluster
+    - dns
+    - phase1
+
+- name: PHASE 1 - Configure DNS providers in DNS policy
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    path: "/api/mo/uni/fabric/dnsp-FourthEstate-DNS/prov-[{{ item.address }}].json"
+    method: post
+    content:
+      dnsProv:
+        attributes:
+          addr: "{{ item.address }}"
+          preferred: "{{ 'yes' if item.preferred else 'no' }}"
+  loop: "{{ aci_dns_servers }}"
+  loop_control:
+    label: "{{ item.address }}"
+  when: apply_changes | bool
+  tags:
+    - aci
+    - apic
+    - cluster
+    - dns
+    - phase1
+
+- name: PHASE 1 - Configure DNS search domain in DNS policy
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    path: "/api/mo/uni/fabric/dnsp-FourthEstate-DNS/dom-[{{ item.domain }}].json"
+    method: post
+    content:
+      dnsDomain:
+        attributes:
+          name: "{{ item.domain }}"
+          isDefault: "{{ 'yes' if item.default else 'no' }}"
+  loop: "{{ aci_dns_search_domains }}"
+  loop_control:
+    label: "{{ item.domain }}"
+  when: apply_changes | bool
+  tags:
+    - aci
+    - apic
+    - cluster
+    - dns
+    - phase1
+
+- name: PHASE 1 - Configure syslog remote destination
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    path: /api/mo/uni/fabric/moncommon/slgroup-FourthEstate-Syslog.json
+    method: post
+    content:
+      syslogGroup:
+        attributes:
+          dn: uni/fabric/moncommon/slgroup-FourthEstate-Syslog
+          name: "FourthEstate-Syslog"
+          format: "aci"
+          includeMilliSeconds: "true"
+        children:
+          - syslogRemoteDest:
+              attributes:
+                host: "{{ aci_syslog_server }}"
+                port: "{{ aci_syslog_port }}"
+                severity: "{{ aci_syslog_severity }}"
+                facility: "{{ aci_syslog_facility }}"
+                adminState: "enabled"
+                forwardingFacility: "local0"
+                name: "FourthEstate-SyslogDest"
+  when:
+    - apply_changes | bool
+    - aci_syslog_enabled | bool
+  tags:
+    - aci
+    - apic
+    - cluster
+    - syslog
+    - phase1
+
+- name: PHASE 1 - Save APIC cluster configuration artifact
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/aci_apic_cluster_config.json"
+    mode: "0640"
+    content: "{{ apic_cluster_artifact | to_nice_json }}"
+  vars:
+    apic_cluster_artifact:
+      timestamp: "{{ ansible_date_time.iso8601 }}"
+      fabric_name: "{{ aci_fabric_name }}"
+      pod_id: "{{ aci_pod_id }}"
+      ntp_servers: "{{ aci_ntp_servers }}"
+      dns_servers: "{{ aci_dns_servers }}"
+      syslog_enabled: "{{ aci_syslog_enabled }}"
+      apply_changes: "{{ apply_changes | bool }}"
+  tags:
+    - aci
+    - apic
+    - cluster
+    - phase1

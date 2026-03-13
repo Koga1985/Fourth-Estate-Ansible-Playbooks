@@ -1,0 +1,118 @@
+---
+# tasks file for aci_tenant_config - EPG Configuration
+# Creates endpoint groups and attaches contracts using cisco.aci.aci_epg and aci_epg_to_contract
+
+- name: PHASE 2 - Create endpoint groups (EPGs)
+  cisco.aci.aci_epg:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    tenant: "{{ item.tenant }}"
+    ap: "{{ item.app_profile }}"
+    epg: "{{ item.name }}"
+    bd: "{{ item.bridge_domain }}"
+    description: "{{ item.description | default('') }}"
+    preferred_group: "{{ item.preferred_group | default(false) | ternary('include', 'exclude') }}"
+    intra_epg_isolation: "{{ item.intra_epg_isolation | default('unenforced') }}"
+    state: "{{ 'present' if apply_changes | bool else 'query' }}"
+  loop: "{{ aci_epgs }}"
+  loop_control:
+    label: "{{ item.tenant }}/{{ item.app_profile }}/{{ item.name }}"
+  register: epg_creation_results
+  tags:
+    - aci
+    - tenants
+    - epgs
+    - phase2
+
+- name: PHASE 2 - Bind provider contracts to EPGs
+  cisco.aci.aci_epg_to_contract:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    tenant: "{{ item.0.tenant }}"
+    ap: "{{ item.0.app_profile }}"
+    epg: "{{ item.0.name }}"
+    contract: "{{ item.1.name }}"
+    contract_type: "{{ item.1.type }}"
+    state: "{{ 'present' if apply_changes | bool else 'query' }}"
+  loop: "{{ aci_epgs | subelements('provider_contracts', skip_missing=True) }}"
+  loop_control:
+    label: "{{ item.0.name }} provides {{ item.1.name }}"
+  tags:
+    - aci
+    - tenants
+    - epgs
+    - contracts
+    - phase2
+
+- name: PHASE 2 - Bind consumer contracts to EPGs
+  cisco.aci.aci_epg_to_contract:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    tenant: "{{ item.0.tenant }}"
+    ap: "{{ item.0.app_profile }}"
+    epg: "{{ item.0.name }}"
+    contract: "{{ item.1.name }}"
+    contract_type: "consumer"
+    state: "{{ 'present' if apply_changes | bool else 'query' }}"
+  loop: "{{ aci_epgs | subelements('consumer_contracts', skip_missing=True) }}"
+  loop_control:
+    label: "{{ item.0.name }} consumes {{ item.1.name }}"
+  tags:
+    - aci
+    - tenants
+    - epgs
+    - contracts
+    - phase2
+
+- name: PHASE 2 - Query EPGs for validation
+  cisco.aci.aci_epg:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    state: query
+  register: aci_epg_query_all
+  tags:
+    - aci
+    - tenants
+    - epgs
+    - phase2
+    - validation
+
+- name: PHASE 2 - Display EPG configuration summary
+  ansible.builtin.debug:
+    msg:
+      - "=== EPG Configuration Summary ==="
+      - "Configured EPGs:  {{ aci_epgs | length }}"
+      - "Apply changes:    {{ apply_changes | bool }}"
+  tags:
+    - aci
+    - tenants
+    - epgs
+    - phase2
+
+- name: PHASE 2 - Save EPG configuration artifact
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/aci_epgs.json"
+    mode: "0640"
+    content: "{{ epg_artifact | to_nice_json }}"
+  vars:
+    epg_artifact:
+      timestamp: "{{ ansible_date_time.iso8601 }}"
+      configured_epgs: "{{ aci_epgs }}"
+      apply_changes: "{{ apply_changes | bool }}"
+  tags:
+    - aci
+    - tenants
+    - epgs
+    - phase2

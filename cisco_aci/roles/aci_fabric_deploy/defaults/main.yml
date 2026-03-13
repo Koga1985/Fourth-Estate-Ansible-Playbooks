@@ -1,0 +1,288 @@
+---
+# defaults file for aci_fabric_deploy
+# Cisco ACI Fabric Initial Deployment - APIC cluster, spine/leaf nodes, fabric policies
+
+# ============================================================
+# APIC Connection Parameters
+# ============================================================
+aci_host: "{{ vault_aci_apic_hostname }}"
+aci_username: "{{ vault_aci_apic_username }}"
+aci_password: "{{ vault_aci_apic_password }}"
+aci_verify_ssl: true
+aci_use_proxy: false
+aci_timeout: 30
+aci_port: 443
+
+# ============================================================
+# Deployment Control
+# ============================================================
+apply_changes: false
+artifacts_dir: "/tmp/aci-artifacts"
+
+# ============================================================
+# Fourth Estate Organization
+# ============================================================
+fourth_estate_org: "FourthEstate"
+fourth_estate_contact: "{{ vault_fourth_estate_contact }}"
+fourth_estate_environment: "production"
+fourth_estate_region: "primary"
+
+# ============================================================
+# Feature Toggles
+# ============================================================
+enable_apic_config: true
+enable_node_registration: true
+enable_fabric_policies: true
+enable_access_policies: true
+enable_interface_profiles: true
+enable_vpc_protection: true
+
+# ============================================================
+# Fabric Global Settings
+# ============================================================
+aci_fabric_name: "FourthEstate-ACI"
+aci_pod_id: 1
+aci_infra_vlan: 4093
+aci_multicast_gipo: "225.0.0.0/15"
+
+# ============================================================
+# NTP Servers (DoD Approved)
+# ============================================================
+aci_ntp_servers:
+  - server: "time.nist.gov"
+    preferred: true
+    description: "NIST Primary NTP"
+  - server: "time-a-g.nist.gov"
+    preferred: false
+    description: "NIST Secondary NTP"
+
+# ============================================================
+# DNS Servers
+# ============================================================
+aci_dns_servers:
+  - address: "8.8.8.8"
+    preferred: true
+    description: "Google Primary DNS"
+  - address: "8.8.4.4"
+    preferred: false
+    description: "Google Secondary DNS"
+
+aci_dns_search_domains:
+  - domain: "fourthestate.local"
+    default: true
+
+# ============================================================
+# Fabric Node Registration
+# ============================================================
+aci_nodes:
+  - node_id: 101
+    name: "spine-101"
+    role: "spine"
+    pod_id: 1
+    serial: "TEP-1-101"
+    description: "Fourth Estate Spine 1"
+  - node_id: 102
+    name: "spine-102"
+    role: "spine"
+    pod_id: 1
+    serial: "TEP-1-102"
+    description: "Fourth Estate Spine 2"
+  - node_id: 201
+    name: "leaf-201"
+    role: "leaf"
+    pod_id: 1
+    serial: "TEP-1-201"
+    description: "Fourth Estate Leaf 1"
+  - node_id: 202
+    name: "leaf-202"
+    role: "leaf"
+    pod_id: 1
+    serial: "TEP-1-202"
+    description: "Fourth Estate Leaf 2"
+  - node_id: 203
+    name: "leaf-203"
+    role: "leaf"
+    pod_id: 1
+    serial: "TEP-1-203"
+    description: "Fourth Estate Leaf 3"
+  - node_id: 204
+    name: "leaf-204"
+    role: "leaf"
+    pod_id: 1
+    serial: "TEP-1-204"
+    description: "Fourth Estate Leaf 4"
+
+# Node registration wait settings
+aci_node_discovery_retries: 10
+aci_node_discovery_delay: 30
+
+# ============================================================
+# Leaf Switch Profiles
+# ============================================================
+aci_leaf_switch_profiles:
+  - name: "LeafProfile-201-202"
+    description: "Leaf Switch Profile for Leaf 201 and 202"
+    leaf_selectors:
+      - name: "leafSel-201-202"
+        node_ids:
+          - 201
+          - 202
+  - name: "LeafProfile-203-204"
+    description: "Leaf Switch Profile for Leaf 203 and 204"
+    leaf_selectors:
+      - name: "leafSel-203-204"
+        node_ids:
+          - 203
+          - 204
+
+# ============================================================
+# Spine Switch Profiles
+# ============================================================
+aci_spine_switch_profiles:
+  - name: "SpineProfile-101-102"
+    description: "Spine Switch Profile for Spine 101 and 102"
+    spine_selectors:
+      - name: "spineSel-101-102"
+        node_ids:
+          - 101
+          - 102
+
+# ============================================================
+# Interface Policy Groups
+# ============================================================
+aci_interface_policy_groups:
+  - name: "IPG-Access-1G"
+    description: "Access port - 1Gbps"
+    lag_type: "leaf"
+    link_level_policy: "LLP-1G-Auto"
+    cdp_policy: "CDP-Enabled"
+    lldp_policy: "LLDP-Enabled"
+    stp_policy: "STP-BPDUGuard"
+  - name: "IPG-Access-10G"
+    description: "Access port - 10Gbps"
+    lag_type: "leaf"
+    link_level_policy: "LLP-10G-Auto"
+    cdp_policy: "CDP-Enabled"
+    lldp_policy: "LLDP-Enabled"
+    stp_policy: "STP-BPDUGuard"
+  - name: "IPG-vPC-10G"
+    description: "vPC port - 10Gbps"
+    lag_type: "node"
+    link_level_policy: "LLP-10G-Auto"
+    cdp_policy: "CDP-Enabled"
+    lldp_policy: "LLDP-Enabled"
+    stp_policy: "STP-BPDUGuard"
+
+# ============================================================
+# VPC Protection Groups
+# ============================================================
+aci_vpc_protection_groups:
+  - name: "VPC-201-202"
+    description: "vPC Protection Group - Leaf 201 and 202"
+    id: 10
+    node1_id: 201
+    node2_id: 202
+    vpc_domain_policy: "default"
+  - name: "VPC-203-204"
+    description: "vPC Protection Group - Leaf 203 and 204"
+    id: 11
+    node1_id: 203
+    node2_id: 204
+    vpc_domain_policy: "default"
+
+# ============================================================
+# VLAN Pools
+# ============================================================
+aci_vlan_pools:
+  - name: "VLANPool-Prod"
+    description: "Production VLAN Pool"
+    alloc_mode: "static"
+    encap_blocks:
+      - range_from: 100
+        range_to: 199
+        alloc_mode: "inherit"
+        description: "Production VLANs"
+  - name: "VLANPool-Dev"
+    description: "Development VLAN Pool"
+    alloc_mode: "static"
+    encap_blocks:
+      - range_from: 200
+        range_to: 299
+        alloc_mode: "inherit"
+        description: "Development VLANs"
+  - name: "VLANPool-Mgmt"
+    description: "Management VLAN Pool"
+    alloc_mode: "static"
+    encap_blocks:
+      - range_from: 10
+        range_to: 19
+        alloc_mode: "inherit"
+        description: "Management VLANs"
+
+# ============================================================
+# Physical Domains
+# ============================================================
+aci_physical_domains:
+  - name: "PhysDom-Prod"
+    description: "Production Physical Domain"
+    vlan_pool: "VLANPool-Prod"
+  - name: "PhysDom-Dev"
+    description: "Development Physical Domain"
+    vlan_pool: "VLANPool-Dev"
+  - name: "PhysDom-Mgmt"
+    description: "Management Physical Domain"
+    vlan_pool: "VLANPool-Mgmt"
+
+# ============================================================
+# L3 Domains
+# ============================================================
+aci_l3_domains:
+  - name: "L3Dom-External"
+    description: "External L3 Domain"
+    vlan_pool: "VLANPool-Prod"
+  - name: "L3Dom-Core"
+    description: "Core Routing L3 Domain"
+    vlan_pool: "VLANPool-Prod"
+
+# ============================================================
+# VMM Domains (empty by default - configure per environment)
+# ============================================================
+aci_vmm_domains: []
+# Example:
+# aci_vmm_domains:
+#   - name: "VMMDom-vSphere"
+#     description: "VMware vSphere VMM Domain"
+#     vendor: "VMware"
+#     vlan_pool: "VLANPool-Prod"
+#     vcenter_host: "{{ vault_vcenter_hostname }}"
+#     vcenter_user: "{{ vault_vcenter_username }}"
+#     vcenter_pass: "{{ vault_vcenter_password }}"
+#     datacenter: "FourthEstate-DC"
+#     dvs: "FourthEstate-DVS"
+
+# ============================================================
+# Syslog Settings
+# ============================================================
+aci_syslog_enabled: true
+aci_syslog_server: "{{ vault_syslog_server }}"
+aci_syslog_port: 514
+aci_syslog_severity: "warnings"
+aci_syslog_facility: "local0"
+
+# ============================================================
+# SNMP Settings
+# ============================================================
+aci_snmp_enabled: true
+aci_snmp_community: "{{ vault_aci_snmp_community }}"
+aci_snmp_location: "Fourth Estate Primary Data Center"
+aci_snmp_contact: "{{ vault_fourth_estate_contact }}"
+
+# ============================================================
+# Compliance Frameworks
+# ============================================================
+compliance_frameworks:
+  - "dod_stig"
+  - "nist_800_53"
+  - "nist_800_171"
+  - "fisma_moderate"
+  - "fisma_high"

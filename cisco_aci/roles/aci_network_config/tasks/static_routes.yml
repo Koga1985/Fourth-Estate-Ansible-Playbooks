@@ -1,0 +1,93 @@
+---
+# tasks file for aci_network_config - Static Route Configuration
+# Configures static routes and next-hop entries on L3Out logical nodes
+
+- name: PHASE 3 - Configure static routes on L3Out logical nodes
+  cisco.aci.aci_l3out_static_routes:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    tenant: "{{ item.tenant }}"
+    l3out: "{{ item.l3out_name | default('L3Out-Core-Routing') }}"
+    node_profile: "{{ item.node_profile | default('NodeProfile-Core') }}"
+    pod_id: "{{ item.node_dn | regex_replace('topology/pod-(\\d+)/.*', '\\1') }}"
+    node_id: "{{ item.node_dn | regex_replace('topology/pod-\\d+/node-(\\d+)', '\\1') }}"
+    prefix: "{{ item.prefix }}"
+    description: "{{ item.description | default('') }}"
+    state: "{{ 'present' if apply_changes | bool else 'query' }}"
+  loop: "{{ aci_static_routes }}"
+  loop_control:
+    label: "{{ item.tenant }}/{{ item.vrf }} node {{ item.node_dn }} prefix {{ item.prefix }}"
+  register: static_route_results
+  tags:
+    - aci
+    - network
+    - routing
+    - static_routes
+    - phase3
+
+- name: PHASE 3 - Configure static route next-hops
+  cisco.aci.aci_l3out_static_routes_nexthop:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    tenant: "{{ item.0.tenant }}"
+    l3out: "{{ item.0.l3out_name | default('L3Out-Core-Routing') }}"
+    node_profile: "{{ item.0.node_profile | default('NodeProfile-Core') }}"
+    pod_id: "{{ item.0.node_dn | regex_replace('topology/pod-(\\d+)/.*', '\\1') }}"
+    node_id: "{{ item.0.node_dn | regex_replace('topology/pod-\\d+/node-(\\d+)', '\\1') }}"
+    prefix: "{{ item.0.prefix }}"
+    nexthop: "{{ item.1.next_hop }}"
+    preference: "{{ item.1.preference | default(1) }}"
+    description: "{{ item.1.description | default('') }}"
+    state: "{{ 'present' if apply_changes | bool else 'query' }}"
+  loop: "{{ aci_static_routes | subelements('next_hops') }}"
+  loop_control:
+    label: "{{ item.0.tenant }}/{{ item.0.prefix }} -> {{ item.1.next_hop }} (pref {{ item.1.preference | default(1) }})"
+  register: nexthop_results
+  tags:
+    - aci
+    - network
+    - routing
+    - static_routes
+    - phase3
+
+- name: PHASE 3 - Display static route configuration summary
+  ansible.builtin.debug:
+    msg:
+      - "=== Static Route Configuration Summary ==="
+      - "Routes configured:   {{ aci_static_routes | length }}"
+      - "Total next-hops:     {{ aci_static_routes | map(attribute='next_hops') | map('length') | sum }}"
+      - "Apply changes:       {{ apply_changes | bool }}"
+  tags:
+    - aci
+    - network
+    - routing
+    - static_routes
+    - phase3
+
+- name: PHASE 3 - Save static routes configuration artifact
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/aci_static_routes.json"
+    mode: "0640"
+    content: "{{ static_route_artifact | to_nice_json }}"
+  vars:
+    static_route_artifact:
+      timestamp: "{{ ansible_date_time.iso8601 }}"
+      apic_host: "{{ aci_host }}"
+      apply_changes: "{{ apply_changes | bool }}"
+      route_count: "{{ aci_static_routes | length }}"
+      nexthop_count: "{{ aci_static_routes | map(attribute='next_hops') | map('length') | sum }}"
+      routes: "{{ aci_static_routes | map(attribute='prefix') | list }}"
+      tenants_configured: "{{ aci_static_routes | map(attribute='tenant') | unique | list }}"
+      compliance_frameworks: "{{ compliance_frameworks }}"
+  tags:
+    - aci
+    - network
+    - routing
+    - static_routes
+    - phase3
