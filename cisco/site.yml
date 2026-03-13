@@ -1,16 +1,77 @@
 ---
 # Cisco Platform Deployment Playbook
-# Entry point for Cisco ISE and UCS automation
+# Entry point for Cisco ACI, ISE, and UCS automation
 #
 # Usage:
 #   ansible-galaxy collection install -r requirements.yml
 #   ansible-playbook -i inventory site.yml --ask-vault-pass
 #
 # Tags:
+#   - aci: Cisco ACI only
 #   - ise: Cisco ISE only
 #   - ucs: Cisco UCS only
 #   - policy: Policy configuration
 #   - security: Security hardening
+
+- name: Cisco ACI Configuration
+  hosts: localhost
+  connection: local
+  gather_facts: true
+
+  vars:
+    # ACI Deployment control
+    deploy_aci_fabric: true
+    deploy_aci_tenant: true
+    deploy_aci_network: true
+    deploy_aci_security: true
+    deploy_aci_monitoring: true
+
+  tasks:
+    # =========================================
+    # Phase 1: ACI Fabric Deployment
+    # =========================================
+    - name: Phase 1 - ACI Fabric Deploy
+      ansible.builtin.include_role:
+        name: aci_fabric_deploy
+      when: deploy_aci_fabric | bool
+      tags: ['aci', 'fabric', 'phase1']
+
+    # =========================================
+    # Phase 2: ACI Tenant Configuration
+    # =========================================
+    - name: Phase 2 - ACI Tenant Config
+      ansible.builtin.include_role:
+        name: aci_tenant_config
+      when: deploy_aci_tenant | bool
+      tags: ['aci', 'tenant', 'phase2']
+
+    # =========================================
+    # Phase 3: ACI Network Configuration
+    # =========================================
+    - name: Phase 3 - ACI Network Config
+      ansible.builtin.include_role:
+        name: aci_network_config
+      when: deploy_aci_network | bool
+      tags: ['aci', 'networking', 'phase3']
+
+    # =========================================
+    # Phase 4: ACI Security Hardening
+    # =========================================
+    - name: Phase 4 - ACI Security Hardening
+      ansible.builtin.include_role:
+        name: aci_security_hardening
+      when: deploy_aci_security | bool
+      tags: ['aci', 'security', 'phase4']
+
+    # =========================================
+    # Phase 5: ACI Monitoring
+    # =========================================
+    - name: Phase 5 - ACI Monitoring
+      ansible.builtin.include_role:
+        name: aci_monitoring
+      when: deploy_aci_monitoring | bool
+      tags: ['aci', 'monitoring', 'phase5']
+
 
 - name: Cisco ISE Configuration
   hosts: localhost
@@ -289,6 +350,12 @@
       ansible.builtin.debug:
         msg:
           - "=== Cisco Platform Deployment Complete ==="
+          - "--- Cisco ACI ---"
+          - "Fabric Deploy: {{ 'Configured' if deploy_aci_fabric | default(true) else 'Skipped' }}"
+          - "Tenant Config: {{ 'Configured' if deploy_aci_tenant | default(true) else 'Skipped' }}"
+          - "Network Config: {{ 'Configured' if deploy_aci_network | default(true) else 'Skipped' }}"
+          - "Security: {{ 'Hardened' if deploy_aci_security | default(true) else 'Skipped' }}"
+          - "Monitoring: {{ 'Configured' if deploy_aci_monitoring | default(true) else 'Skipped' }}"
           - "--- Cisco ISE ---"
           - "ISE Version: {{ ise_version | default('3.2') }}"
           - "Policy Sets: {{ 'Configured' if deploy_ise_policy | default(true) else 'Skipped' }}"
