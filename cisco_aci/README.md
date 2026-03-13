@@ -71,6 +71,29 @@ ansible-playbook -i inventory playbooks/aci_fourth_estate_production.yml \
 |------|---------|
 | `aci_monitoring` | SNMP, syslog, Call Home, fabric health monitoring, fault management |
 
+## Role Execution Order
+
+Roles are designed to run in this order, though each can also be run independently:
+
+```
+Phase 1: aci_fabric_deploy       — APIC cluster, node registration, fabric policies
+Phase 2: aci_tenant_config       — Tenants, VRFs, BDs, EPGs, contracts
+Phase 3: aci_network_config      — L3Out/L2Out, BGP/OSPF, external connectivity
+Phase 4: aci_security_hardening  — DoD STIG/NIST hardening (auth, TLS, RBAC, audit)
+Phase 5: aci_monitoring          — SNMP, syslog, Call Home, health/fault monitoring
+```
+
+**Dependencies between roles:**
+- `aci_tenant_config` should run after `aci_fabric_deploy` (requires VLAN pools, domains, and AEPs)
+- `aci_network_config` should run after `aci_tenant_config` (requires VRFs and BDs to exist)
+- `aci_security_hardening` and `aci_monitoring` are independent and can run in any order
+
+To run a single phase on an existing fabric:
+```bash
+ansible-playbook -i inventory site.yml --tags security -e "apply_changes=true" --ask-vault-pass
+ansible-playbook -i inventory site.yml --tags monitoring -e "apply_changes=true" --ask-vault-pass
+```
+
 ## Directory Structure
 
 ```
@@ -216,33 +239,47 @@ Required vault variables:
 ```yaml
 # APIC Connection
 vault_aci_apic_hostname: "apic.example.com"
-vault_aci_username: "admin"
-vault_aci_password: "your-secure-password"
+vault_aci_apic_username: "admin"
+vault_aci_apic_password: "your-secure-password"
 
-# Authentication providers
+# LDAP Authentication (aci_security_hardening)
+vault_aci_ldap_host_1: "ldap1.example.com"        # Primary LDAP server (port 636)
+vault_aci_ldap_host_2: "ldap2.example.com"        # Secondary LDAP server
+vault_aci_ldap_base_dn: "dc=example,dc=com"
 vault_aci_ldap_bind_dn: "cn=ansible-svc,ou=svc,dc=example,dc=com"
 vault_aci_ldap_bind_password: "ldap-bind-password"
+
+# RADIUS / TACACS+ (optional — only if using those auth types)
 vault_aci_radius_key: "radius-shared-secret"
 vault_aci_tacacs_key: "tacacs-shared-secret"
 
-# SNMPv3
-vault_aci_snmpv3_auth_password: "snmp-auth-password"
-vault_aci_snmpv3_priv_password: "snmp-priv-password"
+# SNMPv3 (aci_security_hardening + aci_monitoring)
+vault_aci_snmp_auth_password: "snmp-auth-password-min-8-chars"
+vault_aci_snmp_priv_password: "snmp-priv-password-min-8-chars"
+vault_snmp_trap_host: "10.0.10.100"               # SNMP trap receiver IP
+vault_snmp_management_subnet: "10.0.10.0/24"      # Allowed SNMP client subnet
 
-# Monitoring
-vault_aci_snmp_community: "monitoring-community"
+# Monitoring (aci_monitoring)
+vault_aci_snmp_community: "monitoring-read-only"
 vault_aci_callhome_email: "noc@example.com"
 
-# System info (STIG requirement)
+# Syslog / Audit (aci_security_hardening)
+vault_syslog_server_primary: "siem.example.com"
+vault_syslog_server_secondary: "siem-backup.example.com"
+
+# NTP Authentication (aci_security_hardening)
+vault_aci_ntp_key: "ntp-hmac-key-string"
+
+# DNS Servers (aci_security_hardening)
+vault_dns_server_primary: "8.8.8.8"
+vault_dns_server_secondary: "8.8.4.4"
+
+# System identification — required for STIG CISC-ND-001470
 vault_aci_system_contact: "NOC Team - noc@example.com"
-vault_aci_system_location: "Building A, Data Center Row 3"
+vault_aci_system_location: "Building A, Data Center Row 3, Rack 12"
 
-# NTP Authentication
-vault_aci_ntp_key: "ntp-authentication-key"
-
-# Organization contacts
-vault_aci_org_contact: "IT Team"
-vault_aci_org_email: "it@example.com"
+# Organization
+vault_fourth_estate_contact: "it@fourthestate.gov"
 ```
 
 ## Compliance
