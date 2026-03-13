@@ -1,0 +1,228 @@
+---
+# tasks file for aci_fabric_deploy - Access Policies
+# Creates VLAN pools, physical domains, L3 domains, AEP, and interface policy groups
+
+- name: PHASE 1 - Create VLAN pools
+  cisco.aci.aci_vlan_pool:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    pool: "{{ item.name }}"
+    pool_allocation_mode: "{{ item.alloc_mode }}"
+    description: "{{ item.description | default('') }}"
+    state: "{{ 'present' if apply_changes | bool else 'query' }}"
+  loop: "{{ aci_vlan_pools }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: vlan_pool_results
+  tags:
+    - aci
+    - access
+    - policies
+    - vlan_pools
+    - phase1
+
+- name: PHASE 1 - Create VLAN pool encapsulation blocks
+  cisco.aci.aci_vlan_pool_encap_block:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    pool: "{{ item.0.name }}"
+    pool_allocation_mode: "{{ item.0.alloc_mode }}"
+    block_start: "{{ item.1.range_from }}"
+    block_end: "{{ item.1.range_to }}"
+    block_name: "{{ item.0.name }}-block-{{ item.1.range_from }}-{{ item.1.range_to }}"
+    allocation_mode: "{{ item.1.alloc_mode | default('inherit') }}"
+    description: "{{ item.1.description | default('') }}"
+    state: "{{ 'present' if apply_changes | bool else 'query' }}"
+  loop: "{{ aci_vlan_pools | subelements('encap_blocks') }}"
+  loop_control:
+    label: "{{ item.0.name }} vlan-{{ item.1.range_from }}-{{ item.1.range_to }}"
+  tags:
+    - aci
+    - access
+    - policies
+    - vlan_pools
+    - phase1
+
+- name: PHASE 1 - Create physical domains
+  cisco.aci.aci_domain:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    domain: "{{ item.name }}"
+    domain_type: phys
+    state: "{{ 'present' if apply_changes | bool else 'query' }}"
+  loop: "{{ aci_physical_domains }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: phys_domain_results
+  tags:
+    - aci
+    - access
+    - policies
+    - domains
+    - phase1
+
+- name: PHASE 1 - Associate VLAN pools with physical domains
+  cisco.aci.aci_domain_to_vlan_pool:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    domain: "{{ item.name }}"
+    domain_type: phys
+    pool: "{{ item.vlan_pool }}"
+    pool_allocation_mode: static
+    state: "{{ 'present' if apply_changes | bool else 'query' }}"
+  loop: "{{ aci_physical_domains }}"
+  loop_control:
+    label: "{{ item.name }} -> {{ item.vlan_pool }}"
+  tags:
+    - aci
+    - access
+    - policies
+    - domains
+    - phase1
+
+- name: PHASE 1 - Create L3 domains
+  cisco.aci.aci_domain:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    domain: "{{ item.name }}"
+    domain_type: l3dom
+    state: "{{ 'present' if apply_changes | bool else 'query' }}"
+  loop: "{{ aci_l3_domains }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: l3_domain_results
+  tags:
+    - aci
+    - access
+    - policies
+    - domains
+    - l3
+    - phase1
+
+- name: PHASE 1 - Associate VLAN pools with L3 domains
+  cisco.aci.aci_domain_to_vlan_pool:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    domain: "{{ item.name }}"
+    domain_type: l3dom
+    pool: "{{ item.vlan_pool }}"
+    pool_allocation_mode: static
+    state: "{{ 'present' if apply_changes | bool else 'query' }}"
+  loop: "{{ aci_l3_domains }}"
+  loop_control:
+    label: "{{ item.name }} -> {{ item.vlan_pool }}"
+  tags:
+    - aci
+    - access
+    - policies
+    - domains
+    - l3
+    - phase1
+
+- name: PHASE 1 - Create Attachable Entity Profile (AEP) for production
+  cisco.aci.aci_aep:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    aep: "AEP-{{ item }}"
+    description: "Fourth Estate AEP for {{ item }} traffic"
+    infra_vlan: false
+    state: "{{ 'present' if apply_changes | bool else 'query' }}"
+  loop:
+    - "Prod"
+    - "Dev"
+    - "Mgmt"
+  register: aep_results
+  tags:
+    - aci
+    - access
+    - policies
+    - aep
+    - phase1
+
+- name: PHASE 1 - Associate physical domains to production AEP
+  cisco.aci.aci_aep_to_domain:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    aep: "AEP-Prod"
+    domain: "{{ item.name }}"
+    domain_type: phys
+    state: "{{ 'present' if apply_changes | bool else 'query' }}"
+  loop: "{{ aci_physical_domains }}"
+  loop_control:
+    label: "AEP-Prod -> {{ item.name }}"
+  when: "'Prod' in item.name"
+  tags:
+    - aci
+    - access
+    - policies
+    - aep
+    - phase1
+
+- name: PHASE 1 - Create leaf interface policy groups
+  cisco.aci.aci_interface_policy_leaf_policy_group:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    policy_group: "{{ item.name }}"
+    description: "{{ item.description | default('') }}"
+    lag_type: "{{ item.lag_type }}"
+    link_level_policy: "{{ item.link_level_policy | default(omit) }}"
+    cdp_policy: "{{ item.cdp_policy | default(omit) }}"
+    lldp_policy: "{{ item.lldp_policy | default(omit) }}"
+    stp_interface_policy: "{{ item.stp_policy | default(omit) }}"
+    state: "{{ 'present' if apply_changes | bool else 'query' }}"
+  loop: "{{ aci_interface_policy_groups }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: ipg_results
+  tags:
+    - aci
+    - access
+    - policies
+    - policy_groups
+    - phase1
+
+- name: PHASE 1 - Save access policies configuration artifact
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/aci_access_policies.json"
+    mode: "0640"
+    content: "{{ access_policies_artifact | to_nice_json }}"
+  vars:
+    access_policies_artifact:
+      timestamp: "{{ ansible_date_time.iso8601 }}"
+      vlan_pools: "{{ aci_vlan_pools | map(attribute='name') | list }}"
+      physical_domains: "{{ aci_physical_domains | map(attribute='name') | list }}"
+      l3_domains: "{{ aci_l3_domains | map(attribute='name') | list }}"
+      interface_policy_groups: "{{ aci_interface_policy_groups | map(attribute='name') | list }}"
+      apply_changes: "{{ apply_changes | bool }}"
+  tags:
+    - aci
+    - access
+    - policies
+    - phase1

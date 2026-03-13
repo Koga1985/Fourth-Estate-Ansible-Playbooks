@@ -1,0 +1,203 @@
+---
+# tasks file for aci_network_config - L3Out Configuration
+# Configures L3Out objects, logical node profiles, interface profiles, nodes, and paths
+
+- name: PHASE 3 - Create L3Out external connectivity objects
+  cisco.aci.aci_l3out:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    tenant: "{{ item.tenant }}"
+    l3out: "{{ item.name }}"
+    vrf: "{{ item.vrf }}"
+    domain: "{{ item.domain }}"
+    description: "{{ item.description | default('') }}"
+    route_control: export
+    state: "{{ 'present' if apply_changes | bool else 'query' }}"
+  loop: "{{ aci_l3outs }}"
+  loop_control:
+    label: "{{ item.tenant }}/{{ item.name }}"
+  register: l3out_results
+  tags:
+    - aci
+    - network
+    - l3out
+    - phase3
+
+- name: PHASE 3 - Create L3Out logical node profiles
+  cisco.aci.aci_l3out_logical_node_profile:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    tenant: "{{ item.tenant }}"
+    l3out: "{{ item.name }}"
+    node_profile: "{{ item.node_profile }}"
+    description: "Logical node profile for {{ item.name }}"
+    state: "{{ 'present' if apply_changes | bool else 'query' }}"
+  loop: "{{ aci_l3outs }}"
+  loop_control:
+    label: "{{ item.tenant }}/{{ item.name }}/{{ item.node_profile }}"
+  register: node_profile_results
+  tags:
+    - aci
+    - network
+    - l3out
+    - phase3
+
+- name: PHASE 3 - Create L3Out logical interface profiles
+  cisco.aci.aci_l3out_logical_interface_profile:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    tenant: "{{ item.tenant }}"
+    l3out: "{{ item.name }}"
+    node_profile: "{{ item.node_profile }}"
+    interface_profile: "{{ item.interface_profile }}"
+    description: "Logical interface profile for {{ item.name }}"
+    state: "{{ 'present' if apply_changes | bool else 'query' }}"
+  loop: "{{ aci_l3outs }}"
+  loop_control:
+    label: "{{ item.tenant }}/{{ item.name }}/{{ item.interface_profile }}"
+  register: interface_profile_results
+  tags:
+    - aci
+    - network
+    - l3out
+    - phase3
+
+- name: PHASE 3 - Configure L3Out logical nodes (router IDs)
+  cisco.aci.aci_l3out_logical_node:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    tenant: "{{ item.0.tenant }}"
+    l3out: "{{ item.0.name }}"
+    node_profile: "{{ item.0.node_profile }}"
+    pod_id: "{{ item.1.node_dn | regex_replace('topology/pod-(\\d+)/node-.*', '\\1') }}"
+    node_id: "{{ item.1.node_dn | regex_replace('topology/pod-\\d+/node-(\\d+)', '\\1') }}"
+    router_id: "{{ item.1.router_id }}"
+    router_id_as_loopback: "{{ 'yes' if item.1.loopback | default(true) else 'no' }}"
+    state: "{{ 'present' if apply_changes | bool else 'query' }}"
+  loop: "{{ aci_l3outs | subelements('nodes') }}"
+  loop_control:
+    label: "{{ item.0.tenant }}/{{ item.0.name }} node {{ item.1.node_dn }}"
+  register: logical_node_results
+  tags:
+    - aci
+    - network
+    - l3out
+    - phase3
+
+- name: PHASE 3 - Configure L3Out routed interfaces (paths)
+  cisco.aci.aci_l3out_interface:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    tenant: "{{ item.0.tenant }}"
+    l3out: "{{ item.0.name }}"
+    node_profile: "{{ item.0.node_profile }}"
+    interface_profile: "{{ item.0.interface_profile }}"
+    pod_id: "{{ item.1.path_dn | regex_replace('topology/pod-(\\d+)/.*', '\\1') }}"
+    node_id: "{{ item.1.path_dn | regex_replace('topology/pod-\\d+/paths-(\\d+)/.*', '\\1') }}"
+    path_ep: "{{ item.1.path_dn | regex_replace('.*pathep-\\[(.*)\\]', '\\1') }}"
+    ip_masking: "{{ item.1.addr }}"
+    encap: "{{ item.1.encap }}"
+    description: "{{ item.1.description | default('') }}"
+    interface_type: l3-port
+    mode: regular
+    state: "{{ 'present' if apply_changes | bool else 'query' }}"
+  loop: "{{ aci_l3outs | subelements('paths') }}"
+  loop_control:
+    label: "{{ item.0.tenant }}/{{ item.0.name }} path {{ item.1.path_dn }}"
+  register: l3out_interface_results
+  tags:
+    - aci
+    - network
+    - l3out
+    - phase3
+
+- name: PHASE 3 - Configure L3Out OSPF external policy when OSPF is enabled
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    path: "/api/mo/uni/tn-{{ item.tenant }}/out-{{ item.name }}/ospfExtP.json"
+    method: "{{ 'post' if apply_changes | bool else 'get' }}"
+    content:
+      ospfExtP:
+        attributes:
+          dn: "uni/tn-{{ item.tenant }}/out-{{ item.name }}/ospfExtP"
+          areaId: "{{ item.ospf_area | default('0.0.0.0') }}"
+          areaType: "{{ item.ospf_area_type | default('regular') }}"
+          descr: "OSPF external policy for {{ item.name }}"
+  loop: "{{ aci_l3outs | selectattr('ospf_enabled', 'defined') | selectattr('ospf_enabled') | list }}"
+  loop_control:
+    label: "{{ item.tenant }}/{{ item.name }} OSPF area {{ item.ospf_area | default('0.0.0.0') }}"
+  register: l3out_ospf_results
+  tags:
+    - aci
+    - network
+    - l3out
+    - ospf
+    - phase3
+
+- name: PHASE 3 - Configure L3Out BGP external policy when BGP is enabled
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    path: "/api/mo/uni/tn-{{ item.tenant }}/out-{{ item.name }}/bgpExtP.json"
+    method: "{{ 'post' if apply_changes | bool else 'get' }}"
+    content:
+      bgpExtP:
+        attributes:
+          dn: "uni/tn-{{ item.tenant }}/out-{{ item.name }}/bgpExtP"
+          descr: "BGP external policy for {{ item.name }}"
+  loop: "{{ aci_l3outs | selectattr('bgp_enabled', 'defined') | selectattr('bgp_enabled') | list }}"
+  loop_control:
+    label: "{{ item.tenant }}/{{ item.name }} BGP"
+  register: l3out_bgp_results
+  tags:
+    - aci
+    - network
+    - l3out
+    - bgp
+    - phase3
+
+- name: PHASE 3 - Save L3Out configuration artifact
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/aci_l3out_config.json"
+    mode: "0640"
+    content: "{{ l3out_artifact | to_nice_json }}"
+  vars:
+    l3out_artifact:
+      timestamp: "{{ ansible_date_time.iso8601 }}"
+      apic_host: "{{ aci_host }}"
+      apply_changes: "{{ apply_changes | bool }}"
+      l3outs_configured: "{{ aci_l3outs | map(attribute='name') | list }}"
+      l3out_details: "{{ aci_l3outs | map(attribute='name') | zip(aci_l3outs | map(attribute='tenant')) | map('join', '@') | list }}"
+      l3out_count: "{{ aci_l3outs | length }}"
+      node_count: "{{ aci_l3outs | map(attribute='nodes') | map('length') | sum }}"
+      path_count: "{{ aci_l3outs | map(attribute='paths') | map('length') | sum }}"
+      bgp_enabled_l3outs: "{{ aci_l3outs | selectattr('bgp_enabled', 'defined') | selectattr('bgp_enabled') | map(attribute='name') | list }}"
+      ospf_enabled_l3outs: "{{ aci_l3outs | selectattr('ospf_enabled', 'defined') | selectattr('ospf_enabled') | map(attribute='name') | list }}"
+      compliance_frameworks: "{{ compliance_frameworks }}"
+  tags:
+    - aci
+    - network
+    - l3out
+    - phase3

@@ -1,0 +1,142 @@
+---
+# tasks file for aci_fabric_deploy - Fabric Node Registration
+# Registers spine and leaf nodes, waits for discovery, validates status
+
+- name: PHASE 1 - Register spine nodes in ACI fabric
+  cisco.aci.aci_fabric_node:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    node_id: "{{ item.node_id }}"
+    pod_id: "{{ item.pod_id | default(aci_pod_id) }}"
+    serial: "{{ item.serial }}"
+    name: "{{ item.name }}"
+    description: "{{ item.description | default('') }}"
+    role: spine
+    state: "{{ 'present' if apply_changes | bool else 'query' }}"
+  loop: "{{ aci_nodes | selectattr('role', 'equalto', 'spine') | list }}"
+  loop_control:
+    label: "{{ item.name }} (node-{{ item.node_id }})"
+  register: spine_registration_results
+  tags:
+    - aci
+    - fabric
+    - nodes
+    - registration
+    - phase1
+
+- name: PHASE 1 - Register leaf nodes in ACI fabric
+  cisco.aci.aci_fabric_node:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    node_id: "{{ item.node_id }}"
+    pod_id: "{{ item.pod_id | default(aci_pod_id) }}"
+    serial: "{{ item.serial }}"
+    name: "{{ item.name }}"
+    description: "{{ item.description | default('') }}"
+    role: leaf
+    state: "{{ 'present' if apply_changes | bool else 'query' }}"
+  loop: "{{ aci_nodes | selectattr('role', 'equalto', 'leaf') | list }}"
+  loop_control:
+    label: "{{ item.name }} (node-{{ item.node_id }})"
+  register: leaf_registration_results
+  tags:
+    - aci
+    - fabric
+    - nodes
+    - registration
+    - phase1
+
+- name: PHASE 1 - Wait for fabric node discovery to complete
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    path: "/api/node/mo/uni/controller/nodeidentpol/nodep-{{ item.serial }}.json"
+    method: get
+  loop: "{{ aci_nodes }}"
+  loop_control:
+    label: "{{ item.name }} (serial: {{ item.serial }})"
+  register: node_discovery_status
+  until: >-
+    node_discovery_status.imdata is defined and
+    node_discovery_status.imdata | length > 0
+  retries: "{{ aci_node_discovery_retries }}"
+  delay: "{{ aci_node_discovery_delay }}"
+  when: apply_changes | bool
+  tags:
+    - aci
+    - fabric
+    - nodes
+    - registration
+    - phase1
+
+- name: PHASE 1 - Query fabric node inventory for validation
+  cisco.aci.aci_fabric_node:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    state: query
+  register: aci_fabric_inventory
+  tags:
+    - aci
+    - fabric
+    - nodes
+    - registration
+    - validation
+    - phase1
+
+- name: PHASE 1 - Validate registered node count
+  ansible.builtin.assert:
+    that:
+      - aci_fabric_inventory.current is defined
+    fail_msg: "Unable to query fabric inventory - check APIC connectivity"
+    quiet: true
+  tags:
+    - aci
+    - fabric
+    - nodes
+    - validation
+    - phase1
+
+- name: PHASE 1 - Display fabric node registration summary
+  ansible.builtin.debug:
+    msg:
+      - "=== Fabric Node Registration Summary ==="
+      - "Configured nodes: {{ aci_nodes | length }}"
+      - "Spine nodes: {{ aci_nodes | selectattr('role', 'equalto', 'spine') | list | length }}"
+      - "Leaf nodes: {{ aci_nodes | selectattr('role', 'equalto', 'leaf') | list | length }}"
+      - "Apply changes: {{ apply_changes | bool }}"
+  tags:
+    - aci
+    - fabric
+    - nodes
+    - phase1
+
+- name: PHASE 1 - Save fabric node registration artifact
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/aci_fabric_nodes.json"
+    mode: "0640"
+    content: "{{ fabric_nodes_artifact | to_nice_json }}"
+  vars:
+    fabric_nodes_artifact:
+      timestamp: "{{ ansible_date_time.iso8601 }}"
+      configured_nodes: "{{ aci_nodes }}"
+      spine_count: "{{ aci_nodes | selectattr('role', 'equalto', 'spine') | list | length }}"
+      leaf_count: "{{ aci_nodes | selectattr('role', 'equalto', 'leaf') | list | length }}"
+      fabric_inventory: "{{ aci_fabric_inventory.current | default([]) }}"
+      apply_changes: "{{ apply_changes | bool }}"
+  tags:
+    - aci
+    - fabric
+    - nodes
+    - phase1

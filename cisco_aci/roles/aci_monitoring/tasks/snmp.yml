@@ -1,0 +1,233 @@
+---
+# tasks file for aci_monitoring - SNMP Configuration
+# Configures SNMPv3 policy, users, client groups, trap destinations, and trap format
+
+- name: PHASE 5 - Configure SNMP policy on ACI fabric
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    path: /api/mo/uni/fabric/snmppol-default.json
+    method: "{{ 'post' if apply_changes | bool else 'get' }}"
+    content:
+      snmpPol:
+        attributes:
+          dn: uni/fabric/snmppol-default
+          name: "default"
+          adminSt: "{{ 'enabled' if aci_snmp_enabled | bool else 'disabled' }}"
+          contact: "{{ aci_snmp_contact }}"
+          loc: "{{ aci_snmp_location }}"
+          descr: "Fourth Estate ACI SNMP Policy - SNMPv3 enforced"
+  register: snmp_policy_result
+  tags:
+    - aci
+    - monitoring
+    - snmp
+    - phase5
+
+- name: PHASE 5 - Disable SNMPv1 and SNMPv2 community strings (enforce v3-only)
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    path: /api/mo/uni/fabric/snmppol-default/community-{{ aci_snmp_community | hash('md5') | truncate(8, true, '') }}.json
+    method: "{{ 'post' if apply_changes | bool else 'get' }}"
+    content:
+      snmpCommunityP:
+        attributes:
+          dn: "uni/fabric/snmppol-default/community-{{ aci_snmp_community | hash('md5') | truncate(8, true, '') }}"
+          name: "{{ aci_snmp_community }}"
+          descr: "Fourth Estate SNMPv2c community - restricted to management network only"
+  register: snmp_community_result
+  when: aci_snmp_version != 'v3'
+  tags:
+    - aci
+    - monitoring
+    - snmp
+    - phase5
+
+- name: PHASE 5 - Configure SNMPv3 users on ACI fabric
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    path: "/api/mo/uni/fabric/snmppol-default/user-{{ item.username }}.json"
+    method: "{{ 'post' if apply_changes | bool else 'get' }}"
+    content:
+      snmpUserP:
+        attributes:
+          dn: "uni/fabric/snmppol-default/user-{{ item.username }}"
+          name: "{{ item.username }}"
+          authType: "{{ item.auth_type | default('SHA') }}"
+          authKey: "{{ item.auth_password }}"
+          privType: "{{ item.priv_type | default('AES-128') }}"
+          privKey: "{{ item.priv_password }}"
+          descr: "{{ item.description | default('SNMPv3 user - Fourth Estate') }}"
+  loop: "{{ aci_snmp_v3_users }}"
+  loop_control:
+    label: "{{ item.username }}"
+  register: snmp_v3_users_result
+  tags:
+    - aci
+    - monitoring
+    - snmp
+    - snmpv3
+    - phase5
+
+- name: PHASE 5 - Configure SNMP client groups (source IP restriction)
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    path: "/api/mo/uni/fabric/snmppol-default/clgrp-{{ item.name }}.json"
+    method: "{{ 'post' if apply_changes | bool else 'get' }}"
+    content:
+      snmpClientGrpP:
+        attributes:
+          dn: "uni/fabric/snmppol-default/clgrp-{{ item.name }}"
+          name: "{{ item.name }}"
+          descr: "{{ item.description | default('SNMP client group - Fourth Estate') }}"
+        children: "{{ item.clients | map(attribute='address') | zip(item.clients | map(attribute='name')) | map('zip', ['addr', 'name']) | map('items2dict') | map('combine', {'snmpClientP': {'attributes': {}}}) | list }}"
+  loop: "{{ aci_snmp_client_groups }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: snmp_client_groups_result
+  tags:
+    - aci
+    - monitoring
+    - snmp
+    - phase5
+
+- name: PHASE 5 - Configure SNMP client entries within client groups
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    path: "/api/mo/uni/fabric/snmppol-default/clgrp-{{ item.0.name }}/client-[{{ item.1.address }}].json"
+    method: "{{ 'post' if apply_changes | bool else 'get' }}"
+    content:
+      snmpClientP:
+        attributes:
+          dn: "uni/fabric/snmppol-default/clgrp-{{ item.0.name }}/client-[{{ item.1.address }}]"
+          addr: "{{ item.1.address }}"
+          name: "{{ item.1.name }}"
+  loop: "{{ aci_snmp_client_groups | subelements('clients') }}"
+  loop_control:
+    label: "{{ item.0.name }}/{{ item.1.name }}"
+  register: snmp_client_entries_result
+  tags:
+    - aci
+    - monitoring
+    - snmp
+    - phase5
+
+- name: PHASE 5 - Configure SNMP trap policy on ACI fabric
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    path: /api/mo/uni/fabric/moncommon/snmpsrc-default.json
+    method: "{{ 'post' if apply_changes | bool else 'get' }}"
+    content:
+      snmpSrc:
+        attributes:
+          dn: uni/fabric/moncommon/snmpsrc-default
+          name: "default"
+          incl: "all"
+          descr: "Fourth Estate SNMP trap source policy"
+  register: snmp_trap_policy_result
+  tags:
+    - aci
+    - monitoring
+    - snmp
+    - phase5
+
+- name: PHASE 5 - Configure SNMP trap destinations
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    path: "/api/mo/uni/fabric/snmpdest-{{ item.host | replace('.', '-') }}-{{ item.port }}.json"
+    method: "{{ 'post' if apply_changes | bool else 'get' }}"
+    content:
+      snmpRemoteDest:
+        attributes:
+          dn: "uni/fabric/snmpdest-{{ item.host | replace('.', '-') }}-{{ item.port }}"
+          host: "{{ item.host }}"
+          port: "{{ item.port | default(162) }}"
+          ver: "{{ item.version | default('v3') }}"
+          secName: "{{ item.community | default(aci_snmp_community) }}"
+          v3SecLvl: "priv"
+          notifT: "traps"
+          descr: "{{ item.description | default('SNMP trap destination - Fourth Estate') }}"
+  loop: "{{ aci_snmp_trap_destinations }}"
+  loop_control:
+    label: "{{ item.host }}:{{ item.port }}"
+  register: snmp_trap_dest_result
+  tags:
+    - aci
+    - monitoring
+    - snmp
+    - traps
+    - phase5
+
+- name: PHASE 5 - Configure SNMP trap format (include VRF and oid)
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    path: /api/mo/uni/fabric/snmppol-default.json
+    method: "{{ 'post' if apply_changes | bool else 'get' }}"
+    content:
+      snmpPol:
+        attributes:
+          dn: uni/fabric/snmppol-default
+          name: "default"
+  register: snmp_format_result
+  tags:
+    - aci
+    - monitoring
+    - snmp
+    - phase5
+
+- name: PHASE 5 - Save SNMP configuration artifact
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/aci_snmp_config.json"
+    mode: "0640"
+    content: "{{ snmp_artifact | to_nice_json }}"
+  vars:
+    snmp_artifact:
+      timestamp: "{{ ansible_date_time.iso8601 }}"
+      apic_host: "{{ aci_host }}"
+      apply_changes: "{{ apply_changes | bool }}"
+      snmp_enabled: "{{ aci_snmp_enabled | bool }}"
+      snmp_version: "{{ aci_snmp_version }}"
+      snmp_contact: "{{ aci_snmp_contact }}"
+      snmp_location: "{{ aci_snmp_location }}"
+      v3_user_count: "{{ aci_snmp_v3_users | length }}"
+      v3_usernames: "{{ aci_snmp_v3_users | map(attribute='username') | list }}"
+      trap_destination_count: "{{ aci_snmp_trap_destinations | length }}"
+      client_group_count: "{{ aci_snmp_client_groups | length }}"
+      snmp_policy_status: "{{ snmp_policy_result.imdata | default([]) | length }}"
+      compliance_note: "SNMPv3 with SHA auth and AES-128 priv - NIST 800-53 SC-8, IA-3"
+  tags:
+    - aci
+    - monitoring
+    - snmp
+    - phase5

@@ -1,0 +1,61 @@
+---
+# tasks file for aci_tenant_config - Static Path Bindings
+# Binds EPGs to physical ports/vPCs using cisco.aci.aci_static_binding_to_epg
+
+- name: PHASE 2 - Create static path bindings for EPGs
+  cisco.aci.aci_static_binding_to_epg:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    tenant: "{{ item.tenant }}"
+    ap: "{{ item.app_profile }}"
+    epg: "{{ item.epg }}"
+    pod_id: "{{ item.pod_id | default(1) }}"
+    leafs: "{{ item.leaf_id }}"
+    interface: "{{ item.interface }}"
+    encap_id: "{{ item.encap | regex_replace('^vlan-', '') }}"
+    interface_mode: "{{ item.mode | default('regular') }}"
+    interface_type: "{{ item.interface_type | default('switch_port') }}"
+    deploy_immediacy: "{{ item.deploy_immediacy | default('lazy') }}"
+    state: "{{ 'present' if apply_changes | bool else 'query' }}"
+  loop: "{{ aci_static_paths }}"
+  loop_control:
+    label: "{{ item.tenant }}/{{ item.app_profile }}/{{ item.epg }} -> {{ item.interface }}"
+  when: aci_static_paths | length > 0
+  register: static_path_results
+  tags:
+    - aci
+    - tenants
+    - static_paths
+    - phase2
+
+- name: PHASE 2 - Display static path binding summary
+  ansible.builtin.debug:
+    msg:
+      - "=== Static Path Binding Summary ==="
+      - "Configured static paths: {{ aci_static_paths | length }}"
+      - "Apply changes:           {{ apply_changes | bool }}"
+      - "{{ 'No static paths configured - skipping' if aci_static_paths | length == 0 else '' }}"
+  tags:
+    - aci
+    - tenants
+    - static_paths
+    - phase2
+
+- name: PHASE 2 - Save static path bindings artifact
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/aci_static_paths.json"
+    mode: "0640"
+    content: "{{ static_paths_artifact | to_nice_json }}"
+  vars:
+    static_paths_artifact:
+      timestamp: "{{ ansible_date_time.iso8601 }}"
+      configured_static_paths: "{{ aci_static_paths }}"
+      apply_changes: "{{ apply_changes | bool }}"
+  tags:
+    - aci
+    - tenants
+    - static_paths
+    - phase2

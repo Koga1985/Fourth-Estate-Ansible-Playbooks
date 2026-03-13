@@ -1,0 +1,182 @@
+---
+# tasks file for aci_fabric_deploy - Interface and Switch Profiles
+# Creates leaf/spine switch profiles, interface profiles, VPC protection groups
+
+- name: PHASE 1 - Create leaf switch profiles
+  cisco.aci.aci_switch_policy_leaf_profile:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    leaf_profile: "{{ item.name }}"
+    description: "{{ item.description | default('') }}"
+    state: "{{ 'present' if apply_changes | bool else 'query' }}"
+  loop: "{{ aci_leaf_switch_profiles }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: leaf_profile_results
+  tags:
+    - aci
+    - interface
+    - profiles
+    - leaf
+    - phase1
+
+- name: PHASE 1 - Create leaf interface profiles
+  cisco.aci.aci_interface_policy_leaf_profile:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    leaf_interface_profile: "{{ item.name }}-IntProf"
+    description: "Interface profile for {{ item.name }}"
+    state: "{{ 'present' if apply_changes | bool else 'query' }}"
+  loop: "{{ aci_leaf_switch_profiles }}"
+  loop_control:
+    label: "{{ item.name }}-IntProf"
+  register: leaf_intf_profile_results
+  tags:
+    - aci
+    - interface
+    - profiles
+    - leaf
+    - phase1
+
+- name: PHASE 1 - Associate leaf interface profiles to switch profiles
+  cisco.aci.aci_interface_selector_to_switch_policy_leaf_profile:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    leaf_profile: "{{ item.name }}"
+    interface_selector: "{{ item.name }}-IntProf"
+    state: "{{ 'present' if apply_changes | bool else 'query' }}"
+  loop: "{{ aci_leaf_switch_profiles }}"
+  loop_control:
+    label: "{{ item.name }} -> {{ item.name }}-IntProf"
+  tags:
+    - aci
+    - interface
+    - profiles
+    - leaf
+    - phase1
+
+- name: PHASE 1 - Create leaf switch selectors with node blocks
+  cisco.aci.aci_switch_leaf_selector:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    leaf_profile: "{{ item.0.name }}"
+    leaf: "{{ item.1.name }}"
+    leaf_node_blk: "nodeBlk-{{ item.0.name }}-{{ item.1.name }}"
+    from_port: "{{ item.1.node_ids | min }}"
+    to_port: "{{ item.1.node_ids | max }}"
+    state: "{{ 'present' if apply_changes | bool else 'query' }}"
+  loop: "{{ aci_leaf_switch_profiles | subelements('leaf_selectors') }}"
+  loop_control:
+    label: "{{ item.0.name }} / {{ item.1.name }}"
+  tags:
+    - aci
+    - interface
+    - profiles
+    - leaf
+    - phase1
+
+- name: PHASE 1 - Create spine switch profiles
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    path: "/api/mo/uni/infra/spprof-{{ item.name }}.json"
+    method: "{{ 'post' if apply_changes | bool else 'get' }}"
+    content:
+      infraSpineP:
+        attributes:
+          dn: "uni/infra/spprof-{{ item.name }}"
+          name: "{{ item.name }}"
+          descr: "{{ item.description | default('') }}"
+  loop: "{{ aci_spine_switch_profiles }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: spine_profile_results
+  tags:
+    - aci
+    - interface
+    - profiles
+    - spine
+    - phase1
+
+- name: PHASE 1 - Create spine interface profiles
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    path: "/api/mo/uni/infra/spaccportprof-{{ item.name }}-IntProf.json"
+    method: "{{ 'post' if apply_changes | bool else 'get' }}"
+    content:
+      infraSpAccPortP:
+        attributes:
+          dn: "uni/infra/spaccportprof-{{ item.name }}-IntProf"
+          name: "{{ item.name }}-IntProf"
+          descr: "Spine interface profile for {{ item.name }}"
+  loop: "{{ aci_spine_switch_profiles }}"
+  loop_control:
+    label: "{{ item.name }}-IntProf"
+  tags:
+    - aci
+    - interface
+    - profiles
+    - spine
+    - phase1
+
+- name: PHASE 1 - Create VPC protection groups
+  cisco.aci.aci_switch_policy_vpc_protection_group:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    protection_group: "{{ item.name }}"
+    protection_group_id: "{{ item.id }}"
+    switch_1_id: "{{ item.node1_id }}"
+    switch_2_id: "{{ item.node2_id }}"
+    vpc_domain_policy: "{{ item.vpc_domain_policy | default('default') }}"
+    state: "{{ 'present' if (apply_changes | bool and enable_vpc_protection | bool) else 'query' }}"
+  loop: "{{ aci_vpc_protection_groups }}"
+  loop_control:
+    label: "{{ item.name }} ({{ item.node1_id }}-{{ item.node2_id }})"
+  when: enable_vpc_protection | bool
+  register: vpc_pg_results
+  tags:
+    - aci
+    - interface
+    - profiles
+    - vpc
+    - phase1
+
+- name: PHASE 1 - Save interface profiles configuration artifact
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/aci_interface_profiles.json"
+    mode: "0640"
+    content: "{{ interface_profiles_artifact | to_nice_json }}"
+  vars:
+    interface_profiles_artifact:
+      timestamp: "{{ ansible_date_time.iso8601 }}"
+      leaf_switch_profiles: "{{ aci_leaf_switch_profiles | map(attribute='name') | list }}"
+      spine_switch_profiles: "{{ aci_spine_switch_profiles | map(attribute='name') | list }}"
+      vpc_protection_groups: "{{ aci_vpc_protection_groups | map(attribute='name') | list }}"
+      apply_changes: "{{ apply_changes | bool }}"
+  tags:
+    - aci
+    - interface
+    - profiles
+    - phase1

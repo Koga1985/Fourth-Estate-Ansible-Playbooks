@@ -1,0 +1,90 @@
+---
+# tasks file for aci_network_config - BGP Peer Configuration
+# Configures BGP peer connectivity on L3Out logical interface profiles
+
+- name: PHASE 3 - Configure BGP peers on L3Out interface paths
+  cisco.aci.aci_l3out_bgp_peer:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    tenant: "{{ item.0.tenant }}"
+    l3out: "{{ item.0.name }}"
+    node_profile: "{{ item.0.node_profile }}"
+    interface_profile: "{{ item.0.interface_profile }}"
+    pod_id: "{{ item.1.path_dn | regex_replace('topology/pod-(\\d+)/.*', '\\1') }}"
+    node_id: "{{ item.1.path_dn | regex_replace('topology/pod-\\d+/paths-(\\d+)/.*', '\\1') }}"
+    path_ep: "{{ item.1.path_dn | regex_replace('.*pathep-\\[(.*)\\]', '\\1') }}"
+    peer_ip: "{{ item.1.peer_ip }}"
+    remote_asn: "{{ item.1.remote_asn }}"
+    local_asn: "{{ item.1.local_asn | default(omit) }}"
+    password: "{{ item.1.password | default(omit) }}"
+    description: "{{ item.1.description | default('') }}"
+    allow_self_as: false
+    as_override: false
+    dis_peer_as_check: false
+    next_hop_self: false
+    send_com: false
+    send_ext_com: false
+    state: "{{ 'present' if apply_changes | bool else 'query' }}"
+  loop: >-
+    {{
+      aci_l3outs
+      | selectattr('bgp_enabled', 'defined')
+      | selectattr('bgp_enabled')
+      | selectattr('bgp_peers', 'defined')
+      | subelements('bgp_peers')
+    }}
+  loop_control:
+    label: "{{ item.0.tenant }}/{{ item.0.name }} BGP peer {{ item.1.peer_ip }} ASN {{ item.1.remote_asn }}"
+  register: bgp_peer_results
+  tags:
+    - aci
+    - network
+    - bgp
+    - routing
+    - phase3
+
+- name: PHASE 3 - Display BGP peer configuration summary
+  ansible.builtin.debug:
+    msg:
+      - "=== BGP Peer Configuration Summary ==="
+      - "L3Outs with BGP:     {{ aci_l3outs | selectattr('bgp_enabled', 'defined') | selectattr('bgp_enabled') | list | length }}"
+      - "Total BGP peers:     {{ aci_l3outs | selectattr('bgp_enabled', 'defined') | selectattr('bgp_enabled') | selectattr('bgp_peers', 'defined') | map(attribute='bgp_peers') | map('length') | sum }}"
+      - "Apply changes:       {{ apply_changes | bool }}"
+  tags:
+    - aci
+    - network
+    - bgp
+    - routing
+    - phase3
+
+- name: PHASE 3 - Save BGP peer configuration artifact
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/aci_bgp_peers.json"
+    mode: "0640"
+    content: "{{ bgp_artifact | to_nice_json }}"
+  vars:
+    bgp_artifact:
+      timestamp: "{{ ansible_date_time.iso8601 }}"
+      apic_host: "{{ aci_host }}"
+      apply_changes: "{{ apply_changes | bool }}"
+      l3outs_with_bgp: "{{ aci_l3outs | selectattr('bgp_enabled', 'defined') | selectattr('bgp_enabled') | map(attribute='name') | list }}"
+      total_bgp_peers: "{{ aci_l3outs | selectattr('bgp_enabled', 'defined') | selectattr('bgp_enabled') | selectattr('bgp_peers', 'defined') | map(attribute='bgp_peers') | map('length') | sum }}"
+      bgp_peers_by_l3out: >-
+        {{
+          aci_l3outs
+          | selectattr('bgp_enabled', 'defined')
+          | selectattr('bgp_enabled')
+          | selectattr('bgp_peers', 'defined')
+          | map(attribute='name')
+          | list
+        }}
+      compliance_frameworks: "{{ compliance_frameworks }}"
+  tags:
+    - aci
+    - network
+    - bgp
+    - routing
+    - phase3

@@ -1,0 +1,200 @@
+---
+# tasks file for aci_security_hardening - Access Control and RBAC
+# DoD STIG CAT II - Account lockout, concurrent sessions, security domains, RBAC
+# NIST AC-2, AC-3, AC-6, AC-7 | STIG CISC-ND-000370, CISC-ND-000360
+
+- name: PHASE 4 - CISC-ND-000370 - Configure account lockout after {{ aci_lockout_max_attempts }} failed attempts
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    path: /api/mo/uni/userext.json
+    method: "{{ 'post' if apply_changes | bool else 'get' }}"
+    content:
+      aaaUserEp:
+        attributes:
+          dn: uni/userext
+          blockDuration: "{{ aci_lockout_duration_seconds | string }}"
+          enableLoginBlock: "{{ 'enable' if aci_lockout_enabled else 'disable' }}"
+          maxFailedAttempts: "{{ aci_lockout_max_attempts | string }}"
+          maxFailedAttemptsWindow: "{{ aci_lockout_window_seconds | string }}"
+  register: lockout_config_result
+  tags:
+    - aci
+    - security
+    - stig
+    - stig_cat2
+    - nist_ac
+    - rbac
+    - phase4
+
+- name: PHASE 4 - CISC-ND-000360 - Set maximum concurrent sessions to {{ aci_max_concurrent_sessions }}
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    path: /api/mo/uni/userext.json
+    method: "{{ 'post' if apply_changes | bool else 'get' }}"
+    content:
+      aaaUserEp:
+        attributes:
+          dn: uni/userext
+          maxSessions: "{{ aci_max_concurrent_sessions | string }}"
+  register: max_sessions_result
+  tags:
+    - aci
+    - security
+    - stig
+    - stig_cat2
+    - nist_ac
+    - rbac
+    - phase4
+
+- name: PHASE 4 - Configure security domains
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    path: "/api/mo/uni/userext/domain-{{ item.name }}.json"
+    method: "{{ 'post' if apply_changes | bool else 'get' }}"
+    content:
+      aaaDomain:
+        attributes:
+          dn: "uni/userext/domain-{{ item.name }}"
+          name: "{{ item.name }}"
+          descr: "{{ item.description | default('') }}"
+  loop: "{{ aci_security_domains }}"
+  loop_control:
+    label: "Security domain {{ item.name }}"
+  register: security_domain_results
+  tags:
+    - aci
+    - security
+    - stig
+    - stig_cat2
+    - nist_ac
+    - rbac
+    - phase4
+
+- name: PHASE 4 - Configure local service accounts (break-glass and automation only)
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    path: "/api/mo/uni/userext/user-{{ item.username }}.json"
+    method: "{{ 'post' if apply_changes | bool else 'get' }}"
+    content:
+      aaaUser:
+        attributes:
+          dn: "uni/userext/user-{{ item.username }}"
+          name: "{{ item.username }}"
+          descr: "{{ item.description | default('') }}"
+          email: "{{ item.email | default('') }}"
+          firstName: "{{ item.first_name | default('') }}"
+          lastName: "{{ item.last_name | default('') }}"
+          phone: "{{ item.phone | default('') }}"
+          expiration: "{{ item.expiry | default('never') }}"
+          accountStatus: "active"
+          clearPwdHistory: "no"
+          pwdUpdateRequired: "yes"
+  loop: "{{ aci_local_users }}"
+  loop_control:
+    label: "Local user {{ item.username }}"
+  register: local_user_results
+  tags:
+    - aci
+    - security
+    - stig
+    - stig_cat2
+    - nist_ac
+    - rbac
+    - phase4
+
+- name: PHASE 4 - Assign roles to local service accounts
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    path: "/api/mo/uni/userext/user-{{ item.0.username }}/role-{{ item.1.name }}.json"
+    method: "{{ 'post' if apply_changes | bool else 'get' }}"
+    content:
+      aaaUserRole:
+        attributes:
+          dn: "uni/userext/user-{{ item.0.username }}/role-{{ item.1.name }}"
+          name: "{{ item.1.name }}"
+          privType: "{{ item.1.priv_type | default('writePriv') }}"
+  loop: "{{ aci_local_users | subelements('roles') }}"
+  loop_control:
+    label: "{{ item.0.username }} role {{ item.1.name }}"
+  register: user_role_results
+  tags:
+    - aci
+    - security
+    - stig
+    - stig_cat2
+    - nist_ac
+    - rbac
+    - phase4
+
+- name: PHASE 4 - Display access control configuration summary
+  ansible.builtin.debug:
+    msg:
+      - "=== STIG CAT II - Access Control Configuration ==="
+      - "CISC-ND-000370 - Account lockout:   {{ aci_lockout_enabled }} ({{ aci_lockout_max_attempts }} attempts)"
+      - "CISC-ND-000370 - Lockout duration:  {{ aci_lockout_duration_seconds }} seconds"
+      - "CISC-ND-000360 - Max sessions:      {{ aci_max_concurrent_sessions }}"
+      - "Security domains:                   {{ aci_security_domains | length }} configured"
+      - "Local service accounts:             {{ aci_local_users | length }} configured"
+      - "Apply changes:                      {{ apply_changes | bool }}"
+  tags:
+    - aci
+    - security
+    - stig
+    - stig_cat2
+    - nist_ac
+    - rbac
+    - phase4
+
+- name: PHASE 4 - Save access control configuration artifact
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/aci_stig_access_control.json"
+    mode: "0640"
+    content: "{{ ac_artifact | to_nice_json }}"
+  vars:
+    ac_artifact:
+      timestamp: "{{ ansible_date_time.iso8601 }}"
+      apic_host: "{{ aci_host }}"
+      apply_changes: "{{ apply_changes | bool }}"
+      stig_controls:
+        - id: "CISC-ND-000370"
+          description: "Account lockout configured"
+          lockout_enabled: "{{ aci_lockout_enabled | bool }}"
+          max_attempts: "{{ aci_lockout_max_attempts }}"
+          lockout_window_seconds: "{{ aci_lockout_window_seconds }}"
+          lockout_duration_seconds: "{{ aci_lockout_duration_seconds }}"
+          status: "configured"
+        - id: "CISC-ND-000360"
+          description: "Maximum concurrent sessions configured"
+          max_sessions: "{{ aci_max_concurrent_sessions }}"
+          status: "configured"
+      security_domains: "{{ aci_security_domains | map(attribute='name') | list }}"
+      local_accounts: "{{ aci_local_users | map(attribute='username') | list }}"
+      compliance_frameworks: "{{ compliance_frameworks }}"
+  tags:
+    - aci
+    - security
+    - stig
+    - stig_cat2
+    - nist_ac
+    - rbac
+    - phase4

@@ -1,0 +1,68 @@
+---
+# tasks file for aci_tenant_config - Application Profile Configuration
+# Creates application profiles using cisco.aci.aci_ap
+
+- name: PHASE 2 - Create application profiles
+  cisco.aci.aci_ap:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    tenant: "{{ item.tenant }}"
+    ap: "{{ item.name }}"
+    description: "{{ item.description | default('') }}"
+    state: "{{ 'present' if apply_changes | bool else 'query' }}"
+  loop: "{{ aci_app_profiles }}"
+  loop_control:
+    label: "{{ item.tenant }}/{{ item.name }}"
+  register: ap_creation_results
+  tags:
+    - aci
+    - tenants
+    - app_profiles
+    - phase2
+
+- name: PHASE 2 - Query application profiles for validation
+  cisco.aci.aci_ap:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    state: query
+  register: aci_ap_query_all
+  tags:
+    - aci
+    - tenants
+    - app_profiles
+    - phase2
+    - validation
+
+- name: PHASE 2 - Display application profile configuration summary
+  ansible.builtin.debug:
+    msg:
+      - "=== Application Profile Configuration Summary ==="
+      - "Configured App Profiles: {{ aci_app_profiles | length }}"
+      - "Apply changes:           {{ apply_changes | bool }}"
+  tags:
+    - aci
+    - tenants
+    - app_profiles
+    - phase2
+
+- name: PHASE 2 - Save application profiles artifact
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/aci_app_profiles.json"
+    mode: "0640"
+    content: "{{ ap_artifact | to_nice_json }}"
+  vars:
+    ap_artifact:
+      timestamp: "{{ ansible_date_time.iso8601 }}"
+      configured_app_profiles: "{{ aci_app_profiles }}"
+      apply_changes: "{{ apply_changes | bool }}"
+  tags:
+    - aci
+    - tenants
+    - app_profiles
+    - phase2

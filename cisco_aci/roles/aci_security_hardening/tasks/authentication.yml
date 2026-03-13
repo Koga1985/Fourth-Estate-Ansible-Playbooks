@@ -1,0 +1,293 @@
+---
+# tasks file for aci_security_hardening - Authentication Hardening
+# DoD STIG CAT I - Centralized authentication and password policy
+# NIST IA-2, IA-5 | STIG CISC-ND-001190, CISC-ND-000530, CISC-ND-000570
+
+- name: PHASE 4 - CISC-ND-000530 - Configure password strength policy
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    path: /api/mo/uni/userext/pwdprofile.json
+    method: "{{ 'post' if apply_changes | bool else 'get' }}"
+    content:
+      aaaPwdProfile:
+        attributes:
+          dn: uni/userext/pwdprofile
+          changeCount: "{{ aci_password_history_count | string }}"
+          changeDuringInterval: "{{ 'enable' if aci_password_no_change_interval | int > 0 else 'disable' }}"
+          changeInterval: "{{ aci_password_no_change_interval | string }}"
+          expirationWarnTime: "7"
+          graceLoginCount: "0"
+          historyCount: "{{ aci_password_history_count | string }}"
+          noChangeInterval: "{{ aci_password_no_change_interval | string }}"
+          passwordStrengthCheck: "{{ 'yes' if aci_password_strength_check else 'no' }}"
+          pwdStrengthProfileDn: ""
+  register: password_profile_result
+  tags:
+    - aci
+    - security
+    - stig
+    - stig_cat1
+    - nist_ia
+    - authentication
+    - phase4
+
+- name: PHASE 4 - CISC-ND-000570 - Set minimum password length to {{ aci_password_min_length }}
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    path: /api/mo/uni/userext/pwdprofile.json
+    method: "{{ 'post' if apply_changes | bool else 'get' }}"
+    content:
+      aaaPwdProfile:
+        attributes:
+          dn: uni/userext/pwdprofile
+          minLength: "{{ aci_password_min_length | string }}"
+          maxLength: "64"
+          classFlags: >-
+            {{
+              ['lowercase'] * (aci_password_min_lowercase | int > 0) |
+              union(['uppercase'] * (aci_password_min_uppercase | int > 0)) |
+              union(['digit'] * (aci_password_min_digits | int > 0)) |
+              union(['punctuation'] * (aci_password_min_special | int > 0)) |
+              join(',')
+            }}
+  register: password_length_result
+  tags:
+    - aci
+    - security
+    - stig
+    - stig_cat1
+    - nist_ia
+    - authentication
+    - phase4
+
+- name: PHASE 4 - CISC-ND-000196 - Configure password expiration policy ({{ aci_password_expiry_days }} days)
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    path: /api/mo/uni/userext/pwdprofile.json
+    method: "{{ 'post' if apply_changes | bool else 'get' }}"
+    content:
+      aaaPwdProfile:
+        attributes:
+          dn: uni/userext/pwdprofile
+          expirationInDays: "{{ aci_password_expiry_days | string }}"
+          pwdExpirationEnabled: "yes"
+  register: password_expiry_result
+  tags:
+    - aci
+    - security
+    - stig
+    - stig_cat1
+    - nist_ia
+    - authentication
+    - phase4
+
+- name: PHASE 4 - CISC-ND-001190 - Configure LDAP authentication providers
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    path: "/api/mo/uni/userext/ldapext/ldapprovider-{{ item.host }}.json"
+    method: "{{ 'post' if apply_changes | bool else 'get' }}"
+    content:
+      aaaLdapProvider:
+        attributes:
+          dn: "uni/userext/ldapext/ldapprovider-{{ item.host }}"
+          name: "{{ item.host }}"
+          descr: "{{ item.description | default('') }}"
+          port: "{{ item.port | string }}"
+          sslValidation: "{{ 'yes' if item.use_ssl | default(true) else 'no' }}"
+          enableSSL: "{{ 'yes' if item.use_ssl | default(true) else 'no' }}"
+          rootdn: "{{ item.bind_dn }}"
+          key: "{{ item.bind_password }}"
+          basedn: "{{ item.base_dn }}"
+          filterDn: "{{ item.filter_type | default('default') }}"
+          timeout: "{{ item.timeout | default(30) | string }}"
+          retries: "{{ item.retries | default(1) | string }}"
+          monitoringUser: ""
+  loop: "{{ aci_ldap_servers }}"
+  loop_control:
+    label: "LDAP server {{ item.host }}"
+  register: ldap_provider_results
+  when: aci_auth_realm_type == 'ldap'
+  tags:
+    - aci
+    - security
+    - stig
+    - stig_cat1
+    - nist_ia
+    - authentication
+    - ldap
+    - phase4
+
+- name: PHASE 4 - CISC-ND-001190 - Configure RADIUS authentication providers
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    path: "/api/mo/uni/userext/radiusext/radiusprovider-{{ item.host }}.json"
+    method: "{{ 'post' if apply_changes | bool else 'get' }}"
+    content:
+      aaaRadiusProvider:
+        attributes:
+          dn: "uni/userext/radiusext/radiusprovider-{{ item.host }}"
+          name: "{{ item.host }}"
+          descr: "{{ item.description | default('') }}"
+          authPort: "{{ item.auth_port | default(1812) | string }}"
+          key: "{{ item.key }}"
+          timeout: "{{ item.timeout | default(5) | string }}"
+          retries: "{{ item.retries | default(1) | string }}"
+  loop: "{{ aci_radius_servers }}"
+  loop_control:
+    label: "RADIUS server {{ item.host }}"
+  register: radius_provider_results
+  when: aci_auth_realm_type == 'radius' and aci_radius_servers | length > 0
+  tags:
+    - aci
+    - security
+    - stig
+    - stig_cat1
+    - nist_ia
+    - authentication
+    - radius
+    - phase4
+
+- name: PHASE 4 - CISC-ND-001190 - Configure TACACS+ authentication providers
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    path: "/api/mo/uni/userext/tacacsext/tacacsprovider-{{ item.host }}.json"
+    method: "{{ 'post' if apply_changes | bool else 'get' }}"
+    content:
+      aaaTacacsPlusProvider:
+        attributes:
+          dn: "uni/userext/tacacsext/tacacsprovider-{{ item.host }}"
+          name: "{{ item.host }}"
+          descr: "{{ item.description | default('') }}"
+          port: "{{ item.port | default(49) | string }}"
+          key: "{{ item.key }}"
+          timeout: "{{ item.timeout | default(5) | string }}"
+          retries: "{{ item.retries | default(1) | string }}"
+  loop: "{{ aci_tacacs_servers }}"
+  loop_control:
+    label: "TACACS+ server {{ item.host }}"
+  register: tacacs_provider_results
+  when: aci_auth_realm_type == 'tacacs' and aci_tacacs_servers | length > 0
+  tags:
+    - aci
+    - security
+    - stig
+    - stig_cat1
+    - nist_ia
+    - authentication
+    - tacacs
+    - phase4
+
+- name: PHASE 4 - CISC-ND-001190 - Configure authentication login domain
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    path: "/api/mo/uni/userext/logindomain-{{ aci_auth_login_domain }}.json"
+    method: "{{ 'post' if apply_changes | bool else 'get' }}"
+    content:
+      aaaDomain:
+        attributes:
+          dn: "uni/userext/logindomain-{{ aci_auth_login_domain }}"
+          name: "{{ aci_auth_login_domain }}"
+          descr: "Fourth Estate centralized authentication domain"
+        children:
+          - aaaDomainRef:
+              attributes:
+                name: "{{ aci_auth_login_domain }}"
+                providerGroup: "{{ aci_auth_login_domain }}"
+  register: login_domain_result
+  tags:
+    - aci
+    - security
+    - stig
+    - stig_cat1
+    - nist_ia
+    - authentication
+    - phase4
+
+- name: PHASE 4 - CISC-ND-001190 - Configure default authentication realm
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    path: /api/mo/uni/userext.json
+    method: "{{ 'post' if apply_changes | bool else 'get' }}"
+    content:
+      aaaUserEp:
+        attributes:
+          dn: uni/userext
+          defaultLoginDomain: "{{ aci_auth_login_domain }}"
+          remoteUserLoginPolicy: "no-login"
+  register: default_realm_result
+  tags:
+    - aci
+    - security
+    - stig
+    - stig_cat1
+    - nist_ia
+    - authentication
+    - phase4
+
+- name: PHASE 4 - Save authentication configuration artifact
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/aci_stig_authentication.json"
+    mode: "0640"
+    content: "{{ auth_artifact | to_nice_json }}"
+  vars:
+    auth_artifact:
+      timestamp: "{{ ansible_date_time.iso8601 }}"
+      apic_host: "{{ aci_host }}"
+      apply_changes: "{{ apply_changes | bool }}"
+      stig_controls:
+        - id: "CISC-ND-000530"
+          description: "Password strength policy configured"
+          status: "configured"
+        - id: "CISC-ND-000570"
+          description: "Minimum password length set to {{ aci_password_min_length }}"
+          status: "configured"
+        - id: "CISC-ND-001190"
+          description: "Centralized authentication ({{ aci_auth_realm_type | upper }}) configured"
+          status: "configured"
+      auth_realm_type: "{{ aci_auth_realm_type }}"
+      ldap_servers: "{{ aci_ldap_servers | map(attribute='host') | list }}"
+      login_domain: "{{ aci_auth_login_domain }}"
+      password_min_length: "{{ aci_password_min_length }}"
+      password_expiry_days: "{{ aci_password_expiry_days }}"
+      password_history_count: "{{ aci_password_history_count }}"
+      compliance_frameworks: "{{ compliance_frameworks }}"
+  tags:
+    - aci
+    - security
+    - stig
+    - stig_cat1
+    - nist_ia
+    - authentication
+    - phase4

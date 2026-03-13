@@ -1,0 +1,269 @@
+---
+# tasks file for aci_fabric_deploy - Fabric-Wide Policies
+# Configures node control, link level, ISIS, COOP, endpoint loop protection, rogue endpoint control
+
+- name: PHASE 1 - Configure fabric Node Control policy (MACsec and analytics)
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    path: /api/mo/uni/fabric/nodecontpol-FourthEstate-NodeCtrl.json
+    method: "{{ 'post' if apply_changes | bool else 'get' }}"
+    content:
+      fabricNodeControl:
+        attributes:
+          dn: uni/fabric/nodecontpol-FourthEstate-NodeCtrl
+          name: "FourthEstate-NodeCtrl"
+          control: "Dom"
+          featureSel: "analytics"
+          descr: "Fourth Estate fabric node control policy"
+  register: node_control_result
+  tags:
+    - aci
+    - fabric
+    - policies
+    - phase1
+
+- name: PHASE 1 - Configure fabric Link Level policy (auto-negotiation)
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    path: "/api/mo/uni/infra/hintfpol-{{ item.name }}.json"
+    method: "{{ 'post' if apply_changes | bool else 'get' }}"
+    content:
+      fabricHIfPol:
+        attributes:
+          dn: "uni/infra/hintfpol-{{ item.name }}"
+          name: "{{ item.name }}"
+          autoNeg: "{{ item.auto_neg | default('on') }}"
+          speed: "{{ item.speed | default('inherit') }}"
+          fecMode: "{{ item.fec_mode | default('inherit') }}"
+          descr: "{{ item.description | default('') }}"
+  loop:
+    - name: "LLP-1G-Auto"
+      description: "1Gbps with auto-negotiation"
+      auto_neg: "on"
+      speed: "1G"
+    - name: "LLP-10G-Auto"
+      description: "10Gbps with auto-negotiation"
+      auto_neg: "on"
+      speed: "10G"
+    - name: "LLP-25G-Auto"
+      description: "25Gbps with auto-negotiation"
+      auto_neg: "on"
+      speed: "25G"
+    - name: "LLP-100G-Auto"
+      description: "100Gbps with auto-negotiation"
+      auto_neg: "on"
+      speed: "100G"
+  loop_control:
+    label: "{{ item.name }}"
+  register: link_level_results
+  tags:
+    - aci
+    - fabric
+    - policies
+    - link_level
+    - phase1
+
+- name: PHASE 1 - Configure ISIS redistribution policy
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    path: /api/mo/uni/fabric/isisdomdef-default.json
+    method: "{{ 'post' if apply_changes | bool else 'get' }}"
+    content:
+      isisDomPol:
+        attributes:
+          dn: uni/fabric/isisdomdef-default
+          redistribMetric: "63"
+          mtu: "9126"
+  register: isis_result
+  tags:
+    - aci
+    - fabric
+    - policies
+    - isis
+    - phase1
+
+- name: PHASE 1 - Configure COOP group policy
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    path: /api/mo/uni/fabric/pol-default.json
+    method: "{{ 'post' if apply_changes | bool else 'get' }}"
+    content:
+      coopPol:
+        attributes:
+          dn: uni/fabric/pol-default
+          type: "compatible"
+  register: coop_result
+  tags:
+    - aci
+    - fabric
+    - policies
+    - coop
+    - phase1
+
+- name: PHASE 1 - Configure endpoint loop protection policy
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    path: /api/mo/uni/infra/epLoopProtectP-default.json
+    method: "{{ 'post' if apply_changes | bool else 'get' }}"
+    content:
+      epLoopProtectPol:
+        attributes:
+          dn: uni/infra/epLoopProtectP-default
+          adminSt: "enabled"
+          action: "bd-learn-disable,port-disable"
+          loopDetectIntvl: "60"
+          loopDetectMult: "4"
+  register: ep_loop_result
+  tags:
+    - aci
+    - fabric
+    - policies
+    - endpoint
+    - phase1
+
+- name: PHASE 1 - Configure rogue endpoint control policy
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    path: /api/mo/uni/infra/epCtrlP-default.json
+    method: "{{ 'post' if apply_changes | bool else 'get' }}"
+    content:
+      epControlPol:
+        attributes:
+          dn: uni/infra/epCtrlP-default
+          adminSt: "enabled"
+          rogueEpDetectIntvl: "60"
+          rogueEpDetectMult: "4"
+          holdIntvl: "1800"
+  register: rogue_ep_result
+  tags:
+    - aci
+    - fabric
+    - policies
+    - endpoint
+    - rogue
+    - phase1
+
+- name: PHASE 1 - Configure CDP interface policy
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    path: "/api/mo/uni/infra/cdpIfP-{{ item.name }}.json"
+    method: "{{ 'post' if apply_changes | bool else 'get' }}"
+    content:
+      cdpIfPol:
+        attributes:
+          dn: "uni/infra/cdpIfP-{{ item.name }}"
+          name: "{{ item.name }}"
+          adminSt: "{{ item.admin_state }}"
+  loop:
+    - name: "CDP-Enabled"
+      admin_state: "enabled"
+    - name: "CDP-Disabled"
+      admin_state: "disabled"
+  loop_control:
+    label: "{{ item.name }}"
+  tags:
+    - aci
+    - fabric
+    - policies
+    - cdp
+    - phase1
+
+- name: PHASE 1 - Configure LLDP interface policy
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    path: "/api/mo/uni/infra/lldpIfP-{{ item.name }}.json"
+    method: "{{ 'post' if apply_changes | bool else 'get' }}"
+    content:
+      lldpIfPol:
+        attributes:
+          dn: "uni/infra/lldpIfP-{{ item.name }}"
+          name: "{{ item.name }}"
+          adminRxSt: "{{ item.rx_state }}"
+          adminTxSt: "{{ item.tx_state }}"
+  loop:
+    - name: "LLDP-Enabled"
+      rx_state: "enabled"
+      tx_state: "enabled"
+    - name: "LLDP-Disabled"
+      rx_state: "disabled"
+      tx_state: "disabled"
+  loop_control:
+    label: "{{ item.name }}"
+  tags:
+    - aci
+    - fabric
+    - policies
+    - lldp
+    - phase1
+
+- name: PHASE 1 - Configure STP interface policy (BPDU Guard)
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    path: /api/mo/uni/infra/ifPol-STP-BPDUGuard.json
+    method: "{{ 'post' if apply_changes | bool else 'get' }}"
+    content:
+      stpIfPol:
+        attributes:
+          dn: uni/infra/ifPol-STP-BPDUGuard
+          name: "STP-BPDUGuard"
+          ctrl: "bpdu-guard"
+  tags:
+    - aci
+    - fabric
+    - policies
+    - stp
+    - phase1
+
+- name: PHASE 1 - Save fabric policies configuration artifact
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/aci_fabric_policies.json"
+    mode: "0640"
+    content: "{{ fabric_policies_artifact | to_nice_json }}"
+  vars:
+    fabric_policies_artifact:
+      timestamp: "{{ ansible_date_time.iso8601 }}"
+      node_control: "{{ node_control_result.imdata | default([]) }}"
+      coop_policy: "{{ coop_result.imdata | default([]) }}"
+      isis_policy: "{{ isis_result.imdata | default([]) }}"
+      apply_changes: "{{ apply_changes | bool }}"
+  tags:
+    - aci
+    - fabric
+    - policies
+    - phase1

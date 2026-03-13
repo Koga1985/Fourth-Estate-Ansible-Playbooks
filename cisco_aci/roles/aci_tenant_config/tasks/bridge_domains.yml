@@ -1,0 +1,102 @@
+---
+# tasks file for aci_tenant_config - Bridge Domain Configuration
+# Creates bridge domains and subnets using cisco.aci.aci_bd and aci_bd_subnet
+
+- name: PHASE 2 - Create bridge domains
+  cisco.aci.aci_bd:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    tenant: "{{ item.tenant }}"
+    bd: "{{ item.name }}"
+    vrf: "{{ item.vrf }}"
+    description: "{{ item.description | default('') }}"
+    enable_routing: "{{ item.unicast_routing | default(true) }}"
+    arp_flooding: "{{ item.arp_flooding | default(false) }}"
+    l2_unknown_unicast: "{{ item.l2_unknown_unicast | default('proxy') }}"
+    l3_unknown_multicast: "{{ item.l3_unknown_multicast_flooding | default('flood') }}"
+    multi_dest: "{{ item.multi_dest_flooding | default('bd-flood') }}"
+    ip_learning: "{{ item.ip_learning | default(true) }}"
+    limit_ip_learn: "{{ item.limit_ip_learn | default(true) }}"
+    state: "{{ 'present' if apply_changes | bool else 'query' }}"
+  loop: "{{ aci_bridge_domains }}"
+  loop_control:
+    label: "{{ item.tenant }}/{{ item.name }}"
+  register: bd_creation_results
+  tags:
+    - aci
+    - tenants
+    - bridge_domains
+    - phase2
+
+- name: PHASE 2 - Create bridge domain subnets (gateway IPs)
+  cisco.aci.aci_bd_subnet:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    tenant: "{{ item.tenant }}"
+    bd: "{{ item.name }}"
+    gateway: "{{ item.gateway_ip | ansible.utils.ipaddr('address') }}"
+    mask: "{{ item.gateway_ip | ansible.utils.ipaddr('prefix') }}"
+    scope: "{{ item.scope | default('private') }}"
+    state: "{{ 'present' if apply_changes | bool else 'query' }}"
+  loop: "{{ aci_bridge_domains }}"
+  loop_control:
+    label: "{{ item.tenant }}/{{ item.name }} - {{ item.gateway_ip }}"
+  when: item.gateway_ip is defined
+  register: bd_subnet_results
+  tags:
+    - aci
+    - tenants
+    - bridge_domains
+    - subnets
+    - phase2
+
+- name: PHASE 2 - Query bridge domains for validation
+  cisco.aci.aci_bd:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    state: query
+  register: aci_bd_query_all
+  tags:
+    - aci
+    - tenants
+    - bridge_domains
+    - phase2
+    - validation
+
+- name: PHASE 2 - Display bridge domain configuration summary
+  ansible.builtin.debug:
+    msg:
+      - "=== Bridge Domain Configuration Summary ==="
+      - "Configured BDs:  {{ aci_bridge_domains | length }}"
+      - "With gateways:   {{ aci_bridge_domains | selectattr('gateway_ip', 'defined') | list | length }}"
+      - "Apply changes:   {{ apply_changes | bool }}"
+  tags:
+    - aci
+    - tenants
+    - bridge_domains
+    - phase2
+
+- name: PHASE 2 - Save bridge domain configuration artifact
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/aci_bridge_domains.json"
+    mode: "0640"
+    content: "{{ bd_artifact | to_nice_json }}"
+  vars:
+    bd_artifact:
+      timestamp: "{{ ansible_date_time.iso8601 }}"
+      configured_bridge_domains: "{{ aci_bridge_domains }}"
+      apply_changes: "{{ apply_changes | bool }}"
+  tags:
+    - aci
+    - tenants
+    - bridge_domains
+    - phase2

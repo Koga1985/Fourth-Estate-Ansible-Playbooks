@@ -1,0 +1,171 @@
+---
+# tasks file for aci_security_hardening - Prerequisites and Validation
+# Validates connectivity, required variables, and creates artifact directory
+
+- name: PHASE 4 - Display aci_security_hardening role banner
+  ansible.builtin.debug:
+    msg:
+      - "================================================================"
+      - " Cisco ACI Security Hardening - Fourth Estate"
+      - "================================================================"
+      - " Role:              aci_security_hardening"
+      - " APIC Host:         {{ aci_host }}"
+      - " Apply Changes:     {{ apply_changes }}"
+      - " Artifacts:         {{ artifacts_dir }}"
+      - " STIG CAT I:        {{ stig_cat1_enabled }}"
+      - " STIG CAT II:       {{ stig_cat2_enabled }}"
+      - " STIG CAT III:      {{ stig_cat3_enabled }}"
+      - " Auth Hardening:    {{ enable_auth_hardening }}"
+      - " Crypto/TLS:        {{ enable_crypto_tls }}"
+      - " Access Control:    {{ enable_access_control }}"
+      - " Session Mgmt:      {{ enable_session_management }}"
+      - " Audit Logging:     {{ enable_audit_logging }}"
+      - " SNMP Security:     {{ enable_snmp_security }}"
+      - " NTP/DNS:           {{ enable_ntp_dns }}"
+      - " Banners:           {{ enable_banners }}"
+      - " Compliance:        {{ compliance_frameworks | join(', ') }}"
+      - "================================================================"
+      - " {{ 'DRY RUN MODE - No changes will be applied' if not (apply_changes | bool) else 'LIVE MODE - Changes WILL be applied' }}"
+      - "================================================================"
+  tags:
+    - always
+    - prerequisites
+
+- name: PHASE 4 - Validate required APIC connection variables are defined
+  ansible.builtin.assert:
+    that:
+      - aci_host is defined
+      - aci_host | length > 0
+      - aci_username is defined
+      - aci_username | length > 0
+      - aci_password is defined
+      - aci_password | length > 0
+    fail_msg: "Required APIC connection parameters (aci_host, aci_username, aci_password) must be defined"
+    quiet: true
+  tags:
+    - always
+    - prerequisites
+    - validation
+
+- name: PHASE 4 - Validate STIG password policy settings
+  ansible.builtin.assert:
+    that:
+      - aci_password_min_length is defined
+      - aci_password_min_length | int >= 15
+      - aci_lockout_max_attempts is defined
+      - aci_lockout_max_attempts | int <= 3
+      - aci_session_timeout is defined
+      - aci_session_timeout | int <= 600
+    fail_msg: "STIG password/lockout settings do not meet minimum requirements (min_length>=15, lockout<=3, session<=600)"
+    quiet: true
+  tags:
+    - always
+    - prerequisites
+    - validation
+
+- name: PHASE 4 - Validate SNMP settings when SNMPv3 is required
+  ansible.builtin.assert:
+    that:
+      - not aci_snmp_v1_enabled | bool
+      - not aci_snmp_v2_enabled | bool
+      - aci_snmp_v3_enabled | bool
+      - aci_snmp_v3_users is defined
+      - aci_snmp_v3_users | length > 0
+    fail_msg: "STIG CISC-ND-000090 violation: SNMPv1/v2 must be disabled and SNMPv3 must be enabled with at least one user"
+    quiet: true
+  when: enable_snmp_security | bool
+  tags:
+    - always
+    - prerequisites
+    - validation
+
+- name: PHASE 4 - Validate TLS settings
+  ansible.builtin.assert:
+    that:
+      - aci_https_enabled | bool
+      - not aci_http_enabled | bool
+      - aci_min_tls_version in ['tls1.2', 'tls1.3']
+    fail_msg: "STIG CISC-ND-001440 violation: HTTPS must be enabled, HTTP disabled, and TLS 1.2+ required"
+    quiet: true
+  when: enable_crypto_tls | bool
+  tags:
+    - always
+    - prerequisites
+    - validation
+
+- name: PHASE 4 - Test APIC connectivity
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    path: /api/mo/uni.json
+    method: get
+  register: aci_connectivity_check
+  failed_when: false
+  tags:
+    - always
+    - prerequisites
+    - validation
+
+- name: PHASE 4 - Assert APIC is reachable
+  ansible.builtin.assert:
+    that:
+      - aci_connectivity_check is defined
+      - aci_connectivity_check.status is defined
+      - aci_connectivity_check.status == 200
+    fail_msg: "Unable to reach APIC at {{ aci_host }} - check connectivity and credentials"
+    quiet: true
+  tags:
+    - always
+    - prerequisites
+    - validation
+
+- name: PHASE 4 - Create artifacts directory
+  ansible.builtin.file:
+    path: "{{ artifacts_dir }}"
+    state: directory
+    mode: "0750"
+  tags:
+    - always
+    - prerequisites
+
+- name: PHASE 4 - Record role start time
+  ansible.builtin.set_fact:
+    aci_security_hardening_start_time: "{{ ansible_date_time.iso8601 }}"
+    aci_security_hardening_epoch: "{{ ansible_date_time.epoch }}"
+  tags:
+    - always
+    - prerequisites
+
+- name: PHASE 4 - Save deployment metadata artifact
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/aci_security_hardening_metadata.json"
+    mode: "0640"
+    content: "{{ deployment_metadata | to_nice_json }}"
+  vars:
+    deployment_metadata:
+      role: "aci_security_hardening"
+      timestamp: "{{ aci_security_hardening_start_time }}"
+      apic_host: "{{ aci_host }}"
+      apply_changes: "{{ apply_changes | bool }}"
+      stig_categories_enabled:
+        cat1: "{{ stig_cat1_enabled | bool }}"
+        cat2: "{{ stig_cat2_enabled | bool }}"
+        cat3: "{{ stig_cat3_enabled | bool }}"
+      modules_enabled:
+        auth_hardening: "{{ enable_auth_hardening | bool }}"
+        crypto_tls: "{{ enable_crypto_tls | bool }}"
+        access_control: "{{ enable_access_control | bool }}"
+        session_management: "{{ enable_session_management | bool }}"
+        audit_logging: "{{ enable_audit_logging | bool }}"
+        snmp_security: "{{ enable_snmp_security | bool }}"
+        ntp_dns: "{{ enable_ntp_dns | bool }}"
+        banners: "{{ enable_banners | bool }}"
+      compliance_frameworks: "{{ compliance_frameworks }}"
+      fourth_estate_org: "{{ fourth_estate_org }}"
+      fourth_estate_environment: "{{ fourth_estate_environment }}"
+  tags:
+    - always
+    - prerequisites

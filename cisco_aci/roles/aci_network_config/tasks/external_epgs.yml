@@ -1,0 +1,285 @@
+---
+# tasks file for aci_network_config - External EPG Configuration
+# Configures L3Out external EPGs, subnets, and contract bindings
+
+- name: PHASE 3 - Create L3Out external EPGs (inline with L3Out definitions)
+  cisco.aci.aci_l3out_extepg:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    tenant: "{{ item.0.tenant }}"
+    l3out: "{{ item.0.name }}"
+    extepg: "{{ item.1.name }}"
+    description: "{{ item.1.description | default('') }}"
+    preferred_group: false
+    state: "{{ 'present' if apply_changes | bool else 'query' }}"
+  loop: "{{ aci_l3outs | subelements('external_epgs') }}"
+  loop_control:
+    label: "{{ item.0.tenant }}/{{ item.0.name }}/{{ item.1.name }}"
+  register: l3out_extepg_results
+  tags:
+    - aci
+    - network
+    - external_epgs
+    - phase3
+
+- name: PHASE 3 - Configure external EPG subnets (inline L3Out EPGs)
+  cisco.aci.aci_l3out_extsubnet:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    tenant: "{{ item.0.tenant }}"
+    l3out: "{{ item.0.l3out_name }}"
+    extepg: "{{ item.0.epg_name }}"
+    network: "{{ item.1.prefix }}"
+    scope: "{{ item.1.scope | default('import-security') }}"
+    state: "{{ 'present' if apply_changes | bool else 'query' }}"
+  loop: >-
+    {{
+      aci_l3outs
+      | subelements('external_epgs')
+      | map('combine', {'l3out_name': (item[0].name if item is defined else '')})
+      | list
+    }}
+  vars:
+    _extepg_subnets: >-
+      {{
+        aci_l3outs
+        | map(attribute='external_epgs')
+        | zip(aci_l3outs)
+        | list
+      }}
+  loop: >-
+    {{
+      aci_l3outs
+      | map('combine', {'_name': 'placeholder'})
+      | list
+    }}
+  loop_control:
+    label: "subnet configuration"
+  when: false
+  tags:
+    - aci
+    - network
+    - external_epgs
+    - phase3
+
+# Flatten the nested structure for subnet configuration
+- name: PHASE 3 - Build flattened external EPG subnet list
+  ansible.builtin.set_fact:
+    _flat_extepg_subnets: >-
+      {{
+        _flat_extepg_subnets | default([]) + [
+          {
+            'tenant': l3out_item.tenant,
+            'l3out': l3out_item.name,
+            'extepg': epg_item.name,
+            'prefix': subnet_item.prefix,
+            'scope': subnet_item.scope | default('import-security')
+          }
+        ]
+      }}
+  loop: "{{ aci_l3outs }}"
+  loop_control:
+    loop_var: l3out_item
+    label: "{{ l3out_item.name }}"
+  vars:
+    _flat_extepg_subnets: []
+  tags:
+    - aci
+    - network
+    - external_epgs
+    - phase3
+
+- name: PHASE 3 - Configure L3Out external EPG subnets
+  cisco.aci.aci_l3out_extsubnet:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    tenant: "{{ item.0.tenant }}"
+    l3out: "{{ item.0.name }}"
+    extepg: "{{ item.1.name }}"
+    network: "{{ item.2.prefix }}"
+    scope: "{{ item.2.scope | default('import-security') }}"
+    state: "{{ 'present' if apply_changes | bool else 'query' }}"
+  loop: >-
+    {{
+      aci_l3outs
+      | subelements('external_epgs')
+      | subelements('1.subnets')
+    }}
+  loop_control:
+    label: "{{ item.0.tenant }}/{{ item.0.name }}/{{ item.1.name }}: {{ item.2.prefix }}"
+  register: extepg_subnet_results
+  tags:
+    - aci
+    - network
+    - external_epgs
+    - phase3
+
+- name: PHASE 3 - Bind provided contracts to inline L3Out external EPGs
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    path: "/api/mo/uni/tn-{{ item.0.tenant }}/out-{{ item.0.l3out }}/instP-{{ item.0.extepg }}/rsprov-{{ item.1 }}.json"
+    method: "{{ 'post' if apply_changes | bool else 'get' }}"
+    content:
+      fvRsProv:
+        attributes:
+          dn: "uni/tn-{{ item.0.tenant }}/out-{{ item.0.l3out }}/instP-{{ item.0.extepg }}/rsprov-{{ item.1 }}"
+          tnVzBrCPName: "{{ item.1 }}"
+  loop: >-
+    {{
+      aci_l3outs
+      | subelements('external_epgs')
+      | map('combine', {'tenant': (item[0].tenant if item is defined else ''), 'l3out': (item[0].name if item is defined else ''), 'extepg': (item[1].name if item is defined else '')})
+      | list
+    }}
+  when: false
+  loop_control:
+    label: "contract binding"
+  tags:
+    - aci
+    - network
+    - external_epgs
+    - contracts
+    - phase3
+
+- name: PHASE 3 - Bind provided contracts to external EPGs
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    path: "/api/mo/uni/tn-{{ item.0.tenant }}/out-{{ item.0.name }}/instP-{{ item.1.name }}/rsprov-{{ item.2 }}.json"
+    method: "{{ 'post' if apply_changes | bool else 'get' }}"
+    content:
+      fvRsProv:
+        attributes:
+          dn: "uni/tn-{{ item.0.tenant }}/out-{{ item.0.name }}/instP-{{ item.1.name }}/rsprov-{{ item.2 }}"
+          tnVzBrCPName: "{{ item.2 }}"
+  loop: >-
+    {{
+      aci_l3outs
+      | subelements('external_epgs')
+      | subelements('1.provided_contracts')
+    }}
+  loop_control:
+    label: "{{ item.0.tenant }}/{{ item.0.name }}/{{ item.1.name }} provides {{ item.2 }}"
+  register: extepg_provided_contract_results
+  when: (aci_l3outs | subelements('external_epgs') | subelements('1.provided_contracts') | list | length) > 0
+  tags:
+    - aci
+    - network
+    - external_epgs
+    - contracts
+    - phase3
+
+- name: PHASE 3 - Bind consumed contracts to external EPGs
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    path: "/api/mo/uni/tn-{{ item.0.tenant }}/out-{{ item.0.name }}/instP-{{ item.1.name }}/rscons-{{ item.2 }}.json"
+    method: "{{ 'post' if apply_changes | bool else 'get' }}"
+    content:
+      fvRsCons:
+        attributes:
+          dn: "uni/tn-{{ item.0.tenant }}/out-{{ item.0.name }}/instP-{{ item.1.name }}/rscons-{{ item.2 }}"
+          tnVzBrCPName: "{{ item.2 }}"
+  loop: >-
+    {{
+      aci_l3outs
+      | subelements('external_epgs')
+      | subelements('1.consumed_contracts')
+    }}
+  loop_control:
+    label: "{{ item.0.tenant }}/{{ item.0.name }}/{{ item.1.name }} consumes {{ item.2 }}"
+  register: extepg_consumed_contract_results
+  when: (aci_l3outs | subelements('external_epgs') | subelements('1.consumed_contracts') | list | length) > 0
+  tags:
+    - aci
+    - network
+    - external_epgs
+    - contracts
+    - phase3
+
+- name: PHASE 3 - Create standalone external EPGs (from aci_external_epgs list)
+  cisco.aci.aci_l3out_extepg:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    tenant: "{{ item.tenant }}"
+    l3out: "{{ item.l3out }}"
+    extepg: "{{ item.name }}"
+    description: "{{ item.description | default('') }}"
+    preferred_group: false
+    state: "{{ 'present' if apply_changes | bool else 'query' }}"
+  loop: "{{ aci_external_epgs }}"
+  loop_control:
+    label: "{{ item.tenant }}/{{ item.l3out }}/{{ item.name }}"
+  register: standalone_extepg_results
+  when: aci_external_epgs | length > 0
+  tags:
+    - aci
+    - network
+    - external_epgs
+    - phase3
+
+- name: PHASE 3 - Configure standalone external EPG subnets
+  cisco.aci.aci_l3out_extsubnet:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    tenant: "{{ item.0.tenant }}"
+    l3out: "{{ item.0.l3out }}"
+    extepg: "{{ item.0.name }}"
+    network: "{{ item.1.prefix }}"
+    scope: "{{ item.1.scope | default('import-security') }}"
+    state: "{{ 'present' if apply_changes | bool else 'query' }}"
+  loop: "{{ aci_external_epgs | subelements('subnets') }}"
+  loop_control:
+    label: "{{ item.0.tenant }}/{{ item.0.l3out }}/{{ item.0.name }}: {{ item.1.prefix }}"
+  register: standalone_extepg_subnet_results
+  when: aci_external_epgs | length > 0
+  tags:
+    - aci
+    - network
+    - external_epgs
+    - phase3
+
+- name: PHASE 3 - Save external EPG configuration artifact
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/aci_external_epgs.json"
+    mode: "0640"
+    content: "{{ extepg_artifact | to_nice_json }}"
+  vars:
+    extepg_artifact:
+      timestamp: "{{ ansible_date_time.iso8601 }}"
+      apic_host: "{{ aci_host }}"
+      apply_changes: "{{ apply_changes | bool }}"
+      inline_extepg_count: "{{ aci_l3outs | map(attribute='external_epgs') | map('length') | sum }}"
+      standalone_extepg_count: "{{ aci_external_epgs | length }}"
+      l3outs_with_extepgs: "{{ aci_l3outs | map(attribute='name') | list }}"
+      compliance_frameworks: "{{ compliance_frameworks }}"
+  tags:
+    - aci
+    - network
+    - external_epgs
+    - phase3

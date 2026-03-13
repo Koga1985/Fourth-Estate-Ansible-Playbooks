@@ -1,0 +1,130 @@
+---
+# tasks file for aci_network_config - OSPF Interface Policy and Peer Configuration
+# Configures OSPF interface policies, area settings, and interface-level OSPF timers
+
+- name: PHASE 3 - Create OSPF interface policies
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    path: "/api/mo/uni/tn-{{ item.tenant }}/ospfIfPol-{{ item.name }}.json"
+    method: "{{ 'post' if apply_changes | bool else 'get' }}"
+    content:
+      ospfIfPol:
+        attributes:
+          dn: "uni/tn-{{ item.tenant }}/ospfIfPol-{{ item.name }}"
+          name: "{{ item.name }}"
+          descr: "{{ item.description | default('') }}"
+          nwT: "{{ item.network_type | default('p2p') }}"
+          helloIntvl: "{{ item.hello_interval | default(10) | string }}"
+          deadIntvl: "{{ item.dead_interval | default(40) | string }}"
+          rexmitIntvl: "{{ item.retransmit_interval | default(5) | string }}"
+          xmitDelay: "{{ item.transmit_delay | default(1) | string }}"
+          prio: "{{ item.priority | default(1) | string }}"
+  loop: "{{ aci_ospf_interface_policies }}"
+  loop_control:
+    label: "{{ item.tenant }}/{{ item.name }} ({{ item.network_type | default('p2p') }})"
+  register: ospf_if_policy_results
+  tags:
+    - aci
+    - network
+    - ospf
+    - routing
+    - phase3
+
+- name: PHASE 3 - Associate OSPF interface policy with L3Out interface profile
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    path: "/api/mo/uni/tn-{{ item.tenant }}/out-{{ item.l3out_name }}/lnodep-NodeProfile-{{ item.l3out_name }}/lifp-IntProfile-{{ item.l3out_name }}/ospfIfP.json"
+    method: "{{ 'post' if apply_changes | bool else 'get' }}"
+    content:
+      ospfIfP:
+        attributes:
+          dn: "uni/tn-{{ item.tenant }}/out-{{ item.l3out_name }}/lnodep-NodeProfile-{{ item.l3out_name }}/lifp-IntProfile-{{ item.l3out_name }}/ospfIfP"
+          descr: "OSPF interface profile for {{ item.l3out_name }}"
+          authKey: ""
+          authKeyId: "1"
+          authType: "none"
+        children:
+          - ospfRsIfPol:
+              attributes:
+                tnOspfIfPolName: "{{ item.interface_policy }}"
+  loop: "{{ aci_ospf_configs }}"
+  loop_control:
+    label: "{{ item.tenant }}/{{ item.l3out_name }} OSPF interface policy {{ item.interface_policy }}"
+  register: ospf_if_profile_results
+  tags:
+    - aci
+    - network
+    - ospf
+    - routing
+    - phase3
+
+- name: PHASE 3 - Configure OSPF area policy on L3Out
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    path: "/api/mo/uni/tn-{{ item.tenant }}/out-{{ item.l3out_name }}/ospfExtP.json"
+    method: "{{ 'post' if apply_changes | bool else 'get' }}"
+    content:
+      ospfExtP:
+        attributes:
+          dn: "uni/tn-{{ item.tenant }}/out-{{ item.l3out_name }}/ospfExtP"
+          areaId: "{{ item.area_id | default('0.0.0.0') }}"
+          areaType: "{{ item.area_type | default('regular') }}"
+          areaCost: "{{ item.area_cost | default(1) | string }}"
+          descr: "{{ item.description | default('') }}"
+  loop: "{{ aci_ospf_configs }}"
+  loop_control:
+    label: "{{ item.tenant }}/{{ item.l3out_name }} OSPF area {{ item.area_id | default('0.0.0.0') }}"
+  register: ospf_area_results
+  tags:
+    - aci
+    - network
+    - ospf
+    - routing
+    - phase3
+
+- name: PHASE 3 - Display OSPF configuration summary
+  ansible.builtin.debug:
+    msg:
+      - "=== OSPF Configuration Summary ==="
+      - "OSPF interface policies: {{ aci_ospf_interface_policies | length }}"
+      - "OSPF L3Out configs:      {{ aci_ospf_configs | length }}"
+      - "Apply changes:           {{ apply_changes | bool }}"
+  tags:
+    - aci
+    - network
+    - ospf
+    - routing
+    - phase3
+
+- name: PHASE 3 - Save OSPF configuration artifact
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/aci_ospf_config.json"
+    mode: "0640"
+    content: "{{ ospf_artifact | to_nice_json }}"
+  vars:
+    ospf_artifact:
+      timestamp: "{{ ansible_date_time.iso8601 }}"
+      apic_host: "{{ aci_host }}"
+      apply_changes: "{{ apply_changes | bool }}"
+      ospf_interface_policies: "{{ aci_ospf_interface_policies | map(attribute='name') | list }}"
+      ospf_l3out_configs: "{{ aci_ospf_configs | map(attribute='l3out_name') | list }}"
+      ospf_areas: "{{ aci_ospf_configs | map(attribute='area_id') | list }}"
+      compliance_frameworks: "{{ compliance_frameworks }}"
+  tags:
+    - aci
+    - network
+    - ospf
+    - routing
+    - phase3

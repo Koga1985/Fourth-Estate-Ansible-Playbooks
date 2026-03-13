@@ -1,0 +1,228 @@
+---
+# tasks file for aci_monitoring - Health Monitoring
+# Queries fabric, pod, node, and tenant health scores; checks against thresholds; generates report
+
+- name: PHASE 5 - Query overall fabric health score
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    path: /api/mo/topology/health.json
+    method: get
+  register: fabric_health_result
+  failed_when: false
+  tags:
+    - aci
+    - monitoring
+    - health
+    - phase5
+
+- name: PHASE 5 - Set fabric health score fact
+  ansible.builtin.set_fact:
+    fabric_health_score: "{{ fabric_health_result.imdata[0].fabricHealthTotal.attributes.cur | default('unknown') }}"
+  when: fabric_health_result.imdata is defined and fabric_health_result.imdata | length > 0
+  tags:
+    - aci
+    - monitoring
+    - health
+    - phase5
+
+- name: PHASE 5 - Set fabric health score fact (fallback)
+  ansible.builtin.set_fact:
+    fabric_health_score: "unknown"
+  when: fabric_health_result.imdata is not defined or fabric_health_result.imdata | length == 0
+  tags:
+    - aci
+    - monitoring
+    - health
+    - phase5
+
+- name: PHASE 5 - Query pod health scores
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    path: /api/class/fabricPodHealthTotal.json
+    method: get
+  register: pod_health_result
+  failed_when: false
+  when: aci_monitor_pods | bool
+  tags:
+    - aci
+    - monitoring
+    - health
+    - phase5
+
+- name: PHASE 5 - Query node health scores (all fabric nodes)
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    path: /api/class/fabricNodeHealthTotal.json?order-by=fabricNodeHealthTotal.cur|asc
+    method: get
+  register: node_health_result
+  failed_when: false
+  when: aci_monitor_nodes | bool
+  tags:
+    - aci
+    - monitoring
+    - health
+    - phase5
+
+- name: PHASE 5 - Query tenant health scores
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    path: /api/class/fvTenant.json?rsp-subtree-include=health
+    method: get
+  register: tenant_health_result
+  failed_when: false
+  when: aci_monitor_tenants | bool
+  tags:
+    - aci
+    - monitoring
+    - health
+    - phase5
+
+- name: PHASE 5 - Query APIC health scores
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    path: /api/class/infraWiNode.json?rsp-subtree-include=health
+    method: get
+  register: apic_health_result
+  failed_when: false
+  tags:
+    - aci
+    - monitoring
+    - health
+    - phase5
+
+- name: PHASE 5 - Set node health facts for threshold analysis
+  ansible.builtin.set_fact:
+    node_health_scores: "{{ node_health_result.imdata | default([]) | map(attribute='fabricNodeHealthTotal.attributes') | list }}"
+  when: aci_monitor_nodes | bool and node_health_result.imdata is defined
+  tags:
+    - aci
+    - monitoring
+    - health
+    - phase5
+
+- name: PHASE 5 - Set node health facts (fallback)
+  ansible.builtin.set_fact:
+    node_health_scores: []
+  when: not (aci_monitor_nodes | bool) or node_health_result.imdata is not defined
+  tags:
+    - aci
+    - monitoring
+    - health
+    - phase5
+
+- name: PHASE 5 - Check fabric health against warning threshold
+  ansible.builtin.debug:
+    msg:
+      - "WARNING: Fabric health score {{ fabric_health_score }} is below warning threshold {{ aci_health_warn_threshold }}"
+      - "Review ACI fabric health at: https://{{ aci_host }}/index.html"
+  when:
+    - fabric_health_score != 'unknown'
+    - fabric_health_score | int < aci_health_warn_threshold | int
+    - fabric_health_score | int >= aci_health_critical_threshold | int
+  tags:
+    - aci
+    - monitoring
+    - health
+    - phase5
+
+- name: PHASE 5 - Check fabric health against critical threshold
+  ansible.builtin.debug:
+    msg:
+      - "CRITICAL: Fabric health score {{ fabric_health_score }} is below critical threshold {{ aci_health_critical_threshold }}"
+      - "Immediate attention required - review faults at: https://{{ aci_host }}/index.html"
+  when:
+    - fabric_health_score != 'unknown'
+    - fabric_health_score | int < aci_health_critical_threshold | int
+  tags:
+    - aci
+    - monitoring
+    - health
+    - phase5
+
+- name: PHASE 5 - Fail on critical fabric health if configured
+  ansible.builtin.fail:
+    msg: "CRITICAL: Fabric health score {{ fabric_health_score }} is below critical threshold {{ aci_health_critical_threshold }} - deployment blocked"
+  when:
+    - aci_health_fail_on_critical | bool
+    - fabric_health_score != 'unknown'
+    - fabric_health_score | int < aci_health_critical_threshold | int
+  tags:
+    - aci
+    - monitoring
+    - health
+    - phase5
+
+- name: PHASE 5 - Display health monitoring summary
+  ansible.builtin.debug:
+    msg:
+      - "==================================================================="
+      - " ACI Health Monitoring Summary - Fourth Estate"
+      - "==================================================================="
+      - " APIC Host:           {{ aci_host }}"
+      - " Fabric Health Score: {{ fabric_health_score }}"
+      - " Warning Threshold:   {{ aci_health_warn_threshold }}"
+      - " Critical Threshold:  {{ aci_health_critical_threshold }}"
+      - " Status:              {{ 'CRITICAL' if fabric_health_score != 'unknown' and fabric_health_score | int < aci_health_critical_threshold | int else ('WARNING' if fabric_health_score != 'unknown' and fabric_health_score | int < aci_health_warn_threshold | int else 'HEALTHY') }}"
+      - "-------------------------------------------------------------------"
+      - " Pod Count:           {{ pod_health_result.imdata | default([]) | length }}"
+      - " Node Count:          {{ node_health_result.imdata | default([]) | length }}"
+      - " Tenant Count:        {{ tenant_health_result.imdata | default([]) | length }}"
+      - " Timestamp:           {{ ansible_date_time.iso8601 }}"
+      - "==================================================================="
+  tags:
+    - aci
+    - monitoring
+    - health
+    - phase5
+
+- name: PHASE 5 - Generate health monitoring report artifact
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/aci_health_report.json"
+    mode: "0640"
+    content: "{{ health_report | to_nice_json }}"
+  vars:
+    health_report:
+      timestamp: "{{ ansible_date_time.iso8601 }}"
+      apic_host: "{{ aci_host }}"
+      apply_changes: "{{ apply_changes | bool }}"
+      fabric_health_score: "{{ fabric_health_score }}"
+      health_thresholds:
+        warning: "{{ aci_health_warn_threshold }}"
+        critical: "{{ aci_health_critical_threshold }}"
+      health_status: "{{ 'CRITICAL' if fabric_health_score != 'unknown' and fabric_health_score | int < aci_health_critical_threshold | int else ('WARNING' if fabric_health_score != 'unknown' and fabric_health_score | int < aci_health_warn_threshold | int else 'HEALTHY') }}"
+      pod_count: "{{ pod_health_result.imdata | default([]) | length }}"
+      pod_health_entries: "{{ pod_health_result.imdata | default([]) }}"
+      node_count: "{{ node_health_result.imdata | default([]) | length }}"
+      node_health_scores: "{{ node_health_scores | default([]) }}"
+      tenant_count: "{{ tenant_health_result.imdata | default([]) | length }}"
+      monitoring_config:
+        monitor_pods: "{{ aci_monitor_pods | bool }}"
+        monitor_nodes: "{{ aci_monitor_nodes | bool }}"
+        monitor_tenants: "{{ aci_monitor_tenants | bool }}"
+      fourth_estate_org: "{{ fourth_estate_org }}"
+      fourth_estate_environment: "{{ fourth_estate_environment }}"
+  tags:
+    - aci
+    - monitoring
+    - health
+    - phase5

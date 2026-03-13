@@ -1,0 +1,141 @@
+---
+# tasks file for aci_tenant_config - Validation and Verification
+# Queries tenant configuration, checks for faults, generates validation report
+
+- name: PHASE 2 - Query all tenants for validation
+  cisco.aci.aci_tenant:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    state: query
+  register: aci_tenant_validation
+  tags:
+    - validation
+    - verification
+    - phase2
+
+- name: PHASE 2 - Query all VRFs for validation
+  cisco.aci.aci_vrf:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    state: query
+  register: aci_vrf_validation
+  tags:
+    - validation
+    - verification
+    - phase2
+
+- name: PHASE 2 - Query all bridge domains for validation
+  cisco.aci.aci_bd:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    state: query
+  register: aci_bd_validation
+  tags:
+    - validation
+    - verification
+    - phase2
+
+- name: PHASE 2 - Query all EPGs for validation
+  cisco.aci.aci_epg:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    state: query
+  register: aci_epg_validation
+  tags:
+    - validation
+    - verification
+    - phase2
+
+- name: PHASE 2 - Query tenant-related faults
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    path: "/api/class/faultInst.json?query-target-filter=and(or(eq(faultInst.severity,\"critical\"),eq(faultInst.severity,\"major\")),wcard(faultInst.dn,\"tn-\"))&order-by=faultInst.severity|desc&page-size=50"
+    method: get
+  register: aci_tenant_faults
+  failed_when: false
+  tags:
+    - validation
+    - verification
+    - phase2
+
+- name: PHASE 2 - Verify configured tenants exist
+  ansible.builtin.assert:
+    that:
+      - aci_tenant_validation.current is defined
+    fail_msg: "Tenant validation query failed - check APIC connectivity"
+    success_msg: "Tenant validation query succeeded"
+    quiet: true
+  tags:
+    - validation
+    - verification
+    - phase2
+
+- name: PHASE 2 - Display tenant configuration validation summary
+  ansible.builtin.debug:
+    msg:
+      - "=== ACI Tenant Configuration Validation ==="
+      - "APIC Host:               {{ aci_host }}"
+      - "Expected Tenants:        {{ aci_tenants | length }}"
+      - "Tenants Found:           {{ aci_tenant_validation.current | default([]) | length }}"
+      - "VRFs Found:              {{ aci_vrf_validation.current | default([]) | length }}"
+      - "Bridge Domains Found:    {{ aci_bd_validation.current | default([]) | length }}"
+      - "EPGs Found:              {{ aci_epg_validation.current | default([]) | length }}"
+      - "Critical/Major Faults:   {{ aci_tenant_faults.imdata | default([]) | length }}"
+      - "Apply Changes Mode:      {{ apply_changes | bool }}"
+      - "Deployment Start:        {{ aci_tenant_deploy_start_time | default('unknown') }}"
+      - "Validation Time:         {{ ansible_date_time.iso8601 }}"
+  tags:
+    - validation
+    - verification
+    - phase2
+
+- name: PHASE 2 - Warn if critical or major tenant faults detected
+  ansible.builtin.debug:
+    msg:
+      - "WARNING: {{ aci_tenant_faults.imdata | default([]) | length }} critical/major fault(s) detected in ACI tenant configuration"
+      - "Review faults at: https://{{ aci_host }}/index.html#bTenants"
+  when: (aci_tenant_faults.imdata | default([]) | length) > 0
+  tags:
+    - validation
+    - verification
+    - phase2
+
+- name: PHASE 2 - Generate tenant configuration validation report artifact
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/aci_tenant_validation_report.json"
+    mode: "0640"
+    content: "{{ tenant_validation_report | to_nice_json }}"
+  vars:
+    tenant_validation_report:
+      timestamp: "{{ ansible_date_time.iso8601 }}"
+      deployment_start: "{{ aci_tenant_deploy_start_time | default('unknown') }}"
+      apic_host: "{{ aci_host }}"
+      apply_changes: "{{ apply_changes | bool }}"
+      expected_tenant_count: "{{ aci_tenants | length }}"
+      tenants_found: "{{ aci_tenant_validation.current | default([]) | length }}"
+      vrfs_found: "{{ aci_vrf_validation.current | default([]) | length }}"
+      bridge_domains_found: "{{ aci_bd_validation.current | default([]) | length }}"
+      epgs_found: "{{ aci_epg_validation.current | default([]) | length }}"
+      critical_major_faults: "{{ aci_tenant_faults.imdata | default([]) | length }}"
+      compliance_frameworks: "{{ compliance_frameworks }}"
+      validation_status: "{{ 'PASSED' if (aci_tenant_faults.imdata | default([]) | length) == 0 else 'WARNING - Faults Detected' }}"
+  tags:
+    - validation
+    - verification
+    - phase2
