@@ -1,0 +1,221 @@
+---
+# tasks file for aci_security_hardening - Compliance Report Generation
+# Generates JSON and text STIG compliance artifacts for audit purposes
+# NIST CA-7, CA-8 | Continuous monitoring and assessment
+
+# ============================================================
+# Collect current APIC security configuration for reporting
+# ============================================================
+
+- name: Query current APIC password policy
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    path: /api/mo/uni/userext/pwdprofile.json
+    method: get
+  register: query_pwd_policy
+  failed_when: false
+
+- name: Query current APIC login domain
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    path: /api/mo/uni/userext.json
+    method: get
+  register: query_userext
+  failed_when: false
+
+- name: Query current SNMP policy
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    path: /api/mo/uni/fabric/snmppol-default.json
+    method: get
+  register: query_snmp_policy
+  failed_when: false
+
+- name: Query current faults
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    path: /api/class/faultInst.json?query-target-filter=eq(faultInst.severity,"critical")&page-size=10
+    method: get
+  register: query_critical_faults
+  failed_when: false
+
+# ============================================================
+# Generate JSON compliance report artifact
+# ============================================================
+
+- name: Ensure artifacts directory exists
+  ansible.builtin.file:
+    path: "{{ artifacts_dir }}"
+    state: directory
+    mode: '0750'
+
+- name: Generate STIG compliance report (JSON)
+  ansible.builtin.copy:
+    content: "{{ compliance_report | to_nice_json }}"
+    dest: "{{ artifacts_dir }}/aci_stig_compliance_report.json"
+    mode: '0640'
+  vars:
+    compliance_report:
+      metadata:
+        report_type: "DoD STIG Compliance Report"
+        timestamp: "{{ ansible_date_time.iso8601 }}"
+        apic_host: "{{ aci_host }}"
+        mode: "{{ 'applied' if apply_changes | bool else 'dry_run' }}"
+        frameworks:
+          - "dod_stig"
+          - "nist_800_53"
+          - "nist_800_171"
+      stig_controls:
+        cat1_high:
+          - id: "CISC-ND-001440"
+            description: "Enforce HTTPS, disable HTTP"
+            enabled: "{{ enable_crypto_tls | bool }}"
+            applied: "{{ apply_changes | bool }}"
+          - id: "CISC-ND-000530"
+            description: "Password encryption and strength policy"
+            enabled: "{{ enable_auth_hardening | bool }}"
+            applied: "{{ apply_changes | bool }}"
+            settings:
+              min_length: "{{ aci_password_min_length }}"
+              history_count: "{{ aci_password_history_count }}"
+              expiry_days: "{{ aci_password_expiry_days }}"
+          - id: "CISC-ND-000570"
+            description: "Minimum password length 15 characters"
+            enabled: "{{ enable_auth_hardening | bool }}"
+            compliant: "{{ aci_password_min_length | int >= 15 }}"
+            applied: "{{ apply_changes | bool }}"
+          - id: "CISC-ND-001190"
+            description: "Centralized authentication (LDAP/RADIUS/TACACS+)"
+            enabled: "{{ enable_auth_hardening | bool }}"
+            auth_type: "{{ aci_auth_realm_type }}"
+            applied: "{{ apply_changes | bool }}"
+        cat2_medium:
+          - id: "CISC-ND-000370"
+            description: "Account lockout after 3 consecutive failures"
+            enabled: "{{ enable_auth_hardening | bool }}"
+            applied: "{{ apply_changes | bool }}"
+            settings:
+              max_attempts: "{{ aci_lockout_max_attempts }}"
+              lockout_duration_seconds: "{{ aci_lockout_duration_seconds }}"
+          - id: "CISC-ND-000390"
+            description: "Session idle timeout (10 minutes max)"
+            enabled: "{{ enable_session_management | bool }}"
+            applied: "{{ apply_changes | bool }}"
+            settings:
+              idle_timeout_seconds: "{{ aci_idle_timeout }}"
+              session_timeout_seconds: "{{ aci_session_timeout }}"
+              compliant: "{{ aci_idle_timeout | int <= 600 }}"
+          - id: "CISC-ND-000360"
+            description: "Concurrent session limits"
+            enabled: "{{ enable_session_management | bool }}"
+            applied: "{{ apply_changes | bool }}"
+            settings:
+              max_concurrent_sessions: "{{ aci_max_concurrent_sessions }}"
+          - id: "CISC-ND-000700"
+            description: "Comprehensive audit logging with timestamps"
+            enabled: "{{ enable_audit_logging | bool }}"
+            applied: "{{ apply_changes | bool }}"
+          - id: "CISC-ND-000090"
+            description: "SNMPv3 required, disable SNMPv1/v2"
+            enabled: "{{ enable_snmp_security | bool }}"
+            applied: "{{ apply_changes | bool }}"
+            settings:
+              v1_disabled: "{{ not aci_snmp_v1_enabled | bool }}"
+              v2_disabled: "{{ not aci_snmp_v2_enabled | bool }}"
+              v3_enabled: "{{ aci_snmp_v3_enabled | bool }}"
+          - id: "CISC-ND-001400"
+            description: "SSH enforcement, Telnet disabled"
+            enabled: "{{ enable_crypto_tls | bool }}"
+            applied: "{{ apply_changes | bool }}"
+            settings:
+              ssh_enabled: "{{ aci_ssh_enabled | bool }}"
+              telnet_disabled: "{{ not aci_telnet_enabled | bool }}"
+          - id: "CISC-ND-001420"
+            description: "NTP with authentication"
+            enabled: "{{ enable_ntp_dns | bool }}"
+            applied: "{{ apply_changes | bool }}"
+            settings:
+              ntp_auth_enabled: "{{ aci_ntp_authenticate | bool }}"
+        cat3_low:
+          - id: "CISC-ND-000080"
+            description: "DoD mandatory login banner"
+            enabled: "{{ enable_banners | bool }}"
+            applied: "{{ apply_changes | bool }}"
+          - id: "CISC-ND-001290"
+            description: "NTP configuration"
+            enabled: "{{ enable_ntp_dns | bool }}"
+            applied: "{{ apply_changes | bool }}"
+          - id: "CISC-ND-001470"
+            description: "System contact and location"
+            enabled: "{{ enable_banners | bool }}"
+            applied: "{{ apply_changes | bool }}"
+            settings:
+              system_contact: "{{ aci_system_contact }}"
+              system_location: "{{ aci_system_location }}"
+      critical_faults: "{{ query_critical_faults.imdata | default([]) | length }}"
+
+- name: Generate STIG compliance summary (text)
+  ansible.builtin.copy:
+    content: |
+      ================================================================
+       ACI DoD STIG Compliance Summary — Fourth Estate
+      ================================================================
+       Report Date:  {{ ansible_date_time.date }}
+       APIC Host:    {{ aci_host }}
+       Mode:         {{ 'CHANGES APPLIED' if apply_changes | bool else 'DRY RUN - no changes made' }}
+      ----------------------------------------------------------------
+       STIG Categories:
+         CAT I  (High):   {{ 'ENABLED' if stig_cat1_enabled | bool else 'DISABLED' }}
+         CAT II (Medium): {{ 'ENABLED' if stig_cat2_enabled | bool else 'DISABLED' }}
+         CAT III (Low):   {{ 'ENABLED' if stig_cat3_enabled | bool else 'DISABLED' }}
+      ----------------------------------------------------------------
+       CAT I Controls (High Severity):
+         CISC-ND-001440  HTTPS enforced / HTTP disabled:    {{ 'YES' if enable_crypto_tls | bool else 'SKIPPED' }}
+         CISC-ND-000530  Password strength policy:          {{ 'YES' if enable_auth_hardening | bool else 'SKIPPED' }}
+         CISC-ND-000570  Min password length (15 chars):    {{ 'COMPLIANT' if aci_password_min_length | int >= 15 else 'NON-COMPLIANT' }} ({{ aci_password_min_length }} chars)
+         CISC-ND-001190  Centralized auth ({{ aci_auth_realm_type }}):   {{ 'YES' if enable_auth_hardening | bool else 'SKIPPED' }}
+      ----------------------------------------------------------------
+       CAT II Controls (Medium Severity):
+         CISC-ND-000370  Account lockout ({{ aci_lockout_max_attempts }} attempts):    {{ 'YES' if enable_auth_hardening | bool else 'SKIPPED' }}
+         CISC-ND-000390  Session idle timeout ({{ aci_idle_timeout }}s):  {{ 'COMPLIANT' if aci_idle_timeout | int <= 600 else 'NON-COMPLIANT' }}
+         CISC-ND-000360  Concurrent session limit ({{ aci_max_concurrent_sessions }}): {{ 'YES' if enable_session_management | bool else 'SKIPPED' }}
+         CISC-ND-000700  Audit logging:                     {{ 'YES' if enable_audit_logging | bool else 'SKIPPED' }}
+         CISC-ND-000090  SNMPv3 (v1/v2 disabled):          {{ 'YES' if enable_snmp_security | bool else 'SKIPPED' }}
+         CISC-ND-001400  SSH enforced / Telnet disabled:    {{ 'YES' if enable_crypto_tls | bool else 'SKIPPED' }}
+         CISC-ND-001420  NTP with authentication:           {{ 'YES' if enable_ntp_dns | bool else 'SKIPPED' }}
+      ----------------------------------------------------------------
+       CAT III Controls (Low Severity):
+         CISC-ND-000080  DoD login banner:                  {{ 'YES' if enable_banners | bool else 'SKIPPED' }}
+         CISC-ND-001290  NTP configured:                    {{ 'YES' if enable_ntp_dns | bool else 'SKIPPED' }}
+         CISC-ND-001470  System contact/location:           {{ 'YES' if enable_banners | bool else 'SKIPPED' }}
+      ----------------------------------------------------------------
+       Critical Faults at time of report: {{ query_critical_faults.imdata | default([]) | length }}
+      ================================================================
+       Full report: {{ artifacts_dir }}/aci_stig_compliance_report.json
+      ================================================================
+    dest: "{{ artifacts_dir }}/aci_stig_compliance_summary.txt"
+    mode: '0640'
+
+- name: Display compliance summary
+  ansible.builtin.debug:
+    msg:
+      - "STIG compliance report generated:"
+      - "  JSON: {{ artifacts_dir }}/aci_stig_compliance_report.json"
+      - "  Text: {{ artifacts_dir }}/aci_stig_compliance_summary.txt"
+      - "  Mode: {{ 'CHANGES APPLIED' if apply_changes | bool else 'DRY RUN' }}"

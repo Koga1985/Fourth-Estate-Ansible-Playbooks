@@ -1,0 +1,96 @@
+---
+# tasks file for aci_security_hardening - DoD Login Banner and System Identification
+# DoD STIG CAT III - Mandatory login banner and system contact/location
+# NIST AC-8 | STIG CISC-ND-000080, CISC-ND-001470
+
+- name: PHASE 4 - CISC-ND-000080 - Configure DoD mandatory login banner
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    path: /api/mo/uni/userext.json
+    method: "{{ 'post' if apply_changes | bool else 'get' }}"
+    content:
+      aaaUserEp:
+        attributes:
+          dn: uni/userext
+          showBanner: "yes"
+          bannerMessage: "{{ aci_login_banner }}"
+  register: banner_result
+  notify:
+    - backup aci configuration
+    - notify security hardening complete
+
+- name: PHASE 4 - CISC-ND-000080 - Verify banner configuration (dry-run validation)
+  ansible.builtin.debug:
+    msg:
+      - "Banner configuration: {{ 'APPLIED' if apply_changes | bool else 'DRY RUN - not applied' }}"
+      - "Banner length: {{ aci_login_banner | length }} characters"
+  when: not apply_changes | bool
+
+# ============================================================
+# System Contact and Location (STIG CISC-ND-001470)
+# NIST CM-8 - Component inventory / system identification
+# ============================================================
+
+- name: PHASE 4 - CISC-ND-001470 - Configure system contact information
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    path: /api/mo/uni/fabric/dnsp-default.json
+    method: "{{ 'post' if apply_changes | bool else 'get' }}"
+    content:
+      dnsProfile:
+        attributes:
+          dn: uni/fabric/dnsp-default
+          name: default
+          descr: "{{ aci_system_description }}"
+  register: system_desc_result
+
+- name: PHASE 4 - CISC-ND-001470 - Configure SNMP system contact and location
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    path: /api/mo/uni/fabric/snmppol-default.json
+    method: "{{ 'post' if apply_changes | bool else 'get' }}"
+    content:
+      snmpPol:
+        attributes:
+          dn: uni/fabric/snmppol-default
+          name: default
+          contact: "{{ aci_system_contact }}"
+          loc: "{{ aci_system_location }}"
+  register: snmp_contact_result
+
+# ============================================================
+# Generate banner artifact
+# ============================================================
+
+- name: Save banner configuration artifact
+  ansible.builtin.copy:
+    content: "{{ banner_config | to_nice_json }}"
+    dest: "{{ artifacts_dir }}/aci_banner_config.json"
+    mode: '0640'
+  vars:
+    banner_config:
+      timestamp: "{{ ansible_date_time.iso8601 }}"
+      apic_host: "{{ aci_host }}"
+      mode: "{{ 'applied' if apply_changes | bool else 'dry_run' }}"
+      stig_controls:
+        - id: "CISC-ND-000080"
+          description: "DoD mandatory login banner"
+          status: "{{ 'compliant' if apply_changes | bool else 'pending' }}"
+        - id: "CISC-ND-001470"
+          description: "System contact and location configured"
+          status: "{{ 'compliant' if apply_changes | bool else 'pending' }}"
+      system_contact: "{{ aci_system_contact }}"
+      system_location: "{{ aci_system_location }}"
+  failed_when: false

@@ -1,0 +1,62 @@
+---
+# handlers file for aci_security_hardening
+# Backup, fault query, and security hardening completion notification handlers
+
+- name: backup aci configuration
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    path: /api/mo/uni/fabric/configexp-FourthEstate-Backup.json
+    method: post
+    content:
+      configExportP:
+        attributes:
+          dn: uni/fabric/configexp-FourthEstate-Backup
+          name: "FourthEstate-Backup"
+          adminSt: "triggered"
+          format: "json"
+          includeSecureFields: "yes"
+          snapshot: "yes"
+  when: apply_changes | bool
+
+- name: query aci faults
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    path: /api/class/faultInst.json?query-target-filter=eq(faultInst.severity,"critical")&page-size=20
+    method: get
+  register: aci_handler_faults
+  failed_when: false
+
+- name: notify security hardening complete
+  ansible.builtin.debug:
+    msg:
+      - "================================================================"
+      - " ACI Security Hardening Complete - Fourth Estate"
+      - "================================================================"
+      - " APIC Host:     {{ aci_host }}"
+      - " Mode:          {{ 'CHANGES APPLIED' if apply_changes | bool else 'DRY RUN ONLY' }}"
+      - " Timestamp:     {{ ansible_date_time.iso8601 }}"
+      - " Artifacts:     {{ artifacts_dir }}"
+      - "----------------------------------------------------------------"
+      - " STIG Controls Applied:"
+      - "   CAT I  (High):   {{ stig_cat1_enabled | bool }}"
+      - "   CAT II (Medium): {{ stig_cat2_enabled | bool }}"
+      - "   CAT III (Low):   {{ stig_cat3_enabled | bool }}"
+      - "----------------------------------------------------------------"
+      - " Modules:"
+      - "   Authentication:     {{ enable_auth_hardening | bool }}"
+      - "   Access Control:     {{ enable_access_control | bool }}"
+      - "   Audit Logging:      {{ enable_audit_logging | bool }}"
+      - "   TLS/Crypto:         {{ enable_crypto_tls | bool }}"
+      - "   Session Management: {{ enable_session_management | bool }}"
+      - "   SNMP Security:      {{ enable_snmp_security | bool }}"
+      - "   NTP/DNS:            {{ enable_ntp_dns | bool }}"
+      - "   Banners:            {{ enable_banners | bool }}"
+      - "================================================================"
