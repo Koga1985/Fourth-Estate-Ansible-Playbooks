@@ -42,8 +42,8 @@ This guide provides step-by-step instructions for deploying Policy as Code to Fo
 #### Step 1: Clone Repository
 
 ```bash
-git clone https://github.com/your-org/Ansible-Playbooks-2.0.git
-cd Ansible-Playbooks-2.0/policy_as_code
+git clone https://github.com/<your-org>/Fourth-Estate-Ansible-Playbooks.git
+cd Fourth-Estate-Ansible-Playbooks/policy_as_code
 ```
 
 #### Step 2: Review Documentation
@@ -89,11 +89,11 @@ all:
   children:
     cisco_switches:
       hosts:
-        switch01.example.mil:
+        <your-switch-hostname>:
           ansible_host: 192.168.1.10
           ansible_network_os: ios
           ansible_connection: network_cli
-        switch02.example.mil:
+        <your-switch-hostname-2>:
           ansible_host: 192.168.1.11
           ansible_network_os: ios
           ansible_connection: network_cli
@@ -105,7 +105,7 @@ all:
 
     cisco_ucs:
       hosts:
-        ucs01.example.mil:
+        <your-ucs-hostname>:
           ansible_host: 192.168.1.20
           ansible_connection: local
       vars:
@@ -118,7 +118,7 @@ all:
     deployment_environment: "production"
 
     # Syslog server (AU-3)
-    au_syslog_server: "syslog.example.mil"
+    au_syslog_server: "<your-syslog-server>"
     au_syslog_port: 514
 ```
 
@@ -144,7 +144,7 @@ vault_ucs_password: YourSecurePassword
 ansible-playbook site.yml -i inventory/production.yml --ask-vault-pass
 
 # Run against single host for validation
-ansible-playbook site.yml -i inventory/production.yml --limit switch01.example.mil --ask-vault-pass
+ansible-playbook site.yml -i inventory/production.yml --limit <your-switch-hostname> --ask-vault-pass
 
 # Run specific control family only
 ansible-playbook site.yml -i inventory/production.yml --tags nist_ia --ask-vault-pass
@@ -153,7 +153,7 @@ ansible-playbook site.yml -i inventory/production.yml --tags nist_ia --ask-vault
 **Expected Output:**
 ```
 PLAY RECAP *************************************
-switch01.example.mil : ok=45  changed=0  unreachable=0  failed=0  skipped=5  rescued=0  ignored=0
+<your-switch-hostname> : ok=45  changed=0  unreachable=0  failed=0  skipped=5  rescued=0  ignored=0
 ```
 
 **Key Points:**
@@ -221,7 +221,7 @@ ansible-playbook backup_configs.yml -i inventory/production.yml --ask-vault-pass
 # Deploy to single host first
 ansible-playbook site.yml \
   -i inventory/production.yml \
-  --limit switch01.example.mil \
+  --limit <your-switch-hostname> \
   -e "apply_changes=true" \
   --ask-vault-pass
 ```
@@ -267,7 +267,7 @@ For each deployed system:
 
 ```bash
 # Verify IA-5: Password Policy
-ssh admin@switch01.example.mil
+ssh admin@<your-switch-hostname>
 show running-config | include password
 
 # Verify AC-12: Session Timeout
@@ -395,7 +395,7 @@ ansible-playbook site.yml \
 **Cause:** Network connectivity or syslog server issues
 
 **Resolution:**
-1. Verify network connectivity: `ping syslog.example.mil`
+1. Verify network connectivity: `ping <your-syslog-server>`
 2. Check firewall rules for UDP/514
 3. Verify syslog server is accepting logs
 4. Re-run audit logging policy
@@ -415,12 +415,12 @@ ansible-playbook site.yml \
 ## Support and Contacts
 
 ### Security Team
-- Email: security@example.mil
-- Ticket System: https://tickets.example.mil
+- Email: <security-team-email>
+- Ticket System: <your-ticketing-system-url>
 
 ### Change Control
-- Email: changecontrol@example.mil
-- Process: https://wiki.example.mil/change-control
+- Email: <change-control-email>
+- Process: <your-change-control-wiki-url>
 
 ### Documentation
 - Policy Framework: `policy_as_code/README.md`

@@ -32,6 +32,10 @@ This repository provides production-ready Ansible automation for network infrast
 - [Compliance and Security](#compliance-and-security)
 - [Contribution Guidelines](#contribution-guidelines)
 - [Where to Get Help](#where-to-get-help)
+- [**Customer Quick Start**](./CUSTOMER_QUICK_START.md)
+- [**Known Limitations**](./KNOWN_LIMITATIONS.md)
+- [**Troubleshooting**](./TROUBLESHOOTING.md)
+- [**Changelog**](./CHANGELOG.md)
 - [**DISA STIG & NIST 800-53 Compliance Mapping**](./COMPLIANCE_MAPPING.md)
 
 ## Repository Purpose
@@ -714,8 +718,12 @@ stig(kubernetes): Implement STIG finding V-242376 for pod security
 
 ### Documentation
 
+- **New to this repo?** Start with [CUSTOMER_QUICK_START.md](./CUSTOMER_QUICK_START.md)
+- **Errors or unexpected behavior?** See [TROUBLESHOOTING.md](./TROUBLESHOOTING.md)
+- **Non-idempotent tasks, version constraints** — [KNOWN_LIMITATIONS.md](./KNOWN_LIMITATIONS.md)
+- **What changed and when** — [CHANGELOG.md](./CHANGELOG.md)
 - **Technology-specific README files** - See `<technology>/README.md` for each platform
-- **Policy as Code Guide** - `policy_as_code/DEPLOYMENT_GUIDE.md`
+- **Policy as Code Guide** - [policy_as_code/DEPLOYMENT_GUIDE.md](./policy_as_code/DEPLOYMENT_GUIDE.md)
 - **Role documentation** - Each role has a dedicated README with variables and examples
 
 ### Vendor Documentation
@@ -746,11 +754,12 @@ Consult official vendor documentation:
 
 ## Development History
 
-This repository was built in three phases during January 2026:
+This repository was built in four content phases and subsequently hardened for production customer delivery:
 
 - **Phase 1** - Added AWS (40+ roles), Windows Server (20+ roles), VMware NSX-T (8 roles), plus enhanced Veeam and Cohesity from task-only to full roles
 - **Phase 2** - Added Azure (30+ roles), database platforms (PostgreSQL, MySQL, Oracle), NetApp ONTAP, Fortinet FortiGate, Prometheus/Grafana, ELK Stack, and expanded Policy as Code to 8 NIST control families
 - **Phase 3** - Added F5 BIG-IP, Tenable Security Center, ServiceNow CMDB, HashiCorp Vault, and Ansible Tower/AAP to complete the enterprise automation suite
+- **Security hardening (March 2026)** - Added `no_log: true` to 954 credential-handling tasks, `changed_when` correctness to all query tasks, `any_errors_fatal: true` to all plays, and comprehensive customer documentation (CUSTOMER_QUICK_START, KNOWN_LIMITATIONS, TROUBLESHOOTING, CHANGELOG)
 
 ---
 
