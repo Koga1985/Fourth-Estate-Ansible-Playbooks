@@ -82,8 +82,23 @@
         - postgresql_synchronous_standby_names is defined
       notify: reload postgresql
 
-- name: Replica server configuration
+- name: Check if replica is already configured
+  ansible.builtin.stat:
+    path: "{{ postgresql_data_directory }}/standby.signal"
+  register: replica_configured
   when: is_replica
+
+- name: Check if replica recovery.conf exists (PostgreSQL < 12)
+  ansible.builtin.stat:
+    path: "{{ postgresql_data_directory }}/recovery.conf"
+  register: replica_recovery_conf
+  when: is_replica
+
+- name: Replica server configuration
+  when:
+    - is_replica
+    - not replica_configured.stat.exists | default(false)
+    - not replica_recovery_conf.stat.exists | default(false)
   block:
     - name: Stop PostgreSQL on replica
       ansible.builtin.service:

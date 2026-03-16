@@ -30,6 +30,7 @@
     block: "{{ lookup('template', 'security_config.yml.j2') }}"
     backup: yes
   notify: restart elasticsearch
+  register: es_security_config
 
 - name: Create keystore if it doesn't exist
   command: /usr/share/elasticsearch/bin/elasticsearch-keystore create
@@ -56,18 +57,13 @@
   include_tasks: saml_config.yml
   when: elasticsearch_saml_enabled | bool
 
-- name: Restart Elasticsearch to apply security settings
-  systemd:
-    name: elasticsearch
-    state: restarted
-  when: elasticsearch_security_enabled | bool
-
 - name: Wait for Elasticsearch to start with security
   wait_for:
     host: localhost
     port: "{{ elasticsearch_http_port }}"
     delay: 15
     timeout: 300
+  when: es_security_config is changed
 
 - name: Check if setup-passwords has been run
   stat:
