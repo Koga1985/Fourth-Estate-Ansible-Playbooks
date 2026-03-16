@@ -49,9 +49,9 @@ Each top-level directory focuses on a specific technology platform and contains 
 ## Supported Technologies
 
 ### 🌐 Network & Security (15 platforms)
-- **Cisco ISE** (Identity Services Engine) - 30+ roles for policy, posture, guest services, profiling
-- **Cisco UCS** (Unified Computing System) - Infrastructure, security, networking, monitoring, DR
-- **Cisco ACI** (Application Centric Infrastructure) - Fabric deploy, tenant config, L3Out/L2Out, DoD STIG/NIST hardening, monitoring (5 roles) ⭐ NEW
+- **Cisco ISE** (Identity Services Engine) - 28 roles for policy, posture, guest, profiling, pxGrid, reporting
+- **Cisco UCS** (Unified Computing System) - 5 roles for infrastructure, security, networking, monitoring, DR
+- **Cisco ACI** (Application Centric Infrastructure) - 5 roles for fabric deploy, tenant config, L3Out/L2Out, DoD STIG/NIST hardening, monitoring
 - **Palo Alto Networks** - PAN-OS firewalls, Panorama management, VPN, QoS (10 roles)
 - **Check Point** - Firewalls, access policies, threat prevention, identity awareness (6 roles)
 - **Arista EOS** - Network switches, CVP, routing, fabric, baseline configuration (6 roles)
@@ -154,22 +154,35 @@ Fourth-Estate-Ansible-Playbooks/
 │   ├── roles/
 │   └── tasks/
 │
-├── cisco/                         # Cisco ISE & UCS (35+ roles)
+├── cisco/                         # Cisco ACI, ISE & UCS (38 roles)
 │   ├── README.md
-│   ├── roles/
-│   └── tasks/
-│
-├── cisco_aci/                     # Cisco ACI - Application Centric Infrastructure (5 roles)
-│   ├── README.md
-│   ├── site.yml                   # Entry-point playbook
+│   ├── site.yml                   # Entry-point playbook (ACI + ISE + UCS)
 │   ├── requirements.yml
 │   ├── inventory.example
 │   ├── roles/
-│   │   ├── aci_fabric_deploy/     # Fabric infrastructure deployment
-│   │   ├── aci_tenant_config/     # Tenant, VRF, BD, EPG, contracts
-│   │   ├── aci_network_config/    # L3Out, L2Out, external connectivity
-│   │   ├── aci_security_hardening/ # DoD STIG and NIST 800-53 hardening
-│   │   └── aci_monitoring/        # SNMP, syslog, health monitoring
+│   │   ├── aci_fabric_deploy/         # ACI Phase 1: Fabric deployment
+│   │   ├── aci_tenant_config/         # ACI Phase 2: Tenant, VRF, BD, EPG
+│   │   ├── aci_network_config/        # ACI Phase 3: L3Out/L2Out connectivity
+│   │   ├── aci_security_hardening/    # ACI Phase 4: DoD STIG/NIST hardening
+│   │   ├── aci_monitoring/            # ACI Phase 5: SNMP, syslog, health
+│   │   ├── ise_policy__*/             # ISE policy, conditions, authz (6 roles)
+│   │   ├── ise_profiling__*/          # ISE profiling probes & policies (2 roles)
+│   │   ├── ise_endpoints__*/          # ISE endpoint registration (2 roles)
+│   │   ├── ise_posture__*/            # ISE posture assessment (3 roles)
+│   │   ├── ise_guest__*/              # ISE guest & BYOD portals (4 roles)
+│   │   ├── ise_pxgrid__*/             # ISE pxGrid integrations (1 role)
+│   │   ├── ise_integration__*/        # ISE MSE/DNAC/logging integrations (2 roles)
+│   │   ├── ise_anc__*/                # ISE ANC quarantine (1 role)
+│   │   ├── ise_hygiene__*/            # ISE stale object cleanup (1 role)
+│   │   ├── ise_audit__*/              # ISE audit & change tracking (1 role)
+│   │   ├── ise_report__*/             # ISE reporting (2 roles)
+│   │   ├── ise_sessions__*/           # ISE session export (1 role)
+│   │   ├── ise_monitor__*/            # ISE RADIUS accounting monitor (1 role)
+│   │   ├── ucs_prod_infrastructure/   # UCS Phase 10: Infrastructure
+│   │   ├── ucs_prod_networking/       # UCS Phase 11: VLAN/VSAN/QoS
+│   │   ├── ucs_security_hardening/    # UCS Phase 12: DoD STIG/NIST hardening
+│   │   ├── ucs_prod_backup_dr/        # UCS Phase 13: Backup & DR
+│   │   └── ucs_prod_monitoring/       # UCS Phase 14: Monitoring & compliance
 │   ├── playbooks/                 # Phased deployment playbooks
 │   └── tasks/
 │
@@ -775,18 +788,27 @@ ansible-playbook policy_as_code/site.yml -i inventory/prod.yml -e "apply_changes
 ls -la /tmp/policy-artifacts/
 ```
 
-### Example 3: Configure Cisco UCS for Fourth Estate
+### Example 3: Configure Cisco ACI / ISE / UCS for Fourth Estate
 
 ```bash
-# 1. Review Cisco UCS documentation
+# 1. Review Cisco documentation
 cat cisco/README.md
 
-# 2. Set up inventory
-cp cisco/inventory.example cisco/inventory/production.yml
-vi cisco/inventory/production.yml
+# 2. Install dependencies
+ansible-galaxy collection install -r cisco/requirements.yml
+pip install acicobra acimodel ciscoisesdk ucsmsdk intersight requests
 
-# 3. Deploy Fourth Estate configuration
-ansible-playbook cisco/ucs_fourth_estate_production.yml -i cisco/inventory/production.yml --ask-vault-pass
+# 3. Set up inventory
+cp cisco/inventory.example cisco/inventory
+vi cisco/inventory
+
+# 4. Deploy all platforms (ACI + ISE + UCS)
+ansible-playbook cisco/site.yml -i cisco/inventory --ask-vault-pass
+
+# 5. Deploy a single platform selectively
+ansible-playbook cisco/site.yml -i cisco/inventory --tags aci --ask-vault-pass
+ansible-playbook cisco/site.yml -i cisco/inventory --tags ise,policy --ask-vault-pass
+ansible-playbook cisco/site.yml -i cisco/inventory --tags ucs,security --ask-vault-pass
 ```
 
 ### Example 4: VMware vSphere STIG Hardening
@@ -806,5 +828,5 @@ ansible-playbook vmware/playbooks/esxi_stig_hardening.yml -i inventory/vmware.ym
 
 **Repository Maintained By:** Fourth Estate Infrastructure Team
 **Classification:** UNCLASSIFIED
-**Last Updated:** 2026-02-06
+**Last Updated:** 2026-03-16
 **License:** See LICENSE file

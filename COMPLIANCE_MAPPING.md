@@ -6,7 +6,7 @@ applicable **DISA Security Technical Implementation Guide (STIG)** findings and
 
 **Classification:** UNCLASSIFIED
 **Frameworks Covered:** DISA STIG, NIST 800-53 Rev 5, NIST 800-171, FedRAMP
-**Last Updated:** 2026-02-24
+**Last Updated:** 2026-03-16
 
 ---
 
@@ -32,6 +32,7 @@ applicable **DISA Security Technical Implementation Guide (STIG)** findings and
    - [Red Hat Enterprise Linux 8 STIG V1R14](#red-hat-enterprise-linux-8-stig-v1r14)
    - [Microsoft Windows Server STIG V2R8](#microsoft-windows-server-stig-v2r8)
    - [Cisco IOS/NX-OS Network Infrastructure STIG V2R7](#cisco-iosnx-os-network-infrastructure-stig-v2r7)
+   - [Cisco ACI STIG (APIC STIG / Network Infrastructure STIG)](#cisco-aci-stig-apic-stig--network-infrastructure-stig)
    - [Arista EOS Network Device STIG](#arista-eos-network-device-stig)
    - [Palo Alto Networks STIG V2R2](#palo-alto-networks-stig-v2r2)
    - [PostgreSQL STIG V2R1](#postgresql-stig-v2r1)
@@ -79,8 +80,9 @@ applicable **DISA Security Technical Implementation Guide (STIG)** findings and
 | AC-12 | Session Termination | STIG findings V-230286, V-230287 | RHEL 8 |
 | AC-17 | Remote Access | `vmware/roles/vsphere_esxi_stig_hardening` (SSH/ESXi shell lockdown) | VMware ESXi |
 | AC-17 | Remote Access | `arista/roles/arista_backup_restore` (management plane hardening) | Arista |
-| AC-18 | Wireless Access Control | `cisco/roles` (ISE wireless policy) | Cisco ISE |
-| AC-19 | Access Control for Mobile | `cisco/roles` (ISE MDM integration) | Cisco ISE |
+| AC-17 | Remote Access | `cisco/roles/aci_security_hardening` (out-of-band management access control) | Cisco ACI |
+| AC-18 | Wireless Access Control | `cisco/roles/ise_policy__*` (ISE wireless policy sets) | Cisco ISE |
+| AC-19 | Access Control for Mobile | `cisco/roles/ise_byod__workflow`, `ise_posture__*` (ISE MDM/BYOD integration) | Cisco ISE |
 | AC-20 | Use of External Systems | `illumio/roles` (micro-segmentation boundary) | Illumio |
 
 ---
@@ -92,6 +94,10 @@ applicable **DISA Security Technical Implementation Guide (STIG)** findings and
 | AU-2 | Event Logging | `ansible/roles/ans_ctrl_backup_and_audit` | AAP |
 | AU-2 | Event Logging | `ansible/tasks/ans_ctrl__audit_export.yml` | AAP |
 | AU-2 | Event Logging | `vmware/roles/vsphere_esxi_stig_hardening` (remote syslog) | VMware ESXi |
+| AU-2 | Event Logging | `cisco/roles/aci_monitoring` (syslog remote destinations, fault management) | Cisco ACI |
+| AU-2 | Event Logging | `cisco/roles/aci_security_hardening` (audit logging, syslog forwarding) | Cisco ACI |
+| AU-2 | Event Logging | `cisco/roles/ise_audit__config_changes` (ISE configuration change audit) | Cisco ISE |
+| AU-2 | Event Logging | `cisco/roles/ise_integration__logging` (remote syslog / SIEM integration) | Cisco ISE |
 | AU-2 | Event Logging | `splunk/roles` | Splunk |
 | AU-2 | Event Logging | `elk_stack/roles` | ELK Stack |
 | AU-2 | Event Logging | `sciencelogic/roles` | ScienceLogic |
@@ -108,6 +114,8 @@ applicable **DISA Security Technical Implementation Guide (STIG)** findings and
 | AU-11 | Audit Record Retention | `ansible/tasks/ans_ops__artifacts_retention.yml` | AAP |
 | AU-12 | Audit Record Generation | `policy_as_code/policies/audit_accountability/audit_logging.yml` | Policy as Code |
 | AU-12 | Audit Record Generation | `vmware/roles/vsphere_esxi_stig_hardening` (syslog, logDirUnique) | VMware ESXi |
+| AU-12 | Audit Record Generation | `cisco/roles/aci_monitoring` (Call Home, fault severity reporting) | Cisco ACI |
+| AU-12 | Audit Record Generation | `cisco/roles/ise_report__auth_failures`, `ise_report__endpoint_catalog` | Cisco ISE |
 
 ---
 
@@ -144,6 +152,8 @@ applicable **DISA Security Technical Implementation Guide (STIG)** findings and
 | CM-5 | Access Restrictions for Change | `ansible/tasks/ans_ctrl__approvals.yml` | AAP |
 | CM-6 | Configuration Settings | `vmware/roles/vsphere_esxi_stig_hardening` | VMware ESXi |
 | CM-6 | Configuration Settings | `vmware/roles/vsphere_vm_stig_hardening` | VMware VM |
+| CM-6 | Configuration Settings | `cisco/roles/aci_security_hardening` (STIG Cat I/II/III, password/TLS/RBAC) | Cisco ACI |
+| CM-6 | Configuration Settings | `cisco/roles/ucs_security_hardening` (STIG Cat I/II/III) | Cisco UCS |
 | CM-6 | Configuration Settings | `rhel/roles` (hardening baseline) | RHEL |
 | CM-6 | Configuration Settings | `windows/roles/win_stig_hardening` | Windows |
 | CM-6 | Configuration Settings | `kubernetes/playbook-cluster-hardening.yml` | Kubernetes |
@@ -272,10 +282,15 @@ applicable **DISA Security Technical Implementation Guide (STIG)** findings and
 | SC-7 | Boundary Protection | `vmware/roles/nsx_t_security` | VMware NSX-T |
 | SC-7 | Boundary Protection | `arista/roles/arista_acl_qos_security` | Arista |
 | SC-7 | Boundary Protection | `f5_bigip/roles` (WAF/virtual servers) | F5 BIG-IP |
+| SC-7 | Boundary Protection | `cisco/roles/aci_security_hardening` (contract enforcement, EPG isolation) | Cisco ACI |
+| SC-7 | Boundary Protection | `cisco/roles/aci_tenant_config` (intra-EPG isolation, contracts) | Cisco ACI |
+| SC-7 | Boundary Protection | `cisco/roles/ise_anc__quarantine_rules` (adaptive network quarantine) | Cisco ISE |
 | SC-7 | Boundary Protection | `windows/roles/win_firewall` | Windows |
 | SC-7 | Boundary Protection | `vmware/roles/vsphere_esxi_stig_hardening` (firewall rulesets) | VMware ESXi |
 | SC-8 | Transmission Confidentiality and Integrity | `policy_as_code/policies/system_communications/cryptographic_protection.yml` | Policy as Code |
 | SC-8 | Transmission Confidentiality and Integrity | STIG findings V-230273, V-230274, V-230275, V-230276, V-230277 | RHEL 8 |
+| SC-8 | Transmission Confidentiality and Integrity | `cisco/roles/aci_security_hardening` (TLS 1.2+ enforcement, FIPS-mode) | Cisco ACI |
+| SC-8 | Transmission Confidentiality and Integrity | `cisco/roles/ucs_security_hardening` (TLS 1.2+ enforcement) | Cisco UCS |
 | SC-8 | Transmission Confidentiality and Integrity | `vmware/roles/vsphere_vm_stig_hardening` | VMware VM |
 | SC-8 | Transmission Confidentiality and Integrity | `arista/roles/arista_acl_qos_security` | Arista |
 | SC-12 | Cryptographic Key Establishment and Management | `hashicorp_vault/roles` (PKI, key management) | HashiCorp Vault |
@@ -453,6 +468,30 @@ Role: `cisco/roles`
 
 ---
 
+### Cisco ACI STIG (APIC STIG / Network Infrastructure STIG)
+
+Roles: `cisco/roles/aci_fabric_deploy`, `cisco/roles/aci_security_hardening`, `cisco/roles/aci_monitoring`
+
+| STIG Finding | Severity | Description | Implementing Role |
+|-------------|----------|-------------|------------------|
+| NET0400 | Cat II | Enable AAA for APIC management access | `aci_security_hardening` |
+| NET0470 | Cat II | Enable syslog to remote server | `aci_monitoring` |
+| NET0480 | Cat II | Timestamps on log entries | `aci_monitoring` |
+| NET0600 | Cat II | Restrict SNMP — SNMPv3 only, disable v1/v2c | `aci_security_hardening` |
+| NET0700 | Cat II | Restrict management access by OOB ACL | `aci_fabric_deploy`, `aci_security_hardening` |
+| NET0800 | Cat II | SSH enabled; Telnet disabled on APIC | `aci_security_hardening` |
+| NET1028 | Cat I | Disable unused services | `aci_security_hardening` |
+| CISC-ND-000010 | Cat I | Authentication required for all management access | `aci_security_hardening` |
+| CISC-ND-000020 | Cat II | Session timeout enforcement (15 min) | `aci_security_hardening` |
+| CISC-ND-000030 | Cat I | Password complexity minimum requirements | `aci_security_hardening` |
+| CISC-ND-000040 | Cat II | RBAC — privilege separation for operators/admins | `aci_security_hardening` |
+| CISC-ND-000050 | Cat II | TLS 1.2+ enforced; TLS 1.0/1.1 disabled | `aci_security_hardening` |
+| CISC-ND-000060 | Cat II | Call Home notification configured | `aci_monitoring` |
+| CISC-ND-000070 | Cat I | Rogue endpoint detection enabled | `aci_fabric_deploy` |
+| CISC-ND-000080 | Cat II | Loop protection enabled on leaf nodes | `aci_fabric_deploy` |
+
+---
+
 ### Arista EOS Network Device STIG
 
 Roles: `arista/roles/arista_acl_qos_security`, `arista/roles/arista_baseline_config`, `arista/roles/arista_backup_restore`
@@ -590,7 +629,7 @@ control families for rapid lookup.
 | `aws/` | DoD CC SRG / FedRAMP | AC, AU, CM, IA, SC, SI | IAM, VPC, EC2, EKS, S3 roles |
 | `azure/` | DoD CC SRG / FedRAMP | AC, AU, CM, IA, SC, SI | Azure AD, AKS, Key Vault, Sentinel roles |
 | `checkpoint/` | Firewall STIG | AC, AU, SC, SI | Access policy, threat prevention roles |
-| `cisco/` | IOS STIG V2R7, UCS STIG | AC, AU, CM, IA, SC | ISE identity, UCS hardening, AAA roles |
+| `cisco/` | ACI STIG (APIC), IOS STIG V2R7, UCS STIG | AC, AU, CM, IA, SC, SI | `aci_security_hardening`, `aci_monitoring`, `aci_fabric_deploy`, ISE identity/policy/profiling/posture/reporting (28 roles), `ucs_security_hardening`, `ucs_prod_monitoring` |
 | `claroty/` | ICS STIG | AU, CM, IA, SC, SI | OT asset mgmt, secure remote access roles |
 | `cohesity/` | General App STIG | CP, SC | Cluster config, protection, recovery roles |
 | `crowdstrike/` | Endpoint Security | RA, SI | EDR deployment, policy management |
