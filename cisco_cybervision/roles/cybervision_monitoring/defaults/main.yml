@@ -1,0 +1,183 @@
+---
+# defaults file for cybervision_monitoring
+# Cisco Cyber Vision - SIEM/syslog integration, SNMP, alerts, ISE integration
+
+# ============================================================
+# Cyber Vision Center API Connection
+# ============================================================
+cv_center_host: "{{ vault_cv_center_hostname }}"
+cv_api_url: "https://{{ cv_center_host }}/api/3.0"
+cv_api_token: "{{ vault_cv_api_token }}"
+cv_validate_certs: true
+cv_use_proxy: false
+cv_timeout: 60
+
+# ============================================================
+# Deployment Control
+# ============================================================
+apply_changes: false
+artifacts_dir: "/tmp/cv-artifacts"
+
+# ============================================================
+# Feature Toggles
+# ============================================================
+enable_syslog: true
+enable_snmp: true
+enable_alerts: true
+enable_ise_integration: true
+enable_health_monitoring: true
+
+# ============================================================
+# Syslog / SIEM Integration
+# ============================================================
+cv_syslog_enabled: true
+
+cv_syslog_destinations:
+  - host: "{{ vault_syslog_server_primary }}"
+    port: 514
+    protocol: "udp"           # Options: udp, tcp, tls
+    severity: "warning"       # Options: debug, info, notice, warning, error, critical
+    facility: "local0"
+    format: "cef"             # Options: cef, leef, syslog — CEF recommended for SIEM
+    description: "Primary SIEM - CEF format"
+  - host: "{{ vault_syslog_server_secondary }}"
+    port: 514
+    protocol: "udp"
+    severity: "warning"
+    facility: "local0"
+    format: "cef"
+    description: "Secondary SIEM - CEF format"
+
+# Event categories to forward to SIEM
+cv_syslog_event_types:
+  - "alert"                   # Security alerts (anomalies, policy violations)
+  - "asset_change"            # New or changed assets
+  - "authentication"          # Login success/failure
+  - "configuration_change"    # Admin config changes (audit trail)
+  - "sensor_status"           # Sensor connectivity events
+  - "vulnerability"           # New CVE matches on OT assets
+
+# ============================================================
+# SNMP Configuration
+# ============================================================
+cv_snmp_enabled: true
+cv_snmp_version: "v3"
+
+cv_snmp_v3_users:
+  - username: "cv-snmpv3-monitor"
+    auth_type: "SHA"
+    auth_password: "{{ vault_cv_snmp_auth_password }}"
+    priv_type: "AES128"
+    priv_password: "{{ vault_cv_snmp_priv_password }}"
+    description: "SNMPv3 read-only monitoring user"
+
+cv_snmp_trap_destinations:
+  - host: "{{ vault_snmp_trap_host }}"
+    port: 162
+    version: "v3"
+    user: "cv-snmpv3-monitor"
+    security_level: "authPriv"
+    description: "Primary SNMP trap receiver"
+
+cv_snmp_allowed_hosts:
+  - "{{ vault_snmp_management_subnet }}"    # e.g., "10.0.10.0/24"
+
+# ============================================================
+# Alert Policies
+# ============================================================
+cv_alerts_enabled: true
+
+cv_alert_policies:
+  # New device seen on OT network
+  - name: "New-OT-Device"
+    description: "Alert when an unknown device appears on the OT network"
+    category: "asset_discovery"
+    severity: "high"
+    enabled: true
+    notification:
+      email: true
+      syslog: true
+      snmp_trap: true
+
+  # Communication from safety system to IT network (unexpected flow)
+  - name: "SIS-IT-Communication"
+    description: "Safety system communicating outside OT boundary"
+    category: "anomaly"
+    severity: "critical"
+    enabled: true
+    notification:
+      email: true
+      syslog: true
+      snmp_trap: true
+
+  # High CVSSv3 vulnerability on critical asset
+  - name: "Critical-Vulnerability"
+    description: "CVSS >= 9.0 vulnerability detected on a critical OT asset"
+    category: "vulnerability"
+    severity: "critical"
+    cvss_threshold: 9.0
+    enabled: true
+    notification:
+      email: true
+      syslog: true
+      snmp_trap: false
+
+  # Authentication failure (brute force / misconfig)
+  - name: "Auth-Failure-Spike"
+    description: "Multiple authentication failures in short window"
+    category: "authentication"
+    severity: "high"
+    threshold_count: 5
+    threshold_window_minutes: 10
+    enabled: true
+    notification:
+      email: true
+      syslog: true
+      snmp_trap: false
+
+  # Sensor disconnected
+  - name: "Sensor-Offline"
+    description: "Sensor has not reported to Center within threshold"
+    category: "sensor_status"
+    severity: "high"
+    offline_threshold_minutes: 15
+    enabled: true
+    notification:
+      email: true
+      syslog: true
+      snmp_trap: true
+
+# Email notification settings
+cv_alert_email_enabled: true
+cv_alert_smtp_server: "{{ vault_cv_smtp_server }}"
+cv_alert_smtp_port: 587
+cv_alert_smtp_tls: true
+cv_alert_from_address: "cybervision-alerts@fourthestate.gov"
+cv_alert_to_addresses:
+  - "{{ vault_cv_alert_email_primary }}"
+  - "{{ vault_cv_alert_email_secondary }}"
+
+# ============================================================
+# Cisco ISE Integration
+# Publishes OT asset context (IP, MAC, vendor, criticality) to ISE pxGrid
+# for use in Cisco TrustSec segmentation policies
+# ============================================================
+cv_ise_enabled: true
+cv_ise_host: "{{ vault_cv_ise_hostname }}"
+cv_ise_pxgrid_node: "{{ vault_cv_ise_pxgrid_node }}"
+cv_ise_client_cert: "{{ vault_cv_ise_client_cert }}"
+cv_ise_client_key: "{{ vault_cv_ise_client_key }}"
+cv_ise_ca_cert: "{{ vault_cv_ise_ca_cert }}"
+cv_ise_publish_assets: true
+cv_ise_publish_vulnerabilities: false    # ISE pxGrid can be noisy with vuln data
+cv_ise_publish_alerts: true
+
+# ============================================================
+# Health Monitoring
+# ============================================================
+cv_health_check_interval_minutes: 5
+cv_sensor_offline_threshold_minutes: 15
+cv_center_disk_warning_percent: 75
+cv_center_disk_critical_percent: 90
+cv_center_cpu_warning_percent: 80
+cv_center_cpu_critical_percent: 95

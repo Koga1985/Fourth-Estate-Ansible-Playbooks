@@ -1,0 +1,73 @@
+---
+# tasks file for cybervision_center_deploy - License activation
+# Applies Cyber Vision Center license key
+
+- name: PHASE 1 - Query current license status
+  ansible.builtin.uri:
+    url: "{{ cv_api_url }}/system/license"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ cv_api_token }}"
+      Accept: "application/json"
+    validate_certs: "{{ cv_validate_certs }}"
+    timeout: "{{ cv_timeout }}"
+    status_code: 200
+  register: cv_license_status
+  failed_when: false
+
+- name: PHASE 1 - Display current license status
+  ansible.builtin.debug:
+    msg:
+      - "License status:   {{ cv_license_status.json.status | default('unknown') }}"
+      - "License type:     {{ cv_license_status.json.type | default('none') }}"
+      - "Expiry:           {{ cv_license_status.json.expiry | default('N/A') }}"
+      - "Max sensors:      {{ cv_license_status.json.max_sensors | default('N/A') }}"
+  when: cv_license_status.status == 200
+
+- name: PHASE 1 - Activate license
+  ansible.builtin.uri:
+    url: "{{ cv_api_url }}/system/license"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ cv_api_token }}"
+      Content-Type: "application/json"
+      Accept: "application/json"
+    body_format: json
+    body:
+      license_key: "{{ cv_license_key }}"
+    validate_certs: "{{ cv_validate_certs }}"
+    timeout: "{{ cv_timeout }}"
+    status_code: [200, 201, 204]
+  register: cv_license_result
+  when:
+    - apply_changes | bool
+    - cv_license_status.json.status | default('none') != 'active'
+  no_log: true    # License key is sensitive
+  notify:
+    - notify center deploy complete
+
+- name: PHASE 1 - Display license activation result
+  ansible.builtin.debug:
+    msg: "License activation: {{ 'succeeded' if cv_license_result.status in [200, 201, 204] else 'failed' }}"
+  when: cv_license_result is not skipped
+
+- name: PHASE 1 - Display license plan (dry-run)
+  ansible.builtin.debug:
+    msg:
+      - "DRY RUN — would activate license type: {{ cv_license_type }}"
+      - "Current status: {{ cv_license_status.json.status | default('unknown') }}"
+  when: not apply_changes | bool
+
+- name: Save license artifact
+  ansible.builtin.copy:
+    content: "{{ license_artifact | to_nice_json }}"
+    dest: "{{ artifacts_dir }}/cv_license.json"
+    mode: '0640'
+  vars:
+    license_artifact:
+      timestamp: "{{ ansible_date_time.iso8601 }}"
+      center_host: "{{ cv_center_host }}"
+      mode: "{{ 'applied' if apply_changes | bool else 'dry_run' }}"
+      license_type: "{{ cv_license_type }}"
+      status_before: "{{ cv_license_status.json.status | default('unknown') }}"
+      expiry_before: "{{ cv_license_status.json.expiry | default('N/A') }}"

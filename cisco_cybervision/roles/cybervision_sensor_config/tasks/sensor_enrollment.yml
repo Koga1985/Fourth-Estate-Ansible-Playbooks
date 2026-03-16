@@ -1,0 +1,93 @@
+---
+# tasks file for cybervision_sensor_config - Sensor enrollment
+# Generates enrollment tokens and registers sensors with the Center
+
+- name: PHASE 2 - Generate sensor enrollment token
+  ansible.builtin.uri:
+    url: "{{ cv_api_url }}/sensors/enrollment-token"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ cv_api_token }}"
+      Content-Type: "application/json"
+      Accept: "application/json"
+    body_format: json
+    body:
+      ttl_hours: "{{ cv_sensor_enrollment_ttl_hours }}"
+    validate_certs: "{{ cv_validate_certs }}"
+    timeout: "{{ cv_timeout }}"
+    status_code: [200, 201]
+  register: cv_enrollment_token
+  when: apply_changes | bool
+  no_log: true
+
+- name: PHASE 2 - Save enrollment token artifact
+  ansible.builtin.copy:
+    content: "{{ token_artifact | to_nice_json }}"
+    dest: "{{ artifacts_dir }}/cv_enrollment_token.json"
+    mode: '0600'    # Sensitive — restrict permissions
+  vars:
+    token_artifact:
+      timestamp: "{{ ansible_date_time.iso8601 }}"
+      center_host: "{{ cv_center_host }}"
+      ttl_hours: "{{ cv_sensor_enrollment_ttl_hours }}"
+      token: "{{ cv_enrollment_token.json.token | default('not_generated') }}"
+  when: apply_changes | bool and cv_enrollment_token is not skipped
+
+- name: PHASE 2 - Create sensor zones (groups)
+  ansible.builtin.uri:
+    url: "{{ cv_api_url }}/groups"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ cv_api_token }}"
+      Content-Type: "application/json"
+      Accept: "application/json"
+    body_format: json
+    body:
+      name: "{{ item.name }}"
+      description: "{{ item.description }}"
+      color: "{{ item.color }}"
+    validate_certs: "{{ cv_validate_certs }}"
+    timeout: "{{ cv_timeout }}"
+    status_code: [200, 201, 409]    # 409 = already exists
+  loop: "{{ cv_sensor_zones }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: cv_zone_results
+  when: apply_changes | bool
+
+- name: PHASE 2 - Display zone creation plan (dry-run)
+  ansible.builtin.debug:
+    msg:
+      - "DRY RUN — would create sensor zones:"
+      - "{% for z in cv_sensor_zones %}  - {{ z.name }}: {{ z.description }}{% endfor %}"
+  when: not apply_changes | bool
+
+- name: PHASE 2 - Query current sensor status
+  ansible.builtin.uri:
+    url: "{{ cv_api_url }}/sensors/{{ item }}"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ cv_api_token }}"
+      Accept: "application/json"
+    validate_certs: "{{ cv_validate_certs }}"
+    timeout: "{{ cv_timeout }}"
+    status_code: [200, 404]
+  loop: "{{ groups['cv_sensors'] | default([]) }}"
+  loop_control:
+    label: "{{ item }}"
+  register: cv_sensor_status
+  failed_when: false
+
+- name: Save enrollment artifact
+  ansible.builtin.copy:
+    content: "{{ enrollment_artifact | to_nice_json }}"
+    dest: "{{ artifacts_dir }}/cv_sensor_enrollment.json"
+    mode: '0640'
+  vars:
+    enrollment_artifact:
+      timestamp: "{{ ansible_date_time.iso8601 }}"
+      center_host: "{{ cv_center_host }}"
+      mode: "{{ 'applied' if apply_changes | bool else 'dry_run' }}"
+      zones_configured: "{{ cv_sensor_zones | map(attribute='name') | list }}"
+      inventory_sensors: "{{ groups['cv_sensors'] | default([]) | length }}"
+      enrolled_sensors: "{{ cv_enrolled_sensors.json | default([]) | length }}"

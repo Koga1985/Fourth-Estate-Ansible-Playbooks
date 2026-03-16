@@ -1,0 +1,36 @@
+---
+# tasks file for cybervision_monitoring - Prerequisites
+
+- name: Ensure artifacts directory exists
+  ansible.builtin.file:
+    path: "{{ artifacts_dir }}"
+    state: directory
+    mode: '0750'
+
+- name: Verify required vault variables
+  ansible.builtin.assert:
+    that:
+      - vault_cv_center_hostname is defined
+      - vault_cv_api_token is defined
+    fail_msg: "Required vault variables missing: vault_cv_center_hostname, vault_cv_api_token"
+    success_msg: "Monitoring vault variables present"
+
+- name: Query Center health for prerequisite check
+  ansible.builtin.uri:
+    url: "{{ cv_api_url }}/system/health"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ cv_api_token }}"
+      Accept: "application/json"
+    validate_certs: "{{ cv_validate_certs }}"
+    timeout: "{{ cv_timeout }}"
+    status_code: 200
+  register: cv_monitoring_prereq_health
+  failed_when: false
+
+- name: Display monitoring mode
+  ansible.builtin.debug:
+    msg:
+      - "Center health: {{ cv_monitoring_prereq_health.json.status | default('unknown') }}"
+      - "Apply changes: {{ apply_changes | bool }}"
+      - "Modules: syslog={{ enable_syslog }}, snmp={{ enable_snmp }}, alerts={{ enable_alerts }}, ise={{ enable_ise_integration }}"

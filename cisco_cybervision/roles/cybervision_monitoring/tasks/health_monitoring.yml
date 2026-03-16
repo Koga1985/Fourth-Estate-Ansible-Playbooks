@@ -1,0 +1,103 @@
+---
+# tasks file for cybervision_monitoring - Center and sensor health monitoring
+# Queries health metrics and exports health/fault reports
+
+- name: PHASE 5 - Query Cyber Vision Center health
+  ansible.builtin.uri:
+    url: "{{ cv_api_url }}/system/health"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ cv_api_token }}"
+      Accept: "application/json"
+    validate_certs: "{{ cv_validate_certs }}"
+    timeout: "{{ cv_timeout }}"
+    status_code: 200
+  register: cv_center_health
+  failed_when: false
+
+- name: PHASE 5 - Configure health check thresholds
+  ansible.builtin.uri:
+    url: "{{ cv_api_url }}/system/health/thresholds"
+    method: PUT
+    headers:
+      Authorization: "Bearer {{ cv_api_token }}"
+      Content-Type: "application/json"
+      Accept: "application/json"
+    body_format: json
+    body:
+      check_interval_minutes: "{{ cv_health_check_interval_minutes }}"
+      sensor_offline_threshold_minutes: "{{ cv_sensor_offline_threshold_minutes }}"
+      disk_warning_percent: "{{ cv_center_disk_warning_percent }}"
+      disk_critical_percent: "{{ cv_center_disk_critical_percent }}"
+      cpu_warning_percent: "{{ cv_center_cpu_warning_percent }}"
+      cpu_critical_percent: "{{ cv_center_cpu_critical_percent }}"
+    validate_certs: "{{ cv_validate_certs }}"
+    timeout: "{{ cv_timeout }}"
+    status_code: [200, 204]
+  register: cv_health_thresholds_result
+  when: apply_changes | bool
+
+- name: PHASE 5 - Query sensor health
+  ansible.builtin.uri:
+    url: "{{ cv_api_url }}/sensors"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ cv_api_token }}"
+      Accept: "application/json"
+    validate_certs: "{{ cv_validate_certs }}"
+    timeout: "{{ cv_timeout }}"
+    status_code: 200
+  register: cv_sensor_health
+  failed_when: false
+
+- name: PHASE 5 - Query active alerts
+  ansible.builtin.uri:
+    url: "{{ cv_api_url }}/alerts?status=active&page=1&size=50"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ cv_api_token }}"
+      Accept: "application/json"
+    validate_certs: "{{ cv_validate_certs }}"
+    timeout: "{{ cv_timeout }}"
+    status_code: 200
+  register: cv_active_alerts
+  failed_when: false
+
+- name: Save health monitoring artifact
+  ansible.builtin.copy:
+    content: "{{ health_artifact | to_nice_json }}"
+    dest: "{{ artifacts_dir }}/cv_health_report.json"
+    mode: '0640'
+  vars:
+    health_artifact:
+      timestamp: "{{ ansible_date_time.iso8601 }}"
+      center_host: "{{ cv_center_host }}"
+      center_status: "{{ cv_center_health.json.status | default('unknown') }}"
+      center_disk_used_percent: "{{ cv_center_health.json.disk_used_percent | default('unknown') }}"
+      center_cpu_percent: "{{ cv_center_health.json.cpu_percent | default('unknown') }}"
+      total_sensors: "{{ cv_sensor_health.json | default([]) | length }}"
+      online_sensors: "{{ cv_sensor_health.json | default([]) | selectattr('status', 'equalto', 'online') | list | length }}"
+      offline_sensors: "{{ cv_sensor_health.json | default([]) | selectattr('status', 'equalto', 'offline') | list | length }}"
+      active_alerts: "{{ cv_active_alerts.json.total | default(0) }}"
+
+- name: Display health monitoring summary
+  ansible.builtin.debug:
+    msg:
+      - "================================================================"
+      - " Cyber Vision Health Summary - Fourth Estate"
+      - "================================================================"
+      - " Center status:     {{ cv_center_health.json.status | default('unknown') }}"
+      - " Disk used:         {{ cv_center_health.json.disk_used_percent | default('N/A') }}%"
+      - " CPU:               {{ cv_center_health.json.cpu_percent | default('N/A') }}%"
+      - " Total sensors:     {{ cv_sensor_health.json | default([]) | length }}"
+      - " Online sensors:    {{ cv_sensor_health.json | default([]) | selectattr('status', 'equalto', 'online') | list | length }}"
+      - " Active alerts:     {{ cv_active_alerts.json.total | default(0) }}"
+      - "================================================================"
+
+- name: Warn if sensors are offline
+  ansible.builtin.debug:
+    msg: "WARNING: {{ cv_sensor_health.json | default([]) | selectattr('status', 'equalto', 'offline') | list | length }} sensor(s) offline!"
+  when:
+    - cv_sensor_health.status is defined
+    - cv_sensor_health.status == 200
+    - cv_sensor_health.json | default([]) | selectattr('status', 'equalto', 'offline') | list | length > 0

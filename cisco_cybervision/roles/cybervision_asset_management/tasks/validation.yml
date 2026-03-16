@@ -1,0 +1,53 @@
+---
+# tasks file for cybervision_asset_management - Post-configuration validation
+
+- name: PHASE 3 - Query asset groups for validation
+  ansible.builtin.uri:
+    url: "{{ cv_api_url }}/groups"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ cv_api_token }}"
+      Accept: "application/json"
+    validate_certs: "{{ cv_validate_certs }}"
+    timeout: "{{ cv_timeout }}"
+    status_code: 200
+  register: cv_groups_validation
+  failed_when: false
+
+- name: PHASE 3 - Query vulnerability summary for validation
+  ansible.builtin.uri:
+    url: "{{ cv_api_url }}/reports/vulnerabilities/summary"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ cv_api_token }}"
+      Accept: "application/json"
+    validate_certs: "{{ cv_validate_certs }}"
+    timeout: "{{ cv_timeout }}"
+    status_code: 200
+  register: cv_vuln_summary
+  failed_when: false
+
+- name: Save asset management validation artifact
+  ansible.builtin.copy:
+    content: "{{ am_validation | to_nice_json }}"
+    dest: "{{ artifacts_dir }}/cv_asset_management_validation.json"
+    mode: '0640'
+  vars:
+    am_validation:
+      timestamp: "{{ ansible_date_time.iso8601 }}"
+      center_host: "{{ cv_center_host }}"
+      total_asset_groups: "{{ cv_groups_validation.json | default([]) | length }}"
+      critical_vulns: "{{ cv_vuln_summary.json.critical | default(0) }}"
+      high_vulns: "{{ cv_vuln_summary.json.high | default(0) }}"
+
+- name: Display asset management summary
+  ansible.builtin.debug:
+    msg:
+      - "================================================================"
+      - " Cyber Vision Asset Management - Summary"
+      - "================================================================"
+      - " Asset groups configured: {{ cv_groups_validation.json | default([]) | length }}"
+      - " Critical vulnerabilities: {{ cv_vuln_summary.json.critical | default('N/A') }}"
+      - " High vulnerabilities:     {{ cv_vuln_summary.json.high | default('N/A') }}"
+      - " Artifacts:               {{ artifacts_dir }}"
+      - "================================================================"

@@ -1,0 +1,53 @@
+---
+# tasks file for cybervision_monitoring - Post-configuration validation
+
+- name: PHASE 5 - Validate syslog destinations are configured
+  ansible.builtin.uri:
+    url: "{{ cv_api_url }}/system/syslog"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ cv_api_token }}"
+      Accept: "application/json"
+    validate_certs: "{{ cv_validate_certs }}"
+    timeout: "{{ cv_timeout }}"
+    status_code: 200
+  register: cv_validate_syslog
+  failed_when: false
+
+- name: PHASE 5 - Validate alert policies are configured
+  ansible.builtin.uri:
+    url: "{{ cv_api_url }}/alert-policies"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ cv_api_token }}"
+      Accept: "application/json"
+    validate_certs: "{{ cv_validate_certs }}"
+    timeout: "{{ cv_timeout }}"
+    status_code: 200
+  register: cv_validate_alerts
+  failed_when: false
+
+- name: Save monitoring validation artifact
+  ansible.builtin.copy:
+    content: "{{ monitoring_validation | to_nice_json }}"
+    dest: "{{ artifacts_dir }}/cv_monitoring_validation.json"
+    mode: '0640'
+  vars:
+    monitoring_validation:
+      timestamp: "{{ ansible_date_time.iso8601 }}"
+      center_host: "{{ cv_center_host }}"
+      syslog_configured: "{{ cv_validate_syslog.json.enabled | default(false) }}"
+      syslog_destination_count: "{{ cv_validate_syslog.json.destinations | default([]) | length }}"
+      alert_policy_count: "{{ cv_validate_alerts.json | default([]) | length }}"
+
+- name: Display monitoring validation summary
+  ansible.builtin.debug:
+    msg:
+      - "================================================================"
+      - " Cyber Vision Monitoring - Validation Summary"
+      - "================================================================"
+      - " Syslog enabled:      {{ cv_validate_syslog.json.enabled | default(false) }}"
+      - " Syslog destinations: {{ cv_validate_syslog.json.destinations | default([]) | length }}"
+      - " Alert policies:      {{ cv_validate_alerts.json | default([]) | length }}"
+      - " Artifacts:           {{ artifacts_dir }}"
+      - "================================================================"

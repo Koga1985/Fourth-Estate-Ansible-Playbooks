@@ -1,0 +1,103 @@
+---
+# defaults file for cybervision_sensor_config
+# Cisco Cyber Vision - sensor enrollment, capture modes, and sensor policies
+
+# ============================================================
+# Cyber Vision Center API Connection
+# ============================================================
+cv_center_host: "{{ vault_cv_center_hostname }}"
+cv_api_url: "https://{{ cv_center_host }}/api/3.0"
+cv_api_token: "{{ vault_cv_api_token }}"
+cv_validate_certs: true
+cv_use_proxy: false
+cv_timeout: 60
+
+# ============================================================
+# Deployment Control
+# ============================================================
+apply_changes: false
+artifacts_dir: "/tmp/cv-artifacts"
+
+# ============================================================
+# Feature Toggles
+# ============================================================
+enable_sensor_enrollment: true
+enable_sensor_policies: true
+enable_capture_modes: true
+
+# ============================================================
+# Sensor Enrollment Configuration
+# ============================================================
+# Sensors are enrolled by generating an enrollment token on the Center
+# and applying it during sensor initial configuration.
+# Use 'ansible_host' from inventory for per-sensor targeting.
+
+cv_sensor_enrollment_ttl_hours: 24    # Enrollment token validity window
+
+# Default sensor configuration applied to all sensors unless overridden
+cv_sensor_defaults:
+  active_discovery: true              # Enable active discovery (ARP/ICMP probing)
+  deep_packet_inspection: true        # Enable DPI for protocol decoding
+  capture_mode: "span"               # Options: span, tap, rspan, erspan
+  max_bandwidth_mbps: 1000            # Capture throughput limit
+  label: "FourthEstate"
+
+# Per-sensor overrides (keyed by sensor hostname from inventory)
+# cv_sensor_overrides:
+#   cv-sensor-03:
+#     capture_mode: "tap"
+#     max_bandwidth_mbps: 100
+
+# ============================================================
+# Sensor Groups / Zones
+# Maps sensor_zone inventory variable to Cyber Vision groups
+# ============================================================
+cv_sensor_zones:
+  - name: "plant_floor"
+    description: "Plant floor OT network — Level 0/1 devices"
+    color: "#e74c3c"
+  - name: "control_room"
+    description: "Control room — Level 2 SCADA/HMI systems"
+    color: "#f39c12"
+  - name: "dmz"
+    description: "OT/IT DMZ — data historians and jump hosts"
+    color: "#3498db"
+  - name: "substation"
+    description: "Remote substation sensors"
+    color: "#2ecc71"
+
+# ============================================================
+# Sensor Policies
+# Controls what traffic categories sensors report to the Center
+# ============================================================
+cv_sensor_policies:
+  - name: "FourthEstate-Default"
+    description: "Default sensor reporting policy"
+    report_flows: true
+    report_alerts: true
+    report_assets: true
+    report_vulnerabilities: true
+    # Traffic categories to decode
+    protocol_decoders:
+      - "modbus"
+      - "dnp3"
+      - "s7"
+      - "bacnet"
+      - "ethernet_ip"
+      - "profinet"
+      - "iec61850"
+      - "opcua"
+
+# ============================================================
+# Capture Mode Defaults by Sensor Type
+# ============================================================
+cv_capture_modes:
+  hardware:
+    mode: "span"                # Hardware sensors use SPAN/RSPAN port mirroring
+    promiscuous: true
+  software:
+    mode: "span"                # Software sensors can use SPAN or a virtual tap
+    promiscuous: true
+  iol:                          # IOx sensors on Catalyst switches
+    mode: "iol"
+    promiscuous: false

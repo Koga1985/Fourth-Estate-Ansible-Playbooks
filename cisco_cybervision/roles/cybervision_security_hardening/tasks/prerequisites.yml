@@ -1,0 +1,43 @@
+---
+# tasks file for cybervision_security_hardening - Prerequisites
+
+- name: Ensure artifacts directory exists
+  ansible.builtin.file:
+    path: "{{ artifacts_dir }}"
+    state: directory
+    mode: '0750'
+
+- name: Verify required vault variables
+  ansible.builtin.assert:
+    that:
+      - vault_cv_center_hostname is defined
+      - vault_cv_api_token is defined
+    fail_msg: "Required vault variables missing: vault_cv_center_hostname, vault_cv_api_token"
+    success_msg: "Security hardening vault variables present"
+
+- name: Test Cyber Vision Center API connectivity
+  ansible.builtin.uri:
+    url: "{{ cv_api_url }}/system/version"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ cv_api_token }}"
+      Accept: "application/json"
+    validate_certs: "{{ cv_validate_certs }}"
+    timeout: "{{ cv_timeout }}"
+    status_code: 200
+  register: cv_prereq_version
+  failed_when: false
+
+- name: Display security hardening mode
+  ansible.builtin.debug:
+    msg:
+      - "================================================================"
+      - " Cyber Vision Security Hardening - Fourth Estate"
+      - "================================================================"
+      - " Center: {{ cv_center_host }}"
+      - " Version: {{ cv_prereq_version.json.version | default('unknown') }}"
+      - " Mode: {{ 'LIVE - changes will be applied' if apply_changes | bool else 'DRY RUN - no changes' }}"
+      - " STIG CAT I:   {{ stig_cat1_enabled }}"
+      - " STIG CAT II:  {{ stig_cat2_enabled }}"
+      - " STIG CAT III: {{ stig_cat3_enabled }}"
+      - "================================================================"

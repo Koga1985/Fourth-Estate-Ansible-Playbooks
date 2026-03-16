@@ -1,0 +1,49 @@
+---
+# handlers file for cybervision_monitoring
+
+- name: notify monitoring complete
+  ansible.builtin.debug:
+    msg:
+      - "================================================================"
+      - " Cyber Vision Monitoring Configuration Complete - Fourth Estate"
+      - "================================================================"
+      - " Center Host:   {{ cv_center_host }}"
+      - " Mode:          {{ 'CHANGES APPLIED' if apply_changes | bool else 'DRY RUN ONLY' }}"
+      - " Timestamp:     {{ ansible_date_time.iso8601 }}"
+      - " Artifacts:     {{ artifacts_dir }}"
+      - "----------------------------------------------------------------"
+      - " Modules:"
+      - "   Syslog/SIEM:       {{ enable_syslog | bool }}"
+      - "   SNMP:              {{ enable_snmp | bool }}"
+      - "   Alerts:            {{ enable_alerts | bool }}"
+      - "   ISE Integration:   {{ enable_ise_integration | bool }}"
+      - "   Health Monitoring: {{ enable_health_monitoring | bool }}"
+      - "================================================================"
+
+- name: refresh syslog config
+  ansible.builtin.uri:
+    url: "{{ cv_api_url }}/system/syslog"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ cv_api_token }}"
+      Accept: "application/json"
+    validate_certs: "{{ cv_validate_certs }}"
+    timeout: "{{ cv_timeout }}"
+    status_code: 200
+  register: cv_syslog_refresh
+  failed_when: false
+  when: apply_changes | bool
+
+- name: refresh alert policies
+  ansible.builtin.uri:
+    url: "{{ cv_api_url }}/alert-policies"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ cv_api_token }}"
+      Accept: "application/json"
+    validate_certs: "{{ cv_validate_certs }}"
+    timeout: "{{ cv_timeout }}"
+    status_code: 200
+  register: cv_alerts_refresh
+  failed_when: false
+  when: apply_changes | bool

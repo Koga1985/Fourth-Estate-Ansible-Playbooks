@@ -1,0 +1,61 @@
+---
+# tasks file for cybervision_security_hardening - NTP and DNS configuration
+# NIST AU-8 | STIG CISC-ND-001290, CISC-ND-001420
+
+- name: PHASE 4 - CISC-ND-001290/001420 - Configure NTP servers
+  ansible.builtin.uri:
+    url: "{{ cv_api_url }}/system/network/ntp"
+    method: PUT
+    headers:
+      Authorization: "Bearer {{ cv_api_token }}"
+      Content-Type: "application/json"
+      Accept: "application/json"
+    body_format: json
+    body:
+      servers: "{{ cv_ntp_servers }}"
+    validate_certs: "{{ cv_validate_certs }}"
+    timeout: "{{ cv_timeout }}"
+    status_code: [200, 204]
+  register: cv_ntp_result
+  when: apply_changes | bool
+
+- name: PHASE 4 - Configure DNS servers
+  ansible.builtin.uri:
+    url: "{{ cv_api_url }}/system/network/dns"
+    method: PUT
+    headers:
+      Authorization: "Bearer {{ cv_api_token }}"
+      Content-Type: "application/json"
+      Accept: "application/json"
+    body_format: json
+    body:
+      servers: "{{ cv_dns_servers | map(attribute='address') | list }}"
+    validate_certs: "{{ cv_validate_certs }}"
+    timeout: "{{ cv_timeout }}"
+    status_code: [200, 204]
+  register: cv_dns_result
+  when: apply_changes | bool
+
+- name: PHASE 4 - Display NTP/DNS plan (dry-run)
+  ansible.builtin.debug:
+    msg:
+      - "DRY RUN — would configure:"
+      - "  NTP servers: {{ cv_ntp_servers | map(attribute='server') | list | join(', ') }}"
+      - "  DNS servers: {{ cv_dns_servers | map(attribute='address') | list | join(', ') }}"
+  when: not apply_changes | bool
+
+- name: Save NTP/DNS artifact
+  ansible.builtin.copy:
+    content: "{{ ntpdns_artifact | to_nice_json }}"
+    dest: "{{ artifacts_dir }}/cv_ntp_dns.json"
+    mode: '0640'
+  vars:
+    ntpdns_artifact:
+      timestamp: "{{ ansible_date_time.iso8601 }}"
+      center_host: "{{ cv_center_host }}"
+      mode: "{{ 'applied' if apply_changes | bool else 'dry_run' }}"
+      stig_controls:
+        - "CISC-ND-001290"
+        - "CISC-ND-001420"
+      ntp_servers: "{{ cv_ntp_servers }}"
+      dns_servers: "{{ cv_dns_servers }}"

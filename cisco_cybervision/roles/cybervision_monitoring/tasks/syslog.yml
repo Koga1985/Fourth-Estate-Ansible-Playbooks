@@ -1,0 +1,58 @@
+---
+# tasks file for cybervision_monitoring - Syslog/SIEM integration
+# Forwards Cyber Vision events to SIEM in CEF/LEEF format
+
+- name: PHASE 5 - Query current syslog destinations
+  ansible.builtin.uri:
+    url: "{{ cv_api_url }}/system/syslog"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ cv_api_token }}"
+      Accept: "application/json"
+    validate_certs: "{{ cv_validate_certs }}"
+    timeout: "{{ cv_timeout }}"
+    status_code: 200
+  register: cv_current_syslog
+  failed_when: false
+
+- name: PHASE 5 - Configure syslog destinations
+  ansible.builtin.uri:
+    url: "{{ cv_api_url }}/system/syslog"
+    method: PUT
+    headers:
+      Authorization: "Bearer {{ cv_api_token }}"
+      Content-Type: "application/json"
+      Accept: "application/json"
+    body_format: json
+    body:
+      enabled: "{{ cv_syslog_enabled }}"
+      destinations: "{{ cv_syslog_destinations }}"
+      event_types: "{{ cv_syslog_event_types }}"
+    validate_certs: "{{ cv_validate_certs }}"
+    timeout: "{{ cv_timeout }}"
+    status_code: [200, 204]
+  register: cv_syslog_result
+  when: apply_changes | bool
+
+- name: PHASE 5 - Display syslog plan (dry-run)
+  ansible.builtin.debug:
+    msg:
+      - "DRY RUN — would configure syslog:"
+      - "  Destinations:  {{ cv_syslog_destinations | map(attribute='host') | list | join(', ') }}"
+      - "  Format:        {{ cv_syslog_destinations[0].format | default('cef') }}"
+      - "  Event types:   {{ cv_syslog_event_types | join(', ') }}"
+  when: not apply_changes | bool
+
+- name: Save syslog artifact
+  ansible.builtin.copy:
+    content: "{{ syslog_artifact | to_nice_json }}"
+    dest: "{{ artifacts_dir }}/cv_syslog_config.json"
+    mode: '0640'
+  vars:
+    syslog_artifact:
+      timestamp: "{{ ansible_date_time.iso8601 }}"
+      center_host: "{{ cv_center_host }}"
+      mode: "{{ 'applied' if apply_changes | bool else 'dry_run' }}"
+      syslog_enabled: "{{ cv_syslog_enabled }}"
+      destinations: "{{ cv_syslog_destinations }}"
+      event_types: "{{ cv_syslog_event_types }}"
