@@ -1,6 +1,14 @@
 # Cisco Ansible Automation
 
-Comprehensive Ansible roles and playbooks for Cisco infrastructure automation, including Application Centric Infrastructure (ACI), Identity Services Engine (ISE), and Unified Computing System (UCS).
+Comprehensive Ansible roles and playbooks for Cisco infrastructure automation across three platforms:
+
+| Platform | Roles | Deployment Phases | Key Capability |
+|----------|-------|-------------------|----------------|
+| **Cisco ACI** | 5 | Phases 1–5 | Fabric, Tenant, Networking, Security, Monitoring |
+| **Cisco ISE** | 28 | Phases 1–9 | Policy, Profiling, Posture, Guest, pxGrid, Reporting |
+| **Cisco UCS** | 5 | Phases 10–14 | Infrastructure, Networking, Security, Backup/DR, Monitoring |
+
+All roles implement **DoD STIG** and **NIST 800-53** compliance controls and default to **dry-run mode** (`apply_changes: false`).
 
 ## 🚀 Quick Start (Drop-In Deployment)
 
@@ -42,21 +50,66 @@ ansible-playbook -i inventory site.yml --tags ucs,security
 
 ```
 cisco/
-├── playbooks/          # Production-ready playbooks
+├── site.yml            # Entry-point playbook (ACI + ISE + UCS)
+├── requirements.yml    # Ansible Galaxy collections
+├── inventory.example   # Inventory template
+├── playbooks/          # Phased deployment playbooks
+│   ├── 01_ucs_full_deployment.yml
+│   ├── 02_ucs_phase1_infrastructure.yml
+│   ├── 03_ucs_phase2_networking.yml
+│   ├── 04_ucs_phase3_security.yml
+│   ├── 05_ucs_phase4_monitoring.yml
+│   ├── 06_ucs_phase5_backup_dr.yml
+│   ├── 10_ucs_validation.yml
+│   ├── 11_ucs_compliance_audit.yml
+│   ├── 20_ucs_quick_start.yml
+│   ├── 30_ucs_maintenance.yml
+│   ├── 40_ucs_fabric_interconnect_config.yml
+│   ├── 41_ucs_service_profile_association.yml
 │   ├── ucs_fourth_estate_production.yml
 │   └── README.md
-├── roles/              # Ansible roles
-│   ├── aci_fabric_deploy/             # ACI fabric initial deployment
-│   ├── aci_tenant_config/             # ACI tenant, VRF, BD, EPG, contracts
-│   ├── aci_network_config/            # ACI L3Out/L2Out external connectivity
-│   ├── aci_security_hardening/        # ACI security hardening (DoD STIG)
-│   ├── aci_monitoring/                # ACI SNMP, syslog, Call Home, health
-│   ├── ise_*/                         # ISE roles (28 roles)
-│   ├── ucs_prod_infrastructure/       # UCS infrastructure deployment
-│   ├── ucs_security_hardening/        # UCS security hardening (DoD STIG)
-│   ├── ucs_prod_networking/           # UCS networking configuration
-│   ├── ucs_prod_monitoring/           # UCS monitoring and compliance
-│   └── ucs_prod_backup_dr/            # UCS backup and disaster recovery
+├── roles/
+│   ├── # --- Cisco ACI (5 roles) ---
+│   ├── aci_fabric_deploy/             # Phase 1: ACI fabric initial deployment
+│   ├── aci_tenant_config/             # Phase 2: Tenant, VRF, BD, EPG, contracts
+│   ├── aci_network_config/            # Phase 3: L3Out/L2Out external connectivity
+│   ├── aci_security_hardening/        # Phase 4: DoD STIG/NIST 800-53 hardening
+│   ├── aci_monitoring/                # Phase 5: SNMP, syslog, Call Home, health
+│   ├── # --- Cisco ISE (28 roles) ---
+│   ├── ise_policy__policy_sets_scaffold/   # Policy set framework
+│   ├── ise_policy__conditions_library/     # Conditions library
+│   ├── ise_policy__authz_profiles/         # Authorization profiles
+│   ├── ise_policy__radius_dacls/           # RADIUS downloadable ACLs
+│   ├── ise_policy__shell_profiles_cmdsets/ # TACACS+ shell profiles & command sets
+│   ├── ise_policy__apply_rules/            # Policy rule application
+│   ├── ise_policy__hitcount_shadow_report/ # Policy hit-count shadow reporting
+│   ├── ise_profiling__probes/              # Profiler probe configuration
+│   ├── ise_profiling__policies/            # Profiling policies
+│   ├── ise_endpoints__register_bulk/       # Bulk endpoint registration
+│   ├── ise_endpoints__group_membership/    # Endpoint group membership
+│   ├── ise_posture__conditions_rules/      # Posture conditions & rules
+│   ├── ise_posture__client_provisioning/   # Client provisioning
+│   ├── ise_posture__updates_channel/       # Posture updates channel
+│   ├── ise_guest__guest_portal/            # Guest self-service portal
+│   ├── ise_guest__sponsor_portal/          # Sponsor management portal
+│   ├── ise_guest__accounts_bulk/           # Bulk guest account provisioning
+│   ├── ise_byod__workflow/                 # BYOD onboarding workflow
+│   ├── ise_pxgrid__enable_clients/         # pxGrid client enablement
+│   ├── ise_integration__mse_dnac/          # Cisco MSE / DNA Center integration
+│   ├── ise_integration__logging/           # Remote syslog & SIEM integration
+│   ├── ise_anc__quarantine_rules/          # ANC adaptive quarantine rules
+│   ├── ise_hygiene__stale_objects_prune/   # Stale object cleanup
+│   ├── ise_audit__config_changes/          # Configuration change auditing
+│   ├── ise_report__auth_failures/          # Authentication failure reporting
+│   ├── ise_report__endpoint_catalog/       # Endpoint catalog reporting
+│   ├── ise_sessions__export_active/        # Active session export
+│   ├── ise_monitor__radius_accounting/     # RADIUS accounting monitoring
+│   ├── # --- Cisco UCS (5 roles) ---
+│   ├── ucs_prod_infrastructure/       # Phase 10: UCS infrastructure deployment
+│   ├── ucs_prod_networking/           # Phase 11: VLAN/VSAN/QoS/uplinks
+│   ├── ucs_security_hardening/        # Phase 12: DoD STIG/NIST 800-53 hardening
+│   ├── ucs_prod_backup_dr/            # Phase 13: Backup & disaster recovery
+│   └── ucs_prod_monitoring/           # Phase 14: SNMP, Call Home, health
 └── tasks/              # Reusable task files
     └── ucs_fourth_estate_deploy.yml
 ```
@@ -138,6 +191,89 @@ The ACI roles provide production-ready automation for deploying Cisco Applicatio
 - Fault management with severity-based reporting (critical, major, minor, warning)
 
 **Documentation:** `roles/aci_monitoring/README.md`
+
+---
+
+## ISE Roles for Fourth Estate
+
+### Overview
+
+The ISE roles provide production-ready automation for Cisco Identity Services Engine (ISE) deployments. Roles are organized in nine phases covering policy, profiling, posture, guest services, pxGrid, integrations, security, operations, and reporting.
+
+### Roles
+
+#### Phase 1 — Policy Configuration
+
+| Role | Purpose |
+|------|---------|
+| `ise_policy__policy_sets_scaffold` | Create the policy set framework (authentication/authorization rule sets) |
+| `ise_policy__conditions_library` | Build reusable compound conditions for policy rules |
+| `ise_policy__authz_profiles` | Define VLAN/dACL/SGT authorization result profiles |
+| `ise_policy__radius_dacls` | Configure downloadable ACLs pushed via RADIUS |
+| `ise_policy__shell_profiles_cmdsets` | Configure TACACS+ shell profiles and device admin command sets |
+| `ise_policy__apply_rules` | Apply authentication and authorization rules to policy sets |
+
+#### Phase 2 — Profiling
+
+| Role | Purpose |
+|------|---------|
+| `ise_profiling__probes` | Enable and configure profiler probes (DHCP, HTTP, RADIUS, NetFlow, SNMP) |
+| `ise_profiling__policies` | Create and tune endpoint profiling policies |
+
+#### Phase 3 — Endpoint Management
+
+| Role | Purpose |
+|------|---------|
+| `ise_endpoints__register_bulk` | Bulk-register endpoints from CSV/JSON source |
+| `ise_endpoints__group_membership` | Assign endpoints to endpoint identity groups |
+
+#### Phase 4 — Posture
+
+| Role | Purpose |
+|------|---------|
+| `ise_posture__conditions_rules` | Define posture conditions and compliance rules |
+| `ise_posture__client_provisioning` | Configure client provisioning policies and agent packages |
+| `ise_posture__updates_channel` | Manage posture updates feed / offline update archives |
+
+#### Phase 5 — Guest & BYOD
+
+| Role | Purpose |
+|------|---------|
+| `ise_guest__guest_portal` | Configure self-registration and hotspot guest portals |
+| `ise_guest__sponsor_portal` | Configure sponsor-approved guest portals |
+| `ise_guest__accounts_bulk` | Bulk-create guest accounts from a CSV source |
+| `ise_byod__workflow` | Configure BYOD onboarding portals and certificate provisioning |
+
+#### Phase 6 — pxGrid & Integrations
+
+| Role | Purpose |
+|------|---------|
+| `ise_pxgrid__enable_clients` | Register and approve pxGrid clients (Stealthwatch, FMC, etc.) |
+| `ise_integration__mse_dnac` | Integrate ISE with Cisco MSE and DNA Center / Catalyst Center |
+| `ise_integration__logging` | Configure remote syslog targets and SIEM log forwarding |
+
+#### Phase 7 — Security
+
+| Role | Purpose |
+|------|---------|
+| `ise_anc__quarantine_rules` | Define Adaptive Network Control (ANC) quarantine and unquarantine policies |
+
+#### Phase 8 — Operations
+
+| Role | Purpose |
+|------|---------|
+| `ise_policy__hitcount_shadow_report` | Generate policy rule hit-count and shadow-policy reports |
+| `ise_hygiene__stale_objects_prune` | Identify and prune stale endpoints, expired guests, and unused groups |
+| `ise_audit__config_changes` | Audit ISE configuration changes with diff reporting |
+
+#### Phase 9 — Reporting
+
+| Role | Purpose |
+|------|---------|
+| `ise_report__auth_failures` | Generate authentication failure reports with trend analysis |
+| `ise_report__endpoint_catalog` | Export the full endpoint catalog with profiling data |
+| `ise_sessions__export_active` | Export active RADIUS/TACACS+ session data |
+| `ise_monitor__radius_accounting` | Monitor RADIUS accounting statistics and anomalies |
 
 ---
 
@@ -228,10 +364,10 @@ The UCS roles provide production-ready automation for deploying Cisco UCS infras
 
 ### Prerequisites
 
-1. Install required collections:
+1. Install required collections and Python libraries:
 ```bash
 ansible-galaxy collection install -r requirements.yml
-pip install acicobra acimodel ciscoisesdk ucsmsdk intersight requests
+pip install acicobra acimodel ciscoisesdk ucsmsdk intersight dnacentersdk requests paramiko
 ```
 
 2. Create vault for credentials:
@@ -245,6 +381,12 @@ Add the following variables:
 vault_aci_apic_hostname: "apic.example.com"
 vault_aci_apic_username: "admin"
 vault_aci_apic_password: "your-password"
+
+# ISE
+vault_ise_hostname: "ise.example.com"
+vault_ise_username: "admin"
+vault_ise_password: "your-password"
+vault_ise_verify_ssl: true
 
 # UCS
 vault_ucs_hostname: "ucs-manager.example.com"
@@ -445,5 +587,5 @@ Created for Fourth Estate production deployments.
 
 ---
 
-**Last Updated:** 2026-03-13
+**Last Updated:** 2026-03-16
 **Maintained By:** Fourth Estate Infrastructure Team
