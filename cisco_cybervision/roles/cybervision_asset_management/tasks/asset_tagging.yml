@@ -1,0 +1,68 @@
+---
+# tasks file for cybervision_asset_management - Asset group and tag configuration
+# Creates criticality levels, asset groups, and pre-defined OT device categories
+
+- name: PHASE 3 - Create asset criticality labels
+  ansible.builtin.uri:
+    url: "{{ cv_api_url }}/labels"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ cv_api_token }}"
+      Content-Type: "application/json"
+      Accept: "application/json"
+    body_format: json
+    body:
+      name: "{{ item.name }}"
+      description: "{{ item.description }}"
+      color: "{{ item.color }}"
+    validate_certs: "{{ cv_validate_certs }}"
+    timeout: "{{ cv_timeout }}"
+    status_code: [200, 201, 409]
+  loop: "{{ cv_criticality_levels }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: cv_label_results
+  when: apply_changes | bool
+
+- name: PHASE 3 - Create asset groups
+  ansible.builtin.uri:
+    url: "{{ cv_api_url }}/groups"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ cv_api_token }}"
+      Content-Type: "application/json"
+      Accept: "application/json"
+    body_format: json
+    body:
+      name: "{{ item.name }}"
+      description: "{{ item.description }}"
+      criticality: "{{ item.criticality }}"
+      tags: "{{ item.tags }}"
+    validate_certs: "{{ cv_validate_certs }}"
+    timeout: "{{ cv_timeout }}"
+    status_code: [200, 201, 409]
+  loop: "{{ cv_asset_groups }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: cv_group_results
+  when: apply_changes | bool
+
+- name: PHASE 3 - Display tagging plan (dry-run)
+  ansible.builtin.debug:
+    msg:
+      - "DRY RUN — would create asset groups:"
+      - "{% for g in cv_asset_groups %}  - {{ g.name }} ({{ g.criticality }}): tags={{ g.tags | join(',') }}{% endfor %}"
+  when: not apply_changes | bool
+
+- name: Save asset tagging artifact
+  ansible.builtin.copy:
+    content: "{{ tagging_artifact | to_nice_json }}"
+    dest: "{{ artifacts_dir }}/cv_asset_tagging.json"
+    mode: '0640'
+  vars:
+    tagging_artifact:
+      timestamp: "{{ ansible_date_time.iso8601 }}"
+      center_host: "{{ cv_center_host }}"
+      mode: "{{ 'applied' if apply_changes | bool else 'dry_run' }}"
+      criticality_levels: "{{ cv_criticality_levels | map(attribute='name') | list }}"
+      asset_groups: "{{ cv_asset_groups | map(attribute='name') | list }}"

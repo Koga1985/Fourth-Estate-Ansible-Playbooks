@@ -1,0 +1,61 @@
+---
+# tasks file for cybervision_sensor_config - Sensor reporting policies
+# Defines what data sensors collect and forward to the Center
+
+- name: PHASE 2 - Query existing sensor policies
+  ansible.builtin.uri:
+    url: "{{ cv_api_url }}/sensor-policies"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ cv_api_token }}"
+      Accept: "application/json"
+    validate_certs: "{{ cv_validate_certs }}"
+    timeout: "{{ cv_timeout }}"
+    status_code: 200
+  register: cv_existing_policies
+  failed_when: false
+
+- name: PHASE 2 - Create or update sensor reporting policies
+  ansible.builtin.uri:
+    url: "{{ cv_api_url }}/sensor-policies"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ cv_api_token }}"
+      Content-Type: "application/json"
+      Accept: "application/json"
+    body_format: json
+    body:
+      name: "{{ item.name }}"
+      description: "{{ item.description }}"
+      report_flows: "{{ item.report_flows }}"
+      report_alerts: "{{ item.report_alerts }}"
+      report_assets: "{{ item.report_assets }}"
+      report_vulnerabilities: "{{ item.report_vulnerabilities }}"
+      protocol_decoders: "{{ item.protocol_decoders }}"
+    validate_certs: "{{ cv_validate_certs }}"
+    timeout: "{{ cv_timeout }}"
+    status_code: [200, 201, 409]
+  loop: "{{ cv_sensor_policies }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: cv_policy_results
+  when: apply_changes | bool
+
+- name: PHASE 2 - Display policy plan (dry-run)
+  ansible.builtin.debug:
+    msg:
+      - "DRY RUN — would create sensor policies:"
+      - "{% for p in cv_sensor_policies %}  - {{ p.name }}: decoders={{ p.protocol_decoders | join(',') }}{% endfor %}"
+  when: not apply_changes | bool
+
+- name: Save sensor policies artifact
+  ansible.builtin.copy:
+    content: "{{ policy_artifact | to_nice_json }}"
+    dest: "{{ artifacts_dir }}/cv_sensor_policies.json"
+    mode: '0640'
+  vars:
+    policy_artifact:
+      timestamp: "{{ ansible_date_time.iso8601 }}"
+      center_host: "{{ cv_center_host }}"
+      mode: "{{ 'applied' if apply_changes | bool else 'dry_run' }}"
+      policies: "{{ cv_sensor_policies }}"

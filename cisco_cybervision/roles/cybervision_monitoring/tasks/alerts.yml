@@ -1,0 +1,71 @@
+---
+# tasks file for cybervision_monitoring - Alert policy configuration
+# Configures OT-specific alert rules for new devices, anomalies, vulnerabilities
+
+- name: PHASE 5 - Configure email notification settings
+  ansible.builtin.uri:
+    url: "{{ cv_api_url }}/system/notifications/email"
+    method: PUT
+    headers:
+      Authorization: "Bearer {{ cv_api_token }}"
+      Content-Type: "application/json"
+      Accept: "application/json"
+    body_format: json
+    body:
+      enabled: "{{ cv_alert_email_enabled }}"
+      smtp_server: "{{ cv_alert_smtp_server }}"
+      smtp_port: "{{ cv_alert_smtp_port }}"
+      use_tls: "{{ cv_alert_smtp_tls }}"
+      from_address: "{{ cv_alert_from_address }}"
+      to_addresses: "{{ cv_alert_to_addresses }}"
+    validate_certs: "{{ cv_validate_certs }}"
+    timeout: "{{ cv_timeout }}"
+    status_code: [200, 204]
+  register: cv_email_config_result
+  when: apply_changes | bool
+
+- name: PHASE 5 - Create alert policies
+  ansible.builtin.uri:
+    url: "{{ cv_api_url }}/alert-policies"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ cv_api_token }}"
+      Content-Type: "application/json"
+      Accept: "application/json"
+    body_format: json
+    body:
+      name: "{{ item.name }}"
+      description: "{{ item.description }}"
+      category: "{{ item.category }}"
+      severity: "{{ item.severity }}"
+      enabled: "{{ item.enabled }}"
+      notification: "{{ item.notification }}"
+    validate_certs: "{{ cv_validate_certs }}"
+    timeout: "{{ cv_timeout }}"
+    status_code: [200, 201, 409]    # 409 = already exists
+  loop: "{{ cv_alert_policies }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: cv_alert_policy_results
+  when: apply_changes | bool
+
+- name: PHASE 5 - Display alert policy plan (dry-run)
+  ansible.builtin.debug:
+    msg:
+      - "DRY RUN — would create alert policies:"
+      - "{% for p in cv_alert_policies %}  - {{ p.name }} ({{ p.severity }}): category={{ p.category }}{% endfor %}"
+  when: not apply_changes | bool
+
+- name: Save alert policy artifact
+  ansible.builtin.copy:
+    content: "{{ alert_artifact | to_nice_json }}"
+    dest: "{{ artifacts_dir }}/cv_alert_policies.json"
+    mode: '0640'
+  vars:
+    alert_artifact:
+      timestamp: "{{ ansible_date_time.iso8601 }}"
+      center_host: "{{ cv_center_host }}"
+      mode: "{{ 'applied' if apply_changes | bool else 'dry_run' }}"
+      email_enabled: "{{ cv_alert_email_enabled }}"
+      smtp_server: "{{ cv_alert_smtp_server }}"
+      policies: "{{ cv_alert_policies | map(attribute='name') | list }}"

@@ -1,0 +1,62 @@
+---
+# tasks file for cybervision_center_deploy - Local user management
+# Creates and manages local admin and break-glass accounts
+# Operational users should authenticate via LDAP (see cybervision_security_hardening)
+
+- name: PHASE 1 - Query existing local users
+  ansible.builtin.uri:
+    url: "{{ cv_api_url }}/users"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ cv_api_token }}"
+      Accept: "application/json"
+    validate_certs: "{{ cv_validate_certs }}"
+    timeout: "{{ cv_timeout }}"
+    status_code: 200
+  register: cv_existing_users
+  failed_when: false
+
+- name: PHASE 1 - Create or update local users
+  ansible.builtin.uri:
+    url: "{{ cv_api_url }}/users"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ cv_api_token }}"
+      Content-Type: "application/json"
+      Accept: "application/json"
+    body_format: json
+    body:
+      username: "{{ item.username }}"
+      password: "{{ item.password }}"
+      role: "{{ item.role }}"
+      email: "{{ item.email }}"
+      description: "{{ item.description }}"
+    validate_certs: "{{ cv_validate_certs }}"
+    timeout: "{{ cv_timeout }}"
+    status_code: [200, 201, 409]    # 409 = already exists (idempotent)
+  loop: "{{ cv_local_users }}"
+  loop_control:
+    label: "{{ item.username }}"
+  register: cv_user_results
+  when: apply_changes | bool
+  no_log: true    # Passwords in loop body
+
+- name: PHASE 1 - Display user management plan (dry-run)
+  ansible.builtin.debug:
+    msg:
+      - "DRY RUN — would create/update local users:"
+      - "{% for u in cv_local_users %}  - {{ u.username }} (role: {{ u.role }}){% endfor %}"
+  when: not apply_changes | bool
+
+- name: Save user management artifact
+  ansible.builtin.copy:
+    content: "{{ user_artifact | to_nice_json }}"
+    dest: "{{ artifacts_dir }}/cv_user_management.json"
+    mode: '0640'
+  vars:
+    user_artifact:
+      timestamp: "{{ ansible_date_time.iso8601 }}"
+      center_host: "{{ cv_center_host }}"
+      mode: "{{ 'applied' if apply_changes | bool else 'dry_run' }}"
+      local_users:
+        - "{{ cv_local_users | map(attribute='username') | list }}"

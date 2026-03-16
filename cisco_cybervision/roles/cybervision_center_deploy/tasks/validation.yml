@@ -1,0 +1,66 @@
+---
+# tasks file for cybervision_center_deploy - Post-deployment validation
+
+- name: PHASE 1 - Validate Center API is responsive
+  ansible.builtin.uri:
+    url: "{{ cv_api_url }}/system/version"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ cv_api_token }}"
+      Accept: "application/json"
+    validate_certs: "{{ cv_validate_certs }}"
+    timeout: "{{ cv_timeout }}"
+    status_code: 200
+  register: cv_validate_api
+
+- name: PHASE 1 - Validate license is active
+  ansible.builtin.uri:
+    url: "{{ cv_api_url }}/system/license"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ cv_api_token }}"
+      Accept: "application/json"
+    validate_certs: "{{ cv_validate_certs }}"
+    timeout: "{{ cv_timeout }}"
+    status_code: 200
+  register: cv_validate_license
+  failed_when: false
+
+- name: PHASE 1 - Validate enrolled sensor count
+  ansible.builtin.uri:
+    url: "{{ cv_api_url }}/sensors"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ cv_api_token }}"
+      Accept: "application/json"
+    validate_certs: "{{ cv_validate_certs }}"
+    timeout: "{{ cv_timeout }}"
+    status_code: 200
+  register: cv_validate_sensors
+  failed_when: false
+
+- name: Save validation artifact
+  ansible.builtin.copy:
+    content: "{{ validation_artifact | to_nice_json }}"
+    dest: "{{ artifacts_dir }}/cv_center_validation.json"
+    mode: '0640'
+  vars:
+    validation_artifact:
+      timestamp: "{{ ansible_date_time.iso8601 }}"
+      center_host: "{{ cv_center_host }}"
+      api_responsive: "{{ cv_validate_api.status == 200 }}"
+      version: "{{ cv_validate_api.json.version | default('unknown') }}"
+      license_status: "{{ cv_validate_license.json.status | default('unknown') }}"
+      sensor_count: "{{ cv_validate_sensors.json | default([]) | length }}"
+
+- name: Display validation summary
+  ansible.builtin.debug:
+    msg:
+      - "================================================================"
+      - " Cyber Vision Center - Validation Summary"
+      - "================================================================"
+      - " API responsive:   {{ cv_validate_api.status == 200 }}"
+      - " Version:          {{ cv_validate_api.json.version | default('unknown') }}"
+      - " License status:   {{ cv_validate_license.json.status | default('unknown') }}"
+      - " Enrolled sensors: {{ cv_validate_sensors.json | default([]) | length }}"
+      - "================================================================"

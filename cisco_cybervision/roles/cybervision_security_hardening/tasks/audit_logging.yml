@@ -1,0 +1,52 @@
+---
+# tasks file for cybervision_security_hardening - Audit logging
+# NIST AU-2, AU-3, AU-9, AU-12 | STIG CISC-ND-000700, CISC-ND-000710, CISC-ND-000720
+
+- name: PHASE 4 - CISC-ND-000700/710/720 - Configure audit logging policy
+  ansible.builtin.uri:
+    url: "{{ cv_api_url }}/system/audit"
+    method: PUT
+    headers:
+      Authorization: "Bearer {{ cv_api_token }}"
+      Content-Type: "application/json"
+      Accept: "application/json"
+    body_format: json
+    body:
+      enabled: "{{ cv_audit_enabled }}"
+      log_auth_events: "{{ cv_audit_log_auth_events }}"
+      log_config_changes: "{{ cv_audit_log_config_changes }}"
+      log_admin_actions: "{{ cv_audit_log_admin_actions }}"
+      retention_days: "{{ cv_audit_log_retention_days }}"
+    validate_certs: "{{ cv_validate_certs }}"
+    timeout: "{{ cv_timeout }}"
+    status_code: [200, 204]
+  register: cv_audit_result
+  when: apply_changes | bool
+
+- name: PHASE 4 - Display audit logging plan (dry-run)
+  ansible.builtin.debug:
+    msg:
+      - "DRY RUN — would configure audit logging:"
+      - "  Enabled:         {{ cv_audit_enabled }}"
+      - "  Auth events:     {{ cv_audit_log_auth_events }}"
+      - "  Config changes:  {{ cv_audit_log_config_changes }}"
+      - "  Admin actions:   {{ cv_audit_log_admin_actions }}"
+      - "  Retention days:  {{ cv_audit_log_retention_days }}"
+  when: not apply_changes | bool
+
+- name: Save audit logging artifact
+  ansible.builtin.copy:
+    content: "{{ audit_artifact | to_nice_json }}"
+    dest: "{{ artifacts_dir }}/cv_audit_logging.json"
+    mode: '0640'
+  vars:
+    audit_artifact:
+      timestamp: "{{ ansible_date_time.iso8601 }}"
+      center_host: "{{ cv_center_host }}"
+      mode: "{{ 'applied' if apply_changes | bool else 'dry_run' }}"
+      stig_controls:
+        - "CISC-ND-000700"
+        - "CISC-ND-000710"
+        - "CISC-ND-000720"
+      audit_enabled: "{{ cv_audit_enabled }}"
+      retention_days: "{{ cv_audit_log_retention_days }}"

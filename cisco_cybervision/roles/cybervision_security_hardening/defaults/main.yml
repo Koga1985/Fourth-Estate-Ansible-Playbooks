@@ -1,0 +1,207 @@
+---
+# defaults file for cybervision_security_hardening
+# Cisco Cyber Vision - DoD STIG and NIST 800-53 security hardening
+
+# ============================================================
+# Cyber Vision Center API Connection
+# ============================================================
+cv_center_host: "{{ vault_cv_center_hostname }}"
+cv_api_url: "https://{{ cv_center_host }}/api/3.0"
+cv_api_token: "{{ vault_cv_api_token }}"
+cv_validate_certs: true
+cv_use_proxy: false
+cv_timeout: 60
+
+# ============================================================
+# Deployment Control
+# ============================================================
+apply_changes: false
+artifacts_dir: "/tmp/cv-artifacts"
+
+# ============================================================
+# Fourth Estate Organization
+# ============================================================
+cv_org_name: "FourthEstate"
+cv_org_contact: "{{ vault_fourth_estate_contact }}"
+cv_environment: "production"
+
+# ============================================================
+# STIG Category Feature Toggles
+# ============================================================
+stig_cat1_enabled: true
+stig_cat2_enabled: true
+stig_cat3_enabled: true
+
+# ============================================================
+# Module Feature Toggles
+# ============================================================
+enable_auth_hardening: true
+enable_access_control: true
+enable_audit_logging: true
+enable_crypto_tls: true
+enable_session_management: true
+enable_banners: true
+enable_ntp_dns: true
+enable_compliance_report: true
+
+# ============================================================
+# Authentication Configuration
+# NIST IA-2, IA-5 | STIG CISC-ND-001190
+# ============================================================
+cv_auth_type: "ldap"    # Options: local, ldap, radius, tacacs
+
+# LDAP Configuration
+cv_ldap_enabled: true
+cv_ldap_servers:
+  - host: "{{ vault_cv_ldap_host_1 }}"
+    port: 636
+    use_ssl: true
+    base_dn: "{{ vault_cv_ldap_base_dn }}"
+    bind_dn: "{{ vault_cv_ldap_bind_dn }}"
+    bind_password: "{{ vault_cv_ldap_bind_password }}"
+    description: "Primary LDAP server"
+  - host: "{{ vault_cv_ldap_host_2 }}"
+    port: 636
+    use_ssl: true
+    base_dn: "{{ vault_cv_ldap_base_dn }}"
+    bind_dn: "{{ vault_cv_ldap_bind_dn }}"
+    bind_password: "{{ vault_cv_ldap_bind_password }}"
+    description: "Secondary LDAP server"
+
+cv_ldap_group_mappings:
+  - ldap_group: "CN=CV-Admins,OU=Groups,DC=example,DC=com"
+    cv_role: "Admin"
+  - ldap_group: "CN=CV-Operators,OU=Groups,DC=example,DC=com"
+    cv_role: "Operator"
+  - ldap_group: "CN=CV-ReadOnly,OU=Groups,DC=example,DC=com"
+    cv_role: "Viewer"
+
+# RADIUS (optional)
+cv_radius_enabled: false
+cv_radius_servers: []
+# cv_radius_servers:
+#   - host: "{{ vault_cv_radius_host_1 }}"
+#     secret: "{{ vault_cv_radius_secret }}"
+#     auth_port: 1812
+#     timeout: 5
+
+# TACACS+ (optional)
+cv_tacacs_enabled: false
+cv_tacacs_servers: []
+
+# ============================================================
+# Password Policy (STIG CAT I)
+# NIST IA-5 | STIG CISC-ND-000530, CISC-ND-000570
+# ============================================================
+cv_password_min_length: 15
+cv_password_min_uppercase: 1
+cv_password_min_lowercase: 1
+cv_password_min_digits: 1
+cv_password_min_special: 1
+cv_password_history_count: 5
+cv_password_expiry_days: 60
+cv_password_strength_check: true
+
+# ============================================================
+# Account Lockout Policy (STIG CAT II)
+# NIST AC-7 | STIG CISC-ND-000370
+# ============================================================
+cv_lockout_enabled: true
+cv_lockout_max_attempts: 3
+cv_lockout_window_seconds: 300
+cv_lockout_duration_seconds: 1800
+
+# ============================================================
+# Session Management (STIG CAT II)
+# NIST AC-11, AC-12 | STIG CISC-ND-000390
+# ============================================================
+cv_session_timeout: 600      # 10 minutes — maximum session duration
+cv_idle_timeout: 300         # 5 minutes — idle/inactivity timeout
+cv_max_concurrent_sessions: 10
+
+# ============================================================
+# TLS Configuration (STIG CAT I)
+# NIST SC-8 | STIG CISC-ND-001440
+# ============================================================
+cv_https_only: true           # Disable HTTP — enforce HTTPS only
+cv_min_tls_version: "TLSv1.2"
+
+cv_allowed_ciphers:
+  - "TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384"
+  - "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256"
+  - "TLS_RSA_WITH_AES_256_CBC_SHA256"
+  - "TLS_RSA_WITH_AES_128_CBC_SHA256"
+
+# ============================================================
+# Audit Logging (STIG CAT II)
+# NIST AU-2, AU-3, AU-9, AU-12 | STIG CISC-ND-000700/710/720
+# ============================================================
+cv_audit_enabled: true
+cv_audit_log_auth_events: true
+cv_audit_log_config_changes: true
+cv_audit_log_admin_actions: true
+cv_audit_log_retention_days: 90
+
+# ============================================================
+# NTP Configuration (STIG CAT II/III)
+# NIST AU-8 | STIG CISC-ND-001290, CISC-ND-001420
+# ============================================================
+cv_ntp_servers:
+  - server: "time.nist.gov"
+    preferred: true
+  - server: "time-a-g.nist.gov"
+    preferred: false
+
+# DNS
+cv_dns_servers:
+  - address: "{{ vault_dns_server_primary }}"
+    preferred: true
+  - address: "{{ vault_dns_server_secondary }}"
+    preferred: false
+
+# ============================================================
+# DoD Login Banner (STIG CAT III)
+# NIST AC-8 | STIG CISC-ND-000080
+# ============================================================
+cv_login_banner: |
+  You are accessing a U.S. Government (USG) Information System (IS) that is
+  provided for USG-authorized use only. By using this IS (which includes any
+  device attached to this IS), you consent to the following conditions:
+  -The USG routinely intercepts and monitors communications on this IS for
+  purposes including, but not limited to, penetration testing, COMSEC monitoring,
+  network operations and defense, personnel misconduct (PM), law enforcement (LE),
+  and counterintelligence (CI) investigations.
+  -At any time, the USG may inspect and seize data stored on this IS.
+  -Communications using, or data stored on, this IS are not private, are subject
+  to routine monitoring, interception, and search, and may be disclosed or used
+  for any USG-authorized purpose.
+  -This IS includes security measures (e.g., authentication and access controls)
+  to protect USG interests--not for your personal benefit or privacy.
+  -Notwithstanding the above, using this IS does not constitute consent to PM, LE
+  or CI investigative searching or monitoring of the content of privileged
+  communications, or work product, related to personal representation or services
+  by attorneys, psychotherapists, or clergy, and their assistants. Such
+  communications and work product are private and confidential. See User Agreement
+  for details.
+
+# ============================================================
+# System Identification (STIG CAT III)
+# NIST CM-8 | STIG CISC-ND-001470
+# ============================================================
+cv_system_contact: "{{ vault_cv_system_contact }}"
+cv_system_location: "{{ vault_cv_system_location }}"
+cv_system_description: "Fourth Estate OT Security Platform - DoD STIG Compliant"
+
+# ============================================================
+# RBAC Roles
+# NIST AC-2, AC-3, AC-6 | STIG CISC-ND-000360
+# ============================================================
+cv_roles:
+  - name: "Admin"
+    description: "Full administrative access to all Center functions"
+  - name: "Operator"
+    description: "Read-write access to assets, flows, and alerts; no system config"
+  - name: "Viewer"
+    description: "Read-only access for auditors and SOC analysts"
+  - name: "SensorManager"
+    description: "Sensor enrollment and management only"

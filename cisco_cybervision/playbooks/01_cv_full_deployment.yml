@@ -1,0 +1,54 @@
+---
+# Cisco Cyber Vision - Full End-to-End Deployment
+# Runs all five phases in sequence
+#
+# Usage:
+#   # Dry-run (default)
+#   ansible-playbook -i inventory playbooks/01_cv_full_deployment.yml --ask-vault-pass
+#
+#   # Apply changes
+#   ansible-playbook -i inventory playbooks/01_cv_full_deployment.yml \
+#     -e "apply_changes=true" --ask-vault-pass
+
+- name: Cyber Vision Full Deployment - All Phases
+  hosts: localhost
+  connection: local
+  gather_facts: true
+
+  vars:
+    apply_changes: false
+    artifacts_dir: "/tmp/cv-artifacts"
+    deploy_cv_center: true
+    deploy_cv_sensors: true
+    deploy_cv_assets: true
+    deploy_cv_security: true
+    deploy_cv_monitoring: true
+
+  pre_tasks:
+    - name: Create artifacts directory
+      ansible.builtin.file:
+        path: "{{ artifacts_dir }}"
+        state: directory
+        mode: '0750'
+      tags: ['always']
+
+  roles:
+    - role: cybervision_center_deploy
+      when: deploy_cv_center | bool
+      tags: ['center', 'phase1']
+
+    - role: cybervision_sensor_config
+      when: deploy_cv_sensors | bool
+      tags: ['sensors', 'phase2']
+
+    - role: cybervision_asset_management
+      when: deploy_cv_assets | bool
+      tags: ['assets', 'phase3']
+
+    - role: cybervision_security_hardening
+      when: deploy_cv_security | bool
+      tags: ['security', 'phase4']
+
+    - role: cybervision_monitoring
+      when: deploy_cv_monitoring | bool
+      tags: ['monitoring', 'phase5']

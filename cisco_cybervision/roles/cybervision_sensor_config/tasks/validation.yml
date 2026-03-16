@@ -1,0 +1,51 @@
+---
+# tasks file for cybervision_sensor_config - Post-configuration validation
+
+- name: PHASE 2 - Query all sensors and their status
+  ansible.builtin.uri:
+    url: "{{ cv_api_url }}/sensors"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ cv_api_token }}"
+      Accept: "application/json"
+    validate_certs: "{{ cv_validate_certs }}"
+    timeout: "{{ cv_timeout }}"
+    status_code: 200
+  register: cv_sensors_validation
+  failed_when: false
+
+- name: PHASE 2 - Check for offline sensors
+  ansible.builtin.set_fact:
+    cv_offline_sensors: "{{ cv_sensors_validation.json | default([]) | selectattr('status', 'equalto', 'offline') | list }}"
+  when: cv_sensors_validation.status == 200
+
+- name: PHASE 2 - Warn on offline sensors
+  ansible.builtin.debug:
+    msg: "WARNING: {{ cv_offline_sensors | length }} sensor(s) offline: {{ cv_offline_sensors | map(attribute='name') | list }}"
+  when:
+    - cv_offline_sensors is defined
+    - cv_offline_sensors | length > 0
+
+- name: Save sensor validation artifact
+  ansible.builtin.copy:
+    content: "{{ sensor_validation | to_nice_json }}"
+    dest: "{{ artifacts_dir }}/cv_sensor_validation.json"
+    mode: '0640'
+  vars:
+    sensor_validation:
+      timestamp: "{{ ansible_date_time.iso8601 }}"
+      center_host: "{{ cv_center_host }}"
+      total_sensors: "{{ cv_sensors_validation.json | default([]) | length }}"
+      online_sensors: "{{ cv_sensors_validation.json | default([]) | selectattr('status', 'equalto', 'online') | list | length }}"
+      offline_sensors: "{{ cv_offline_sensors | default([]) | length }}"
+
+- name: Display sensor validation summary
+  ansible.builtin.debug:
+    msg:
+      - "================================================================"
+      - " Cyber Vision Sensor Config - Validation Summary"
+      - "================================================================"
+      - " Total enrolled:  {{ cv_sensors_validation.json | default([]) | length }}"
+      - " Online:          {{ cv_sensors_validation.json | default([]) | selectattr('status', 'equalto', 'online') | list | length }}"
+      - " Offline:         {{ cv_offline_sensors | default([]) | length }}"
+      - "================================================================"

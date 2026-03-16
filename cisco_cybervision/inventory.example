@@ -1,0 +1,115 @@
+# Cisco Cyber Vision Inventory Example
+# Copy this file to your inventory directory and customize for your environment.
+#
+# Cyber Vision is API-driven: all Ansible modules communicate with the
+# Cyber Vision Center REST API (HTTPS on port 443).
+# All configuration tasks run from localhost targeting the Center API.
+#
+# Usage:
+#   cp inventory.example inventory
+#   # Edit Center IP, sensor IPs, and vault references below
+#   ansible-vault create group_vars/all/vault.yml  # store credentials here
+#   ansible-playbook -i inventory site.yml --ask-vault-pass
+
+# =========================================
+# Cyber Vision Center (Management Server)
+# Typically a single appliance or VM; HA pairs use a VIP.
+# =========================================
+[cv_center]
+cv-center-01 ansible_host=192.168.10.10    # Primary Cyber Vision Center
+
+# =========================================
+# Cyber Vision Sensors
+# Hardware or software sensors deployed at OT network tap points.
+# sensor_type: hardware | software | iol (IOx on Catalyst)
+# sensor_zone: logical zone name (maps to CV groups)
+# =========================================
+[cv_sensors]
+cv-sensor-01 ansible_host=192.168.10.20 sensor_type=hardware sensor_zone=plant_floor
+cv-sensor-02 ansible_host=192.168.10.21 sensor_type=hardware sensor_zone=control_room
+cv-sensor-03 ansible_host=192.168.10.22 sensor_type=software sensor_zone=dmz
+cv-sensor-04 ansible_host=192.168.10.23 sensor_type=iol sensor_zone=substation
+
+# =========================================
+# Groupings
+# =========================================
+[cv_fabric:children]
+cv_center
+cv_sensors
+
+# =========================================
+# Localhost for API Operations
+# All ansible.builtin.uri calls run from localhost against the Center API.
+# =========================================
+[localhost]
+localhost ansible_connection=local ansible_python_interpreter=/usr/bin/python3
+
+# =========================================
+# Center Variables
+# =========================================
+[cv_center:vars]
+# API base URL — change only if Center uses a non-standard port
+cv_api_url=https://{{ ansible_host }}/api/3.0
+cv_validate_certs=true    # Set to false for lab/self-signed certs
+
+# =========================================
+# Sensor Group Variables
+# =========================================
+[cv_sensors:vars]
+# SSH access for initial sensor bootstrap (not used for ongoing API config)
+ansible_user={{ vault_cv_sensor_ssh_user }}
+ansible_ssh_private_key_file={{ vault_cv_sensor_ssh_key_path }}
+ansible_ssh_common_args='-o StrictHostKeyChecking=no'
+
+# =========================================
+# Localhost Variables
+# All Cyber Vision API tasks target localhost and call the Center REST API.
+# =========================================
+[localhost:vars]
+# Center API connection
+cv_center_host={{ vault_cv_center_hostname }}
+cv_api_url=https://{{ vault_cv_center_hostname }}/api/3.0
+cv_validate_certs=true    # Set to false for lab/self-signed certs
+
+# Deployment control:
+#   apply_changes=false → dry run, API GETs only (safe default)
+#   apply_changes=true  → POST/PUT/DELETE calls made to Center
+apply_changes=false
+artifacts_dir=/tmp/cv-artifacts    # Directory for JSON/text report artifacts
+
+# Organization naming
+cv_org_name=FourthEstate
+cv_org_description=Fourth Estate Organization - Cisco Cyber Vision
+
+# =========================================
+# Security Variables (cybervision_security_hardening)
+# =========================================
+[localhost:vars]
+# STIG category toggles
+stig_cat1_enabled=true
+stig_cat2_enabled=true
+stig_cat3_enabled=true
+
+# Authentication
+cv_auth_type=ldap    # Options: local, ldap, radius, tacacs
+
+# Session timeouts (seconds)
+cv_session_timeout=600    # Max session duration (10 minutes — STIG requirement)
+cv_idle_timeout=300       # Idle logout timeout (5 minutes)
+
+# =========================================
+# Monitoring Variables (cybervision_monitoring)
+# =========================================
+[localhost:vars]
+# Syslog / SIEM
+cv_syslog_destination=siem.example.com    # Replace with your SIEM
+cv_syslog_port=514
+cv_syslog_severity=warnings
+
+# SNMP
+cv_snmp_version=v3
+cv_snmp_trap_destination=monitor.example.com    # Replace with your trap receiver
+
+# Cisco ISE integration
+cv_ise_enabled=true
+cv_ise_host={{ vault_cv_ise_hostname }}

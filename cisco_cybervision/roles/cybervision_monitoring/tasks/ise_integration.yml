@@ -1,0 +1,74 @@
+---
+# tasks file for cybervision_monitoring - Cisco ISE pxGrid integration
+# Publishes OT asset context to ISE for TrustSec segmentation policy enforcement
+
+- name: PHASE 5 - Query existing ISE integration status
+  ansible.builtin.uri:
+    url: "{{ cv_api_url }}/integrations/ise"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ cv_api_token }}"
+      Accept: "application/json"
+    validate_certs: "{{ cv_validate_certs }}"
+    timeout: "{{ cv_timeout }}"
+    status_code: [200, 404]
+  register: cv_ise_status
+  failed_when: false
+  when: cv_ise_enabled | bool
+
+- name: PHASE 5 - Configure Cisco ISE pxGrid integration
+  ansible.builtin.uri:
+    url: "{{ cv_api_url }}/integrations/ise"
+    method: PUT
+    headers:
+      Authorization: "Bearer {{ cv_api_token }}"
+      Content-Type: "application/json"
+      Accept: "application/json"
+    body_format: json
+    body:
+      enabled: "{{ cv_ise_enabled }}"
+      ise_host: "{{ cv_ise_host }}"
+      pxgrid_node: "{{ cv_ise_pxgrid_node }}"
+      client_cert: "{{ cv_ise_client_cert }}"
+      client_key: "{{ cv_ise_client_key }}"
+      ca_cert: "{{ cv_ise_ca_cert }}"
+      publish_assets: "{{ cv_ise_publish_assets }}"
+      publish_vulnerabilities: "{{ cv_ise_publish_vulnerabilities }}"
+      publish_alerts: "{{ cv_ise_publish_alerts }}"
+    validate_certs: "{{ cv_validate_certs }}"
+    timeout: "{{ cv_timeout }}"
+    status_code: [200, 204]
+  register: cv_ise_config_result
+  when:
+    - apply_changes | bool
+    - cv_ise_enabled | bool
+  no_log: true    # Certificates in body
+
+- name: PHASE 5 - Display ISE integration plan (dry-run)
+  ansible.builtin.debug:
+    msg:
+      - "DRY RUN — would configure ISE pxGrid integration:"
+      - "  ISE host:             {{ cv_ise_host }}"
+      - "  pxGrid node:          {{ cv_ise_pxgrid_node }}"
+      - "  Publish assets:       {{ cv_ise_publish_assets }}"
+      - "  Publish alerts:       {{ cv_ise_publish_alerts }}"
+      - "  Publish vulns:        {{ cv_ise_publish_vulnerabilities }}"
+  when: not apply_changes | bool and cv_ise_enabled | bool
+
+- name: Save ISE integration artifact
+  ansible.builtin.copy:
+    content: "{{ ise_artifact | to_nice_json }}"
+    dest: "{{ artifacts_dir }}/cv_ise_integration.json"
+    mode: '0640'
+  vars:
+    ise_artifact:
+      timestamp: "{{ ansible_date_time.iso8601 }}"
+      center_host: "{{ cv_center_host }}"
+      mode: "{{ 'applied' if apply_changes | bool else 'dry_run' }}"
+      ise_enabled: "{{ cv_ise_enabled }}"
+      ise_host: "{{ cv_ise_host }}"
+      pxgrid_node: "{{ cv_ise_pxgrid_node }}"
+      publish_assets: "{{ cv_ise_publish_assets }}"
+      publish_vulnerabilities: "{{ cv_ise_publish_vulnerabilities }}"
+      publish_alerts: "{{ cv_ise_publish_alerts }}"
+  when: cv_ise_enabled | bool

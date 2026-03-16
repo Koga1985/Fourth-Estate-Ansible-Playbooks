@@ -1,0 +1,47 @@
+---
+# handlers file for cybervision_security_hardening
+
+- name: notify security hardening complete
+  ansible.builtin.debug:
+    msg:
+      - "================================================================"
+      - " Cyber Vision Security Hardening Complete - Fourth Estate"
+      - "================================================================"
+      - " Center Host:   {{ cv_center_host }}"
+      - " Mode:          {{ 'CHANGES APPLIED' if apply_changes | bool else 'DRY RUN ONLY' }}"
+      - " Timestamp:     {{ ansible_date_time.iso8601 }}"
+      - " Artifacts:     {{ artifacts_dir }}"
+      - "----------------------------------------------------------------"
+      - " STIG Controls Applied:"
+      - "   CAT I  (High):   {{ stig_cat1_enabled | bool }}"
+      - "   CAT II (Medium): {{ stig_cat2_enabled | bool }}"
+      - "   CAT III (Low):   {{ stig_cat3_enabled | bool }}"
+      - "----------------------------------------------------------------"
+      - " Modules:"
+      - "   Authentication:     {{ enable_auth_hardening | bool }}"
+      - "   Access Control:     {{ enable_access_control | bool }}"
+      - "   Audit Logging:      {{ enable_audit_logging | bool }}"
+      - "   TLS/Crypto:         {{ enable_crypto_tls | bool }}"
+      - "   Session Management: {{ enable_session_management | bool }}"
+      - "   Banners:            {{ enable_banners | bool }}"
+      - "   NTP/DNS:            {{ enable_ntp_dns | bool }}"
+      - "================================================================"
+
+- name: backup cybervision config
+  ansible.builtin.uri:
+    url: "{{ cv_api_url }}/system/backup"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ cv_api_token }}"
+      Content-Type: "application/json"
+      Accept: "application/json"
+    body_format: json
+    body:
+      name: "pre-hardening-backup-{{ ansible_date_time.date }}"
+      description: "Automated backup before security hardening"
+    validate_certs: "{{ cv_validate_certs }}"
+    timeout: "{{ cv_timeout }}"
+    status_code: [200, 201, 202]
+  register: cv_backup_result
+  failed_when: false
+  when: apply_changes | bool

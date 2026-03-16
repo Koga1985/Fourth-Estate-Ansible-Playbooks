@@ -1,0 +1,63 @@
+---
+# tasks file for cybervision_sensor_config - Capture mode configuration
+# Sets traffic capture mode per sensor type (SPAN, TAP, IOx)
+
+- name: PHASE 2 - Query enrolled sensors for capture mode config
+  ansible.builtin.uri:
+    url: "{{ cv_api_url }}/sensors"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ cv_api_token }}"
+      Accept: "application/json"
+    validate_certs: "{{ cv_validate_certs }}"
+    timeout: "{{ cv_timeout }}"
+    status_code: 200
+  register: cv_sensors_for_capture
+  failed_when: false
+
+- name: PHASE 2 - Configure capture mode per sensor type
+  ansible.builtin.uri:
+    url: "{{ cv_api_url }}/sensors/{{ item.id }}/capture-mode"
+    method: PUT
+    headers:
+      Authorization: "Bearer {{ cv_api_token }}"
+      Content-Type: "application/json"
+      Accept: "application/json"
+    body_format: json
+    body:
+      mode: "{{ cv_capture_modes[item.type]['mode'] | default('span') }}"
+      promiscuous: "{{ cv_capture_modes[item.type]['promiscuous'] | default(true) }}"
+      max_bandwidth_mbps: "{{ cv_sensor_defaults.max_bandwidth_mbps }}"
+    validate_certs: "{{ cv_validate_certs }}"
+    timeout: "{{ cv_timeout }}"
+    status_code: [200, 204]
+  loop: "{{ cv_sensors_for_capture.json | default([]) }}"
+  loop_control:
+    label: "sensor {{ item.id }} ({{ item.type | default('unknown') }})"
+  register: cv_capture_results
+  when:
+    - apply_changes | bool
+    - cv_sensors_for_capture.status == 200
+
+- name: PHASE 2 - Display capture mode plan (dry-run)
+  ansible.builtin.debug:
+    msg:
+      - "DRY RUN — capture mode defaults by sensor type:"
+      - "  hardware: {{ cv_capture_modes.hardware.mode }}"
+      - "  software: {{ cv_capture_modes.software.mode }}"
+      - "  iol:      {{ cv_capture_modes.iol.mode }}"
+      - "Enrolled sensors to configure: {{ cv_sensors_for_capture.json | default([]) | length }}"
+  when: not apply_changes | bool
+
+- name: Save capture mode artifact
+  ansible.builtin.copy:
+    content: "{{ capture_artifact | to_nice_json }}"
+    dest: "{{ artifacts_dir }}/cv_capture_modes.json"
+    mode: '0640'
+  vars:
+    capture_artifact:
+      timestamp: "{{ ansible_date_time.iso8601 }}"
+      center_host: "{{ cv_center_host }}"
+      mode: "{{ 'applied' if apply_changes | bool else 'dry_run' }}"
+      capture_mode_defaults: "{{ cv_capture_modes }}"
+      sensors_configured: "{{ cv_sensors_for_capture.json | default([]) | length }}"

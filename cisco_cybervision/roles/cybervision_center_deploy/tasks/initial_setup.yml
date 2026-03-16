@@ -1,0 +1,64 @@
+---
+# tasks file for cybervision_center_deploy - Initial system setup
+# Configures Center name, timezone, and language
+
+- name: PHASE 1 - Query current system settings
+  ansible.builtin.uri:
+    url: "{{ cv_api_url }}/system/settings"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ cv_api_token }}"
+      Accept: "application/json"
+    validate_certs: "{{ cv_validate_certs }}"
+    timeout: "{{ cv_timeout }}"
+    status_code: 200
+  register: cv_current_settings
+  failed_when: false
+
+- name: PHASE 1 - Configure Center name, timezone, and language
+  ansible.builtin.uri:
+    url: "{{ cv_api_url }}/system/settings"
+    method: PUT
+    headers:
+      Authorization: "Bearer {{ cv_api_token }}"
+      Content-Type: "application/json"
+      Accept: "application/json"
+    body_format: json
+    body:
+      name: "{{ cv_center_name }}"
+      description: "{{ cv_center_description }}"
+      timezone: "{{ cv_center_timezone }}"
+      language: "{{ cv_center_language }}"
+    validate_certs: "{{ cv_validate_certs }}"
+    timeout: "{{ cv_timeout }}"
+    status_code: [200, 204]
+  register: cv_settings_result
+  when: apply_changes | bool
+  notify:
+    - notify center deploy complete
+
+- name: PHASE 1 - Display planned settings (dry-run)
+  ansible.builtin.debug:
+    msg:
+      - "DRY RUN — would configure:"
+      - "  Name:        {{ cv_center_name }}"
+      - "  Description: {{ cv_center_description }}"
+      - "  Timezone:    {{ cv_center_timezone }}"
+      - "  Language:    {{ cv_center_language }}"
+  when: not apply_changes | bool
+
+- name: Save initial setup artifact
+  ansible.builtin.copy:
+    content: "{{ setup_artifact | to_nice_json }}"
+    dest: "{{ artifacts_dir }}/cv_initial_setup.json"
+    mode: '0640'
+  vars:
+    setup_artifact:
+      timestamp: "{{ ansible_date_time.iso8601 }}"
+      center_host: "{{ cv_center_host }}"
+      mode: "{{ 'applied' if apply_changes | bool else 'dry_run' }}"
+      settings:
+        name: "{{ cv_center_name }}"
+        description: "{{ cv_center_description }}"
+        timezone: "{{ cv_center_timezone }}"
+        language: "{{ cv_center_language }}"

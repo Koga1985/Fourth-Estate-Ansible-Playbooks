@@ -1,0 +1,172 @@
+---
+# tasks file for cybervision_security_hardening - Compliance report generation
+# NIST CA-7, CA-8
+
+- name: Query current TLS settings for report
+  ansible.builtin.uri:
+    url: "{{ cv_api_url }}/system/security/tls"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ cv_api_token }}"
+      Accept: "application/json"
+    validate_certs: "{{ cv_validate_certs }}"
+    timeout: "{{ cv_timeout }}"
+    status_code: 200
+  register: cv_report_tls
+  failed_when: false
+
+- name: Query current session policy for report
+  ansible.builtin.uri:
+    url: "{{ cv_api_url }}/system/security/session-policy"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ cv_api_token }}"
+      Accept: "application/json"
+    validate_certs: "{{ cv_validate_certs }}"
+    timeout: "{{ cv_timeout }}"
+    status_code: 200
+  register: cv_report_session
+  failed_when: false
+
+- name: Query current audit settings for report
+  ansible.builtin.uri:
+    url: "{{ cv_api_url }}/system/audit"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ cv_api_token }}"
+      Accept: "application/json"
+    validate_certs: "{{ cv_validate_certs }}"
+    timeout: "{{ cv_timeout }}"
+    status_code: 200
+  register: cv_report_audit
+  failed_when: false
+
+- name: Generate STIG compliance report (JSON)
+  ansible.builtin.copy:
+    content: "{{ compliance_report | to_nice_json }}"
+    dest: "{{ artifacts_dir }}/cv_stig_compliance_report.json"
+    mode: '0640'
+  vars:
+    compliance_report:
+      metadata:
+        report_type: "Cisco Cyber Vision DoD STIG Compliance Report"
+        timestamp: "{{ ansible_date_time.iso8601 }}"
+        center_host: "{{ cv_center_host }}"
+        mode: "{{ 'applied' if apply_changes | bool else 'dry_run' }}"
+        frameworks:
+          - "dod_stig"
+          - "nist_800_53"
+      stig_controls:
+        cat1_high:
+          - id: "CISC-ND-001440"
+            description: "HTTPS enforced, HTTP disabled"
+            configured_https_only: "{{ cv_https_only }}"
+            configured_min_tls: "{{ cv_min_tls_version }}"
+            enabled: "{{ enable_crypto_tls | bool }}"
+            applied: "{{ apply_changes | bool }}"
+          - id: "CISC-ND-000530"
+            description: "Password strength policy"
+            min_length: "{{ cv_password_min_length }}"
+            history_count: "{{ cv_password_history_count }}"
+            enabled: "{{ enable_auth_hardening | bool }}"
+            applied: "{{ apply_changes | bool }}"
+          - id: "CISC-ND-000570"
+            description: "Minimum password length >= 15"
+            current_min: "{{ cv_password_min_length }}"
+            compliant: "{{ cv_password_min_length | int >= 15 }}"
+          - id: "CISC-ND-001190"
+            description: "Centralized authentication"
+            auth_type: "{{ cv_auth_type }}"
+            enabled: "{{ enable_auth_hardening | bool }}"
+            applied: "{{ apply_changes | bool }}"
+        cat2_medium:
+          - id: "CISC-ND-000370"
+            description: "Account lockout after 3 failures"
+            max_attempts: "{{ cv_lockout_max_attempts }}"
+            duration_seconds: "{{ cv_lockout_duration_seconds }}"
+            enabled: "{{ enable_auth_hardening | bool }}"
+            applied: "{{ apply_changes | bool }}"
+          - id: "CISC-ND-000390"
+            description: "Session idle timeout <= 600s"
+            idle_timeout: "{{ cv_idle_timeout }}"
+            session_timeout: "{{ cv_session_timeout }}"
+            compliant: "{{ cv_idle_timeout | int <= 600 }}"
+            enabled: "{{ enable_session_management | bool }}"
+            applied: "{{ apply_changes | bool }}"
+          - id: "CISC-ND-000360"
+            description: "Concurrent session limits"
+            max_concurrent: "{{ cv_max_concurrent_sessions }}"
+            enabled: "{{ enable_access_control | bool }}"
+            applied: "{{ apply_changes | bool }}"
+          - id: "CISC-ND-000700"
+            description: "Audit logging enabled"
+            log_auth: "{{ cv_audit_log_auth_events }}"
+            log_config: "{{ cv_audit_log_config_changes }}"
+            log_admin: "{{ cv_audit_log_admin_actions }}"
+            enabled: "{{ enable_audit_logging | bool }}"
+            applied: "{{ apply_changes | bool }}"
+          - id: "CISC-ND-001420"
+            description: "NTP configured"
+            ntp_servers: "{{ cv_ntp_servers | map(attribute='server') | list }}"
+            enabled: "{{ enable_ntp_dns | bool }}"
+            applied: "{{ apply_changes | bool }}"
+        cat3_low:
+          - id: "CISC-ND-000080"
+            description: "DoD mandatory login banner"
+            enabled: "{{ enable_banners | bool }}"
+            applied: "{{ apply_changes | bool }}"
+          - id: "CISC-ND-001290"
+            description: "NTP configuration"
+            enabled: "{{ enable_ntp_dns | bool }}"
+            applied: "{{ apply_changes | bool }}"
+          - id: "CISC-ND-001470"
+            description: "System contact and location"
+            contact: "{{ cv_system_contact }}"
+            location: "{{ cv_system_location }}"
+            enabled: "{{ enable_banners | bool }}"
+            applied: "{{ apply_changes | bool }}"
+
+- name: Generate STIG compliance summary (text)
+  ansible.builtin.copy:
+    content: |
+      ================================================================
+       Cisco Cyber Vision DoD STIG Compliance Summary — Fourth Estate
+      ================================================================
+       Report Date:  {{ ansible_date_time.date }}
+       Center Host:  {{ cv_center_host }}
+       Mode:         {{ 'CHANGES APPLIED' if apply_changes | bool else 'DRY RUN - no changes made' }}
+      ----------------------------------------------------------------
+       STIG Categories:
+         CAT I  (High):   {{ 'ENABLED' if stig_cat1_enabled | bool else 'DISABLED' }}
+         CAT II (Medium): {{ 'ENABLED' if stig_cat2_enabled | bool else 'DISABLED' }}
+         CAT III (Low):   {{ 'ENABLED' if stig_cat3_enabled | bool else 'DISABLED' }}
+      ----------------------------------------------------------------
+       CAT I Controls (High Severity):
+         CISC-ND-001440  HTTPS enforced / HTTP disabled:     {{ 'YES' if enable_crypto_tls | bool else 'SKIPPED' }}
+         CISC-ND-000530  Password strength policy:           {{ 'YES' if enable_auth_hardening | bool else 'SKIPPED' }}
+         CISC-ND-000570  Min password length (15 chars):     {{ 'COMPLIANT' if cv_password_min_length | int >= 15 else 'NON-COMPLIANT' }} ({{ cv_password_min_length }} chars)
+         CISC-ND-001190  Centralized auth ({{ cv_auth_type }}):     {{ 'YES' if enable_auth_hardening | bool else 'SKIPPED' }}
+      ----------------------------------------------------------------
+       CAT II Controls (Medium Severity):
+         CISC-ND-000370  Account lockout ({{ cv_lockout_max_attempts }} attempts):     {{ 'YES' if enable_auth_hardening | bool else 'SKIPPED' }}
+         CISC-ND-000390  Session idle timeout ({{ cv_idle_timeout }}s):   {{ 'COMPLIANT' if cv_idle_timeout | int <= 600 else 'NON-COMPLIANT' }}
+         CISC-ND-000360  Concurrent session limit ({{ cv_max_concurrent_sessions }}):  {{ 'YES' if enable_access_control | bool else 'SKIPPED' }}
+         CISC-ND-000700  Audit logging:                      {{ 'YES' if enable_audit_logging | bool else 'SKIPPED' }}
+         CISC-ND-001420  NTP configured:                     {{ 'YES' if enable_ntp_dns | bool else 'SKIPPED' }}
+      ----------------------------------------------------------------
+       CAT III Controls (Low Severity):
+         CISC-ND-000080  DoD login banner:                   {{ 'YES' if enable_banners | bool else 'SKIPPED' }}
+         CISC-ND-001290  NTP configuration:                  {{ 'YES' if enable_ntp_dns | bool else 'SKIPPED' }}
+         CISC-ND-001470  System contact/location:            {{ 'YES' if enable_banners | bool else 'SKIPPED' }}
+      ================================================================
+       Full report: {{ artifacts_dir }}/cv_stig_compliance_report.json
+      ================================================================
+    dest: "{{ artifacts_dir }}/cv_stig_compliance_summary.txt"
+    mode: '0640'
+
+- name: Display compliance summary
+  ansible.builtin.debug:
+    msg:
+      - "STIG compliance report generated:"
+      - "  JSON: {{ artifacts_dir }}/cv_stig_compliance_report.json"
+      - "  Text: {{ artifacts_dir }}/cv_stig_compliance_summary.txt"

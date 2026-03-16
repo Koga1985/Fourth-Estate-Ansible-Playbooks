@@ -1,0 +1,125 @@
+---
+# tasks file for cybervision_security_hardening - Authentication hardening
+# DoD STIG CAT I - Centralized authentication, password policy, account lockout
+# NIST IA-2, IA-5, AC-7 | STIG CISC-ND-001190, CISC-ND-000530, CISC-ND-000570, CISC-ND-000370
+
+# ============================================================
+# Password Policy (STIG CISC-ND-000530, CISC-ND-000570)
+# ============================================================
+- name: PHASE 4 - CISC-ND-000530/570 - Configure password policy
+  ansible.builtin.uri:
+    url: "{{ cv_api_url }}/system/security/password-policy"
+    method: PUT
+    headers:
+      Authorization: "Bearer {{ cv_api_token }}"
+      Content-Type: "application/json"
+      Accept: "application/json"
+    body_format: json
+    body:
+      min_length: "{{ cv_password_min_length }}"
+      require_uppercase: "{{ cv_password_min_uppercase | int > 0 }}"
+      require_lowercase: "{{ cv_password_min_lowercase | int > 0 }}"
+      require_digits: "{{ cv_password_min_digits | int > 0 }}"
+      require_special: "{{ cv_password_min_special | int > 0 }}"
+      history_count: "{{ cv_password_history_count }}"
+      expiry_days: "{{ cv_password_expiry_days }}"
+      strength_check: "{{ cv_password_strength_check }}"
+    validate_certs: "{{ cv_validate_certs }}"
+    timeout: "{{ cv_timeout }}"
+    status_code: [200, 204]
+  register: cv_pwd_policy_result
+  when: apply_changes | bool
+
+- name: PHASE 4 - Verify password min length compliance
+  ansible.builtin.assert:
+    that:
+      - cv_password_min_length | int >= 15
+    fail_msg: "STIG CISC-ND-000570 violation: cv_password_min_length must be >= 15 (currently {{ cv_password_min_length }})"
+    success_msg: "STIG CISC-ND-000570 compliant: min password length = {{ cv_password_min_length }}"
+
+# ============================================================
+# Account Lockout (STIG CISC-ND-000370)
+# ============================================================
+- name: PHASE 4 - CISC-ND-000370 - Configure account lockout policy
+  ansible.builtin.uri:
+    url: "{{ cv_api_url }}/system/security/lockout-policy"
+    method: PUT
+    headers:
+      Authorization: "Bearer {{ cv_api_token }}"
+      Content-Type: "application/json"
+      Accept: "application/json"
+    body_format: json
+    body:
+      enabled: "{{ cv_lockout_enabled }}"
+      max_attempts: "{{ cv_lockout_max_attempts }}"
+      window_seconds: "{{ cv_lockout_window_seconds }}"
+      duration_seconds: "{{ cv_lockout_duration_seconds }}"
+    validate_certs: "{{ cv_validate_certs }}"
+    timeout: "{{ cv_timeout }}"
+    status_code: [200, 204]
+  register: cv_lockout_result
+  when: apply_changes | bool
+
+# ============================================================
+# LDAP Authentication (STIG CISC-ND-001190)
+# ============================================================
+- name: PHASE 4 - CISC-ND-001190 - Configure LDAP authentication servers
+  ansible.builtin.uri:
+    url: "{{ cv_api_url }}/system/auth/ldap"
+    method: PUT
+    headers:
+      Authorization: "Bearer {{ cv_api_token }}"
+      Content-Type: "application/json"
+      Accept: "application/json"
+    body_format: json
+    body:
+      enabled: "{{ cv_ldap_enabled }}"
+      servers: "{{ cv_ldap_servers | map('combine', {'bind_password': '***REDACTED***'}) | list }}"
+      group_mappings: "{{ cv_ldap_group_mappings }}"
+    validate_certs: "{{ cv_validate_certs }}"
+    timeout: "{{ cv_timeout }}"
+    status_code: [200, 204]
+  register: cv_ldap_result
+  when:
+    - apply_changes | bool
+    - cv_ldap_enabled | bool
+  no_log: true    # LDAP bind passwords in body
+
+- name: PHASE 4 - Display authentication plan (dry-run)
+  ansible.builtin.debug:
+    msg:
+      - "DRY RUN — would configure:"
+      - "  Auth type:       {{ cv_auth_type }}"
+      - "  LDAP servers:    {{ cv_ldap_servers | map(attribute='host') | list }}"
+      - "  Password length: {{ cv_password_min_length }} (STIG requires >= 15)"
+      - "  Lockout after:   {{ cv_lockout_max_attempts }} attempts"
+      - "  Lockout duration: {{ cv_lockout_duration_seconds }}s"
+  when: not apply_changes | bool
+
+- name: Save authentication artifact
+  ansible.builtin.copy:
+    content: "{{ auth_artifact | to_nice_json }}"
+    dest: "{{ artifacts_dir }}/cv_authentication.json"
+    mode: '0640'
+  vars:
+    auth_artifact:
+      timestamp: "{{ ansible_date_time.iso8601 }}"
+      center_host: "{{ cv_center_host }}"
+      mode: "{{ 'applied' if apply_changes | bool else 'dry_run' }}"
+      stig_controls:
+        - id: "CISC-ND-001190"
+          description: "Centralized authentication"
+          auth_type: "{{ cv_auth_type }}"
+          applied: "{{ apply_changes | bool }}"
+        - id: "CISC-ND-000530"
+          description: "Password strength policy"
+          min_length: "{{ cv_password_min_length }}"
+          applied: "{{ apply_changes | bool }}"
+        - id: "CISC-ND-000570"
+          description: "Min password length >= 15"
+          compliant: "{{ cv_password_min_length | int >= 15 }}"
+        - id: "CISC-ND-000370"
+          description: "Account lockout"
+          max_attempts: "{{ cv_lockout_max_attempts }}"
+          duration_seconds: "{{ cv_lockout_duration_seconds }}"
+          applied: "{{ apply_changes | bool }}"

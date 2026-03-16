@@ -1,0 +1,148 @@
+---
+# Cisco Cyber Vision Platform Deployment Playbook
+# Entry point for Cisco Cyber Vision OT security visibility automation
+#
+# Usage:
+#   ansible-galaxy collection install -r requirements.yml
+#   ansible-playbook -i inventory site.yml --ask-vault-pass
+#
+# Dry-run (default - no changes applied):
+#   ansible-playbook -i inventory site.yml --ask-vault-pass
+#
+# Apply changes:
+#   ansible-playbook -i inventory site.yml -e "apply_changes=true" --ask-vault-pass
+#
+# Tags:
+#   - center:     Center initial deployment (name, DNS, NTP, license, users)
+#   - sensors:    Sensor enrollment and capture mode configuration
+#   - assets:     OT asset discovery, tagging, vulnerability tracking
+#   - security:   DoD STIG and NIST 800-53 hardening
+#   - monitoring: Syslog/SIEM, SNMP, alerts, ISE integration
+#   - phase1:     Center deployment phase
+#   - phase2:     Sensor configuration phase
+#   - phase3:     Asset management phase
+#   - phase4:     Security hardening phase
+#   - phase5:     Monitoring and integration phase
+
+- name: Cisco Cyber Vision Platform Deployment
+  hosts: localhost
+  connection: local
+  gather_facts: true
+
+  vars:
+    apply_changes: false
+    artifacts_dir: "/tmp/cv-artifacts"
+
+    # Feature toggles — set to false to skip a phase
+    deploy_cv_center: true
+    deploy_cv_sensors: true
+    deploy_cv_assets: true
+    deploy_cv_security: true
+    deploy_cv_monitoring: true
+
+    # Compliance frameworks
+    compliance_frameworks:
+      - "dod_stig"
+      - "nist_800_53"
+      - "nist_800_171"
+      - "fisma_moderate"
+      - "fisma_high"
+
+  pre_tasks:
+    - name: Display Cyber Vision deployment banner
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - " Cisco Cyber Vision - Fourth Estate OT Security Platform"
+          - "================================================================"
+          - " Center: {{ vault_cv_center_hostname | default('not set') }}"
+          - " Apply Changes: {{ apply_changes }}"
+          - " Artifacts Dir: {{ artifacts_dir }}"
+          - " Compliance: {{ compliance_frameworks | join(', ') }}"
+          - "================================================================"
+          - " {{ 'DRY RUN MODE - No changes will be applied' if not (apply_changes | bool) else 'LIVE MODE - Changes WILL be applied' }}"
+          - "================================================================"
+      tags: ['always']
+
+    - name: Create artifacts directory
+      ansible.builtin.file:
+        path: "{{ artifacts_dir }}"
+        state: directory
+        mode: '0750'
+      tags: ['always']
+
+  tasks:
+    # =========================================
+    # Phase 1: Cyber Vision Center Deployment
+    # =========================================
+    - name: Phase 1 - Cyber Vision Center Deployment
+      ansible.builtin.include_role:
+        name: cybervision_center_deploy
+      when: deploy_cv_center | bool
+      tags: ['cybervision', 'center', 'infrastructure', 'phase1']
+
+    # =========================================
+    # Phase 2: Sensor Configuration
+    # =========================================
+    - name: Phase 2 - Sensor Configuration
+      ansible.builtin.include_role:
+        name: cybervision_sensor_config
+      when: deploy_cv_sensors | bool
+      tags: ['cybervision', 'sensors', 'phase2']
+
+    # =========================================
+    # Phase 3: Asset Management
+    # =========================================
+    - name: Phase 3 - OT Asset Management
+      ansible.builtin.include_role:
+        name: cybervision_asset_management
+      when: deploy_cv_assets | bool
+      tags: ['cybervision', 'assets', 'discovery', 'phase3']
+
+    # =========================================
+    # Phase 4: Security Hardening (STIG/NIST)
+    # =========================================
+    - name: Phase 4 - Security Hardening
+      ansible.builtin.include_role:
+        name: cybervision_security_hardening
+      when: deploy_cv_security | bool
+      tags: ['cybervision', 'security', 'hardening', 'stig', 'nist', 'phase4']
+
+    # =========================================
+    # Phase 5: Monitoring and Integrations
+    # =========================================
+    - name: Phase 5 - Monitoring and Integrations
+      ansible.builtin.include_role:
+        name: cybervision_monitoring
+      when: deploy_cv_monitoring | bool
+      tags: ['cybervision', 'monitoring', 'siem', 'ise', 'phase5']
+
+
+- name: Cyber Vision Deployment Summary
+  hosts: localhost
+  gather_facts: false
+
+  vars:
+    apply_changes: false
+    deploy_cv_center: true
+    deploy_cv_sensors: true
+    deploy_cv_assets: true
+    deploy_cv_security: true
+    deploy_cv_monitoring: true
+
+  tasks:
+    - name: Display deployment summary
+      ansible.builtin.debug:
+        msg:
+          - "=== Cisco Cyber Vision Platform Deployment Complete ==="
+          - "Mode: {{ apply_changes | default(false) | bool | ternary('APPLIED', 'DRY RUN') }}"
+          - "--- Deployment Phases ---"
+          - "Center Deployment:  {{ 'Deployed' if deploy_cv_center | default(true) | bool else 'Skipped' }}"
+          - "Sensor Config:      {{ 'Configured' if deploy_cv_sensors | default(true) | bool else 'Skipped' }}"
+          - "Asset Management:   {{ 'Configured' if deploy_cv_assets | default(true) | bool else 'Skipped' }}"
+          - "Security Hardening: {{ 'Hardened (STIG/NIST)' if deploy_cv_security | default(true) | bool else 'Skipped' }}"
+          - "Monitoring:         {{ 'Configured' if deploy_cv_monitoring | default(true) | bool else 'Skipped' }}"
+          - "--- Artifacts ---"
+          - "Review artifacts in /tmp/cv-artifacts/"
+          - "To apply changes, run: -e 'apply_changes=true'"
+      tags: ['always']

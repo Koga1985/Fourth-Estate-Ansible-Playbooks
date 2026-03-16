@@ -1,0 +1,82 @@
+---
+# tasks file for cybervision_center_deploy - Prerequisites and validation
+# Verifies connectivity to Cyber Vision Center API before proceeding
+
+- name: Ensure artifacts directory exists
+  ansible.builtin.file:
+    path: "{{ artifacts_dir }}"
+    state: directory
+    mode: '0750'
+
+- name: Verify required vault variables are defined
+  ansible.builtin.assert:
+    that:
+      - vault_cv_center_hostname is defined
+      - vault_cv_admin_username is defined
+      - vault_cv_admin_password is defined
+    fail_msg: >
+      Required vault variables are missing. Ensure vault_cv_center_hostname,
+      vault_cv_admin_username, and vault_cv_admin_password are defined in
+      group_vars/all/vault.yml.
+    success_msg: "Required vault variables are present"
+
+- name: Test connectivity to Cyber Vision Center API
+  ansible.builtin.uri:
+    url: "{{ cv_api_url }}/system/version"
+    method: GET
+    headers:
+      Accept: "application/json"
+    validate_certs: "{{ cv_validate_certs }}"
+    timeout: "{{ cv_timeout }}"
+    status_code: [200, 401]    # 401 is expected if not authenticated yet
+  register: cv_connectivity_check
+  failed_when: cv_connectivity_check.status not in [200, 401]
+
+- name: Display connectivity status
+  ansible.builtin.debug:
+    msg:
+      - "Cyber Vision Center reachable: {{ cv_connectivity_check.status in [200, 401] }}"
+      - "Center URL: {{ cv_api_url }}"
+      - "Apply Changes: {{ apply_changes | bool }}"
+      - "Mode: {{ 'LIVE - changes will be applied' if apply_changes | bool else 'DRY RUN - no changes' }}"
+
+- name: Authenticate to Cyber Vision Center
+  ansible.builtin.uri:
+    url: "{{ cv_api_url }}/auth/token"
+    method: POST
+    headers:
+      Content-Type: "application/json"
+      Accept: "application/json"
+    body_format: json
+    body:
+      username: "{{ cv_username }}"
+      password: "{{ cv_password }}"
+    validate_certs: "{{ cv_validate_certs }}"
+    timeout: "{{ cv_timeout }}"
+    status_code: 200
+  register: cv_auth_response
+  when: cv_api_token is not defined or cv_api_token == ''
+  no_log: true
+
+- name: Set API token from authentication response
+  ansible.builtin.set_fact:
+    cv_api_token: "{{ cv_auth_response.json.token }}"
+  when: cv_auth_response is not skipped and cv_auth_response.json.token is defined
+
+- name: Query Cyber Vision Center version
+  ansible.builtin.uri:
+    url: "{{ cv_api_url }}/system/version"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ cv_api_token }}"
+      Accept: "application/json"
+    validate_certs: "{{ cv_validate_certs }}"
+    timeout: "{{ cv_timeout }}"
+    status_code: 200
+  register: cv_version_info
+  failed_when: false
+
+- name: Display Center version
+  ansible.builtin.debug:
+    msg: "Cyber Vision Center version: {{ cv_version_info.json.version | default('unknown') }}"
+  when: cv_version_info.status == 200
