@@ -11,7 +11,7 @@ Stage and orchestrate **NIOS** upgrades/rollbacks in **waves**, with prechecks a
 - **Reports**: `report_path` (JSON) plus `plan_dir` with precheck/plan/upload/activate artifacts.
 - **Dry run**: default `dry_run: true` builds the plan and prechecks without calling upgrade endpoints.
 
-> Service drain tasks are placeholders by default—wire them to your DNS/DHCP policies or explicit WAPI calls for your NIOS version.
+> Service drain tasks emit debug messages during `dry_run: true` and do not call WAPI endpoints to disable DNS or DHCP services. When `dry_run: false`, connect these steps to your site-specific DNS/DHCP drain procedures (e.g., WAPI member service update calls or out-of-band policy toggles) appropriate for your NIOS version before activating the upgrade.
 
 ## Variables (see `defaults/main.yml`)
 ```yaml
