@@ -1,1 +1,115 @@
 # ise_policy__shell_profiles_cmdsets
+
+Creates and manages Cisco ISE TACACS+ shell profiles and command sets for device administration authorization. Shell profiles define the privilege level and session attributes granted to administrators after authentication. Command sets specify which CLI commands are permitted or denied for a given administrator role. This role supports DISA STIG-compliant device administration policy deployment.
+
+## Requirements
+
+- Ansible 2.14 or later
+- `cisco.ise` collection (install via `ansible-galaxy collection install cisco.ise`)
+- ISE with Device Administration (TACACS+) licensed and enabled
+- ISE admin credentials with ERS API access and Device Administration management permissions
+- Ansible Vault for credential management
+
+## Role Variables
+
+### ISE Connection
+
+| Variable | Default | Description |
+|---|---|---|
+| `ise_hostname` | `{{ vault_ise_hostname }}` | ISE primary PAN hostname or IP |
+| `ise_username` | `{{ vault_ise_username }}` | ISE admin username |
+| `ise_password` | `{{ vault_ise_password }}` | ISE admin password (vault-protected) |
+| `ise_verify_ssl` | `true` | Validate ISE TLS certificate |
+| `ise_use_proxy` | `false` | Route ISE API calls through a proxy |
+| `ise_debug` | `false` | Enable verbose debug logging |
+
+### Deployment Control
+
+| Variable | Default | Description |
+|---|---|---|
+| `apply_changes` | `false` | Set to `true` to write changes; `false` runs in plan/audit mode |
+| `ise_artifacts_dir` | `/tmp/ise-artifacts` | Local directory for generated reports |
+
+### TACACS Command Sets
+
+| Variable | Default | Description |
+|---|---|---|
+| `tacacs_command_sets` | (required) | List of command set definitions. Each entry has: `name` (required), `commands` (list of command ACEs), `permit_unmatched` (default `false`), and optional `description` |
+
+### TACACS Shell Profiles
+
+| Variable | Default | Description |
+|---|---|---|
+| `tacacs_profiles` | (required) | List of shell profile definitions. Each entry has: `name` (required), `privilege_level` (default `15`), and optional `description` |
+
+### Feature Flags
+
+| Variable | Default | Description |
+|---|---|---|
+| `ise_policy__shell_profiles_cmdsets_enabled` | `true` | Master toggle for this role |
+| `enable_disa_stig_compliance` | `true` | Apply STIG-compliant settings |
+
+### Logging and Notifications
+
+| Variable | Default | Description |
+|---|---|---|
+| `ise_policy__shell_profiles_cmdsets_log_level` | `INFO` | Log verbosity level |
+| `ise_policy__shell_profiles_cmdsets_log_to_syslog` | `true` | Forward events to syslog |
+| `ise_policy__shell_profiles_cmdsets_syslog_server` | `{{ vault_syslog_server }}` | Syslog server address |
+| `ise_policy__shell_profiles_cmdsets_notify_on_completion` | `false` | Send email on completion |
+| `ise_policy__shell_profiles_cmdsets_notification_email` | `{{ vault_security_team_email }}` | Notification recipient |
+| `ise_policy__shell_profiles_cmdsets_auto_backup` | `true` | Trigger ISE backup after changes |
+
+### Compliance Frameworks
+
+| Variable | Default | Description |
+|---|---|---|
+| `compliance_frameworks` | `[dod_stig, nist_800_53, nist_800_171, fisma_moderate]` | Frameworks referenced in generated reports |
+
+## Example Playbook
+
+```yaml
+- name: Configure ISE TACACS+ shell profiles and command sets
+  hosts: localhost
+  gather_facts: true
+  vars:
+    apply_changes: true
+    tacacs_command_sets:
+      - name: "NetworkAdmin-Commands"
+        description: "Full network device admin commands"
+        permit_unmatched: true
+        commands:
+          - {grant: "PERMIT", command: "show", args: ".*"}
+          - {grant: "PERMIT", command: "configure", args: ".*"}
+      - name: "ReadOnly-Commands"
+        description: "Read-only show commands only"
+        permit_unmatched: false
+        commands:
+          - {grant: "PERMIT", command: "show", args: ".*"}
+    tacacs_profiles:
+      - name: "NetworkAdmin-Profile"
+        description: "Full privilege network admin"
+        privilege_level: 15
+      - name: "ReadOnly-Profile"
+        description: "Read-only access"
+        privilege_level: 1
+  roles:
+    - role: cisco/roles/ise_policy__shell_profiles_cmdsets
+```
+
+## Tags
+
+| Tag | Description |
+|---|---|
+| `validation` | Parameter assertion checks |
+| `tacacs` | All TACACS+ configuration tasks |
+| `commands` | Command set creation tasks |
+| `profiles` | Shell profile creation tasks |
+| `reporting` | Report generation tasks |
+
+## Notes
+
+- `apply_changes` defaults to `false`; the role is safe to run in plan mode.
+- Device Administration (TACACS+) must be enabled in the ISE deployment; this is separate from Network Access (RADIUS).
+- `permit_unmatched: false` causes any command not explicitly listed to be denied — recommended for least-privilege STIG compliance.
+- All credentials must be stored in Ansible Vault.
