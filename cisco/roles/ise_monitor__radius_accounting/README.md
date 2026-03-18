@@ -14,60 +14,60 @@ Retrieves and analyzes RADIUS accounting data from Cisco ISE, including active s
 
 ### ISE Connection
 
-| Variable | Default | Description |
+| Variable | Default | Required | Description |
 |---|---|---|
-| `ise_hostname` | `{{ vault_ise_hostname }}` | ISE primary PAN hostname or IP |
-| `ise_username` | `{{ vault_ise_username }}` | ISE admin username |
-| `ise_password` | `{{ vault_ise_password }}` | ISE admin password (vault-protected) |
-| `ise_verify_ssl` | `true` | Validate ISE TLS certificate |
-| `ise_use_proxy` | `false` | Route ISE API calls through a proxy |
-| `ise_debug` | `false` | Enable verbose debug logging |
+| `ise_hostname` | `{{ vault_ise_hostname }}` | **Yes** | ISE primary PAN hostname or IP |
+| `ise_username` | `{{ vault_ise_username }}` | **Yes** | ISE admin username |
+| `ise_password` | `{{ vault_ise_password }}` | **Yes** | ISE admin password (vault-protected) |
+| `ise_verify_ssl` | `true` | No | Validate ISE TLS certificate |
+| `ise_use_proxy` | `false` | No | Route ISE API calls through a proxy |
+| `ise_debug` | `false` | No | Enable verbose debug logging |
 
 ### Deployment Control
 
-| Variable | Default | Description |
+| Variable | Default | Required | Description |
 |---|---|---|
-| `apply_changes` | `false` | Not used for mutation in this role; reserved for future use |
-| `ise_artifacts_dir` | `/tmp/ise-artifacts` | Local directory for generated reports |
+| `apply_changes` | `false` | No | Not used for mutation in this role; reserved for future use |
+| `ise_artifacts_dir` | `/tmp/ise-artifacts` | No | Local directory for generated reports |
 
 ### Accounting Window
 
-| Variable | Default | Description |
+| Variable | Default | Required | Description |
 |---|---|---|
-| `accounting_start_date` | (required) | Start of accounting log query window |
-| `accounting_end_date` | (required) | End of accounting log query window |
+| `accounting_start_date` | (required) | No | Start of accounting log query window |
+| `accounting_end_date` | (required) | No | End of accounting log query window |
 
 ### SIEM Integration
 
-| Variable | Default | Description |
+| Variable | Default | Required | Description |
 |---|---|---|
-| `siem_integration_enabled` | (required) | Forward session data to SIEM |
-| `siem_endpoint` | (required when enabled) | SIEM ingest endpoint URL |
-| `siem_api_token` | `{{ vault_siem_api_token }}` | Bearer token for SIEM API |
+| `siem_integration_enabled` | (required) | No | Forward session data to SIEM |
+| `siem_endpoint` | (required when enabled) | No | SIEM ingest endpoint URL |
+| `siem_api_token` | `{{ vault_siem_api_token }}` | **Yes** | Bearer token for SIEM API |
 
 ### Feature Flags
 
-| Variable | Default | Description |
+| Variable | Default | Required | Description |
 |---|---|---|
-| `ise_monitor__radius_accounting_enabled` | `true` | Master toggle for this role |
-| `enable_disa_stig_compliance` | `true` | Apply STIG-compliant settings |
+| `ise_monitor__radius_accounting_enabled` | `true` | No | Master toggle for this role |
+| `enable_disa_stig_compliance` | `true` | No | Apply STIG-compliant settings |
 
 ### Logging and Notifications
 
-| Variable | Default | Description |
+| Variable | Default | Required | Description |
 |---|---|---|
-| `ise_monitor__radius_accounting_log_level` | `INFO` | Log verbosity level |
-| `ise_monitor__radius_accounting_log_to_syslog` | `true` | Forward events to syslog |
-| `ise_monitor__radius_accounting_syslog_server` | `{{ vault_syslog_server }}` | Syslog server address |
-| `ise_monitor__radius_accounting_notify_on_completion` | `false` | Send email on completion |
-| `ise_monitor__radius_accounting_notification_email` | `{{ vault_security_team_email }}` | Notification recipient |
-| `ise_monitor__radius_accounting_auto_backup` | `true` | Reserved; no destructive changes are made |
+| `ise_monitor__radius_accounting_log_level` | `INFO` | No | Log verbosity level |
+| `ise_monitor__radius_accounting_log_to_syslog` | `true` | No | Forward events to syslog |
+| `ise_monitor__radius_accounting_syslog_server` | `{{ vault_syslog_server }}` | **Yes** | Syslog server address |
+| `ise_monitor__radius_accounting_notify_on_completion` | `false` | No | Send email on completion |
+| `ise_monitor__radius_accounting_notification_email` | `{{ vault_security_team_email }}` | **Yes** | Notification recipient |
+| `ise_monitor__radius_accounting_auto_backup` | `true` | No | Reserved; no destructive changes are made |
 
 ### Compliance Frameworks
 
-| Variable | Default | Description |
+| Variable | Default | Required | Description |
 |---|---|---|
-| `compliance_frameworks` | `[dod_stig, nist_800_53, nist_800_171, fisma_moderate]` | Frameworks referenced in generated reports |
+| `compliance_frameworks` | `[dod_stig, nist_800_53, nist_800_171, fisma_moderate]` | No | Frameworks referenced in generated reports |
 
 ## Example Playbook
 

@@ -17,14 +17,14 @@ Manages the end-to-end security policy lifecycle in Illumio PCE: applies rule se
 
 All variables are defined in `defaults/main.yml`.
 
-| Variable | Default | Description |
+| Variable | Default | Required | Description |
 |---|---|---|
-| `verify_ssl` | `true` | Verify TLS certificates when calling the PCE API. Set to `false` only in lab environments. |
-| `artifacts_dir` | `/tmp/illumio-artifacts` | Directory on the Ansible controller where intermediate artifacts are written. |
-| `promote_comment` | `"Change via Ansible"` | Change description recorded in the PCE when the policy is promoted. |
-| `deny_threshold` | `0` | Maximum number of blocked flows allowed during the impact simulation before the brownout gate fails the play. |
-| `dry_run` | `true` | When `true`, the role promotes Draft to Staged but does **not** promote Staged to Active. Set to `false` to complete a full promotion to Active. |
-| `brownout_enabled` | `true` | When `true`, runs the traffic-simulation brownout check before promoting. Set to `false` to skip the gate. |
+| `verify_ssl` | `true` | No | Verify TLS certificates when calling the PCE API. Set to `false` only in lab environments. |
+| `artifacts_dir` | `/tmp/illumio-artifacts` | No | Directory on the Ansible controller where intermediate artifacts are written. |
+| `promote_comment` | `"Change via Ansible"` | No | Change description recorded in the PCE when the policy is promoted. |
+| `deny_threshold` | `0` | No | Maximum number of blocked flows allowed during the impact simulation before the brownout gate fails the play. |
+| `dry_run` | `true` | No | When `true`, the role promotes Draft to Staged but does **not** promote Staged to Active. Set to `false` to complete a full promotion to Active. |
+| `brownout_enabled` | `true` | No | When `true`, runs the traffic-simulation brownout check before promoting. Set to `false` to skip the gate. |
 
 ### Runtime-only variables (no defaults)
 

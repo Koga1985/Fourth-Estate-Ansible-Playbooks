@@ -15,34 +15,34 @@ Configures the full data-plane fabric on Arista EOS devices: VLANs, VRFs, MLAG p
 
 All variables are defined in `defaults/main.yml`. Device-specific variables must be set in `host_vars`.
 
-| Variable | Default | Description |
+| Variable | Default | Required | Description |
 |---|---|---|
-| `arista_apply_changes` | `false` | Safety gate. Set to `true` to push configuration; otherwise only a plan artifact is written. |
-| `arista_artifacts_dir` | `/tmp/arista-artifacts` | Directory on the Ansible controller for plan and state artifacts. |
-| `fabric_vlans` | USERS(10), SERVERS(20), DMZ(30), GUEST(40), VOICE(100), L3VNI transit VLANs 3001/3002 | List of VLAN definitions (`vlan_id`, `name`, `state`) in `arista.eos.eos_vlans` format. |
-| `fabric_vrfs` | TENANT_A, TENANT_B | VRF instances with route-distinguisher and import/export route-targets. |
-| `mlag_config.enabled` | `false` | Enables MLAG configuration. Must be `true` for any MLAG tasks to run. |
-| `mlag_config.domain_id` | `MLAG_DOMAIN_1` | MLAG domain identifier shared between the peer pair. |
-| `mlag_config.peer_link` | `Port-Channel1` | Interface used as the MLAG peer-link (configured as a trunk). |
-| `mlag_config.peer_vlan` | `4094` | VLAN for MLAG peer communication SVI. |
-| `mlag_config.peer_address` | `169.254.255.1` | Peer switch MLAG IP address. |
-| `mlag_config.local_peer_ip` | `169.254.255.0` | This switch's MLAG IP address. |
-| `vxlan_config.enabled` | `false` | Enables the VXLAN tunnel interface (Vxlan1). |
-| `vxlan_config.source_interface` | `Loopback1` | VTEP source loopback interface. |
-| `vxlan_config.udp_port` | `4789` | VXLAN UDP encapsulation port. |
-| `vxlan_config.anycast_mac` | `00:1c:73:00:dc:01` | Virtual-router MAC for VXLAN anycast gateway. |
-| `vxlan_vni_mappings` | VLANs 10/20/30/40/100 → VNIs 10010/10020/10030/10040/10100 | L2VNI-to-VLAN mappings. |
-| `vxlan_vrf_mappings` | TENANT_A→13001, TENANT_B→13002 | L3VNI-to-VRF mappings. |
-| `fabric_loopbacks` | Loopback0 (router-id), Loopback1 (VTEP) | Loopback interface definitions with IP addresses. |
-| `fabric_uplinks` | Ethernet49 (SPINE1), Ethernet50 (SPINE2) | Physical uplink interface definitions (description, MTU). |
-| `fabric_uplinks_l3` | Ethernet49, Ethernet50 | L3 IP address assignments for fabric uplinks (uses `fabric_uplink_1_ip`/`fabric_uplink_2_ip`). |
-| `fabric_access_ports` | Ethernet1 (VLAN10), Ethernet2 (VLAN20) | Access-mode downlink port definitions. |
-| `fabric_trunk_ports` | Ethernet3, Ethernet4 (VLANs 10,20,30,40,100) | Trunk-mode downlink port definitions. |
-| `mlag_port_channels` | `[]` | MLAG port-channel definitions (`name`, `description`, `mode`, `vlans`, `mlag_id`). |
-| `fabric_svis` | Vlan10–Vlan100 with anycast gateway IPs | SVI definitions with IP address and virtual-router address for anycast gateway. |
-| `fabric_spanning_tree.mode` | `mstp` | Spanning-tree mode applied globally. |
-| `fabric_spanning_tree.priority` | `16384` | MST instance 0 bridge priority. |
-| `fabric_mac_aging_time` | `300` | MAC address-table aging time in seconds. |
+| `arista_apply_changes` | `false` | No | Safety gate. Set to `true` to push configuration; otherwise only a plan artifact is written. |
+| `arista_artifacts_dir` | `/tmp/arista-artifacts` | No | Directory on the Ansible controller for plan and state artifacts. |
+| `fabric_vlans` | USERS(10), SERVERS(20), DMZ(30), GUEST(40), VOICE(100), L3VNI transit VLANs 3001/3002 | No | List of VLAN definitions (`vlan_id`, `name`, `state`) in `arista.eos.eos_vlans` format. |
+| `fabric_vrfs` | TENANT_A, TENANT_B | No | VRF instances with route-distinguisher and import/export route-targets. |
+| `mlag_config.enabled` | `false` | No | Enables MLAG configuration. Must be `true` for any MLAG tasks to run. |
+| `mlag_config.domain_id` | `MLAG_DOMAIN_1` | No | MLAG domain identifier shared between the peer pair. |
+| `mlag_config.peer_link` | `Port-Channel1` | No | Interface used as the MLAG peer-link (configured as a trunk). |
+| `mlag_config.peer_vlan` | `4094` | No | VLAN for MLAG peer communication SVI. |
+| `mlag_config.peer_address` | `169.254.255.1` | No | Peer switch MLAG IP address. |
+| `mlag_config.local_peer_ip` | `169.254.255.0` | No | This switch's MLAG IP address. |
+| `vxlan_config.enabled` | `false` | No | Enables the VXLAN tunnel interface (Vxlan1). |
+| `vxlan_config.source_interface` | `Loopback1` | No | VTEP source loopback interface. |
+| `vxlan_config.udp_port` | `4789` | No | VXLAN UDP encapsulation port. |
+| `vxlan_config.anycast_mac` | `00:1c:73:00:dc:01` | No | Virtual-router MAC for VXLAN anycast gateway. |
+| `vxlan_vni_mappings` | VLANs 10/20/30/40/100 → VNIs 10010/10020/10030/10040/10100 | No | L2VNI-to-VLAN mappings. |
+| `vxlan_vrf_mappings` | TENANT_A→13001, TENANT_B→13002 | No | L3VNI-to-VRF mappings. |
+| `fabric_loopbacks` | Loopback0 (router-id), Loopback1 (VTEP) | No | Loopback interface definitions with IP addresses. |
+| `fabric_uplinks` | Ethernet49 (SPINE1), Ethernet50 (SPINE2) | No | Physical uplink interface definitions (description, MTU). |
+| `fabric_uplinks_l3` | Ethernet49, Ethernet50 | No | L3 IP address assignments for fabric uplinks (uses `fabric_uplink_1_ip`/`fabric_uplink_2_ip`). |
+| `fabric_access_ports` | Ethernet1 (VLAN10), Ethernet2 (VLAN20) | No | Access-mode downlink port definitions. |
+| `fabric_trunk_ports` | Ethernet3, Ethernet4 (VLANs 10,20,30,40,100) | No | Trunk-mode downlink port definitions. |
+| `mlag_port_channels` | `[]` | No | MLAG port-channel definitions (`name`, `description`, `mode`, `vlans`, `mlag_id`). |
+| `fabric_svis` | Vlan10–Vlan100 with anycast gateway IPs | No | SVI definitions with IP address and virtual-router address for anycast gateway. |
+| `fabric_spanning_tree.mode` | `mstp` | No | Spanning-tree mode applied globally. |
+| `fabric_spanning_tree.priority` | `16384` | No | MST instance 0 bridge priority. |
+| `fabric_mac_aging_time` | `300` | No | MAC address-table aging time in seconds. |
 
 ### Required host_vars
 

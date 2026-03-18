@@ -16,19 +16,19 @@ Manages the Palo Alto Networks objects catalog: administrative tags, address obj
 
 ### Connection and Scope
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `pa_use_panorama` | `false` | Set to `true` when targeting a Panorama-managed device. |
-| `device_group` | `null` | Panorama device group name (Panorama mode only). |
-| `vsys` | `"vsys1"` | Virtual system for direct firewall management. |
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
+| `pa_use_panorama` | `false` | No | Set to `true` when targeting a Panorama-managed device. |
+| `device_group` | `null` | No | Panorama device group name (Panorama mode only). |
+| `vsys` | `"vsys1"` | No | Virtual system for direct firewall management. |
 
 ### Output and Commit
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `artifacts_dir` | `"/tmp/pan-artifacts"` | Directory for prune report and diff artifacts. |
-| `commit_after_changes` | `true` | Commit all changes after applying the catalog. |
-| `commit_description` | `"Apply objects catalog via Ansible"` | Commit description string. |
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
+| `artifacts_dir` | `"/tmp/pan-artifacts"` | No | Directory for prune report and diff artifacts. |
+| `commit_after_changes` | `true` | No | Commit all changes after applying the catalog. |
+| `commit_description` | `"Apply objects catalog via Ansible"` | No | Commit description string. |
 
 ### Tags
 
@@ -128,11 +128,11 @@ service_groups:
 
 ### Prune Configuration
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `prune.dry_run` | `true` | When `true`, reports objects that would be deleted without removing them. Set to `false` to enable actual deletion. |
-| `prune.allow_delete` | `false` | Master switch: objects are only deleted when both `dry_run: false` and `allow_delete: true`. |
-| `prune.protected_names` | `["any","application-default"]` | List of object names that are never pruned regardless of other settings. |
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
+| `prune.dry_run` | `true` | No | When `true`, reports objects that would be deleted without removing them. Set to `false` to enable actual deletion. |
+| `prune.allow_delete` | `false` | No | Master switch: objects are only deleted when both `dry_run: false` and `allow_delete: true`. |
+| `prune.protected_names` | `["any","application-default"]` | No | List of object names that are never pruned regardless of other settings. |
 
 ## Dependencies
 

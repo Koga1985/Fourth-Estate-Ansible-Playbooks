@@ -1,0 +1,60 @@
+---
+# CrowdStrike Falcon EDR Deployment Playbook
+# Entry point for CrowdStrike Falcon sensor automation
+#
+# Usage:
+#   ansible-galaxy collection install -r requirements.yml
+#   cp inventory.example inventory   # edit with your hosts
+#   ansible-vault create group_vars/all/vault.yml  # add vault variables
+#   ansible-playbook -i inventory site.yml --ask-vault-pass
+#
+# Dry-run (no changes):
+#   ansible-playbook -i inventory site.yml -e "apply_changes=false" --ask-vault-pass
+
+- name: CrowdStrike Falcon Sensor Deployment
+  hosts: falcon_targets
+  become: true
+  gather_facts: true
+  any_errors_fatal: true
+
+  vars:
+    apply_changes: true
+    deploy_install: true
+    deploy_security: true
+    deploy_monitoring: true
+
+  tasks:
+    - name: Phase 1 - Sensor Installation
+      ansible.builtin.include_role:
+        name: falcon_sensor_install
+      when: deploy_install | bool
+      tags: ['install', 'phase1']
+
+    - name: Phase 2 - Security Hardening
+      ansible.builtin.include_role:
+        name: falcon_sensor_install
+        tasks_from: configure
+      when: deploy_security | bool
+      tags: ['security', 'hardening', 'phase2']
+
+    - name: Phase 3 - Monitoring & Health
+      ansible.builtin.include_role:
+        name: falcon_sensor_install
+        tasks_from: monitoring
+      when: deploy_monitoring | bool
+      tags: ['monitoring', 'phase3']
+
+
+- name: Deployment Summary
+  hosts: localhost
+  gather_facts: false
+  any_errors_fatal: true
+
+  tasks:
+    - name: Display deployment summary
+      ansible.builtin.debug:
+        msg:
+          - "=== CrowdStrike Falcon Deployment Complete ==="
+          - "Targets: {{ groups['falcon_targets'] | default([]) | length }} host(s)"
+          - "Cloud: {{ falcon_cloud | default('us-1') }}"
+      tags: ['always']

@@ -13,40 +13,40 @@ Reads a Claroty xDome asset export (produced by `claroty_xdome_inventory_export`
 
 ### Source File
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `artifacts_dir` | `"/tmp/claroty-artifacts"` | Directory containing the source JSON file and where normalized output is written. |
-| `source_json` | `"xdome_assets.json"` | Filename of the JSON asset export to normalize. |
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
+| `artifacts_dir` | `"/tmp/claroty-artifacts"` | No | Directory containing the source JSON file and where normalized output is written. |
+| `source_json` | `"xdome_assets.json"` | No | Filename of the JSON asset export to normalize. |
 
 ### Normalization Rules
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `normalize.site_map` | `{}` | Dictionary mapping raw xDome site names to normalized names (e.g., `{"Plant A - OT": "plant-a"}`). |
-| `normalize.zone_rules` | `[]` | List of zone assignment rules. Each rule has a `match` object (with `site` and `type` keys) and a `set` object (with a `zone` key). |
-| `normalize.criticality.default` | `"medium"` | Default criticality assigned when no asset type match is found. |
-| `normalize.criticality.by_type` | `{PLC: high, HMI: high, Switch: medium, Printer: low}` | Per-device-type criticality overrides. |
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
+| `normalize.site_map` | `{}` | No | Dictionary mapping raw xDome site names to normalized names (e.g., `{"Plant A - OT": "plant-a"}`). |
+| `normalize.zone_rules` | `[]` | No | List of zone assignment rules. Each rule has a `match` object (with `site` and `type` keys) and a `set` object (with a `zone` key). |
+| `normalize.criticality.default` | `"medium"` | No | Default criticality assigned when no asset type match is found. |
+| `normalize.criticality.by_type` | `{PLC: high, HMI: high, Switch: medium, Printer: low}` | No | Per-device-type criticality overrides. |
 
 ### Optional: Tag Back in xDome
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `tag_in_xdome` | `false` | When `true`, patches each normalized asset in xDome with `zone` and `criticality` tags and the normalized site name. |
-| `claroty.base_url` | — | Required when `tag_in_xdome: true`. xDome API base URL. |
-| `claroty.token` | — | Required when `tag_in_xdome: true`. xDome bearer token. |
-| `claroty.verify_ssl` | `true` | Whether to verify xDome TLS certificate. |
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
+| `tag_in_xdome` | `false` | No | When `true`, patches each normalized asset in xDome with `zone` and `criticality` tags and the normalized site name. |
+| `claroty.base_url` | — | No | Required when `tag_in_xdome: true`. xDome API base URL. |
+| `claroty.token` | — | No | Required when `tag_in_xdome: true`. xDome bearer token. |
+| `claroty.verify_ssl` | `true` | No | Whether to verify xDome TLS certificate. |
 
 ### Optional: ServiceNow CMDB Push
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `cmdb_push` | `true` | Enable pushing normalized assets to the CMDB. |
-| `cmdb_system` | `"servicenow"` | CMDB target system. Currently supports `servicenow`. |
-| `servicenow.instance` | `"yourinstance.service-now.com"` | ServiceNow instance hostname. |
-| `servicenow.token` | `""` | ServiceNow bearer token. Falls back to `SNOW_TOKEN` environment variable. |
-| `servicenow.table` | `"cmdb_ci_computer"` | ServiceNow CMDB table to write to. |
-| `servicenow.verify_ssl` | `true` | Whether to verify the ServiceNow TLS certificate. |
-| `sn_payload_map` | See defaults | Dictionary mapping ServiceNow field names to xDome asset field names for the CMDB payload. |
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
+| `cmdb_push` | `true` | No | Enable pushing normalized assets to the CMDB. |
+| `cmdb_system` | `"servicenow"` | No | CMDB target system. Currently supports `servicenow`. |
+| `servicenow.instance` | `"yourinstance.service-now.com"` | No | ServiceNow instance hostname. |
+| `servicenow.token` | `""` | No | ServiceNow bearer token. Falls back to `SNOW_TOKEN` environment variable. |
+| `servicenow.table` | `"cmdb_ci_computer"` | No | ServiceNow CMDB table to write to. |
+| `servicenow.verify_ssl` | `true` | No | Whether to verify the ServiceNow TLS certificate. |
+| `sn_payload_map` | See defaults | No | Dictionary mapping ServiceNow field names to xDome asset field names for the CMDB payload. |
 
 ### Default `sn_payload_map`
 

@@ -38,71 +38,71 @@ security requirements.
 
 ### Connection Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `vast_mgmt_host` | `{{ vault_vast_mgmt_host }}` | VAST cluster management IP or FQDN |
-| `vast_mgmt_port` | `443` | Management API port |
-| `vast_mgmt_user` | `{{ vault_vast_mgmt_user }}` | Admin username |
-| `vast_mgmt_password` | `{{ vault_vast_mgmt_password }}` | Admin password (vault-encrypted) |
-| `vast_api_version` | `v1` | VAST REST API version |
-| `vast_verify_ssl` | `true` | Validate TLS certificate |
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
+| `vast_mgmt_host` | `{{ vault_vast_mgmt_host }}` | **Yes** | VAST cluster management IP or FQDN |
+| `vast_mgmt_port` | `443` | No | Management API port |
+| `vast_mgmt_user` | `{{ vault_vast_mgmt_user }}` | **Yes** | Admin username |
+| `vast_mgmt_password` | `{{ vault_vast_mgmt_password }}` | **Yes** | Admin password (vault-encrypted) |
+| `vast_api_version` | `v1` | No | VAST REST API version |
+| `vast_verify_ssl` | `true` | No | Validate TLS certificate |
 
 ### Access Control
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `vast_enable_ldap` | `true` | Enable LDAP authentication |
-| `vast_ldap_server` | `{{ vault_ldap_server }}` | LDAP server FQDN |
-| `vast_ldap_port` | `636` | LDAP port (636 = LDAPS) |
-| `vast_ldap_use_ssl` | `true` | Require LDAPS |
-| `vast_ldap_base_dn` | `{{ vault_ldap_base_dn }}` | LDAP base DN |
-| `vast_enable_active_directory` | `true` | Enable AD integration |
-| `vast_ad_domain` | `{{ vault_ad_domain }}` | Active Directory domain |
-| `vast_require_kerberos` | `true` | Require Kerberos for AD auth |
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
+| `vast_enable_ldap` | `true` | No | Enable LDAP authentication |
+| `vast_ldap_server` | `{{ vault_ldap_server }}` | **Yes** | LDAP server FQDN |
+| `vast_ldap_port` | `636` | No | LDAP port (636 = LDAPS) |
+| `vast_ldap_use_ssl` | `true` | No | Require LDAPS |
+| `vast_ldap_base_dn` | `{{ vault_ldap_base_dn }}` | **Yes** | LDAP base DN |
+| `vast_enable_active_directory` | `true` | No | Enable AD integration |
+| `vast_ad_domain` | `{{ vault_ad_domain }}` | **Yes** | Active Directory domain |
+| `vast_require_kerberos` | `true` | No | Require Kerberos for AD auth |
 
 ### Password Policy
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `vast_password_min_length` | `15` | Minimum password length (STIG requirement) |
-| `vast_password_complexity_required` | `true` | Enforce complexity rules |
-| `vast_password_max_age_days` | `60` | Maximum password age in days |
-| `vast_password_history_count` | `24` | Number of previous passwords to remember |
-| `vast_account_lockout_threshold` | `3` | Failed attempts before lockout |
-| `vast_account_lockout_duration_minutes` | `15` | Lockout duration |
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
+| `vast_password_min_length` | `15` | No | Minimum password length (STIG requirement) |
+| `vast_password_complexity_required` | `true` | No | Enforce complexity rules |
+| `vast_password_max_age_days` | `60` | No | Maximum password age in days |
+| `vast_password_history_count` | `24` | No | Number of previous passwords to remember |
+| `vast_account_lockout_threshold` | `3` | No | Failed attempts before lockout |
+| `vast_account_lockout_duration_minutes` | `15` | No | Lockout duration |
 
 ### Encryption
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `vast_enforce_encryption_at_rest` | `true` | Require data-at-rest encryption |
-| `vast_enforce_encryption_in_transit` | `true` | Require TLS for all data transfers |
-| `vast_fips_140_2_mode` | `true` | Enable FIPS 140-2 mode |
-| `vast_tls_min_version` | `1.2` | Minimum TLS version |
-| `vast_disable_weak_ciphers` | `true` | Disable weak cipher suites |
-| `vast_allowed_cipher_suites` | See defaults | Approved cipher suite list |
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
+| `vast_enforce_encryption_at_rest` | `true` | No | Require data-at-rest encryption |
+| `vast_enforce_encryption_in_transit` | `true` | No | Require TLS for all data transfers |
+| `vast_fips_140_2_mode` | `true` | No | Enable FIPS 140-2 mode |
+| `vast_tls_min_version` | `1.2` | No | Minimum TLS version |
+| `vast_disable_weak_ciphers` | `true` | No | Disable weak cipher suites |
+| `vast_allowed_cipher_suites` | See defaults | No | Approved cipher suite list |
 
 ### Protocol Security
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `vast_disable_smb1` | `true` | Disable SMBv1 (required by STIG) |
-| `vast_smb_signing_required` | `true` | Require SMB packet signing |
-| `vast_smb_encryption_required` | `true` | Require SMB encryption |
-| `vast_nfs_require_secure_port` | `true` | Restrict NFS to privileged ports |
-| `vast_disable_anonymous_access` | `true` | Block anonymous share access |
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
+| `vast_disable_smb1` | `true` | No | Disable SMBv1 (required by STIG) |
+| `vast_smb_signing_required` | `true` | No | Require SMB packet signing |
+| `vast_smb_encryption_required` | `true` | No | Require SMB encryption |
+| `vast_nfs_require_secure_port` | `true` | No | Restrict NFS to privileged ports |
+| `vast_disable_anonymous_access` | `true` | No | Block anonymous share access |
 
 ### Audit Logging
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `vast_audit_all_access` | `true` | Audit all file/share access |
-| `vast_audit_admin_actions` | `true` | Audit all admin operations |
-| `vast_audit_failed_logins` | `true` | Audit failed authentication |
-| `vast_audit_config_changes` | `true` | Audit configuration changes |
-| `vast_audit_log_retention_days` | `365` | Log retention period |
-| `vast_send_logs_to_siem` | `true` | Forward logs to SIEM |
-| `vast_siem_server` | `{{ vault_siem_server }}` | SIEM server address |
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
+| `vast_audit_all_access` | `true` | No | Audit all file/share access |
+| `vast_audit_admin_actions` | `true` | No | Audit all admin operations |
+| `vast_audit_failed_logins` | `true` | No | Audit failed authentication |
+| `vast_audit_config_changes` | `true` | No | Audit configuration changes |
+| `vast_audit_log_retention_days` | `365` | No | Log retention period |
+| `vast_send_logs_to_siem` | `true` | No | Forward logs to SIEM |
+| `vast_siem_server` | `{{ vault_siem_server }}` | **Yes** | SIEM server address |
 
 ## Dependencies
 

@@ -42,25 +42,57 @@ Each platform is independent. Pick one to start.
 
 | You want to automate... | Directory | README |
 |------------------------|-----------|--------|
+| **Network & Security** | | |
 | Cisco ACI / ISE / UCS | `cisco/` | [cisco/README.md](cisco/README.md) |
-| VMware vSphere / ESXi | `vmware/` | [vmware/README.md](vmware/README.md) |
-| VAST Data storage | `vast/` | [vast/README.md](vast/README.md) |
-| NetApp ONTAP | `netapp/` | [netapp/README.md](netapp/README.md) |
 | Palo Alto firewalls | `palo_alto/` | [palo_alto/README.md](palo_alto/README.md) |
 | Check Point firewalls | `checkpoint/` | [checkpoint/README.md](checkpoint/README.md) |
+| Arista EOS / CVP | `arista/` | [arista/README.md](arista/README.md) |
 | F5 BIG-IP | `f5_bigip/` | [f5_bigip/README.md](f5_bigip/README.md) |
+| Fortinet FortiGate | `fortinet/` | [fortinet/README.md](fortinet/README.md) |
 | Infoblox DNS/DHCP | `infoblox/` | [infoblox/README.md](infoblox/README.md) |
 | Illumio micro-seg | `illumio/` | [illumio/README.md](illumio/README.md) |
-| RHEL servers | `rhel/` | [rhel/README.md](rhel/README.md) |
-| Windows servers | `windows/` | [windows/README.md](windows/README.md) |
-| Kubernetes clusters | `kubernetes/` | [kubernetes/README.md](kubernetes/README.md) |
+| **Cloud Platforms** | | |
 | AWS | `aws/` | [aws/README.md](aws/README.md) |
 | Azure | `azure/` | [azure/README.md](azure/README.md) |
+| Google Cloud Platform | `google_cloud_platform/` | [google_cloud_platform/README.md](google_cloud_platform/README.md) |
+| VMware vSphere / NSX-T | `vmware/` | [vmware/README.md](vmware/README.md) |
+| **Operating Systems** | | |
+| RHEL servers | `rhel/` | [rhel/README.md](rhel/README.md) |
+| Windows servers | `windows/` | [windows/README.md](windows/README.md) |
+| **Container & Orchestration** | | |
+| Kubernetes clusters | `kubernetes/` | [kubernetes/README.md](kubernetes/README.md) |
+| Red Hat OpenShift | `openshift/` | [openshift/README.md](openshift/README.md) |
+| **Storage & Backup** | | |
+| VAST Data | `vast/` | [vast/README.md](vast/README.md) |
+| NetApp ONTAP | `netapp/` | [netapp/README.md](netapp/README.md) |
+| Pure Storage | `pure_storage/` | [pure_storage/README.md](pure_storage/README.md) |
+| Veeam Backup | `veeam/` | [veeam/README.md](veeam/README.md) |
+| Cohesity | `cohesity/` | [cohesity/README.md](cohesity/README.md) |
+| **Database Platforms** | | |
+| PostgreSQL | `databases/postgresql/` | [databases/postgresql/README.md](databases/postgresql/README.md) |
+| MySQL / MariaDB | `databases/mysql/` | [databases/mysql/README.md](databases/mysql/README.md) |
+| Oracle Database | `databases/oracle/` | [databases/oracle/README.md](databases/oracle/README.md) |
+| **Monitoring & Logging** | | |
 | Splunk | `splunk/` | [splunk/README.md](splunk/README.md) |
-| ServiceNow CMDB | `servicenow/` | [servicenow/README.md](servicenow/README.md) |
+| ELK Stack | `elk_stack/` | [elk_stack/README.md](elk_stack/README.md) |
+| Prometheus / Grafana | `prometheus_grafana/` | [prometheus_grafana/README.md](prometheus_grafana/README.md) |
+| ScienceLogic SL1 | `sciencelogic/` | [sciencelogic/README.md](sciencelogic/README.md) |
+| **Security & Compliance** | | |
 | HashiCorp Vault | `hashicorp_vault/` | [hashicorp_vault/README.md](hashicorp_vault/README.md) |
-| NIST/STIG policy | `policy_as_code/` | [policy_as_code/README.md](policy_as_code/README.md) |
-| All others | See directory listing | Each has a README.md |
+| Tenable Security Center | `tenable/` | [tenable/README.md](tenable/README.md) |
+| CrowdStrike Falcon EDR | `crowdstrike/` | [crowdstrike/README.md](crowdstrike/README.md) |
+| SentinelOne EDR | `sentinelone/` | [sentinelone/README.md](sentinelone/README.md) |
+| **Enterprise Integration** | | |
+| ServiceNow CMDB | `servicenow/` | [servicenow/README.md](servicenow/README.md) |
+| **Automation Platform** | | |
+| Ansible Automation Platform | `ansible/` | [ansible/README.md](ansible/README.md) |
+| Ansible Tower / AAP | `ansible_tower/` | [ansible_tower/README.md](ansible_tower/README.md) |
+| **Compliance Frameworks** | | |
+| NIST / DoD STIG policy | `policy_as_code/` | [policy_as_code/README.md](policy_as_code/README.md) |
+| **OT / ICS** | | |
+| Operational Technology | `operational_technology/` | [operational_technology/README.md](operational_technology/README.md) |
+| Dragos OT monitoring | `dragos/` | [dragos/README.md](dragos/README.md) |
+| Claroty OT security | `claroty/` | [claroty/README.md](claroty/README.md) |
 
 ---
 
@@ -111,28 +143,24 @@ aci_use_proxy=false
 All credentials must be stored in an encrypted vault file. **Never put
 passwords in your inventory or playbooks.**
 
+Every platform includes a `vault.yml.example` file listing every credential
+variable it needs, with descriptions of where to find each value.
+
 ```bash
-# Create an encrypted vault file
-ansible-vault create cisco/group_vars/all/vault.yml
+# 1. Copy the example to your group_vars directory
+mkdir -p cisco/group_vars/all
+cp cisco/vault.yml.example cisco/group_vars/all/vault.yml
+
+# 2. Edit the file — fill in every CHANGE_ME value
+vi cisco/group_vars/all/vault.yml
+
+# 3. Encrypt it with ansible-vault
+ansible-vault encrypt cisco/group_vars/all/vault.yml
 ```
 
-Inside, define the variables your platform needs. Example for Cisco:
-
-```yaml
-# cisco/group_vars/all/vault.yml
-vault_aci_apic_hostname: "apic01.yourdomain.com"
-vault_aci_apic_username: "admin"
-vault_aci_apic_password: "YourPassword"
-vault_ise_hostname: "ise01.yourdomain.com"
-vault_ise_username: "admin"
-vault_ise_password: "YourISEPassword"
-vault_ucs_hostname: "ucs01.yourdomain.com"
-vault_ucs_username: "admin"
-vault_ucs_password: "YourUCSPassword"
-```
-
-> Check the platform `README.md` or the role `defaults/main.yml` files
-> for the exact vault variable names each role expects.
+> Each `vault.yml.example` lists only the variables for that platform.
+> Required variables are marked clearly; optional ones have comments
+> explaining when they are needed.
 
 ---
 

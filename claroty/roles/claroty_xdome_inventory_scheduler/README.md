@@ -11,13 +11,13 @@ Installs a shell wrapper script and a cron entry on the Ansible control host (or
 
 ## Role Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `artifacts_dir` | `"/tmp/claroty-artifacts"` | Directory where the wrapper script is installed and where delta-sync logs are written. |
-| `cron_schedule` | `"0 * * * *"` | Cron schedule expression in standard five-field format (minute hour day month weekday). Default runs every hour. |
-| `scheduled_playbook` | `"/opt/ansible/claroty/claroty_delta_sync.yml"` | Absolute path to the playbook that the cron job will invoke. |
-| `ansible_cmd` | `"/usr/bin/ansible-playbook"` | Absolute path to the `ansible-playbook` binary. |
-| `cron_env` | `{CLAROTY_TOKEN: "", SNOW_TOKEN: ""}` | Dictionary of environment variable names and values to export in the wrapper script. Used to pass credentials to the scheduled playbook without interactive prompts. **Set via Ansible Vault.** |
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
+| `artifacts_dir` | `"/tmp/claroty-artifacts"` | No | Directory where the wrapper script is installed and where delta-sync logs are written. |
+| `cron_schedule` | `"0 * * * *"` | No | Cron schedule expression in standard five-field format (minute hour day month weekday). Default runs every hour. |
+| `scheduled_playbook` | `"/opt/ansible/claroty/claroty_delta_sync.yml"` | No | Absolute path to the playbook that the cron job will invoke. |
+| `ansible_cmd` | `"/usr/bin/ansible-playbook"` | No | Absolute path to the `ansible-playbook` binary. |
+| `cron_env` | `{CLAROTY_TOKEN: "", SNOW_TOKEN: ""}` | No | Dictionary of environment variable names and values to export in the wrapper script. Used to pass credentials to the scheduled playbook without interactive prompts. **Set via Ansible Vault.** |
 
 ## Dependencies
 

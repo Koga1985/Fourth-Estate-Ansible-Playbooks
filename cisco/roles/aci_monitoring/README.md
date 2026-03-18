@@ -32,14 +32,14 @@ This role automates the complete monitoring and observability stack for a Cisco 
 
 ### Connection Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `aci_host` | `{{ vault_aci_apic_hostname }}` | APIC hostname or IP address |
-| `aci_username` | `{{ vault_aci_apic_username }}` | APIC admin username |
-| `aci_password` | `{{ vault_aci_apic_password }}` | APIC admin password (vault-encrypted) |
-| `aci_verify_ssl` | `true` | Validate APIC TLS certificate |
-| `aci_timeout` | `30` | APIC API request timeout (seconds) |
-| `aci_port` | `443` | APIC HTTPS port |
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
+| `aci_host` | `{{ vault_aci_apic_hostname }}` | **Yes** | APIC hostname or IP address |
+| `aci_username` | `{{ vault_aci_apic_username }}` | **Yes** | APIC admin username |
+| `aci_password` | `{{ vault_aci_apic_password }}` | **Yes** | APIC admin password (vault-encrypted) |
+| `aci_verify_ssl` | `true` | No | Validate APIC TLS certificate |
+| `aci_timeout` | `30` | No | APIC API request timeout (seconds) |
+| `aci_port` | `443` | No | APIC HTTPS port |
 
 ### Deployment Control
 
@@ -47,23 +47,23 @@ This role automates the complete monitoring and observability stack for a Cisco 
 
 ### Feature Toggles
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `enable_snmp` | `true` | Configure SNMP policy, v3 users, and trap destinations |
-| `enable_syslog` | `true` | Configure syslog policy and remote destinations |
-| `enable_callhome` | `true` | Configure Cisco Call Home |
-| `enable_health_monitoring` | `true` | Query and evaluate fabric health scores |
-| `enable_fault_management` | `true` | Query and report on active faults |
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
+| `enable_snmp` | `true` | No | Configure SNMP policy, v3 users, and trap destinations |
+| `enable_syslog` | `true` | No | Configure syslog policy and remote destinations |
+| `enable_callhome` | `true` | No | Configure Cisco Call Home |
+| `enable_health_monitoring` | `true` | No | Query and evaluate fabric health scores |
+| `enable_fault_management` | `true` | No | Query and report on active faults |
 
 ### SNMP Configuration
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `aci_snmp_enabled` | `true` | Enable SNMP on the fabric |
-| `aci_snmp_version` | `v3` | SNMP version (v3 enforced for security) |
-| `aci_snmp_community` | `{{ vault_aci_snmp_community }}` | SNMPv2c community (vault-encrypted) |
-| `aci_snmp_contact` | `{{ vault_fourth_estate_contact }}` | SNMP system contact (vault ref) |
-| `aci_snmp_location` | `{{ vault_aci_snmp_location }}` | SNMP system location (vault ref) |
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
+| `aci_snmp_enabled` | `true` | No | Enable SNMP on the fabric |
+| `aci_snmp_version` | `v3` | No | SNMP version (v3 enforced for security) |
+| `aci_snmp_community` | `{{ vault_aci_snmp_community }}` | **Yes** | SNMPv2c community (vault-encrypted) |
+| `aci_snmp_contact` | `{{ vault_fourth_estate_contact }}` | **Yes** | SNMP system contact (vault ref) |
+| `aci_snmp_location` | `{{ vault_aci_snmp_location }}` | **Yes** | SNMP system location (vault ref) |
 
 #### SNMPv3 Users (`aci_snmp_v3_users`)
 
@@ -90,11 +90,11 @@ aci_snmp_trap_destinations:
 
 ### Syslog Configuration
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `aci_syslog_enabled` | `true` | Enable syslog on the fabric |
-| `aci_syslog_local_severity` | `information` | Local file log severity level |
-| `aci_syslog_include_ms` | `true` | Include milliseconds in timestamps |
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
+| `aci_syslog_enabled` | `true` | No | Enable syslog on the fabric |
+| `aci_syslog_local_severity` | `information` | No | Local file log severity level |
+| `aci_syslog_include_ms` | `true` | No | Include milliseconds in timestamps |
 
 #### Syslog Destinations (`aci_syslog_destinations`)
 
@@ -110,35 +110,35 @@ aci_syslog_destinations:
 
 ### Call Home Configuration
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `aci_callhome_enabled` | `true` | Enable Call Home |
-| `aci_callhome_customer_id` | `{{ vault_aci_callhome_customer_id }}` | Cisco customer ID |
-| `aci_callhome_contract_id` | `{{ vault_aci_callhome_contract_id }}` | Cisco contract ID |
-| `aci_callhome_site_id` | `{{ vault_aci_callhome_site_id }}` | Site identifier |
-| `aci_callhome_email` | `{{ vault_aci_callhome_email }}` | Notification email (vault-encrypted) |
-| `aci_callhome_smtp_server` | `{{ vault_aci_callhome_smtp_server }}` | SMTP relay server |
-| `aci_callhome_smtp_port` | `25` | SMTP relay port |
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
+| `aci_callhome_enabled` | `true` | No | Enable Call Home |
+| `aci_callhome_customer_id` | `{{ vault_aci_callhome_customer_id }}` | **Yes** | Cisco customer ID |
+| `aci_callhome_contract_id` | `{{ vault_aci_callhome_contract_id }}` | **Yes** | Cisco contract ID |
+| `aci_callhome_site_id` | `{{ vault_aci_callhome_site_id }}` | **Yes** | Site identifier |
+| `aci_callhome_email` | `{{ vault_aci_callhome_email }}` | **Yes** | Notification email (vault-encrypted) |
+| `aci_callhome_smtp_server` | `{{ vault_aci_callhome_smtp_server }}` | **Yes** | SMTP relay server |
+| `aci_callhome_smtp_port` | `25` | No | SMTP relay port |
 
 ### Health Monitoring Configuration
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `aci_health_warn_threshold` | `75` | Health score below which warning is issued |
-| `aci_health_critical_threshold` | `50` | Health score below which critical alert is issued |
-| `aci_monitor_pods` | `true` | Query and report pod health scores |
-| `aci_monitor_nodes` | `true` | Query and report fabric node health scores |
-| `aci_monitor_tenants` | `true` | Query and report tenant health scores |
-| `aci_health_fail_on_critical` | `false` | Fail playbook if fabric health is critical |
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
+| `aci_health_warn_threshold` | `75` | No | Health score below which warning is issued |
+| `aci_health_critical_threshold` | `50` | No | Health score below which critical alert is issued |
+| `aci_monitor_pods` | `true` | No | Query and report pod health scores |
+| `aci_monitor_nodes` | `true` | No | Query and report fabric node health scores |
+| `aci_monitor_tenants` | `true` | No | Query and report tenant health scores |
+| `aci_health_fail_on_critical` | `false` | No | Fail playbook if fabric health is critical |
 
 ### Fault Management Configuration
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `aci_suppress_acknowledged` | `false` | Suppress acknowledged faults from reports |
-| `aci_fault_page_size` | `100` | Maximum faults to retrieve per severity query |
-| `aci_fault_fail_on_critical` | `false` | Fail playbook if critical faults are present |
-| `aci_fault_warn_on_major` | `true` | Emit warning debug message for major faults |
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
+| `aci_suppress_acknowledged` | `false` | No | Suppress acknowledged faults from reports |
+| `aci_fault_page_size` | `100` | No | Maximum faults to retrieve per severity query |
+| `aci_fault_fail_on_critical` | `false` | No | Fail playbook if critical faults are present |
+| `aci_fault_warn_on_major` | `true` | No | Emit warning debug message for major faults |
 
 ## Dependencies
 

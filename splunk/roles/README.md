@@ -62,14 +62,14 @@ ansible-playbook -i inventory site.yml --tags install --ask-vault-pass
 
 ## Key Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `splunk_version` | `"9.2.1"` | Splunk Enterprise version to install. |
-| `splunk_enable_fips` | `true` | Enable FIPS 140-2 mode. |
-| `splunk_tls_min_version` | `"tls1.2"` | Minimum TLS version to accept. |
-| `splunk_admin_password` | (required) | Admin password; use Ansible Vault. |
-| `stig_cat1_enabled` | `true` | Apply STIG Category I (High) controls. |
-| `backup_retention_days` | `90` | Days to retain local backup archives. |
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
+| `splunk_version` | `"9.2.1"` | No | Splunk Enterprise version to install. |
+| `splunk_enable_fips` | `true` | No | Enable FIPS 140-2 mode. |
+| `splunk_tls_min_version` | `"tls1.2"` | No | Minimum TLS version to accept. |
+| `splunk_admin_password` | (required) | No | Admin password; use Ansible Vault. |
+| `stig_cat1_enabled` | `true` | No | Apply STIG Category I (High) controls. |
+| `backup_retention_days` | `90` | No | Days to retain local backup archives. |
 
 ---
 
