@@ -111,28 +111,24 @@ aci_use_proxy=false
 All credentials must be stored in an encrypted vault file. **Never put
 passwords in your inventory or playbooks.**
 
+Every platform includes a `vault.yml.example` file listing every credential
+variable it needs, with descriptions of where to find each value.
+
 ```bash
-# Create an encrypted vault file
-ansible-vault create cisco/group_vars/all/vault.yml
+# 1. Copy the example to your group_vars directory
+mkdir -p cisco/group_vars/all
+cp cisco/vault.yml.example cisco/group_vars/all/vault.yml
+
+# 2. Edit the file — fill in every CHANGE_ME value
+vi cisco/group_vars/all/vault.yml
+
+# 3. Encrypt it with ansible-vault
+ansible-vault encrypt cisco/group_vars/all/vault.yml
 ```
 
-Inside, define the variables your platform needs. Example for Cisco:
-
-```yaml
-# cisco/group_vars/all/vault.yml
-vault_aci_apic_hostname: "apic01.yourdomain.com"
-vault_aci_apic_username: "admin"
-vault_aci_apic_password: "YourPassword"
-vault_ise_hostname: "ise01.yourdomain.com"
-vault_ise_username: "admin"
-vault_ise_password: "YourISEPassword"
-vault_ucs_hostname: "ucs01.yourdomain.com"
-vault_ucs_username: "admin"
-vault_ucs_password: "YourUCSPassword"
-```
-
-> Check the platform `README.md` or the role `defaults/main.yml` files
-> for the exact vault variable names each role expects.
+> Each `vault.yml.example` lists only the variables for that platform.
+> Required variables are marked clearly; optional ones have comments
+> explaining when they are needed.
 
 ---
 
