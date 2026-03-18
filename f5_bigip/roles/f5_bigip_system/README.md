@@ -6,8 +6,8 @@ F5 Bigip System role for Fourth Estate infrastructure automation.
 
 ## Role Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
 | `f5_bigip_hostname` | `"{{ inventory_hostname_short }}"` |  |
 | `f5_bigip_domain` | `"agency.gov"` |  |
 | `f5_bigip_description` | `"F5 BIG-IP Load Balancer - Fourth Estate"` |  |

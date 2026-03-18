@@ -17,7 +17,7 @@ Configures Splunk Enterprise backup and disaster recovery: scheduled backups of 
 | `backup_retention_days` | `90` | No | Days to retain local backups |
 | `backup_schedule` | `"0 2 * * 0"` | No | Cron schedule (default: weekly at 2 AM Sunday) |
 | `backup_encryption_enabled` | `true` | No | Encrypt backup archives (STIG requirement) |
-| `backup_encryption_key` | `{{ vault_backup_encryption_key }}` | No | Encryption key for backup archives |
+| `backup_encryption_key` | `{{ vault_backup_encryption_key }}` | **Yes** | Encryption key for backup archives |
 | `backup_include_etc` | `true` | No | Back up `$SPLUNK_HOME/etc` (configs) |
 | `backup_include_kvstore` | `true` | No | Back up KVStore (lookup tables, saved searches) |
 | `backup_include_indexes` | `false` | No | Back up raw indexes (very large — use snapshots instead) |

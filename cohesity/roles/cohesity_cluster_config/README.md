@@ -6,8 +6,8 @@ Cohesity Cluster Config role for Fourth Estate infrastructure automation.
 
 ## Role Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
 | `cohesity_cluster_vip` | `"10.100.1.100"` |  |
 | `cohesity_api_protocol` | `"https"` |  |
 | `cohesity_api_port` | `443` |  |

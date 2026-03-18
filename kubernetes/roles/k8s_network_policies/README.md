@@ -6,8 +6,8 @@ K8S Network Policies role for Fourth Estate infrastructure automation.
 
 ## Role Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
 | `k8s_pod_security_standard` | `restricted` |  |
 | `k8s_network_policy_default_deny_ingress` | `true` |  |
 | `k8s_network_policy_default_deny_egress` | `true` |  |
@@ -19,10 +19,10 @@ K8S Network Policies role for Fourth Estate infrastructure automation.
 | `k8s_network_policy_ingress_namespace` | `ingress-nginx` |  |
 | `k8s_network_policy_fourth_estate_enabled` | `true` |  |
 | `k8s_network_policy_custom` | `[]` |  |
-| `k8s_network_policy_provider` | `calico` | Options: calico, cilium, weave, antrea |
+| `k8s_network_policy_provider` | `calico` | No | Options: calico, cilium, weave, antrea |
 | `k8s_network_policy_enable_logging` | `true` |  |
 | `k8s_network_policy_log_level` | `info` |  |
-| `k8s_network_policy_compliance_mode` | `strict` | Options: strict, permissive |
+| `k8s_network_policy_compliance_mode` | `strict` | No | Options: strict, permissive |
 
 See `defaults/main.yml` for the full variable list.
 

@@ -6,12 +6,12 @@ Azure Subnets role for Fourth Estate infrastructure automation.
 
 ## Role Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
 | `azure_cloud_environment` | `"AzureUSGovernment"` |  |
 | `azure_region` | `"usgovvirginia"` |  |
 | `azure_resource_group` | `"rg-network-prod-usgovva"` |  |
-| `azure_vnet_name` | `""` | Parent VNet name (required) |
+| `azure_vnet_name` | `""` | No | Parent VNet name (required) |
 | `azure_subnets` | `[]` |  |
 | `azure_subnet_enable_private_endpoints` | `true` |  |
 | `azure_subnet_private_endpoint_network_policies` | `"Disabled"` |  |

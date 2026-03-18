@@ -6,8 +6,8 @@ Aws Lambda Functions role for Fourth Estate infrastructure automation.
 
 ## Role Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
 | `lambda_state` | `"present"` |  |
 | `lambda_enable_insights` | `true` |  |
 | `lambda_insights_layer_arn` | `"arn:aws-us-gov:lambda:us-gov-west-1:1234567890...` |  |

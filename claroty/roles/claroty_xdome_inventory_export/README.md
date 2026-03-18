@@ -20,24 +20,24 @@ Exports Claroty xDome assets using a paginated API with optional delta filtering
 
 ### Export Options
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `inventory_format` | `"json"` | Output format: `json`, `csv`, or `both`. |
-| `include_fields` | `[]` | List of asset fields to include in CSV output. When empty, a default set of fields is used (`id`, `name`, `site`, `type`, `ip`, `mac`, `vendor`, `model`, `firmware`, `riskScore`). |
-| `page_size` | `500` | Number of assets to request per API page. |
-| `max_pages` | `1000` | Maximum number of pages to fetch. Acts as a safety ceiling. |
-| `delta_since` | `null` | Controls delta export behavior: `null` performs a full export; an ISO 8601 string filters by update timestamp; `"auto"` reads the `last_run` marker file and uses it automatically. |
-| `request_timeout` | `60` | HTTP request timeout in seconds. |
-| `extra_headers` | `{}` | Additional HTTP headers to include in API requests. |
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
+| `inventory_format` | `"json"` | No | Output format: `json`, `csv`, or `both`. |
+| `include_fields` | `[]` | No | List of asset fields to include in CSV output. When empty, a default set of fields is used (`id`, `name`, `site`, `type`, `ip`, `mac`, `vendor`, `model`, `firmware`, `riskScore`). |
+| `page_size` | `500` | No | Number of assets to request per API page. |
+| `max_pages` | `1000` | No | Maximum number of pages to fetch. Acts as a safety ceiling. |
+| `delta_since` | `null` | No | Controls delta export behavior: `null` performs a full export; an ISO 8601 string filters by update timestamp; `"auto"` reads the `last_run` marker file and uses it automatically. |
+| `request_timeout` | `60` | No | HTTP request timeout in seconds. |
+| `extra_headers` | `{}` | No | Additional HTTP headers to include in API requests. |
 
 ### Output Files
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `artifacts_dir` | `"/tmp/claroty-artifacts"` | Directory where output files are written. Created if it does not exist. |
-| `json_filename` | `"xdome_assets.json"` | Filename for JSON output. |
-| `csv_filename` | `"xdome_assets.csv"` | Filename for CSV output. |
-| `marker_filename` | `"last_run.txt"` | Filename for the last-run UTC timestamp marker used by `delta_since: auto`. |
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
+| `artifacts_dir` | `"/tmp/claroty-artifacts"` | No | Directory where output files are written. Created if it does not exist. |
+| `json_filename` | `"xdome_assets.json"` | No | Filename for JSON output. |
+| `csv_filename` | `"xdome_assets.csv"` | No | Filename for CSV output. |
+| `marker_filename` | `"last_run.txt"` | No | Filename for the last-run UTC timestamp marker used by `delta_since: auto`. |
 
 ## Dependencies
 

@@ -6,8 +6,8 @@ Vault Install role for Fourth Estate infrastructure automation.
 
 ## Role Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
 | `vault_version` | `"1.15.4"` |  |
 | `vault_enterprise` | `false` |  |
 | `vault_license_path` | `""` |  |

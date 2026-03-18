@@ -16,12 +16,12 @@ Generates a suite of CSV reports from the Illumio PCE API: an overall segmentati
 
 All variables are defined in `defaults/main.yml`.
 
-| Variable | Default | Description |
+| Variable | Default | Required | Description |
 |---|---|---|
-| `verify_ssl` | `true` | Verify TLS certificates when calling the PCE API. |
-| `artifacts_dir` | `/tmp/illumio-artifacts` | Directory on the Ansible controller where CSV report files are written. Created automatically if it does not exist. |
-| `start_time` | _(undefined)_ | ISO 8601 start timestamp for the audit-event export (e.g. `2026-03-16T00:00:00Z`). When undefined, the audit-events task is skipped. |
-| `end_time` | _(undefined)_ | ISO 8601 end timestamp for the audit-event export. When undefined, the audit-events task is skipped. |
+| `verify_ssl` | `true` | No | Verify TLS certificates when calling the PCE API. |
+| `artifacts_dir` | `/tmp/illumio-artifacts` | No | Directory on the Ansible controller where CSV report files are written. Created automatically if it does not exist. |
+| `start_time` | _(undefined)_ | No | ISO 8601 start timestamp for the audit-event export (e.g. `2026-03-16T00:00:00Z`). When undefined, the audit-events task is skipped. |
+| `end_time` | _(undefined)_ | No | ISO 8601 end timestamp for the audit-event export. When undefined, the audit-events task is skipped. |
 
 ### Runtime-only variables (no defaults)
 

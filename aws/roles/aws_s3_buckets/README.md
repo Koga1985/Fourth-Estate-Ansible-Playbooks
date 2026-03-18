@@ -6,10 +6,10 @@ Aws S3 Buckets role for Fourth Estate infrastructure automation.
 
 ## Role Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
 | `s3_bucket_name` | `"ansible-managed-bucket"` |  |
-| `s3_region` | `"{{ aws_region | default('us-east-1') }}"` |  |
+| `s3_region` | `"{{ aws_region | No | default('us-east-1') }}"` |
 | `s3_versioning` | `true` |  |
 | `s3_encryption` | `"aws:kms"` |  |
 | `s3_kms_key_id` | `"alias/aws/s3"` |  |

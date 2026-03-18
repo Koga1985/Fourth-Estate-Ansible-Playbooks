@@ -6,8 +6,8 @@ Panos System Config role for Fourth Estate infrastructure automation.
 
 ## Role Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
 | `panos_hostname` | `"fw01"` |  |
 | `panos_domain` | `"example.local"` |  |
 | `panos_timezone` | `"America/New_York"` |  |

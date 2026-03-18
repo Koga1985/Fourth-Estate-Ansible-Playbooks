@@ -15,56 +15,56 @@ Creates Cisco ISE guest user accounts in bulk, either from a CSV file or from an
 
 ### ISE Connection
 
-| Variable | Default | Description |
+| Variable | Default | Required | Description |
 |---|---|---|
-| `ise_hostname` | `{{ vault_ise_hostname }}` | ISE primary PAN hostname or IP |
-| `ise_username` | `{{ vault_ise_username }}` | ISE admin username |
-| `ise_password` | `{{ vault_ise_password }}` | ISE admin password (vault-protected) |
-| `ise_verify_ssl` | `true` | Validate ISE TLS certificate |
-| `ise_use_proxy` | `false` | Route ISE API calls through a proxy |
-| `ise_debug` | `false` | Enable verbose debug logging |
+| `ise_hostname` | `{{ vault_ise_hostname }}` | **Yes** | ISE primary PAN hostname or IP |
+| `ise_username` | `{{ vault_ise_username }}` | **Yes** | ISE admin username |
+| `ise_password` | `{{ vault_ise_password }}` | **Yes** | ISE admin password (vault-protected) |
+| `ise_verify_ssl` | `true` | No | Validate ISE TLS certificate |
+| `ise_use_proxy` | `false` | No | Route ISE API calls through a proxy |
+| `ise_debug` | `false` | No | Enable verbose debug logging |
 
 ### Deployment Control
 
-| Variable | Default | Description |
+| Variable | Default | Required | Description |
 |---|---|---|
-| `apply_changes` | `false` | Set to `true` to write changes; `false` runs in plan/audit mode |
-| `ise_artifacts_dir` | `/tmp/ise-artifacts` | Local directory for generated reports |
+| `apply_changes` | `false` | No | Set to `true` to write changes; `false` runs in plan/audit mode |
+| `ise_artifacts_dir` | `/tmp/ise-artifacts` | No | Local directory for generated reports |
 
 ### Guest Account Input
 
-| Variable | Default | Description |
+| Variable | Default | Required | Description |
 |---|---|---|
-| `guest_csv_file` | (optional) | Absolute path to a CSV file with guest account data |
-| `guest_accounts` | `[]` | Fallback list of guest account dicts when `guest_csv_file` is not provided |
-| `default_guest_type` | (required) | ISE guest type name applied to accounts without an explicit `guest_type` |
-| `default_portal_id` | (required) | ISE portal ID applied to accounts without an explicit `portal_id` |
+| `guest_csv_file` | (optional) | No | Absolute path to a CSV file with guest account data |
+| `guest_accounts` | `[]` | No | Fallback list of guest account dicts when `guest_csv_file` is not provided |
+| `default_guest_type` | (required) | No | ISE guest type name applied to accounts without an explicit `guest_type` |
+| `default_portal_id` | (required) | No | ISE portal ID applied to accounts without an explicit `portal_id` |
 
 CSV / list fields per guest entry: `username` (or `name`), `first_name`, `last_name`, `email`, `phone`, `company`, `guest_type`, `portal_id`.
 
 ### Feature Flags
 
-| Variable | Default | Description |
+| Variable | Default | Required | Description |
 |---|---|---|
-| `ise_guest__accounts_bulk_enabled` | `true` | Master toggle for this role |
-| `enable_disa_stig_compliance` | `true` | Apply STIG-compliant settings |
+| `ise_guest__accounts_bulk_enabled` | `true` | No | Master toggle for this role |
+| `enable_disa_stig_compliance` | `true` | No | Apply STIG-compliant settings |
 
 ### Logging and Notifications
 
-| Variable | Default | Description |
+| Variable | Default | Required | Description |
 |---|---|---|
-| `ise_guest__accounts_bulk_log_level` | `INFO` | Log verbosity level |
-| `ise_guest__accounts_bulk_log_to_syslog` | `true` | Forward events to syslog |
-| `ise_guest__accounts_bulk_syslog_server` | `{{ vault_syslog_server }}` | Syslog server address |
-| `ise_guest__accounts_bulk_notify_on_completion` | `false` | Send email on completion |
-| `ise_guest__accounts_bulk_notification_email` | `{{ vault_security_team_email }}` | Notification recipient |
-| `ise_guest__accounts_bulk_auto_backup` | `true` | Trigger ISE backup after changes |
+| `ise_guest__accounts_bulk_log_level` | `INFO` | No | Log verbosity level |
+| `ise_guest__accounts_bulk_log_to_syslog` | `true` | No | Forward events to syslog |
+| `ise_guest__accounts_bulk_syslog_server` | `{{ vault_syslog_server }}` | **Yes** | Syslog server address |
+| `ise_guest__accounts_bulk_notify_on_completion` | `false` | No | Send email on completion |
+| `ise_guest__accounts_bulk_notification_email` | `{{ vault_security_team_email }}` | **Yes** | Notification recipient |
+| `ise_guest__accounts_bulk_auto_backup` | `true` | No | Trigger ISE backup after changes |
 
 ### Compliance Frameworks
 
-| Variable | Default | Description |
+| Variable | Default | Required | Description |
 |---|---|---|
-| `compliance_frameworks` | `[dod_stig, nist_800_53, nist_800_171, fisma_moderate]` | Frameworks referenced in generated reports |
+| `compliance_frameworks` | `[dod_stig, nist_800_53, nist_800_171, fisma_moderate]` | No | Frameworks referenced in generated reports |
 
 ## Example Playbook
 

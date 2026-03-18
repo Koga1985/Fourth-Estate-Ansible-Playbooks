@@ -25,36 +25,36 @@ This role automates the initial deployment of a Cisco ACI fabric for Fourth Esta
 ## Role Variables
 
 ### Connection Variables
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `aci_host` | `{{ vault_aci_apic_hostname }}` | APIC hostname or IP address |
-| `aci_username` | `{{ vault_aci_apic_username }}` | APIC admin username |
-| `aci_password` | `{{ vault_aci_apic_password }}` | APIC admin password (vault-encrypted) |
-| `aci_verify_ssl` | `true` | Validate APIC TLS certificate |
-| `aci_timeout` | `30` | APIC API request timeout (seconds) |
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
+| `aci_host` | `{{ vault_aci_apic_hostname }}` | **Yes** | APIC hostname or IP address |
+| `aci_username` | `{{ vault_aci_apic_username }}` | **Yes** | APIC admin username |
+| `aci_password` | `{{ vault_aci_apic_password }}` | **Yes** | APIC admin password (vault-encrypted) |
+| `aci_verify_ssl` | `true` | No | Validate APIC TLS certificate |
+| `aci_timeout` | `30` | No | APIC API request timeout (seconds) |
 
 ### Deployment Control
 `apply_changes: false` — The role defaults to **dry-run mode**. No configuration changes are written to the APIC unless `apply_changes: true` is explicitly passed. In dry-run mode, all tasks execute `state: query` instead of `state: present`.
 
 ### Fabric Configuration
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `aci_fabric_name` | `FourthEstate-ACI` | Fabric instance name |
-| `aci_pod_id` | `1` | Default pod ID |
-| `aci_infra_vlan` | `4093` | Infrastructure VLAN ID |
-| `aci_multicast_gipo` | `225.0.0.0/15` | Multicast GIPo address range |
-| `aci_ntp_servers` | NIST servers | List of NTP server objects |
-| `aci_dns_servers` | 8.8.8.8, 8.8.4.4 | List of DNS server objects |
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
+| `aci_fabric_name` | `FourthEstate-ACI` | No | Fabric instance name |
+| `aci_pod_id` | `1` | No | Default pod ID |
+| `aci_infra_vlan` | `4093` | No | Infrastructure VLAN ID |
+| `aci_multicast_gipo` | `225.0.0.0/15` | No | Multicast GIPo address range |
+| `aci_ntp_servers` | NIST servers | No | List of NTP server objects |
+| `aci_dns_servers` | 8.8.8.8, 8.8.4.4 | No | List of DNS server objects |
 
 ### Feature Toggles
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `enable_apic_config` | `true` | Configure APIC system settings |
-| `enable_node_registration` | `true` | Register fabric nodes |
-| `enable_fabric_policies` | `true` | Configure fabric-wide policies |
-| `enable_access_policies` | `true` | Configure VLAN pools, domains, AEP |
-| `enable_interface_profiles` | `true` | Configure switch and interface profiles |
-| `enable_vpc_protection` | `true` | Configure vPC protection groups |
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
+| `enable_apic_config` | `true` | No | Configure APIC system settings |
+| `enable_node_registration` | `true` | No | Register fabric nodes |
+| `enable_fabric_policies` | `true` | No | Configure fabric-wide policies |
+| `enable_access_policies` | `true` | No | Configure VLAN pools, domains, AEP |
+| `enable_interface_profiles` | `true` | No | Configure switch and interface profiles |
+| `enable_vpc_protection` | `true` | No | Configure vPC protection groups |
 
 ### Node Registration
 `aci_nodes` is a list of node objects. Each entry must include:

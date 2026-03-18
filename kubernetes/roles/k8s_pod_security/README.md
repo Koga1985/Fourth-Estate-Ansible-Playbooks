@@ -6,8 +6,8 @@ K8S Pod Security role for Fourth Estate infrastructure automation.
 
 ## Role Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
 | `k8s_version` | `"1.28"` |  |
 | `k8s_pod_security_admission_enabled` | `true` |  |
 | `k8s_pod_security_default_enforce` | `restricted` |  |

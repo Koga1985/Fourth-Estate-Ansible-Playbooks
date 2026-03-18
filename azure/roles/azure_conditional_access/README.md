@@ -6,19 +6,19 @@ Azure Conditional Access role for Fourth Estate infrastructure automation.
 
 ## Role Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
 | `azure_cloud_environment` | `"AzureUSGovernment"` |  |
 | `azure_region` | `"usgovvirginia"` |  |
 | `azure_tenant_id` | `"{{ lookup('env', 'AZURE_TENANT_ID') }}"` |  |
 | `azure_resource_group` | `"rg-identity-prod-usgovva"` |  |
 | `azure_conditional_access_policies` | `[]` |  |
 | `azure_ca_deploy_baseline_policies` | `true` |  |
-| `azure_breakglass_group_id` | `""` | Break-glass account group |
+| `azure_breakglass_group_id` | `""` | No | Break-glass account group |
 | `azure_ca_named_locations` | `[]` |  |
 | `azure_ca_auth_strength_policies` | `[]` |  |
 | `azure_ca_enable_diagnostics` | `true` |  |
-| `azure_log_analytics_workspace_id` | `""` | To be populated |
+| `azure_log_analytics_workspace_id` | `""` | No | To be populated |
 | `azure_ca_display_summary` | `true` |  |
 | `azure_environment` | `"Production"` |  |
 | `azure_cost_center` | `"4thEstate-Identity"` |  |

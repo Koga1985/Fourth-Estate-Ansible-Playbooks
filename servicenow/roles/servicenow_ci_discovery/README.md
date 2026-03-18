@@ -6,16 +6,16 @@ Servicenow Ci Discovery role for Fourth Estate infrastructure automation.
 
 ## Role Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
 | `servicenow_instance` | `"{{ lookup('env', 'SN_INSTANCE') }}"` |  |
 | `servicenow_username` | `"{{ lookup('env', 'SN_USERNAME') }}"` |  |
 | `servicenow_password` | `"{{ lookup('env', 'SN_PASSWORD') }}"` |  |
-| `servicenow_client_id` | `"{{ lookup('env', 'SN_CLIENT_ID') | default('')...` |  |
-| `servicenow_client_secret` | `"{{ lookup('env', 'SN_CLIENT_SECRET') | default...` |  |
+| `servicenow_client_id` | `"{{ lookup('env', 'SN_CLIENT_ID') | No | default('')...` |
+| `servicenow_client_secret` | `"{{ lookup('env', 'SN_CLIENT_SECRET') | No | default...` |
 | `servicenow_timeout` | `60` |  |
 | `servicenow_validate_certs` | `true` |  |
-| `ci_discovery_mode` | `"discover"` | discover, schedule, validate, report |
+| `ci_discovery_mode` | `"discover"` | No | discover, schedule, validate, report |
 
 See `defaults/main.yml` for the full variable list.
 

@@ -6,8 +6,8 @@ Elasticsearch Security role for Fourth Estate infrastructure automation.
 
 ## Role Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
 | `elasticsearch_security_enabled` | `true` |  |
 | `elasticsearch_security_auto_configure` | `true` |  |
 | `elasticsearch_tls_enabled` | `true` |  |

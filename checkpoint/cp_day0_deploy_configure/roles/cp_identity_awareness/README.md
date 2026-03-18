@@ -6,8 +6,8 @@ Cp Identity Awareness role for Fourth Estate infrastructure automation.
 
 ## Role Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
 | `cp_layer` | `"Network"` |  |
 | `publish_changes` | `true` |  |
 | `artifacts_dir` | `"/tmp/checkpoint-artifacts"` |  |

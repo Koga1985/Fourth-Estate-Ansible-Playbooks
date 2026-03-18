@@ -6,8 +6,8 @@ Pure Fb Provisioning role for Fourth Estate infrastructure automation.
 
 ## Role Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
 | `fb_url` | `"https://flashblade.example.com"` |  |
 | `fb_token` | `"{{ lookup('env','PURE_FB_TOKEN') }}"` |  |
 | `fb_validate_certs` | `false` |  |

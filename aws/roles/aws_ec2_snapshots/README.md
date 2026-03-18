@@ -6,8 +6,8 @@ Aws Ec2 Snapshots role for Fourth Estate infrastructure automation.
 
 ## Role Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
 | `snapshot_state` | `"present"` |  |
 | `snapshot_enable_cross_region_copy` | `false` |  |
 | `snapshot_enable_lifecycle_policy` | `true` |  |

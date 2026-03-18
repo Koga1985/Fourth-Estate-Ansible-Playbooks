@@ -6,8 +6,8 @@ Postgresql Install role for Fourth Estate infrastructure automation.
 
 ## Role Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
 | `postgresql_version` | `15` |  |
 | `postgresql_major_version` | `"{{ postgresql_version }}"` |  |
 | `postgresql_bin_path` | `"/usr/pgsql-{{ postgresql_version }}/bin"` |  |
@@ -22,7 +22,7 @@ Postgresql Install role for Fourth Estate infrastructure automation.
 | `postgresql_python_package` | `"python3-psycopg2"` |  |
 | `postgresql_encoding` | `UTF8` |  |
 | `postgresql_locale` | `en_US.UTF-8` |  |
-| `postgresql_initial_password` | `"{{ vault_postgresql_superuser_password | defau...` |  |
+| `postgresql_initial_password` | `"{{ vault_postgresql_superuser_password | No | defau...` |
 
 See `defaults/main.yml` for the full variable list.
 

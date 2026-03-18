@@ -26,28 +26,28 @@ This role automates Cisco ACI tenant configuration for Fourth Estate infrastruct
 ## Role Variables
 
 ### Connection Variables
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `aci_host` | `{{ vault_aci_apic_hostname }}` | APIC hostname or IP address |
-| `aci_username` | `{{ vault_aci_apic_username }}` | APIC admin username |
-| `aci_password` | `{{ vault_aci_apic_password }}` | APIC admin password (vault-encrypted) |
-| `aci_verify_ssl` | `true` | Validate APIC TLS certificate |
-| `aci_timeout` | `30` | APIC API request timeout (seconds) |
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
+| `aci_host` | `{{ vault_aci_apic_hostname }}` | **Yes** | APIC hostname or IP address |
+| `aci_username` | `{{ vault_aci_apic_username }}` | **Yes** | APIC admin username |
+| `aci_password` | `{{ vault_aci_apic_password }}` | **Yes** | APIC admin password (vault-encrypted) |
+| `aci_verify_ssl` | `true` | No | Validate APIC TLS certificate |
+| `aci_timeout` | `30` | No | APIC API request timeout (seconds) |
 
 ### Deployment Control
 `apply_changes: false` — The role defaults to **dry-run mode**. No configuration changes are written to the APIC unless `apply_changes: true` is explicitly passed. In dry-run mode all tasks execute `state: query` instead of `state: present`.
 
 ### Feature Toggles
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `enable_tenants` | `true` | Create/manage tenants |
-| `enable_vrfs` | `true` | Configure VRFs |
-| `enable_bridge_domains` | `true` | Configure bridge domains and subnets |
-| `enable_app_profiles` | `true` | Configure application profiles |
-| `enable_epgs` | `true` | Configure EPGs and contract bindings |
-| `enable_filters` | `true` | Configure filters and filter entries |
-| `enable_contracts` | `true` | Configure contracts and subjects |
-| `enable_static_paths` | `false` | Configure static path bindings (disabled by default) |
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
+| `enable_tenants` | `true` | No | Create/manage tenants |
+| `enable_vrfs` | `true` | No | Configure VRFs |
+| `enable_bridge_domains` | `true` | No | Configure bridge domains and subnets |
+| `enable_app_profiles` | `true` | No | Configure application profiles |
+| `enable_epgs` | `true` | No | Configure EPGs and contract bindings |
+| `enable_filters` | `true` | No | Configure filters and filter entries |
+| `enable_contracts` | `true` | No | Configure contracts and subjects |
+| `enable_static_paths` | `false` | No | Configure static path bindings (disabled by default) |
 
 ### Fabric Configuration
 Key variables and their structures:

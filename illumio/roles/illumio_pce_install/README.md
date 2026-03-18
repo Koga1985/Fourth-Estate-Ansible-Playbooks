@@ -6,8 +6,8 @@ Illumio Pce Install role for Fourth Estate infrastructure automation.
 
 ## Role Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
 | `illumio_pce_version` | `"22.5.0"` |  |
 | `illumio_pce_package_file` | `"illumio-pce-{{ illumio_pce_version }}.tar.gz"` |  |
 | `illumio_pce_package_url` | `"https://repo.illum.io/downloads/{{ illumio_pce...` |  |

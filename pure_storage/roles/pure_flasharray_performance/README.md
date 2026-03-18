@@ -6,8 +6,8 @@ Pure Flasharray Performance role for Fourth Estate infrastructure automation.
 
 ## Role Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
 | `flasharray_url` | `"https://{{ inventory_hostname }}"` |  |
 | `flasharray_monitoring_interval_seconds` | `60` |  |
 | `flasharray_performance_history_days` | `90` |  |

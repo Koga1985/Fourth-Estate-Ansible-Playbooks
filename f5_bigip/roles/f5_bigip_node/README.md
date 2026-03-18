@@ -6,13 +6,13 @@ F5 Bigip Node role for Fourth Estate infrastructure automation.
 
 ## Role Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
 | `f5_bigip_nodes` | `[]` |  |
 | `f5_bigip_fqdn_nodes` | `[]` |  |
 | `f5_bigip_node_discovery_enabled` | `false` |  |
-| `f5_bigip_node_connection_limit` | `0` | 0 = unlimited |
-| `f5_bigip_node_rate_limit` | `0` | 0 = unlimited |
+| `f5_bigip_node_connection_limit` | `0` | No | 0 = unlimited |
+| `f5_bigip_node_rate_limit` | `0` | No | 0 = unlimited |
 | `f5_bigip_node_monitor_default` | `"/Common/icmp"` |  |
 | `f5_bigip_node_session_default` | `"user-enabled"` |  |
 | `f5_bigip_node_state_default` | `"user-up"` |  |

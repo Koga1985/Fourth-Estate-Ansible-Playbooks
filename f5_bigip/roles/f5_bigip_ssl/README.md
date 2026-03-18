@@ -6,8 +6,8 @@ F5 Bigip Ssl role for Fourth Estate infrastructure automation.
 
 ## Role Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
 | `f5_bigip_ssl_certificates` | `[]` |  |
 | `f5_bigip_ssl_keys` | `[]` |  |
 | `f5_bigip_client_ssl_profiles` | `[]` |  |

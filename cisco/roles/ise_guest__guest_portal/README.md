@@ -14,67 +14,67 @@ Configures the Cisco ISE guest self-registration and hotspot portal settings. Th
 
 ### ISE Connection
 
-| Variable | Default | Description |
+| Variable | Default | Required | Description |
 |---|---|---|
-| `ise_hostname` | `{{ vault_ise_hostname }}` | ISE primary PAN hostname or IP |
-| `ise_username` | `{{ vault_ise_username }}` | ISE admin username |
-| `ise_password` | `{{ vault_ise_password }}` | ISE admin password (vault-protected) |
-| `ise_verify_ssl` | `true` | Validate ISE TLS certificate |
-| `ise_use_proxy` | `false` | Route ISE API calls through a proxy |
-| `ise_debug` | `false` | Enable verbose debug logging |
+| `ise_hostname` | `{{ vault_ise_hostname }}` | **Yes** | ISE primary PAN hostname or IP |
+| `ise_username` | `{{ vault_ise_username }}` | **Yes** | ISE admin username |
+| `ise_password` | `{{ vault_ise_password }}` | **Yes** | ISE admin password (vault-protected) |
+| `ise_verify_ssl` | `true` | No | Validate ISE TLS certificate |
+| `ise_use_proxy` | `false` | No | Route ISE API calls through a proxy |
+| `ise_debug` | `false` | No | Enable verbose debug logging |
 
 ### Deployment Control
 
-| Variable | Default | Description |
+| Variable | Default | Required | Description |
 |---|---|---|
-| `apply_changes` | `false` | Set to `true` to write changes; `false` runs in plan/audit mode |
-| `ise_artifacts_dir` | `/tmp/ise-artifacts` | Local directory for generated reports |
+| `apply_changes` | `false` | No | Set to `true` to write changes; `false` runs in plan/audit mode |
+| `ise_artifacts_dir` | `/tmp/ise-artifacts` | No | Local directory for generated reports |
 
 ### Portal Configuration
 
-| Variable | Default | Description |
+| Variable | Default | Required | Description |
 |---|---|---|
-| `guest_portal_name` | (required) | Name for the guest portal |
-| `guest_portal_cert_group` | (required) | Certificate group tag for portal TLS |
-| `guest_endpoint_group` | (required) | Endpoint identity group for guest devices |
-| `guest_portal_language` | `ENGLISH` | Display language for the portal |
-| `guest_allow_password_change` | (required) | Allow guests to change password at first login |
-| `guest_allow_device_registration` | (required) | Allow guests to register additional devices |
-| `guest_require_aup` | (required) | Require guests to accept an AUP |
+| `guest_portal_name` | (required) | No | Name for the guest portal |
+| `guest_portal_cert_group` | (required) | No | Certificate group tag for portal TLS |
+| `guest_endpoint_group` | (required) | No | Endpoint identity group for guest devices |
+| `guest_portal_language` | `ENGLISH` | No | Display language for the portal |
+| `guest_allow_password_change` | (required) | No | Allow guests to change password at first login |
+| `guest_allow_device_registration` | (required) | No | Allow guests to register additional devices |
+| `guest_require_aup` | (required) | No | Require guests to accept an AUP |
 
 ### Portal Branding
 
-| Variable | Default | Description |
+| Variable | Default | Required | Description |
 |---|---|---|
-| `guest_portal_customization_enabled` | `false` | Enable portal branding customization |
-| `guest_portal_id` | (required when branding enabled) | UUID of the portal to customize |
-| `guest_portal_banner_title` | (required when branding enabled) | Banner text displayed at the top of the portal |
-| `guest_portal_banner_image` | (optional) | Base64-encoded banner image |
-| `guest_portal_bg_color` | (required when branding enabled) | Portal background color (hex) |
+| `guest_portal_customization_enabled` | `false` | No | Enable portal branding customization |
+| `guest_portal_id` | (required when branding enabled) | No | UUID of the portal to customize |
+| `guest_portal_banner_title` | (required when branding enabled) | No | Banner text displayed at the top of the portal |
+| `guest_portal_banner_image` | (optional) | No | Base64-encoded banner image |
+| `guest_portal_bg_color` | (required when branding enabled) | No | Portal background color (hex) |
 
 ### Feature Flags
 
-| Variable | Default | Description |
+| Variable | Default | Required | Description |
 |---|---|---|
-| `ise_guest__guest_portal_enabled` | `true` | Master toggle for this role |
-| `enable_disa_stig_compliance` | `true` | Apply STIG-compliant settings |
+| `ise_guest__guest_portal_enabled` | `true` | No | Master toggle for this role |
+| `enable_disa_stig_compliance` | `true` | No | Apply STIG-compliant settings |
 
 ### Logging and Notifications
 
-| Variable | Default | Description |
+| Variable | Default | Required | Description |
 |---|---|---|
-| `ise_guest__guest_portal_log_level` | `INFO` | Log verbosity level |
-| `ise_guest__guest_portal_log_to_syslog` | `true` | Forward events to syslog |
-| `ise_guest__guest_portal_syslog_server` | `{{ vault_syslog_server }}` | Syslog server address |
-| `ise_guest__guest_portal_notify_on_completion` | `false` | Send email on completion |
-| `ise_guest__guest_portal_notification_email` | `{{ vault_security_team_email }}` | Notification recipient |
-| `ise_guest__guest_portal_auto_backup` | `true` | Trigger ISE backup after changes |
+| `ise_guest__guest_portal_log_level` | `INFO` | No | Log verbosity level |
+| `ise_guest__guest_portal_log_to_syslog` | `true` | No | Forward events to syslog |
+| `ise_guest__guest_portal_syslog_server` | `{{ vault_syslog_server }}` | **Yes** | Syslog server address |
+| `ise_guest__guest_portal_notify_on_completion` | `false` | No | Send email on completion |
+| `ise_guest__guest_portal_notification_email` | `{{ vault_security_team_email }}` | **Yes** | Notification recipient |
+| `ise_guest__guest_portal_auto_backup` | `true` | No | Trigger ISE backup after changes |
 
 ### Compliance Frameworks
 
-| Variable | Default | Description |
+| Variable | Default | Required | Description |
 |---|---|---|
-| `compliance_frameworks` | `[dod_stig, nist_800_53, nist_800_171, fisma_moderate]` | Frameworks referenced in generated reports |
+| `compliance_frameworks` | `[dod_stig, nist_800_53, nist_800_171, fisma_moderate]` | No | Frameworks referenced in generated reports |
 
 ## Example Playbook
 

@@ -6,13 +6,13 @@ Aws Nacls role for Fourth Estate infrastructure automation.
 
 ## Role Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
 | `nacl_state` | `"present"` |  |
-| `nacl_public_name` | `"{{ vpc_name | default('main') }}-public-nacl"` |  |
-| `nacl_private_name` | `"{{ vpc_name | default('main') }}-private-nacl"` |  |
-| `nacl_database_name` | `"{{ vpc_name | default('main') }}-database-nacl"` |  |
-| `nacl_dmz_name` | `"{{ vpc_name | default('main') }}-dmz-nacl"` |  |
+| `nacl_public_name` | `"{{ vpc_name | No | default('main') }}-public-nacl"` |
+| `nacl_private_name` | `"{{ vpc_name | No | default('main') }}-private-nacl"` |
+| `nacl_database_name` | `"{{ vpc_name | No | default('main') }}-database-nacl"` |
+| `nacl_dmz_name` | `"{{ vpc_name | No | default('main') }}-dmz-nacl"` |
 | `create_public_nacl` | `true` |  |
 | `create_private_nacl` | `true` |  |
 | `create_database_nacl` | `true` |  |

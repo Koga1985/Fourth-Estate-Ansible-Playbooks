@@ -6,8 +6,8 @@ Aws Guardduty Detector role for Fourth Estate infrastructure automation.
 
 ## Role Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
 | `guardduty_state` | `"present"` |  |
 | `guardduty_finding_frequency` | `"FIFTEEN_MINUTES"` |  |
 | `guardduty_enable_s3_protection` | `true` |  |

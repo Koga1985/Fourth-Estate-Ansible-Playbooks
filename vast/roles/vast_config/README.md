@@ -6,8 +6,8 @@ Vast Config role for Fourth Estate infrastructure automation.
 
 ## Role Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
 | `vast_mgmt_host` | `"{{ vault_vast_mgmt_host }}"` |  |
 | `vast_mgmt_port` | `443` |  |
 | `vast_mgmt_user` | `"{{ vault_vast_mgmt_user }}"` |  |
@@ -22,7 +22,7 @@ Vast Config role for Fourth Estate infrastructure automation.
 | `vast_cluster_description` | `"Fourth Estate Production Storage Cluster"` |  |
 | `vast_ntp_timezone` | `"America/New_York"` |  |
 | `vast_smtp_enabled` | `false` |  |
-| `vast_smtp_server` | `"{{ vault_smtp_server | default('') }}"` |  |
+| `vast_smtp_server` | `"{{ vault_smtp_server | No | default('') }}"` |
 
 See `defaults/main.yml` for the full variable list.
 

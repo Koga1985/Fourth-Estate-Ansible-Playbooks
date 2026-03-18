@@ -6,8 +6,8 @@ Infoblox Dns Config role for Fourth Estate infrastructure automation.
 
 ## Role Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
 | `infoblox_grid_master` | `"infoblox-master.example.com"` |  |
 | `infoblox_username` | `"admin"` |  |
 | `infoblox_password` | `"{{ vault_infoblox_password }}"` |  |

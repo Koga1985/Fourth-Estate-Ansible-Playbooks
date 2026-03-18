@@ -6,8 +6,8 @@ Prometheus Config role for Fourth Estate infrastructure automation.
 
 ## Role Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
 | `prometheus_config_dir` | `"/etc/prometheus"` |  |
 | `prometheus_install_dir` | `"/opt/prometheus"` |  |
 | `prometheus_global_scrape_interval` | `"15s"` |  |
@@ -16,7 +16,7 @@ Prometheus Config role for Fourth Estate infrastructure automation.
 | `prometheus_alertmanager_enabled` | `true` |  |
 | `prometheus_kubernetes_sd_enabled` | `false` |  |
 | `prometheus_kubernetes_api_server` | `"https://kubernetes.default.svc"` |  |
-| `prometheus_kubernetes_sd_role` | `"node"` | node, pod, service, endpoints |
+| `prometheus_kubernetes_sd_role` | `"node"` | No | node, pod, service, endpoints |
 | `prometheus_consul_sd_enabled` | `false` |  |
 | `prometheus_consul_server` | `"localhost:8500"` |  |
 | `prometheus_consul_datacenter` | `"dc1"` |  |

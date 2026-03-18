@@ -6,8 +6,8 @@ Aws Eks Node Groups role for Fourth Estate infrastructure automation.
 
 ## Role Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
 | `node_group_state` | `"present"` |  |
 | `node_group_enforce_imdsv2` | `true` |  |
 | `node_group_enable_autoscaling` | `true` |  |

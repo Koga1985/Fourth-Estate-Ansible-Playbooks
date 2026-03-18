@@ -6,18 +6,18 @@ Pure Flasharray Protection role for Fourth Estate infrastructure automation.
 
 ## Role Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
 | `flasharray_url` | `"https://{{ inventory_hostname }}"` |  |
-| `flasharray_eradication_timer` | `86400` | 24 hours (in seconds) |
+| `flasharray_eradication_timer` | `86400` | No | 24 hours (in seconds) |
 | `flasharray_evidence_pg` | `"pg-evidence-preservation"` |  |
-| `flasharray_evidence_retention_days` | `2555` | 7 years |
+| `flasharray_evidence_retention_days` | `2555` | No | 7 years |
 | `flasharray_safemode_enabled` | `true` |  |
-| `flasharray_safemode_retention_minimum` | `24` | hours (cannot delete before this) |
-| `flasharray_safemode_retention_default` | `168` | hours (7 days default) |
+| `flasharray_safemode_retention_minimum` | `24` | No | hours (cannot delete before this) |
+| `flasharray_safemode_retention_default` | `168` | No | hours (7 days default) |
 | `flasharray_safemode_compliance_mode` | `true` |  |
 | `flasharray_app_consistent_snapshots` | `true` |  |
-| `flasharray_quiesce_timeout` | `300` | seconds |
+| `flasharray_quiesce_timeout` | `300` | No | seconds |
 | `flasharray_snapshot_suffix_format` | `"{{ ansible_date_time.iso8601_basic_short }}"` |  |
 | `flasharray_snapshot_prefix` | `"snap"` |  |
 | `flasharray_ransomware_protection_enabled` | `true` |  |

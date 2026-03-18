@@ -6,12 +6,12 @@ Vault Ha Config role for Fourth Estate infrastructure automation.
 
 ## Role Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
 | `vault_ha_enabled` | `true` |  |
 | `vault_ha_redirect_addr` | `"{{ vault_api_addr }}"` |  |
 | `vault_loadbalancer_enabled` | `true` |  |
-| `vault_loadbalancer_type` | `"haproxy"` | haproxy, nginx, aws_alb |
+| `vault_loadbalancer_type` | `"haproxy"` | **Yes** | haproxy, nginx, aws_alb |
 | `vault_loadbalancer_vip` | `""` |  |
 | `vault_loadbalancer_port` | `8200` |  |
 | `vault_loadbalancer_health_check_path` | `"/v1/sys/health"` |  |
@@ -21,7 +21,7 @@ Vault Ha Config role for Fourth Estate infrastructure automation.
 | `vault_performance_standby_count` | `2` |  |
 | `vault_request_forwarding_enabled` | `true` |  |
 | `vault_cluster_perf_standby_conn_limit` | `1000` |  |
-| `vault_max_request_size` | `33554432` | 32MB |
+| `vault_max_request_size` | `33554432` | **Yes** | 32MB |
 | `vault_max_request_duration` | `"90s"` |  |
 
 See `defaults/main.yml` for the full variable list.

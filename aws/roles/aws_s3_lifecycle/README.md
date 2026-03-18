@@ -6,8 +6,8 @@ Aws S3 Lifecycle role for Fourth Estate infrastructure automation.
 
 ## Role Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
 | `s3_lifecycle_state` | `"present"` |  |
 | `s3_enable_intelligent_tiering` | `true` |  |
 | `s3_lifecycle_rules` | `[]` |  |

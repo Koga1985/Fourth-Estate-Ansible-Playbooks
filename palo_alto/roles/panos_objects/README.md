@@ -6,8 +6,8 @@ Panos Objects role for Fourth Estate infrastructure automation.
 
 ## Role Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
 | `panos_ip_wildcard_objects` | `[]` |  |
 | `panos_registered_ips` | `[]` |  |
 

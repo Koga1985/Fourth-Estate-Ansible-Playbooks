@@ -6,17 +6,17 @@ Ot Asset Lifecycle role for Fourth Estate infrastructure automation.
 
 ## Role Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
 | `ot_asset_api_url` | `"https://cmdb.agency.gov/api/v1"` |  |
 | `ot_asset_api_token` | `""` |  |
 | `ot_asset_verify_ssl` | `true` |  |
 | `ot_asset_api_timeout` | `30` |  |
-| `ot_asset_state` | `present` | present, absent, maintenance, retired |
-| `ot_asset_operation` | `register` | register, update, decommission, dispose |
+| `ot_asset_state` | `present` | No | present, absent, maintenance, retired |
+| `ot_asset_operation` | `register` | No | register, update, decommission, dispose |
 | `ot_asset_id` | `""` |  |
 | `ot_asset_name` | `""` |  |
-| `ot_asset_type` | `""` | plc, hmi, rtu, ied, scada_server, historian, switch, firewall, sensor |
+| `ot_asset_type` | `""` | No | plc, hmi, rtu, ied, scada_server, historian, switch, firewall, sensor |
 | `ot_asset_vendor` | `""` |  |
 | `ot_asset_model` | `""` |  |
 | `ot_asset_serial_number` | `""` |  |

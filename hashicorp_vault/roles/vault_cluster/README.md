@@ -6,10 +6,10 @@ Vault Cluster role for Fourth Estate infrastructure automation.
 
 ## Role Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
 | `vault_cluster_name` | `"vault-prod-cluster"` |  |
-| `vault_cluster_members` | `[]` | List of cluster member addresses |
+| `vault_cluster_members` | `[]` | **Yes** | List of cluster member addresses |
 | `vault_cluster_leader` | `""` |  |
 | `vault_is_cluster_primary` | `false` |  |
 | `vault_raft_autopilot_reconcile_interval` | `"10s"` |  |

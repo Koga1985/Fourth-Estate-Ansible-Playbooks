@@ -6,12 +6,12 @@ Elasticsearch Config role for Fourth Estate infrastructure automation.
 
 ## Role Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
 | `elasticsearch_cluster_name` | `"fourth-estate-logging"` |  |
 | `elasticsearch_node_name` | `"{{ ansible_hostname }}"` |  |
-| `elasticsearch_node_attr_rack` | `"{{ ansible_hostname.split('-')[0] | default('r...` |  |
-| `elasticsearch_node_attr_zone` | `"{{ ansible_hostname.split('-')[1] | default('z...` |  |
+| `elasticsearch_node_attr_rack` | `"{{ ansible_hostname.split('-')[0] | No | default('r...` |
+| `elasticsearch_node_attr_zone` | `"{{ ansible_hostname.split('-')[1] | No | default('z...` |
 | `elasticsearch_node_master` | `true` |  |
 | `elasticsearch_node_data` | `true` |  |
 | `elasticsearch_node_data_content` | `true` |  |

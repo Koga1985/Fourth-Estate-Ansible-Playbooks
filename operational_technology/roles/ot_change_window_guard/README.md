@@ -10,14 +10,14 @@ Restricts automation-driven OT changes to approved maintenance windows. The role
 
 ## Role Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `artifacts_dir` | `/tmp/ot-artifacts` | Directory for dry-run and what-if output artifacts. Created if it does not exist. |
-| `dry_run` | `true` | When `true`, the role reports change window status but does not block execution. Set to `false` to enforce hard blocking outside windows. |
-| `change_tz` | `UTC` | Timezone for change window evaluation (IANA timezone string, e.g. `America/New_York`). |
-| `change_windows` | `[]` | List of approved change window definitions. Each entry is a dict with `start` and `end` keys in `HH:MM` 24-hour format and an optional `days` key (list of weekday names). An empty list means no windows are defined; behavior depends on `dry_run`. |
-| `change_window_override` | `false` | When `true`, bypasses window enforcement regardless of current time. Use only for emergency operations; should be controlled by a separate approval workflow. |
-| `what_if_summary` | `""` | Optional human-readable description of the planned changes, written to the what-if artifact file for review. |
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
+| `artifacts_dir` | `/tmp/ot-artifacts` | No | Directory for dry-run and what-if output artifacts. Created if it does not exist. |
+| `dry_run` | `true` | No | When `true`, the role reports change window status but does not block execution. Set to `false` to enforce hard blocking outside windows. |
+| `change_tz` | `UTC` | No | Timezone for change window evaluation (IANA timezone string, e.g. `America/New_York`). |
+| `change_windows` | `[]` | No | List of approved change window definitions. Each entry is a dict with `start` and `end` keys in `HH:MM` 24-hour format and an optional `days` key (list of weekday names). An empty list means no windows are defined; behavior depends on `dry_run`. |
+| `change_window_override` | `false` | No | When `true`, bypasses window enforcement regardless of current time. Use only for emergency operations; should be controlled by a separate approval workflow. |
+| `what_if_summary` | `""` | No | Optional human-readable description of the planned changes, written to the what-if artifact file for review. |
 
 ## Change Window Definition
 

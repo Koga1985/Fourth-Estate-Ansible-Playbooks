@@ -6,8 +6,8 @@ Aws Ec2 Ebs Volumes role for Fourth Estate infrastructure automation.
 
 ## Role Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
 | `ebs_state` | `"present"` |  |
 | `ebs_enforce_encryption_by_default` | `true` |  |
 | `ebs_set_default_kms_key` | `true` |  |

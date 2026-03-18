@@ -6,14 +6,14 @@ Pure Flasharray Replication role for Fourth Estate infrastructure automation.
 
 ## Role Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
 | `flasharray_url` | `"https://{{ inventory_hostname }}"` |  |
 | `flasharray_default_rpo_minutes` | `15` |  |
 | `flasharray_critical_rpo_minutes` | `5` |  |
 | `flasharray_standard_rpo_minutes` | `60` |  |
 | `flasharray_activecluster_enabled` | `false` |  |
-| `flasharray_activecluster_rpo` | `0` | Synchronous (zero RPO) |
+| `flasharray_activecluster_rpo` | `0` | No | Synchronous (zero RPO) |
 | `flasharray_activecluster_auto_failover` | `true` |  |
 | `flasharray_activecluster_witness` | `true` |  |
 | `flasharray_activedr_enabled` | `true` |  |

@@ -6,8 +6,8 @@ Vault Secrets Engine role for Fourth Estate infrastructure automation.
 
 ## Role Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
 | `vault_nomad_engines` | `[]` |  |
 | `vault_cubbyhole_enabled` | `true` |  |
 | `vault_kv_audit_non_hmac_request_keys` | `[]` |  |

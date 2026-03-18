@@ -6,8 +6,8 @@ Pure Flasharray Hosts role for Fourth Estate infrastructure automation.
 
 ## Role Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
 | `flasharray_url` | `"https://{{ inventory_hostname }}"` |  |
 | `flasharray_default_linux_personality` | `"linux"` |  |
 | `flasharray_default_esxi_personality` | `"esxi"` |  |
@@ -15,10 +15,10 @@ Pure Flasharray Hosts role for Fourth Estate infrastructure automation.
 | `flasharray_default_aix_personality` | `"aix"` |  |
 | `flasharray_default_solaris_personality` | `"solaris"` |  |
 | `flasharray_multipath_enabled` | `true` |  |
-| `flasharray_recommended_paths_per_host` | `4` | 2 per controller minimum |
-| `flasharray_iscsi_mtu` | `9000` | Jumbo frames recommended |
+| `flasharray_recommended_paths_per_host` | `4` | No | 2 per controller minimum |
+| `flasharray_iscsi_mtu` | `9000` | No | Jumbo frames recommended |
 | `flasharray_iscsi_tcp_window` | `131072` |  |
-| `flasharray_iscsi_use_chap` | `false` | Set true if CHAP required |
+| `flasharray_iscsi_use_chap` | `false` | No | Set true if CHAP required |
 | `flasharray_fc_queue_depth` | `128` |  |
 | `flasharray_fc_use_alua` | `true` |  |
 | `flasharray_nvme_queue_depth` | `1024` |  |

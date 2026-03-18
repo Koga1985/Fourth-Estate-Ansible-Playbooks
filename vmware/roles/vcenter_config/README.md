@@ -6,8 +6,8 @@ Vcenter Config role for Fourth Estate infrastructure automation.
 
 ## Role Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
 | `vcenter_hostname` | `"vcsa.example.mil"` |  |
 | `vcenter_username` | `"administrator@vsphere.local"` |  |
 | `vcenter_password` | `""` |  |

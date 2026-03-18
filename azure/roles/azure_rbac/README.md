@@ -6,8 +6,8 @@ Azure Rbac role for Fourth Estate infrastructure automation.
 
 ## Role Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
 | `azure_cloud_environment` | `"AzureUSGovernment"` |  |
 | `azure_region` | `"usgovvirginia"` |  |
 | `azure_tenant_id` | `"{{ lookup('env', 'AZURE_TENANT_ID') }}"` |  |
@@ -21,7 +21,7 @@ Azure Rbac role for Fourth Estate infrastructure automation.
 | `azure_rbac_deny_assignments` | `[]` |  |
 | `azure_rbac_enable_pim` | `true` |  |
 | `azure_rbac_enable_audit_logging` | `true` |  |
-| `azure_log_analytics_workspace_id` | `""` | To be populated |
+| `azure_log_analytics_workspace_id` | `""` | No | To be populated |
 | `azure_rbac_generate_report` | `true` |  |
 
 See `defaults/main.yml` for the full variable list.

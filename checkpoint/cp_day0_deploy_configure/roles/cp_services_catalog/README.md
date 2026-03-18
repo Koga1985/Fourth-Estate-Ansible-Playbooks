@@ -6,8 +6,8 @@ Cp Services Catalog role for Fourth Estate infrastructure automation.
 
 ## Role Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
 | `publish_changes` | `true` |  |
 | `cp_services_tcp` | `[]` |  |
 | `cp_services_udp` | `[]` |  |

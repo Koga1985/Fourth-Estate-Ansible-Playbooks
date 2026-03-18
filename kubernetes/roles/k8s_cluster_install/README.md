@@ -6,8 +6,8 @@ K8S Cluster Install role for Fourth Estate infrastructure automation.
 
 ## Role Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
 | `k8s_version` | `"1.28.5"` |  |
 | `k8s_cluster_name` | `"fourth-estate-k8s"` |  |
 | `k8s_pod_network_cidr` | `"10.244.0.0/16"` |  |

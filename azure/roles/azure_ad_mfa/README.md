@@ -6,8 +6,8 @@ Azure Ad Mfa role for Fourth Estate infrastructure automation.
 
 ## Role Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
 | `azure_cloud_environment` | `"AzureUSGovernment"` |  |
 | `azure_region` | `"usgovvirginia"` |  |
 | `azure_tenant_id` | `"{{ lookup('env', 'AZURE_TENANT_ID') }}"` |  |
@@ -18,7 +18,7 @@ Azure Ad Mfa role for Fourth Estate infrastructure automation.
 | `azure_mfa_configure_authenticator` | `true` |  |
 | `azure_mfa_display_app_info` | `"enabled"` |  |
 | `azure_mfa_display_location` | `"enabled"` |  |
-| `azure_mfa_number_matching` | `"enabled"` | Phishing-resistant |
+| `azure_mfa_number_matching` | `"enabled"` | No | Phishing-resistant |
 | `azure_mfa_enable_fido2` | `true` |  |
 | `azure_mfa_fido2_self_service` | `true` |  |
 | `azure_mfa_fido2_attestation` | `true` |  |

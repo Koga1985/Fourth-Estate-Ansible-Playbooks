@@ -15,69 +15,69 @@ Manages Cisco ISE Adaptive Network Control (ANC) quarantine policies and endpoin
 
 ### ISE Connection
 
-| Variable | Default | Description |
+| Variable | Default | Required | Description |
 |---|---|---|
-| `ise_hostname` | `{{ vault_ise_hostname }}` | ISE primary PAN hostname or IP |
-| `ise_username` | `{{ vault_ise_username }}` | ISE admin username |
-| `ise_password` | `{{ vault_ise_password }}` | ISE admin password (vault-protected) |
-| `ise_verify_ssl` | `true` | Validate ISE TLS certificate |
-| `ise_use_proxy` | `false` | Route ISE API calls through a proxy |
-| `ise_debug` | `false` | Enable verbose ISE SDK debug logging |
+| `ise_hostname` | `{{ vault_ise_hostname }}` | **Yes** | ISE primary PAN hostname or IP |
+| `ise_username` | `{{ vault_ise_username }}` | **Yes** | ISE admin username |
+| `ise_password` | `{{ vault_ise_password }}` | **Yes** | ISE admin password (vault-protected) |
+| `ise_verify_ssl` | `true` | No | Validate ISE TLS certificate |
+| `ise_use_proxy` | `false` | No | Route ISE API calls through a proxy |
+| `ise_debug` | `false` | No | Enable verbose ISE SDK debug logging |
 
 ### Deployment Control
 
-| Variable | Default | Description |
+| Variable | Default | Required | Description |
 |---|---|---|
-| `apply_changes` | `false` | Set to `true` to write changes; `false` runs in plan/audit mode |
-| `ise_artifacts_dir` | `/tmp/ise-artifacts` | Local directory for generated reports and plan documents |
+| `apply_changes` | `false` | No | Set to `true` to write changes; `false` runs in plan/audit mode |
+| `ise_artifacts_dir` | `/tmp/ise-artifacts` | No | Local directory for generated reports and plan documents |
 
 ### ANC Policies
 
-| Variable | Default | Description |
+| Variable | Default | Required | Description |
 |---|---|---|
-| `anc_policies` | See `defaults/main.yml` | List of ANC policy definitions with `name`, `actions`, `description`, and `enabled` fields |
-| `anc_endpoint_assignments` | `[]` | List of explicit endpoint-to-policy assignments (`mac_address`, `policy_name`, `reason`) |
-| `anc_exceptions` | `[]` | List of endpoints exempt from quarantine (`mac_address`, `reason`, `approved_by`, `expiry_date`) |
+| `anc_policies` | See `defaults/main.yml` | No | List of ANC policy definitions with `name`, `actions`, `description`, and `enabled` fields |
+| `anc_endpoint_assignments` | `[]` | No | List of explicit endpoint-to-policy assignments (`mac_address`, `policy_name`, `reason`) |
+| `anc_exceptions` | `[]` | No | List of endpoints exempt from quarantine (`mac_address`, `reason`, `approved_by`, `expiry_date`) |
 
 ### DISA STIG Compliance
 
-| Variable | Default | Description |
+| Variable | Default | Required | Description |
 |---|---|---|
-| `enable_disa_stig_compliance` | `true` | Create additional STIG-mandated ANC policies |
-| `disa_stig_anc_policies` | See `defaults/main.yml` | STIG-specific ANC policy list |
+| `enable_disa_stig_compliance` | `true` | No | Create additional STIG-mandated ANC policies |
+| `disa_stig_anc_policies` | See `defaults/main.yml` | No | STIG-specific ANC policy list |
 
 ### Automated Threat Response
 
-| Variable | Default | Description |
+| Variable | Default | Required | Description |
 |---|---|---|
-| `anc_auto_quarantine_enabled` | `true` | Enable automated quarantine on threat detection |
-| `anc_auto_quarantine_threats` | `[malware_detected, posture_failed, ...]` | Threat categories that trigger automatic quarantine |
+| `anc_auto_quarantine_enabled` | `true` | No | Enable automated quarantine on threat detection |
+| `anc_auto_quarantine_threats` | `[malware_detected, posture_failed, ...]` | No | Threat categories that trigger automatic quarantine |
 
 ### Integration and Notifications
 
-| Variable | Default | Description |
+| Variable | Default | Required | Description |
 |---|---|---|
-| `anc_siem_integration_enabled` | `true` | Forward quarantine events to SIEM |
-| `anc_siem_endpoint` | `{{ vault_siem_endpoint }}` | SIEM ingest endpoint URL |
-| `anc_notify_on_quarantine` | `true` | Send email on quarantine action |
-| `anc_notification_email` | `{{ vault_security_team_email }}` | Recipient address for quarantine alerts |
-| `anc_log_to_syslog` | `true` | Forward ANC events to syslog |
-| `anc_syslog_server` | `{{ vault_syslog_server }}` | Syslog server address |
+| `anc_siem_integration_enabled` | `true` | No | Forward quarantine events to SIEM |
+| `anc_siem_endpoint` | `{{ vault_siem_endpoint }}` | **Yes** | SIEM ingest endpoint URL |
+| `anc_notify_on_quarantine` | `true` | No | Send email on quarantine action |
+| `anc_notification_email` | `{{ vault_security_team_email }}` | **Yes** | Recipient address for quarantine alerts |
+| `anc_log_to_syslog` | `true` | No | Forward ANC events to syslog |
+| `anc_syslog_server` | `{{ vault_syslog_server }}` | **Yes** | Syslog server address |
 
 ### Quarantine Duration
 
-| Variable | Default | Description |
+| Variable | Default | Required | Description |
 |---|---|---|
-| `anc_default_quarantine_duration` | `86400` | Default quarantine duration in seconds (24 h) |
-| `anc_max_quarantine_duration` | `604800` | Maximum quarantine duration in seconds (7 days) |
-| `anc_enable_auto_remediation` | `false` | Redirect quarantined endpoints to a remediation portal |
-| `anc_remediation_portal_url` | `https://{{ ise_hostname }}/remediation` | Remediation portal URL |
+| `anc_default_quarantine_duration` | `86400` | No | Default quarantine duration in seconds (24 h) |
+| `anc_max_quarantine_duration` | `604800` | No | Maximum quarantine duration in seconds (7 days) |
+| `anc_enable_auto_remediation` | `false` | No | Redirect quarantined endpoints to a remediation portal |
+| `anc_remediation_portal_url` | `https://{{ ise_hostname }}/remediation` | No | Remediation portal URL |
 
 ### Compliance Frameworks
 
-| Variable | Default | Description |
+| Variable | Default | Required | Description |
 |---|---|---|
-| `compliance_frameworks` | `[dod_stig, nist_800_53, nist_800_171, fisma_moderate]` | Frameworks referenced in generated audit documents |
+| `compliance_frameworks` | `[dod_stig, nist_800_53, nist_800_171, fisma_moderate]` | No | Frameworks referenced in generated audit documents |
 
 ## Example Playbook
 

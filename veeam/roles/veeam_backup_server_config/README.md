@@ -6,8 +6,8 @@ Veeam Backup Server Config role for Fourth Estate infrastructure automation.
 
 ## Role Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
 | `veeam_use_change_tracking` | `true` |  |
 | `veeam_vmware_tools_quiescence` | `true` |  |
 | `veeam_set_results_to_vm_notes` | `true` |  |

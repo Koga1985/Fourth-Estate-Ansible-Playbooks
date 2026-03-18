@@ -6,8 +6,8 @@ Cp Access Policy role for Fourth Estate infrastructure automation.
 
 ## Role Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
 | `cp_layer` | `"Network"` |  |
 | `policy_package` | `"Standard"` |  |
 | `install_targets` | `[]` |  |

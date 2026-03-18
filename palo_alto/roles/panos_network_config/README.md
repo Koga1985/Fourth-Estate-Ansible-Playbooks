@@ -6,8 +6,8 @@ Panos Network Config role for Fourth Estate infrastructure automation.
 
 ## Role Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
 | `panos_l2_interfaces` | `[]` |  |
 | `panos_virtual_wire_interfaces` | `[]` |  |
 | `panos_bgp_configs` | `[]` |  |

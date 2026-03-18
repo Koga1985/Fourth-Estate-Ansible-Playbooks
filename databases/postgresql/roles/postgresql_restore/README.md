@@ -6,8 +6,8 @@ Postgresql Restore role for Fourth Estate infrastructure automation.
 
 ## Role Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
 | `postgresql_version` | `15` |  |
 | `postgresql_bin_path` | `"/usr/pgsql-{{ postgresql_version }}/bin"` |  |
 | `postgresql_data_directory` | `"/var/lib/pgsql/{{ postgresql_version }}/data"` |  |
@@ -16,7 +16,7 @@ Postgresql Restore role for Fourth Estate infrastructure automation.
 | `postgresql_wal_archive_directory` | `"/var/lib/pgsql/wal_archive"` |  |
 | `postgresql_port` | `5432` |  |
 | `postgresql_home_directory` | `"/var/lib/pgsql"` |  |
-| `postgresql_recovery_target_action` | `promote` | pause, promote, shutdown |
+| `postgresql_recovery_target_action` | `promote` | No | pause, promote, shutdown |
 | `postgresql_restore_run_analyze` | `true` |  |
 | `postgresql_restore_analyze_databases` | `[]` |  |
 

@@ -6,8 +6,8 @@ Vsan Policies role for Fourth Estate infrastructure automation.
 
 ## Role Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
 | `vcenter_hostname` | `""` |  |
 | `vcenter_username` | `""` |  |
 | `vcenter_password` | `""` |  |

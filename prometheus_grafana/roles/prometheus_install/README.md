@@ -6,8 +6,8 @@ Prometheus Install role for Fourth Estate infrastructure automation.
 
 ## Role Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
 | `prometheus_version` | `"2.48.0"` |  |
 | `prometheus_download_url` | `"https://github.com/prometheus/prometheus/relea...` |  |
 | `prometheus_install_dir` | `"/opt/prometheus"` |  |

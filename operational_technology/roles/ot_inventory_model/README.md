@@ -6,8 +6,8 @@ Ot Inventory Model role for Fourth Estate infrastructure automation.
 
 ## Role Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
 | `verify_ssl` | `true` |  |
 | `artifacts_dir` | `/tmp/ot-artifacts` |  |
 | `api` | `{url: "", token: "", paths: {}}` |  |

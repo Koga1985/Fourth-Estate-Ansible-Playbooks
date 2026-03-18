@@ -6,8 +6,8 @@ Pure Fa Integrations role for Fourth Estate infrastructure automation.
 
 ## Role Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
 | `fa_url` | `"10.0.0.10"` |  |
 | `api_token` | `"{{ lookup('env','PURE_FA_TOKEN') }}"` |  |
 | `validate_certs` | `false` |  |

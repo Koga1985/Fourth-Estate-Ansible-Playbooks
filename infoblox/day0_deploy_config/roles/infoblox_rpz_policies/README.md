@@ -6,8 +6,8 @@ Infoblox Rpz Policies role for Fourth Estate infrastructure automation.
 
 ## Role Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
 | `nios_host` | `""` |  |
 | `nios_username` | `""` |  |
 | `nios_password` | `""` |  |

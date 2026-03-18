@@ -6,8 +6,8 @@ Azure Service Principals role for Fourth Estate infrastructure automation.
 
 ## Role Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
 | `azure_cloud_environment` | `"AzureUSGovernment"` |  |
 | `azure_region` | `"usgovvirginia"` |  |
 | `azure_tenant_id` | `"{{ lookup('env', 'AZURE_TENANT_ID') }}"` |  |
@@ -17,7 +17,7 @@ Azure Service Principals role for Fourth Estate infrastructure automation.
 | `azure_key_vault_uri` | `"https://kv-4e-prod-usgovva.vault.usgovcloudapi...` |  |
 | `azure_store_credentials_in_keyvault` | `true` |  |
 | `azure_sp_enable_diagnostics` | `true` |  |
-| `azure_log_analytics_workspace_id` | `""` | To be populated |
+| `azure_log_analytics_workspace_id` | `""` | No | To be populated |
 | `azure_sp_display_summary` | `true` |  |
 | `azure_environment` | `"Production"` |  |
 | `azure_cost_center` | `"4thEstate-Identity"` |  |

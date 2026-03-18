@@ -6,8 +6,8 @@ Aws Iam Groups role for Fourth Estate infrastructure automation.
 
 ## Role Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
 | `iam_group_state` | `"present"` |  |
 | `iam_enforce_mfa` | `true` |  |
 | `iam_groups` | `[]` |  |

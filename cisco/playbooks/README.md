@@ -153,14 +153,14 @@ ansible-playbook cisco/playbooks/10_ucs_validation.yml
 
 All playbooks support these common variables:
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `apply_changes` | `false` | Set to `true` to apply changes (dry-run by default) |
-| `ucs_hostname` | vault | UCS Manager hostname/IP |
-| `ucs_username` | vault | Administrative username |
-| `ucs_password` | vault | Administrative password |
-| `fourth_estate_org_name` | "FourthEstate" | Organization name |
-| `ucs_artifacts_dir` | `/tmp/ucs-*` | Artifacts output directory |
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
+| `apply_changes` | `false` | No | Set to `true` to apply changes (dry-run by default) |
+| `ucs_hostname` | vault | No | UCS Manager hostname/IP |
+| `ucs_username` | vault | No | Administrative username |
+| `ucs_password` | vault | No | Administrative password |
+| `fourth_estate_org_name` | "FourthEstate" | No | Organization name |
+| `ucs_artifacts_dir` | `/tmp/ucs-*` | No | Artifacts output directory |
 
 See individual playbook documentation and [PLAYBOOK_INDEX.md](PLAYBOOK_INDEX.md) for playbook-specific variables.
 

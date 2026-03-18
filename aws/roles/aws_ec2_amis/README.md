@@ -6,15 +6,15 @@ Aws Ec2 Amis role for Fourth Estate infrastructure automation.
 
 ## Role Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
 | `ami_state` | `"present"` |  |
 | `ami_enforce_encryption` | `true` |  |
 | `ami_enable_cross_region_copy` | `false` |  |
 | `ami_enable_deprecation` | `true` |  |
 | `ami_enable_lifecycle_policy` | `true` |  |
 | `ami_retention_days` | `90` |  |
-| `ami_deprecation_time` | `"{{ (ansible_date_time.epoch | int + (ami_reten...` |  |
+| `ami_deprecation_time` | `"{{ (ansible_date_time.epoch | No | int + (ami_reten...` |
 | `ec2_amis` | `[]` |  |
 | `kms_key_id` | `""` |  |
 

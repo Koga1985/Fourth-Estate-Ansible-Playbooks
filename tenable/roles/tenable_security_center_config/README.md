@@ -6,8 +6,8 @@ Tenable Security Center Config role for Fourth Estate infrastructure automation.
 
 ## Role Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
 | `tsc_host` | `"{{ ansible_fqdn }}"` |  |
 | `tsc_port` | `443` |  |
 | `tsc_username` | `"admin"` |  |

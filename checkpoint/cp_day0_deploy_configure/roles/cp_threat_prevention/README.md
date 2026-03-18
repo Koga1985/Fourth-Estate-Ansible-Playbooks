@@ -6,8 +6,8 @@ Cp Threat Prevention role for Fourth Estate infrastructure automation.
 
 ## Role Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
 | `tp_layer` | `"Threat Prevention"` |  |
 | `policy_package` | `"Standard"` |  |
 | `install_targets` | `[]` |  |

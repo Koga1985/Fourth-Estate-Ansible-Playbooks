@@ -18,17 +18,17 @@ Manages the lifecycle of Illumio Virtual Enforcement Node (VEN) agents across a 
 
 All variables are defined in `defaults/main.yml`.
 
-| Variable | Default | Description |
+| Variable | Default | Required | Description |
 |---|---|---|
-| `verify_ssl` | `true` | Verify TLS certificates when calling the PCE API. |
-| `artifacts_dir` | `/tmp/illumio-artifacts` | Directory on the Ansible controller where downloaded installers are stored. |
-| `platforms` | `[]` | List of platform identifiers (e.g. `linux-rhel8-x86_64`) for which VEN installers are downloaded from the PCE. When non-empty, the download task runs. |
-| `pairing_key` | `""` | PCE pairing key used to pair VEN agents during installation. Required for Linux and Windows install tasks. Store in Ansible Vault. |
-| `ven_installer` | `""` | Path to the VEN installer package on the Ansible controller. Used by the Linux install task to push the installer to target hosts. |
-| `upgrade_targets` | `[]` | List of workload identifiers (PCE hrefs or hostnames) to upgrade. When non-empty, the upgrade task runs. |
-| `batch_size` | `50` | Number of VEN agents to upgrade per batch when `upgrade_targets` is set. |
-| `batch_pause` | `60` | Pause in seconds between upgrade batches to limit blast radius. |
-| `decom_targets` | `[]` | List of workload identifiers to unpair and decommission. When non-empty, the unpair/decom task runs. |
+| `verify_ssl` | `true` | No | Verify TLS certificates when calling the PCE API. |
+| `artifacts_dir` | `/tmp/illumio-artifacts` | No | Directory on the Ansible controller where downloaded installers are stored. |
+| `platforms` | `[]` | No | List of platform identifiers (e.g. `linux-rhel8-x86_64`) for which VEN installers are downloaded from the PCE. When non-empty, the download task runs. |
+| `pairing_key` | `""` | No | PCE pairing key used to pair VEN agents during installation. Required for Linux and Windows install tasks. Store in Ansible Vault. |
+| `ven_installer` | `""` | No | Path to the VEN installer package on the Ansible controller. Used by the Linux install task to push the installer to target hosts. |
+| `upgrade_targets` | `[]` | No | List of workload identifiers (PCE hrefs or hostnames) to upgrade. When non-empty, the upgrade task runs. |
+| `batch_size` | `50` | No | Number of VEN agents to upgrade per batch when `upgrade_targets` is set. |
+| `batch_pause` | `60` | No | Pause in seconds between upgrade batches to limit blast radius. |
+| `decom_targets` | `[]` | No | List of workload identifiers to unpair and decommission. When non-empty, the unpair/decom task runs. |
 
 ### Runtime-only variables (no defaults)
 

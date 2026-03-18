@@ -6,10 +6,10 @@ Netapp Svm Management role for Fourth Estate infrastructure automation.
 
 ## Role Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `netapp_svm_hostname` | `"{{ vault_netapp_cluster_hostname | default('ne...` |  |
-| `netapp_svm_username` | `"{{ vault_netapp_cluster_username | default('ad...` |  |
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
+| `netapp_svm_hostname` | `"{{ vault_netapp_cluster_hostname | No | default('ne...` |
+| `netapp_svm_username` | `"{{ vault_netapp_cluster_username | No | default('ad...` |
 | `netapp_svm_password` | `"{{ vault_netapp_cluster_password }}"` |  |
 | `netapp_svm_validate_certs` | `true` |  |
 | `netapp_svm_name` | `"svm_prod"` |  |

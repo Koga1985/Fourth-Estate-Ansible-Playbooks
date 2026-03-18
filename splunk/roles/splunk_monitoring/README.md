@@ -13,7 +13,7 @@ Configures Splunk health monitoring, alerting thresholds, and compliance checks.
 |----------|---------|----------|-------------|
 | `monitoring_enable_health_checks` | `true` | No | Enable periodic health checks |
 | `monitoring_enable_alerting` | `true` | No | Enable email alerting |
-| `monitoring_alert_email` | `{{ vault_monitoring_email }}` | No | Alert recipient email address |
+| `monitoring_alert_email` | `{{ vault_monitoring_email }}` | **Yes** | Alert recipient email address |
 | `monitoring_cpu_threshold` | `80` | No | CPU usage alert threshold (%) |
 | `monitoring_memory_threshold` | `90` | No | Memory usage alert threshold (%) |
 | `monitoring_disk_threshold` | `85` | No | Disk usage alert threshold (%) |

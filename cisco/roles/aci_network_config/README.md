@@ -33,33 +33,33 @@ This role automates the configuration of ACI external network connectivity objec
 
 ### APIC Connection Parameters
 
-| Variable | Default | Description |
+| Variable | Default | Required | Description |
 |---|---|---|
-| `aci_host` | `{{ vault_aci_apic_hostname }}` | APIC hostname or IP address |
-| `aci_username` | `{{ vault_aci_apic_username }}` | APIC username |
-| `aci_password` | `{{ vault_aci_apic_password }}` | APIC password (vault-encrypted) |
-| `aci_verify_ssl` | `true` | Verify SSL/TLS certificate |
-| `aci_use_proxy` | `false` | Use HTTP proxy for APIC connections |
-| `aci_timeout` | `30` | Connection timeout in seconds |
-| `aci_port` | `443` | APIC HTTPS port |
+| `aci_host` | `{{ vault_aci_apic_hostname }}` | **Yes** | APIC hostname or IP address |
+| `aci_username` | `{{ vault_aci_apic_username }}` | **Yes** | APIC username |
+| `aci_password` | `{{ vault_aci_apic_password }}` | **Yes** | APIC password (vault-encrypted) |
+| `aci_verify_ssl` | `true` | No | Verify SSL/TLS certificate |
+| `aci_use_proxy` | `false` | No | Use HTTP proxy for APIC connections |
+| `aci_timeout` | `30` | No | Connection timeout in seconds |
+| `aci_port` | `443` | No | APIC HTTPS port |
 
 ### Deployment Control
 
-| Variable | Default | Description |
+| Variable | Default | Required | Description |
 |---|---|---|
-| `apply_changes` | `false` | Set to `true` to apply changes; `false` for dry-run query mode |
-| `artifacts_dir` | `/tmp/aci-artifacts` | Directory for JSON configuration artifacts |
+| `apply_changes` | `false` | No | Set to `true` to apply changes; `false` for dry-run query mode |
+| `artifacts_dir` | `/tmp/aci-artifacts` | No | Directory for JSON configuration artifacts |
 
 ### Feature Toggles
 
-| Variable | Default | Description |
+| Variable | Default | Required | Description |
 |---|---|---|
-| `enable_l3out` | `true` | Enable L3Out configuration |
-| `enable_l2out` | `false` | Enable L2Out configuration |
-| `enable_external_epgs` | `true` | Enable external EPG configuration |
-| `enable_static_routes` | `true` | Enable static route configuration |
-| `enable_bgp_peers` | `true` | Enable BGP peer configuration |
-| `enable_ospf_peers` | `false` | Enable OSPF interface policy configuration |
+| `enable_l3out` | `true` | No | Enable L3Out configuration |
+| `enable_l2out` | `false` | No | Enable L2Out configuration |
+| `enable_external_epgs` | `true` | No | Enable external EPG configuration |
+| `enable_static_routes` | `true` | No | Enable static route configuration |
+| `enable_bgp_peers` | `true` | No | Enable BGP peer configuration |
+| `enable_ospf_peers` | `false` | No | Enable OSPF interface policy configuration |
 
 ### L3Out Configuration Structure
 

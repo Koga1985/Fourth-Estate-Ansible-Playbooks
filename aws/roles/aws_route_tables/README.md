@@ -6,11 +6,11 @@ Aws Route Tables role for Fourth Estate infrastructure automation.
 
 ## Role Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
 | `route_table_state` | `"present"` |  |
-| `route_table_public_name` | `"{{ vpc_name | default('main') }}-public-rt"` |  |
-| `route_table_vpn_name` | `"{{ vpc_name | default('main') }}-vpn-rt"` |  |
+| `route_table_public_name` | `"{{ vpc_name | No | default('main') }}-public-rt"` |
+| `route_table_vpn_name` | `"{{ vpc_name | No | default('main') }}-vpn-rt"` |
 | `create_public_route_table` | `true` |  |
 | `create_private_route_tables` | `true` |  |
 | `create_vpn_route_table` | `false` |  |

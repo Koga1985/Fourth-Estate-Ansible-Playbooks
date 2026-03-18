@@ -6,8 +6,8 @@ Azure Ad role for Fourth Estate infrastructure automation.
 
 ## Role Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
 | `azure_cloud_environment` | `"AzureUSGovernment"` |  |
 | `azure_region` | `"usgovvirginia"` |  |
 | `azure_tenant_domain` | `"{{ lookup('env', 'AZURE_TENANT_DOMAIN') }}"` |  |

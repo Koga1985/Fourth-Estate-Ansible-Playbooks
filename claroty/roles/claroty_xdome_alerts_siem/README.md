@@ -22,39 +22,39 @@ Polls the Claroty xDome alerts API, writes a CSV artifact, forwards raw alert JS
 
 ### Alert Filtering
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `alert_filter.severity` | `["high","critical"]` | List of severity values to include. |
-| `alert_filter.since` | `"24h"` | Time window for alert retrieval (relative string or ISO 8601 timestamp). |
-| `alert_filter.limit` | `2000` | Maximum number of alerts to retrieve per run. |
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
+| `alert_filter.severity` | `["high","critical"]` | No | List of severity values to include. |
+| `alert_filter.since` | `"24h"` | No | Time window for alert retrieval (relative string or ISO 8601 timestamp). |
+| `alert_filter.limit` | `2000` | No | Maximum number of alerts to retrieve per run. |
 
 ### SIEM Forwarding
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `forward.enabled` | `false` | Enable HTTP forwarding of alert payload to a SIEM endpoint. |
-| `forward.type` | `"http"` | Forwarding method. Currently supports `http`. |
-| `forward.endpoint` | `"https://siem.example/ingest"` | URL of the SIEM ingest endpoint. |
-| `forward.token` | `""` | Bearer token for the SIEM endpoint. Falls back to `SIEM_TOKEN` environment variable. |
-| `forward.verify_ssl` | `true` | Whether to verify the SIEM endpoint TLS certificate. |
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
+| `forward.enabled` | `false` | No | Enable HTTP forwarding of alert payload to a SIEM endpoint. |
+| `forward.type` | `"http"` | No | Forwarding method. Currently supports `http`. |
+| `forward.endpoint` | `"https://siem.example/ingest"` | No | URL of the SIEM ingest endpoint. |
+| `forward.token` | `""` | No | Bearer token for the SIEM endpoint. Falls back to `SIEM_TOKEN` environment variable. |
+| `forward.verify_ssl` | `true` | No | Whether to verify the SIEM endpoint TLS certificate. |
 
 ### Hooks
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `hooks.tag_asset` | `false` | Tag the originating xDome asset with the alert severity for high/critical alerts. |
-| `hooks.raise_ticket` | `false` | Create a ticket in the configured ticketing system for high/critical alerts. |
-| `hooks.ticketing.system` | `"servicenow"` | Ticketing system to use: `servicenow` or `jira`. |
-| `hooks.ticketing.instance` | `null` | ServiceNow instance hostname or Jira base URL. |
-| `hooks.ticketing.token` | `""` | Bearer token. Falls back to `TICKET_TOKEN` environment variable. |
-| `hooks.ticketing.table` | `"incident"` | ServiceNow table to write tickets to (ServiceNow only). |
-| `hooks.ticketing.project_key` | `"SEC"` | Jira project key (Jira only). |
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
+| `hooks.tag_asset` | `false` | No | Tag the originating xDome asset with the alert severity for high/critical alerts. |
+| `hooks.raise_ticket` | `false` | No | Create a ticket in the configured ticketing system for high/critical alerts. |
+| `hooks.ticketing.system` | `"servicenow"` | No | Ticketing system to use: `servicenow` or `jira`. |
+| `hooks.ticketing.instance` | `null` | No | ServiceNow instance hostname or Jira base URL. |
+| `hooks.ticketing.token` | `""` | No | Bearer token. Falls back to `TICKET_TOKEN` environment variable. |
+| `hooks.ticketing.table` | `"incident"` | No | ServiceNow table to write tickets to (ServiceNow only). |
+| `hooks.ticketing.project_key` | `"SEC"` | No | Jira project key (Jira only). |
 
 ### Output
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `artifacts_dir` | `"/tmp/claroty-artifacts"` | Directory for CSV artifact output. Created if it does not exist. |
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
+| `artifacts_dir` | `"/tmp/claroty-artifacts"` | No | Directory for CSV artifact output. Created if it does not exist. |
 
 ## Dependencies
 

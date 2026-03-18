@@ -6,10 +6,10 @@ Aws Vpn role for Fourth Estate infrastructure automation.
 
 ## Role Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
 | `vpn_state` | `"present"` |  |
-| `vpn_gateway_name` | `"{{ vpc_name | default('main') }}-vgw"` |  |
+| `vpn_gateway_name` | `"{{ vpc_name | No | default('main') }}-vgw"` |
 | `vpn_gateway_type` | `"ipsec.1"` |  |
 | `vpn_gateway_asn` | `64512` |  |
 | `create_vpn_gateway` | `true` |  |

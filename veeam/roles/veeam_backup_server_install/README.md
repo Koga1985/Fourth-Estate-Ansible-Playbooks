@@ -6,16 +6,16 @@ Veeam Backup Server Install role for Fourth Estate infrastructure automation.
 
 ## Role Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
 | `veeam_install_dir` | `"C:\\Temp\\Veeam"` |  |
 | `veeam_log_dir` | `"C:\\VeeamLogs"` |  |
-| `veeam_install_source` | `"D:\\"` | CD/DVD drive or network path |
-| `veeam_installer_url` | `""` | Optional: URL to download Veeam ISO |
+| `veeam_install_source` | `"D:\\"` | No | CD/DVD drive or network path |
+| `veeam_installer_url` | `""` | No | Optional: URL to download Veeam ISO |
 | `veeam_install_catalog_path` | `"C:\\VBRCatalog"` |  |
 | `veeam_install_logs_path` | `"C:\\ProgramData\\Veeam\\Backup"` |  |
-| `veeam_license_file` | `""` | Leave empty for trial license |
-| `veeam_sql_edition` | `"express"` | express or standard |
+| `veeam_license_file` | `""` | No | Leave empty for trial license |
+| `veeam_sql_edition` | `"express"` | No | express or standard |
 | `veeam_sql_instance_name` | `"VEEAMSQL2019"` |  |
 | `veeam_sql_service_account` | `"NT AUTHORITY\\SYSTEM"` |  |
 | `veeam_sql_service_password` | `""` |  |

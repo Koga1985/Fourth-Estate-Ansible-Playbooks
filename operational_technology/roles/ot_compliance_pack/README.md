@@ -11,10 +11,10 @@ Assembles an ISA/IEC-62443 compliance evidence bundle for OT environments. The r
 
 ## Role Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `artifacts_dir` | `/tmp/ot-artifacts` | Directory where individual evidence files and the final ZIP bundle are written. |
-| `audit_events` | `[]` | List of audit event records to include in the compliance bundle. Typically populated by upstream inventory or alert-collection tasks that feed data from OT security platforms (Claroty, Dragos, etc.). Each record should include at minimum: `timestamp`, `event_type`, `asset`, `user`, and `description`. |
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
+| `artifacts_dir` | `/tmp/ot-artifacts` | No | Directory where individual evidence files and the final ZIP bundle are written. |
+| `audit_events` | `[]` | No | List of audit event records to include in the compliance bundle. Typically populated by upstream inventory or alert-collection tasks that feed data from OT security platforms (Claroty, Dragos, etc.). Each record should include at minimum: `timestamp`, `event_type`, `asset`, `user`, and `description`. |
 
 ## Tasks Executed
 

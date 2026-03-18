@@ -6,8 +6,8 @@ F5 Bigip Network role for Fourth Estate infrastructure automation.
 
 ## Role Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
 | `f5_bigip_vlans` | `[]` |  |
 | `f5_bigip_selfips` | `[]` |  |
 | `f5_bigip_static_routes` | `[]` |  |

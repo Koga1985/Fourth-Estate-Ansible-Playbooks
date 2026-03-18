@@ -14,28 +14,28 @@ Manages the full CloudVision Portal (CVP) inventory model for Arista networks: c
 
 All variables are defined in `defaults/main.yml`.
 
-| Variable | Default | Description |
+| Variable | Default | Required | Description |
 |---|---|---|
-| `arista_apply_changes` | `false` | Safety gate. Set to `true` to push configuration to CVP; otherwise only a plan artifact is written. |
-| `arista_artifacts_dir` | `/tmp/arista-artifacts` | Directory on the Ansible controller where plan files and CVP facts are written. |
-| `cvp_host` | `$CVP_HOST` env / `cvp.example.mil` | Hostname or IP of the CVP server. Prefer the environment variable or Vault. |
-| `cvp_username` | `$CVP_USERNAME` env / `cvpadmin` | CVP API username. |
-| `cvp_password` | `$CVP_PASSWORD` env | CVP API password. Should be stored in Ansible Vault. |
-| `cvp_protocol` | `https` | Protocol used to connect to CVP. |
-| `cvp_port` | `443` | TCP port for CVP API. |
-| `cvp_validate_certs` | `true` | Verify TLS certificates when connecting to CVP. |
-| `cvp_apply_mode` | `strict` | Container/device apply mode. `strict` removes objects not in the desired state; `loose` only adds. |
-| `cvp_search_key` | `hostname` | Key used to search for devices in CVP. Valid values: `hostname`, `fqdn`, `serialNumber`. |
-| `cvp_containers` | See defaults | List of container definitions (`name`, `parent`) representing the device hierarchy. Defaults to a Fourth Estate / DC1 / DC2 topology. |
-| `cvp_configlets` | See defaults | List of configlets (`name`, `content`) to upload. Defaults include `GLOBAL_BASELINE`, `SECURITY_BASELINE`, `AAA_CONFIG`, and `SYSLOG_CONFIG`. |
-| `cvp_devices` | `[]` | List of device entries mapping FQDNs to parent containers and configlets. Should be defined in `host_vars` or `group_vars`. |
-| `cvp_device_configlets` | `[]` | Per-device configlet assignments (`device`, `configlets`). |
-| `cvp_change_control.enabled` | `true` | Creates a CVP change control for pending tasks. |
-| `cvp_change_control.auto_execute` | `false` | Automatically approves and executes the change control. Leave `false` for manual review. |
-| `cvp_collect_facts` | `true` | Collects CVP facts (devices, containers, configlets, tasks) and saves them to `arista_artifacts_dir`. |
-| `cvp_validate_compliance` | `true` | Runs CVP compliance validation after applying changes. |
-| `cvp_task_timeout` | `300` | Timeout in seconds to wait for CVP tasks to complete. |
-| `cvp_backup_retention_days` | `30` | Retention period for CVP backup artifacts. |
+| `arista_apply_changes` | `false` | No | Safety gate. Set to `true` to push configuration to CVP; otherwise only a plan artifact is written. |
+| `arista_artifacts_dir` | `/tmp/arista-artifacts` | No | Directory on the Ansible controller where plan files and CVP facts are written. |
+| `cvp_host` | `$CVP_HOST` env / `cvp.example.mil` | No | Hostname or IP of the CVP server. Prefer the environment variable or Vault. |
+| `cvp_username` | `$CVP_USERNAME` env / `cvpadmin` | No | CVP API username. |
+| `cvp_password` | `$CVP_PASSWORD` env | No | CVP API password. Should be stored in Ansible Vault. |
+| `cvp_protocol` | `https` | No | Protocol used to connect to CVP. |
+| `cvp_port` | `443` | No | TCP port for CVP API. |
+| `cvp_validate_certs` | `true` | No | Verify TLS certificates when connecting to CVP. |
+| `cvp_apply_mode` | `strict` | No | Container/device apply mode. `strict` removes objects not in the desired state; `loose` only adds. |
+| `cvp_search_key` | `hostname` | No | Key used to search for devices in CVP. Valid values: `hostname`, `fqdn`, `serialNumber`. |
+| `cvp_containers` | See defaults | No | List of container definitions (`name`, `parent`) representing the device hierarchy. Defaults to a Fourth Estate / DC1 / DC2 topology. |
+| `cvp_configlets` | See defaults | No | List of configlets (`name`, `content`) to upload. Defaults include `GLOBAL_BASELINE`, `SECURITY_BASELINE`, `AAA_CONFIG`, and `SYSLOG_CONFIG`. |
+| `cvp_devices` | `[]` | No | List of device entries mapping FQDNs to parent containers and configlets. Should be defined in `host_vars` or `group_vars`. |
+| `cvp_device_configlets` | `[]` | No | Per-device configlet assignments (`device`, `configlets`). |
+| `cvp_change_control.enabled` | `true` | No | Creates a CVP change control for pending tasks. |
+| `cvp_change_control.auto_execute` | `false` | No | Automatically approves and executes the change control. Leave `false` for manual review. |
+| `cvp_collect_facts` | `true` | No | Collects CVP facts (devices, containers, configlets, tasks) and saves them to `arista_artifacts_dir`. |
+| `cvp_validate_compliance` | `true` | No | Runs CVP compliance validation after applying changes. |
+| `cvp_task_timeout` | `300` | No | Timeout in seconds to wait for CVP tasks to complete. |
+| `cvp_backup_retention_days` | `30` | No | Retention period for CVP backup artifacts. |
 
 ## Example Playbook
 

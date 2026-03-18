@@ -6,8 +6,8 @@ Veeam Repositories role for Fourth Estate infrastructure automation.
 
 ## Role Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
 | `veeam_debug` | `false` |  |
 | `veeam_no_log` | `true` |  |
 | `veeam_generate_documentation` | `true` |  |
@@ -19,7 +19,7 @@ Veeam Repositories role for Fourth Estate infrastructure automation.
 | `veeam_fourth_estate_retention_days` | `365` |  |
 | `veeam_source_protection_retention_days` | `730` |  |
 | `veeam_compliance_retention_years` | `7` |  |
-| `veeam_repository_block_size` | `"1024KB"` | 1MB, 512KB, 256KB, 128KB |
+| `veeam_repository_block_size` | `"1024KB"` | No | 1MB, 512KB, 256KB, 128KB |
 | `veeam_repository_cache_size_gb` | `4` |  |
 | `veeam_default_immutability_enabled` | `true` |  |
 | `veeam_default_immutability_period_days` | `14` |  |

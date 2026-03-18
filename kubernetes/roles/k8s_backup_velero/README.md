@@ -6,13 +6,13 @@ K8S Backup Velero role for Fourth Estate infrastructure automation.
 
 ## Role Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
 | `velero_version` | `"v1.12.3"` |  |
 | `velero_namespace` | `"velero"` |  |
-| `velero_install_method` | `"helm"` | Options: helm, cli |
+| `velero_install_method` | `"helm"` | No | Options: helm, cli |
 | `velero_cli_version` | `"1.12.3"` |  |
-| `velero_provider` | `"aws"` | Options: aws, azure, gcp, minio, restic |
+| `velero_provider` | `"aws"` | No | Options: aws, azure, gcp, minio, restic |
 | `velero_use_restic` | `true` |  |
 | `velero_use_volume_snapshots` | `true` |  |
 | `velero_aws_region` | `"us-gov-west-1"` |  |
@@ -20,7 +20,7 @@ K8S Backup Velero role for Fourth Estate infrastructure automation.
 | `velero_aws_backup_location` | `"default"` |  |
 | `velero_aws_credentials_secret` | `"cloud-credentials"` |  |
 | `velero_aws_kms_key_id` | `""` |  |
-| `velero_aws_s3_url` | `""` | Custom S3 endpoint (for S3-compatible storage) |
+| `velero_aws_s3_url` | `""` | No | Custom S3 endpoint (for S3-compatible storage) |
 | `velero_aws_s3_force_path_style` | `false` |  |
 | `velero_azure_storage_account` | `""` |  |
 

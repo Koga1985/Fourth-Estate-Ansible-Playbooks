@@ -6,14 +6,14 @@ Cohesity Cluster Install role for Fourth Estate infrastructure automation.
 
 ## Role Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
 | `cohesity_cluster_name` | `"cohesity-cluster-01"` |  |
 | `cohesity_cluster_domain` | `"cohesity.local"` |  |
 | `cohesity_cluster_gateway` | `"10.100.1.1"` |  |
 | `cohesity_cluster_subnet_mask` | `"255.255.255.0"` |  |
 | `cohesity_deployment_type` | `"ve"` |  |
-| `cohesity_ve_platform` | `"vmware"` | vmware, hyperv, aws, azure |
+| `cohesity_ve_platform` | `"vmware"` | No | vmware, hyperv, aws, azure |
 | `cohesity_ve_ova_path` | `"/opt/cohesity/CohesityVirtualEdition.ova"` |  |
 | `cohesity_ve_vcenter_host` | `"vcenter.example.com"` |  |
 | `cohesity_ve_vcenter_username` | `"administrator@vsphere.local"` |  |

@@ -6,8 +6,8 @@ Aws Iam Policies role for Fourth Estate infrastructure automation.
 
 ## Role Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
 | `iam_policy_state` | `"present"` |  |
 | `iam_create_fedramp_policies` | `true` |  |
 | `iam_enforce_encryption` | `true` |  |

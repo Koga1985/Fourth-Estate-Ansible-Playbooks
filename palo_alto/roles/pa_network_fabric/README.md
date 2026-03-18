@@ -16,20 +16,20 @@ Builds and manages the full network fabric on Palo Alto Networks firewalls and P
 
 ### Connection and Scope
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `pa_use_panorama` | `false` | Set to `true` when targeting a Panorama-managed device. Changes the scope of all API calls. |
-| `device_group` | `null` | Panorama device group name (Panorama mode only). |
-| `vsys` | `"vsys1"` | Virtual system context for direct firewall management. |
-| `template` | `null` | Panorama template name for network configuration (Panorama mode only). |
-| `template_stack` | `null` | Panorama template stack name (Panorama mode only). |
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
+| `pa_use_panorama` | `false` | No | Set to `true` when targeting a Panorama-managed device. Changes the scope of all API calls. |
+| `device_group` | `null` | No | Panorama device group name (Panorama mode only). |
+| `vsys` | `"vsys1"` | No | Virtual system context for direct firewall management. |
+| `template` | `null` | No | Panorama template name for network configuration (Panorama mode only). |
+| `template_stack` | `null` | No | Panorama template stack name (Panorama mode only). |
 
 ### Commit
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `commit_after_changes` | `true` | Commit all changes to the running configuration after applying the fabric. Set to `false` to stage changes without committing (useful when combining with other roles). |
-| `commit_description` | `"Apply network fabric via Ansible"` | Commit description string. |
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
+| `commit_after_changes` | `true` | No | Commit all changes to the running configuration after applying the fabric. Set to `false` to stage changes without committing (useful when combining with other roles). |
+| `commit_description` | `"Apply network fabric via Ansible"` | No | Commit description string. |
 
 ### Interfaces
 

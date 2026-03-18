@@ -6,16 +6,16 @@ Servicenow Cmdb Config role for Fourth Estate infrastructure automation.
 
 ## Role Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
 | `servicenow_instance` | `"{{ lookup('env', 'SN_INSTANCE') }}"` |  |
 | `servicenow_username` | `"{{ lookup('env', 'SN_USERNAME') }}"` |  |
 | `servicenow_password` | `"{{ lookup('env', 'SN_PASSWORD') }}"` |  |
-| `servicenow_client_id` | `"{{ lookup('env', 'SN_CLIENT_ID') | default('')...` |  |
-| `servicenow_client_secret` | `"{{ lookup('env', 'SN_CLIENT_SECRET') | default...` |  |
+| `servicenow_client_id` | `"{{ lookup('env', 'SN_CLIENT_ID') | No | default('')...` |
+| `servicenow_client_secret` | `"{{ lookup('env', 'SN_CLIENT_SECRET') | No | default...` |
 | `servicenow_timeout` | `30` |  |
 | `servicenow_validate_certs` | `true` |  |
-| `cmdb_config_mode` | `"configure"` | configure, validate, report |
+| `cmdb_config_mode` | `"configure"` | No | configure, validate, report |
 | `cmdb_metrics_enabled` | `true` |  |
 | `cmdb_audit_enabled` | `true` |  |
 

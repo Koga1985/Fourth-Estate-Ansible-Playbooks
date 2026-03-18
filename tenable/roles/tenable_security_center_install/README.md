@@ -6,8 +6,8 @@ Tenable Security Center Install role for Fourth Estate infrastructure automation
 
 ## Role Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
 | `tsc_version` | `"6.2.0"` |  |
 | `tsc_package_ext` | `"{{ 'rpm' if ansible_os_family == 'RedHat' else...` |  |
 | `tsc_download_url` | `"https://downloads.tenable.com/SecurityCenter"` |  |

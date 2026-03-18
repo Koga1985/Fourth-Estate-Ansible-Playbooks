@@ -6,22 +6,22 @@ Pure Flasharray Install role for Fourth Estate infrastructure automation.
 
 ## Role Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
 | `flasharray_url` | `"https://{{ inventory_hostname }}"` |  |
 | `flasharray_name` | `"{{ inventory_hostname_short }}-fa"` |  |
-| `flasharray_dns_domain` | `"{{ domain_name | default('example.com') }}"` |  |
+| `flasharray_dns_domain` | `"{{ domain_name | No | default('example.com') }}"` |
 | `flasharray_timezone` | `"America/New_York"` |  |
 | `flasharray_phonehome_enabled` | `true` |  |
 | `flasharray_support_proxy_enabled` | `false` |  |
 | `flasharray_smtp_enabled` | `true` |  |
-| `flasharray_smtp_sender_domain` | `"{{ domain_name | default('example.com') }}"` |  |
-| `flasharray_smtp_relay_host` | `"{{ smtp_relay | default('smtp.example.com') }}"` |  |
+| `flasharray_smtp_sender_domain` | `"{{ domain_name | No | default('example.com') }}"` |
+| `flasharray_smtp_relay_host` | `"{{ smtp_relay | No | default('smtp.example.com') }}"` |
 | `flasharray_idle_timeout` | `30` |  |
 | `flasharray_auto_update` | `false` |  |
 | `flasharray_organization` | `"Fourth Estate"` |  |
-| `flasharray_location` | `"{{ datacenter_name | default('DC1') }}"` |  |
-| `flasharray_contact` | `"storage-team@{{ domain_name | default('example...` |  |
+| `flasharray_location` | `"{{ datacenter_name | No | default('DC1') }}"` |
+| `flasharray_contact` | `"storage-team@{{ domain_name | No | default('example...` |
 | `flasharray_fips_mode` | `true` |  |
 
 See `defaults/main.yml` for the full variable list.

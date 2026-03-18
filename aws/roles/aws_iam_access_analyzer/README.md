@@ -6,10 +6,10 @@ Aws Iam Access Analyzer role for Fourth Estate infrastructure automation.
 
 ## Role Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
 | `iam_access_analyzer_name` | `"FedRAMP-Access-Analyzer"` |  |
-| `iam_access_analyzer_type` | `"ACCOUNT"` | ACCOUNT, ORGANIZATION |
+| `iam_access_analyzer_type` | `"ACCOUNT"` | No | ACCOUNT, ORGANIZATION |
 | `iam_access_analyzer_state` | `"present"` |  |
 | `iam_generate_findings_report` | `true` |  |
 | `iam_access_analyzer_max_findings` | `100` |  |

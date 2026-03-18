@@ -6,8 +6,8 @@ Vast Backup Dr role for Fourth Estate infrastructure automation.
 
 ## Role Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
 | `vast_mgmt_host` | `"{{ vault_vast_mgmt_host }}"` |  |
 | `vast_mgmt_port` | `443` |  |
 | `vast_mgmt_user` | `"{{ vault_vast_mgmt_user }}"` |  |
@@ -19,10 +19,10 @@ Vast Backup Dr role for Fourth Estate infrastructure automation.
 | `vast_snapshot_retention_days` | `30` |  |
 | `vast_snapshot_prefix` | `"auto"` |  |
 | `vast_replication_enabled` | `false` |  |
-| `vast_replication_type` | `"async"` | Options: sync, async |
-| `vast_replication_target_cluster` | `"{{ vault_vast_dr_cluster | default('') }}"` |  |
-| `vast_replication_target_user` | `"{{ vault_vast_dr_user | default('') }}"` |  |
-| `vast_replication_target_password` | `"{{ vault_vast_dr_password | default('') }}"` |  |
+| `vast_replication_type` | `"async"` | No | Options: sync, async |
+| `vast_replication_target_cluster` | `"{{ vault_vast_dr_cluster | No | default('') }}"` |
+| `vast_replication_target_user` | `"{{ vault_vast_dr_user | No | default('') }}"` |
+| `vast_replication_target_password` | `"{{ vault_vast_dr_password | No | default('') }}"` |
 
 See `defaults/main.yml` for the full variable list.
 

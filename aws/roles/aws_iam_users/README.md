@@ -6,12 +6,12 @@ Aws Iam Users role for Fourth Estate infrastructure automation.
 
 ## Role Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
 | `iam_user_state` | `"present"` |  |
 | `iam_enforce_mfa` | `true` |  |
 | `iam_mfa_max_age_days` | `90` |  |
-| `iam_user_permissions_boundary` | `"arn:{{ aws_partition | default('aws-us-gov') }...` |  |
+| `iam_user_permissions_boundary` | `"arn:{{ aws_partition | No | default('aws-us-gov') }...` |
 | `iam_access_key_max_age_days` | `90` |  |
 | `iam_access_key_rotation_enabled` | `true` |  |
 | `iam_password_min_length` | `15` |  |

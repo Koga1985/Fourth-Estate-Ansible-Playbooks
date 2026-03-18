@@ -6,8 +6,8 @@ Aws Ec2 Key Pairs role for Fourth Estate infrastructure automation.
 
 ## Role Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
 | `key_pair_state` | `"present"` |  |
 | `key_pair_save_private_keys` | `true` |  |
 | `key_pair_output_dir` | `"/tmp/ec2_keys"` |  |

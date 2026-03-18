@@ -15,71 +15,71 @@ Integrates Cisco ISE with Cisco DNA Center (DNAC) and Mobility Services Engine (
 
 ### ISE Connection
 
-| Variable | Default | Description |
+| Variable | Default | Required | Description |
 |---|---|---|
-| `ise_hostname` | `{{ vault_ise_hostname }}` | ISE primary PAN hostname or IP |
-| `ise_username` | `{{ vault_ise_username }}` | ISE admin username |
-| `ise_password` | `{{ vault_ise_password }}` | ISE admin password (vault-protected) |
-| `ise_verify_ssl` | `true` | Validate ISE TLS certificate |
-| `ise_use_proxy` | `false` | Route ISE API calls through a proxy |
-| `ise_debug` | `false` | Enable verbose debug logging |
+| `ise_hostname` | `{{ vault_ise_hostname }}` | **Yes** | ISE primary PAN hostname or IP |
+| `ise_username` | `{{ vault_ise_username }}` | **Yes** | ISE admin username |
+| `ise_password` | `{{ vault_ise_password }}` | **Yes** | ISE admin password (vault-protected) |
+| `ise_verify_ssl` | `true` | No | Validate ISE TLS certificate |
+| `ise_use_proxy` | `false` | No | Route ISE API calls through a proxy |
+| `ise_debug` | `false` | No | Enable verbose debug logging |
 
 ### Deployment Control
 
-| Variable | Default | Description |
+| Variable | Default | Required | Description |
 |---|---|---|
-| `apply_changes` | `false` | Set to `true` to write changes; `false` runs in plan/audit mode |
-| `ise_artifacts_dir` | `/tmp/ise-artifacts` | Local directory for generated reports |
+| `apply_changes` | `false` | No | Set to `true` to write changes; `false` runs in plan/audit mode |
+| `ise_artifacts_dir` | `/tmp/ise-artifacts` | No | Local directory for generated reports |
 
 ### pxGrid Settings
 
-| Variable | Default | Description |
+| Variable | Default | Required | Description |
 |---|---|---|
-| `pxgrid_auto_approval` | (required) | Whether new pxGrid client registrations are automatically approved |
+| `pxgrid_auto_approval` | (required) | No | Whether new pxGrid client registrations are automatically approved |
 
 ### DNA Center Integration
 
-| Variable | Default | Description |
+| Variable | Default | Required | Description |
 |---|---|---|
-| `dnac_integration_enabled` | (required) | Enable DNA Center integration tasks |
-| `dnac_hostname` | (required when enabled) | DNA Center hostname or IP |
-| `dnac_auth_token` | (required when enabled) | DNA Center API authentication token |
-| `dnac_ise_shared_secret` | (required when enabled) | Shared secret for the ISE-DNAC integration |
+| `dnac_integration_enabled` | (required) | No | Enable DNA Center integration tasks |
+| `dnac_hostname` | (required when enabled) | No | DNA Center hostname or IP |
+| `dnac_auth_token` | (required when enabled) | No | DNA Center API authentication token |
+| `dnac_ise_shared_secret` | (required when enabled) | No | Shared secret for the ISE-DNAC integration |
 
 ### MSE Integration
 
-| Variable | Default | Description |
+| Variable | Default | Required | Description |
 |---|---|---|
-| `mse_integration_enabled` | (required) | Enable MSE integration tasks |
-| `mse_hostname` | (required when enabled) | MSE hostname or IP |
-| `mse_username` | (required when enabled) | MSE admin username |
-| `mse_password` | (required when enabled) | MSE admin password (vault-protected) |
-| `mse_verify_ssl` | `true` | Validate MSE TLS certificate |
-| `mse_ise_shared_secret` | (required when enabled) | Shared secret for the ISE-MSE integration |
+| `mse_integration_enabled` | (required) | No | Enable MSE integration tasks |
+| `mse_hostname` | (required when enabled) | No | MSE hostname or IP |
+| `mse_username` | (required when enabled) | No | MSE admin username |
+| `mse_password` | (required when enabled) | No | MSE admin password (vault-protected) |
+| `mse_verify_ssl` | `true` | No | Validate MSE TLS certificate |
+| `mse_ise_shared_secret` | (required when enabled) | No | Shared secret for the ISE-MSE integration |
 
 ### Feature Flags
 
-| Variable | Default | Description |
+| Variable | Default | Required | Description |
 |---|---|---|
-| `ise_integration__mse_dnac_enabled` | `true` | Master toggle for this role |
-| `enable_disa_stig_compliance` | `true` | Apply STIG-compliant settings |
+| `ise_integration__mse_dnac_enabled` | `true` | No | Master toggle for this role |
+| `enable_disa_stig_compliance` | `true` | No | Apply STIG-compliant settings |
 
 ### Logging and Notifications
 
-| Variable | Default | Description |
+| Variable | Default | Required | Description |
 |---|---|---|
-| `ise_integration__mse_dnac_log_level` | `INFO` | Log verbosity level |
-| `ise_integration__mse_dnac_log_to_syslog` | `true` | Forward events to syslog |
-| `ise_integration__mse_dnac_syslog_server` | `{{ vault_syslog_server }}` | Syslog server address |
-| `ise_integration__mse_dnac_notify_on_completion` | `false` | Send email on completion |
-| `ise_integration__mse_dnac_notification_email` | `{{ vault_security_team_email }}` | Notification recipient |
-| `ise_integration__mse_dnac_auto_backup` | `true` | Trigger ISE backup after changes |
+| `ise_integration__mse_dnac_log_level` | `INFO` | No | Log verbosity level |
+| `ise_integration__mse_dnac_log_to_syslog` | `true` | No | Forward events to syslog |
+| `ise_integration__mse_dnac_syslog_server` | `{{ vault_syslog_server }}` | **Yes** | Syslog server address |
+| `ise_integration__mse_dnac_notify_on_completion` | `false` | No | Send email on completion |
+| `ise_integration__mse_dnac_notification_email` | `{{ vault_security_team_email }}` | **Yes** | Notification recipient |
+| `ise_integration__mse_dnac_auto_backup` | `true` | No | Trigger ISE backup after changes |
 
 ### Compliance Frameworks
 
-| Variable | Default | Description |
+| Variable | Default | Required | Description |
 |---|---|---|
-| `compliance_frameworks` | `[dod_stig, nist_800_53, nist_800_171, fisma_moderate]` | Frameworks referenced in generated reports |
+| `compliance_frameworks` | `[dod_stig, nist_800_53, nist_800_171, fisma_moderate]` | No | Frameworks referenced in generated reports |
 
 ## Example Playbook
 

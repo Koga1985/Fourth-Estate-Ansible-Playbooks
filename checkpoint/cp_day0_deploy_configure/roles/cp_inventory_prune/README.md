@@ -6,8 +6,8 @@ Cp Inventory Prune role for Fourth Estate infrastructure automation.
 
 ## Role Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
 | `cp_allow_delete` | `false` |  |
 | `dry_run` | `true` |  |
 | `publish_changes` | `false` |  |

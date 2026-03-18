@@ -6,8 +6,8 @@ Datastore Cluster Sdrs role for Fourth Estate infrastructure automation.
 
 ## Role Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
 | `vcenter_hostname` | `""` |  |
 | `vcenter_username` | `""` |  |
 | `vcenter_password` | `""` |  |
@@ -15,7 +15,7 @@ Datastore Cluster Sdrs role for Fourth Estate infrastructure automation.
 | `vcenter_datacenter` | `""` |  |
 | `target_folder` | `""` |  |
 | `apply_recommendations` | `false` |  |
-| `report_path` | `"/tmp/{{ sdrs.name | default('datastore-cluster...` |  |
+| `report_path` | `"/tmp/{{ sdrs.name | No | default('datastore-cluster...` |
 
 See `defaults/main.yml` for the full variable list.
 

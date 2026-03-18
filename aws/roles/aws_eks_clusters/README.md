@@ -6,10 +6,10 @@ Aws Eks Clusters role for Fourth Estate infrastructure automation.
 
 ## Role Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
 | `eks_cluster_name` | `"ansible-managed-eks"` |  |
-| `eks_region` | `"{{ aws_region | default('us-east-1') }}"` |  |
+| `eks_region` | `"{{ aws_region | No | default('us-east-1') }}"` |
 | `eks_version` | `"1.28"` |  |
 | `eks_role_arn` | `""` |  |
 | `eks_subnet_ids` | `[]` |  |

@@ -6,13 +6,13 @@ Vm Placement Policies role for Fourth Estate infrastructure automation.
 
 ## Role Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
 | `vcenter_hostname` | `""` |  |
 | `vcenter_username` | `""` |  |
 | `vcenter_password` | `""` |  |
 | `vcenter_validate_certs` | `false` |  |
-| `cluster_name` | `""` | default cluster for rules/RPs (can be overridden per item) |
+| `cluster_name` | `""` | No | default cluster for rules/RPs (can be overridden per item) |
 | `affinity_policies` | `[]` |  |
 | `host_affinity_policies` | `[]` |  |
 | `resource_pools` | `[]` |  |

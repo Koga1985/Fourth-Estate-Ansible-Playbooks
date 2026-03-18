@@ -6,8 +6,8 @@ Pure Flasharray Config role for Fourth Estate infrastructure automation.
 
 ## Role Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
 | `flasharray_url` | `"https://{{ inventory_hostname }}"` |  |
 | `flasharray_name` | `"{{ inventory_hostname_short }}-fa"` |  |
 | `flasharray_idle_timeout` | `30` |  |
@@ -16,8 +16,8 @@ Pure Flasharray Config role for Fourth Estate infrastructure automation.
 | `flasharray_ldap_enabled` | `false` |  |
 | `flasharray_saml_enabled` | `false` |  |
 | `flasharray_multi_admin_enabled` | `true` |  |
-| `flasharray_smtp_sender_domain` | `"{{ domain_name | default('example.com') }}"` |  |
-| `flasharray_smtp_relay_host` | `"{{ smtp_relay | default('smtp.example.com') }}"` |  |
+| `flasharray_smtp_sender_domain` | `"{{ domain_name | No | default('example.com') }}"` |
+| `flasharray_smtp_relay_host` | `"{{ smtp_relay | No | default('smtp.example.com') }}"` |
 | `flasharray_phonehome_enabled` | `true` |  |
 | `flasharray_support_proxy_enabled` | `false` |  |
 | `flasharray_safemode_enabled` | `true` |  |

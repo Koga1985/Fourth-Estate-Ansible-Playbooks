@@ -14,28 +14,28 @@ Configures IPv4 ACLs, Quality of Service (QoS) class and policy maps, and a full
 
 All variables are defined in `defaults/main.yml`. The most commonly overridden variables are listed below.
 
-| Variable | Default | Description |
+| Variable | Default | Required | Description |
 |---|---|---|
-| `arista_apply_changes` | `false` | Safety gate. Set to `true` to push configuration; otherwise the role only writes a plan artifact. |
-| `arista_artifacts_dir` | `/tmp/arista-artifacts` | Directory on the Ansible controller where plan and state JSON files are written. |
-| `ipv4_acls` | See defaults | List of IPv4 ACL definitions in `arista.eos.eos_acls` format. Includes a default `MGMT_ACCESS` ACL permitting SSH/HTTPS from `10.0.0.0/8` and denying all else. |
-| `acl_interfaces` | `[Management1/ipv4/MGMT_ACCESS/in]` | List of interface-to-ACL bindings (`name`, `afi`, `acl`, `direction`). |
-| `qos_class_maps` | VOICE, VIDEO, CRITICAL_DATA | List of QoS class-map definitions with DSCP/CoS match criteria. |
-| `qos_policy_maps` | `QOS_POLICY` | List of QoS policy-map definitions referencing the class maps above. |
-| `qos_interfaces` | `[]` | Interfaces to which QoS service-policies are applied (`name`, `direction`, `policy`). |
-| `storm_control_interfaces` | `[]` | Interfaces requiring storm control with per-level thresholds (default 10%). |
-| `port_security_interfaces` | `[]` | Interfaces with port security; supports `max_addresses`, `violation_mode`, and `sticky`. |
-| `dhcp_snooping` | `enabled: false` | Enables DHCP snooping and lists trusted interfaces and VLANs. |
-| `arp_inspection` | `enabled: false` | Enables Dynamic ARP Inspection and lists trusted interfaces and VLANs. |
-| `ip_source_guard_interfaces` | `[]` | Interfaces on which `ip verify source` is enforced. |
-| `dot1x_config` | `enabled: false` | Enables 802.1X system-auth-control and sets the RADIUS server group. |
-| `dot1x_interfaces` | `[]` | Per-interface 802.1X settings (`pae`, `port_control`, `reauth_period`). |
-| `static_mac_addresses` | `[]` | Static MAC entries (`mac`, `vlan`, `interface`). |
-| `unused_ports` | `[]` | Ports to shut down and move to `blackhole_vlan` (STIG requirement). |
-| `blackhole_vlan` | `999` | VLAN used to isolate unused ports. |
-| `bpdu_guard_interfaces` | `[]` | Edge ports on which PortFast + BPDU Guard are enabled. |
-| `root_guard_interfaces` | `[]` | Uplink ports on which spanning-tree Root Guard is enabled. |
-| `rate_limiting` | `enabled: true, acl: RATE_LIMIT_ACL` | Applies a control-plane ACL for rate limiting. |
+| `arista_apply_changes` | `false` | No | Safety gate. Set to `true` to push configuration; otherwise the role only writes a plan artifact. |
+| `arista_artifacts_dir` | `/tmp/arista-artifacts` | No | Directory on the Ansible controller where plan and state JSON files are written. |
+| `ipv4_acls` | See defaults | No | List of IPv4 ACL definitions in `arista.eos.eos_acls` format. Includes a default `MGMT_ACCESS` ACL permitting SSH/HTTPS from `10.0.0.0/8` and denying all else. |
+| `acl_interfaces` | `[Management1/ipv4/MGMT_ACCESS/in]` | No | List of interface-to-ACL bindings (`name`, `afi`, `acl`, `direction`). |
+| `qos_class_maps` | VOICE, VIDEO, CRITICAL_DATA | No | List of QoS class-map definitions with DSCP/CoS match criteria. |
+| `qos_policy_maps` | `QOS_POLICY` | No | List of QoS policy-map definitions referencing the class maps above. |
+| `qos_interfaces` | `[]` | No | Interfaces to which QoS service-policies are applied (`name`, `direction`, `policy`). |
+| `storm_control_interfaces` | `[]` | No | Interfaces requiring storm control with per-level thresholds (default 10%). |
+| `port_security_interfaces` | `[]` | No | Interfaces with port security; supports `max_addresses`, `violation_mode`, and `sticky`. |
+| `dhcp_snooping` | `enabled: false` | No | Enables DHCP snooping and lists trusted interfaces and VLANs. |
+| `arp_inspection` | `enabled: false` | No | Enables Dynamic ARP Inspection and lists trusted interfaces and VLANs. |
+| `ip_source_guard_interfaces` | `[]` | No | Interfaces on which `ip verify source` is enforced. |
+| `dot1x_config` | `enabled: false` | No | Enables 802.1X system-auth-control and sets the RADIUS server group. |
+| `dot1x_interfaces` | `[]` | No | Per-interface 802.1X settings (`pae`, `port_control`, `reauth_period`). |
+| `static_mac_addresses` | `[]` | No | Static MAC entries (`mac`, `vlan`, `interface`). |
+| `unused_ports` | `[]` | No | Ports to shut down and move to `blackhole_vlan` (STIG requirement). |
+| `blackhole_vlan` | `999` | No | VLAN used to isolate unused ports. |
+| `bpdu_guard_interfaces` | `[]` | No | Edge ports on which PortFast + BPDU Guard are enabled. |
+| `root_guard_interfaces` | `[]` | No | Uplink ports on which spanning-tree Root Guard is enabled. |
+| `rate_limiting` | `enabled: true, acl: RATE_LIMIT_ACL` | No | Applies a control-plane ACL for rate limiting. |
 
 ## Example Playbook
 

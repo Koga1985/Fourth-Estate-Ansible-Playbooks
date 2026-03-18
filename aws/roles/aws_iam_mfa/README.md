@@ -6,10 +6,10 @@ Aws Iam Mfa role for Fourth Estate infrastructure automation.
 
 ## Role Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
 | `iam_enforce_mfa` | `true` |  |
-| `iam_mfa_device_type` | `"virtual"` | virtual, hardware |
+| `iam_mfa_device_type` | `"virtual"` | No | virtual, hardware |
 | `iam_mfa_grace_period_days` | `7` |  |
 | `iam_generate_mfa_report` | `true` |  |
 | `iam_tag_non_compliant` | `true` |  |

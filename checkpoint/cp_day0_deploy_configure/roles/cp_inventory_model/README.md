@@ -6,8 +6,8 @@ Cp Inventory Model role for Fourth Estate infrastructure automation.
 
 ## Role Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
 | `publish_changes` | `true` |  |
 | `artifacts_dir` | `"/tmp/checkpoint-artifacts"` |  |
 | `cp_hosts` | `[]` |  |

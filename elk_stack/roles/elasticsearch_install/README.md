@@ -6,11 +6,11 @@ Elasticsearch Install role for Fourth Estate infrastructure automation.
 
 ## Role Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
 | `elasticsearch_version` | `"8.11.3"` |  |
 | `elasticsearch_major_version` | `"8.x"` |  |
-| `elasticsearch_install_method` | `"package"` | package, archive |
+| `elasticsearch_install_method` | `"package"` | No | package, archive |
 | `elasticsearch_use_official_repo` | `true` |  |
 | `elasticsearch_repo_gpg_key` | `"https://artifacts.elastic.co/GPG-KEY-elasticse...` |  |
 | `elasticsearch_user` | `"elasticsearch"` |  |
@@ -20,7 +20,7 @@ Elasticsearch Install role for Fourth Estate infrastructure automation.
 | `elasticsearch_data_dir` | `"/var/lib/elasticsearch"` |  |
 | `elasticsearch_log_dir` | `"/var/log/elasticsearch"` |  |
 | `elasticsearch_pid_dir` | `"/var/run/elasticsearch"` |  |
-| `elasticsearch_java_home` | `""` | Auto-detect if empty |
+| `elasticsearch_java_home` | `""` | No | Auto-detect if empty |
 | `elasticsearch_heap_size` | `"{{ (ansible_memtotal_mb * 0.5) | int | min(327...` |  |
 | `elasticsearch_heap_size_min` | `"{{ elasticsearch_heap_size }}"` |  |
 

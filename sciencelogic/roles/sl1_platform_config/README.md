@@ -6,8 +6,8 @@ Sl1 Platform Config role for Fourth Estate infrastructure automation.
 
 ## Role Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
 | `artifacts_dir` | `"/tmp/sl1-config-artifacts"` |  |
 | `log_level` | `"info"` |  |
 | `dry_run` | `false` |  |

@@ -6,8 +6,8 @@ Gcp Project Management role for Fourth Estate infrastructure automation.
 
 ## Role Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
 | `gcp_auth_kind` | `serviceaccount` |  |
 | `gcp_service_account_file` | `"{{ lookup('env', 'GCP_SERVICE_ACCOUNT_FILE') |...` |  |
 | `gcp_project_id` | `""` |  |
@@ -21,7 +21,7 @@ Gcp Project Management role for Fourth Estate infrastructure automation.
 | `gcp_restrict_public_ips` | `true` |  |
 | `gcp_enable_deletion_protection` | `true` |  |
 | `gcp_enable_budget_alerts` | `true` |  |
-| `gcp_budget_amount` | `10000` | USD per month |
+| `gcp_budget_amount` | `10000` | No | USD per month |
 | `gcp_budget_notification_channels` | `[]` |  |
 
 See `defaults/main.yml` for the full variable list.

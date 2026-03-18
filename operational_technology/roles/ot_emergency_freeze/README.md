@@ -9,11 +9,11 @@ Implements an emergency change-freeze toggle for OT automation pipelines. When a
 
 ## Role Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `artifacts_dir` | `/tmp/ot-artifacts` | Directory for freeze status output artifacts. |
-| `freeze_flag` | `false` | Direct variable-based freeze toggle. Set to `true` to activate an emergency freeze immediately. This variable can be passed at runtime with `-e freeze_flag=true`. |
-| `sot_freeze_file` | `""` | Absolute path to a SoT flag file on the control host. When this file exists and contains the string `frozen`, the freeze is activated regardless of `freeze_flag`. Leave empty to disable file-based freeze checking. |
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
+| `artifacts_dir` | `/tmp/ot-artifacts` | No | Directory for freeze status output artifacts. |
+| `freeze_flag` | `false` | No | Direct variable-based freeze toggle. Set to `true` to activate an emergency freeze immediately. This variable can be passed at runtime with `-e freeze_flag=true`. |
+| `sot_freeze_file` | `""` | No | Absolute path to a SoT flag file on the control host. When this file exists and contains the string `frozen`, the freeze is activated regardless of `freeze_flag`. Leave empty to disable file-based freeze checking. |
 
 ## Freeze Activation Logic
 

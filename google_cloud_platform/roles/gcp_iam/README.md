@@ -6,8 +6,8 @@ Gcp Iam role for Fourth Estate infrastructure automation.
 
 ## Role Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
 | `gcp_project_id` | `""` |  |
 | `gcp_organization_id` | `""` |  |
 | `gcp_auth_kind` | `"serviceaccount"` |  |
