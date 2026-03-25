@@ -1,6 +1,6 @@
 # Cohesity Data Platform
 
-This directory contains **6 Ansible roles** for automating **Cohesity Data Platform** management including cluster configuration, protection policies, recovery operations, cloud archive, Views (NAS), and agent deployment.
+This directory contains **7 Ansible roles** for automating **Cohesity Data Platform** management including cluster installation, cluster configuration, protection policies, recovery operations, cloud archive, Views (NAS), and agent deployment.
 
 ## Overview
 
@@ -8,7 +8,8 @@ Comprehensive Cohesity automation covering cluster setup, data protection policy
 
 ## 📋 Roles
 
-### Cluster Management (1 role)
+### Cluster Management (2 roles)
+- **cohesity_cluster_install** - Initial cluster installation and node registration
 - **cohesity_cluster_config** - Cluster initialization, network configuration, and licensing
 
 ### Data Protection (2 roles)
@@ -35,7 +36,7 @@ Comprehensive Cohesity automation covering cluster setup, data protection policy
 
 ```bash
 # Install Cohesity collection
-ansible-galaxy collection install cohesity.dataplatform
+ansible-galaxy collection install cohesity.dataprotect
 
 # Or install Python SDK
 pip install cohesity-management-sdk

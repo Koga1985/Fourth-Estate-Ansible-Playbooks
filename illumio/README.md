@@ -1,12 +1,15 @@
 # Illumio Core Zero Trust Segmentation
 
-This directory contains **3 Ansible roles** for managing **Illumio Core** zero trust micro-segmentation platform.
+This directory contains **4 Ansible roles** for managing **Illumio Core** zero trust micro-segmentation platform.
 
 ## Overview
 
 Illumio Core provides application-centric segmentation and zero trust security. These roles automate policy lifecycle management, VEN (Virtual Enforcement Node) deployment, and security posture reporting for Fourth Estate environments.
 
 ## 📋 Roles
+
+### PCE Installation (1 role)
+- **illumio_pce_install** - Policy Compute Engine installation and setup
 
 ### Policy Management (1 role)
 - **illumio_policy_lifecycle** - Policy creation, testing, enforcement
@@ -16,14 +19,14 @@ Illumio Core provides application-centric segmentation and zero trust security. 
   - Policy versioning
 
 ### VEN Fleet Management (1 role)
-- **illumio_ven_fleet_management** - VEN deployment and lifecycle
+- **illumio_ven_fleet** - VEN deployment and lifecycle
   - VEN installation
   - Pairing keys
   - Health monitoring
   - Version management
 
 ### Reporting & Analytics (1 role)
-- **illumio_reporting_analytics** - Security posture reporting
+- **illumio_reporting_pack** - Security posture reporting
   - Traffic flow visibility
   - Policy coverage analysis
   - Compliance reporting
@@ -56,27 +59,20 @@ illumio_policy_mode: "test"  # draft, test, enforced
 ### Deploy VENs to Workloads
 
 ```bash
-ansible-playbook playbooks/illumio_ven_deployment.yml \
-  -i inventory/workloads.yml \
-  -e "pairing_profile=fourth-estate-prod"
+ansible-playbook -i inventory site.yml --tags ven
 ```
 
 ### Create and Test Segmentation Policy
 
 ```bash
-ansible-playbook roles/illumio_policy_lifecycle/playbook.yml \
-  -i inventory/illumio.yml \
-  -e "policy_name=web-to-db-segmentation" \
-  -e "policy_mode=test"
+ansible-playbook -i inventory site.yml --tags policy \
+  -e "illumio_policy_version=draft"
 ```
 
 ### Generate Compliance Report
 
 ```bash
-ansible-playbook roles/illumio_reporting_analytics/playbook.yml \
-  -i inventory/illumio.yml \
-  -e "report_type=compliance" \
-  -e "output_format=html"
+ansible-playbook -i inventory site.yml --tags reporting
 ```
 
 ## 🛡️ Security Features

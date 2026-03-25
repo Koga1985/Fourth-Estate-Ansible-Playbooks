@@ -1,6 +1,6 @@
 # Windows Server Automation
 
-This directory contains **20+ Ansible roles** for automating **Microsoft Windows Server** infrastructure with emphasis on security hardening (DoD STIG), Active Directory, Group Policy, and Fourth Estate requirements.
+This directory contains **10 Ansible roles** for automating **Microsoft Windows Server** infrastructure with emphasis on security hardening (DoD STIG), Active Directory, Group Policy, and Fourth Estate requirements.
 
 ## Overview
 
@@ -135,8 +135,7 @@ ansible-playbook playbooks/windows_stig_hardening.yml \
 ### Use Case 2: Deploy Active Directory Domain Controller
 
 ```bash
-ansible-playbook playbooks/windows_ad_deploy.yml \
-  -i inventory/windows.ini \
+ansible-playbook -i inventory site.yml --tags ad \
   -e "domain_name=fourth-estate.local" \
   -e "domain_netbios_name=FOURTHESTATE" \
   -e "forest_mode=WinThreshold" \
@@ -146,8 +145,7 @@ ansible-playbook playbooks/windows_ad_deploy.yml \
 ### Use Case 3: Configure DHCP and DNS Services
 
 ```bash
-ansible-playbook playbooks/windows_dhcp_dns.yml \
-  -i inventory/windows.ini \
+ansible-playbook -i inventory site.yml --tags dhcp,dns \
   -e "dhcp_scope_name=Servers" \
   -e "dhcp_scope_start=10.0.1.10" \
   -e "dhcp_scope_end=10.0.1.250" \
@@ -157,8 +155,7 @@ ansible-playbook playbooks/windows_dhcp_dns.yml \
 ### Use Case 4: Deploy IIS Web Server
 
 ```bash
-ansible-playbook playbooks/windows_iis_deploy.yml \
-  -i inventory/windows.ini \
+ansible-playbook -i inventory site.yml --tags iis \
   -e "iis_site_name=Fourth Estate Portal" \
   -e "iis_site_port=443" \
   -e "iis_site_path=C:\\inetpub\\wwwroot"
@@ -167,8 +164,7 @@ ansible-playbook playbooks/windows_iis_deploy.yml \
 ### Use Case 5: Configure Windows Server Backup
 
 ```bash
-ansible-playbook playbooks/windows_backup_config.yml \
-  -i inventory/windows.ini \
+ansible-playbook -i inventory site.yml --tags backup \
   -e "backup_target=E:\\" \
   -e "backup_schedule=daily" \
   -e "backup_time=02:00"

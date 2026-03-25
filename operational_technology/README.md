@@ -8,39 +8,43 @@ Comprehensive OT/ICS security automation covering network segmentation, firewall
 
 ## 📋 Role Categories
 
-### Network Security (8 roles)
-- **ot_firewall_baseline** - OT firewall configuration
-- **ot_network_segmentation** - Zone-based architecture
-- **ot_dmz_configuration** - DMZ setup for IT/OT boundary
-- **ot_vlan_isolation** - VLAN-based isolation
-- **ot_acl_management** - Access control lists
-- **ot_nat_rules** - Network address translation
-- **ot_vpn_config** - Secure remote access VPN
-- **ot_port_security** - Switch port security
+### Zone & Topology (3 roles)
+- **ot_zone_model** - Purdue model zone definition and segmentation
+- **ot_topology_baseline** - Network topology baselining and change detection
+- **ot_inventory_model** - OT asset inventory and CMDB synchronization
 
-### Intrusion Detection (5 roles)
-- **ot_idps_deployment** - IDS/IPS deployment
-- **ot_snort_config** - Snort IDS configuration
-- **ot_suricata_config** - Suricata IDS setup
-- **ot_signature_management** - Signature updates
-- **ot_anomaly_detection** - Baseline anomaly detection
+### Asset Management (3 roles)
+- **ot_asset_lifecycle** - OT asset lifecycle and classification
+- **ot_firmware_register** - Firmware version tracking and registration
+- **ot_windows_hmi_patching** - Windows HMI and workstation patching
 
-### Asset Management (4 roles)
-- **ot_asset_inventory** - Device discovery and inventory
-- **ot_asset_classification** - Criticality classification
-- **ot_vulnerability_scanning** - OT-safe scanning
-- **ot_patch_management** - Firmware/patch lifecycle
+### Firewall & Network (5 roles)
+- **ot_firewall_backup** - OT firewall configuration backup
+- **ot_firewall_policy_checkpoint** - Check Point firewall policy management
+- **ot_firewall_policy_panos** - Palo Alto PAN-OS firewall policy management
+- **ot_network_backup** - Network device configuration backup
+- **ot_nac_visibility** - NAC/network access control visibility
 
-### Monitoring & Logging (4 roles)
-- **ot_syslog_aggregation** - Centralized logging
-- **ot_metrics_reporting** - KPI dashboards
-- **ot_event_correlation** - Security event correlation
-- **ot_audit_logging** - Compliance audit logs
+### Security Monitoring (4 roles)
+- **ot_sensor_ops** - OT sensor deployment and health monitoring
+- **ot_idps_baseline** - IDS/IPS baseline configuration
+- **ot_allowlist_assist** - Protocol and traffic allowlist management
+- **ot_remote_access_bastion** - Secure remote access bastion
 
-### Compliance & Hardening (3 roles)
-- **ot_stig_hardening** - DoD STIG for OT systems
-- **ot_isa62443_compliance** - ISA/IEC 62443 controls
-- **ot_nist80082_compliance** - NIST 800-82 Rev 2
+### Communications & Trust (3 roles)
+- **ot_pki_trust** - PKI certificate trust management
+- **ot_timesync_baseline** - Time synchronization baseline (NTP/PTP)
+- **ot_logging_pipeline** - Security log pipeline configuration
+
+### SCADA & ICS (2 roles)
+- **ot_scada_historians_backup** - SCADA/historian backup operations
+- **ot_emergency_freeze** - Emergency change freeze enforcement
+
+### Compliance & Governance (4 roles)
+- **ot_compliance_pack** - OT compliance reporting and governance
+- **ot_vuln_pipeline** - OT vulnerability tracking pipeline
+- **ot_metrics_reporting** - KPI dashboards and metrics reporting
+- **ot_change_window_guard** - Change window enforcement guard
 
 ## 🚀 Quick Start (Drop-In Deployment)
 
@@ -105,30 +109,23 @@ ot_change_window_enforcement: true
 
 ## 📖 Common Use Cases
 
-### Deploy OT Network Segmentation
+### Define OT Zone Model
 
 ```bash
-ansible-playbook playbooks/ot_network_segmentation.yml \
-  -i inventory/ot_production.yml \
-  -e "apply_changes=false" \
-  --check
+ansible-playbook -i inventory site.yml --tags zones
 ```
 
-### Configure IDPS
+### Configure Asset Inventory
 
 ```bash
-ansible-playbook playbooks/ot_idps_deployment.yml \
-  -i inventory/ot_production.yml \
-  -e "idps_mode=inline" \
-  -e "signature_update=true"
+ansible-playbook -i inventory site.yml --tags inventory
 ```
 
-### Apply ISA 62443 Controls
+### Run Compliance Pack
 
 ```bash
-ansible-playbook playbooks/ot_isa62443_compliance.yml \
-  -i inventory/ot_production.yml \
-  -e "security_level=3"  # SL 1-4
+ansible-playbook -i inventory site.yml --tags compliance \
+  -e "ot_compliance_framework=IEC62443"
 ```
 
 ## 🛡️ Security Standards

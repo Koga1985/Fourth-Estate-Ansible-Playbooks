@@ -56,18 +56,18 @@ Each top-level directory focuses on a specific technology platform and contains 
 - **Cisco ISE** (Identity Services Engine) - 28 roles for policy, posture, guest, profiling, pxGrid, reporting
 - **Cisco UCS** (Unified Computing System) - 5 roles for infrastructure, security, networking, monitoring, DR
 - **Cisco ACI** (Application Centric Infrastructure) - 5 roles for fabric deploy, tenant config, L3Out/L2Out, DoD STIG/NIST hardening, monitoring
-- **Palo Alto Networks** - PAN-OS firewalls, Panorama management, VPN, QoS (10 roles)
+- **Palo Alto Networks** - PAN-OS firewalls, Panorama management, VPN, QoS (13 roles)
 - **Check Point** - Firewalls, access policies, threat prevention, identity awareness (6 roles)
 - **Arista EOS** - Network switches, CVP, routing, fabric, baseline configuration (6 roles)
-- **Illumio** - Zero-trust micro-segmentation, policy lifecycle, VEN management (3 roles)
-- **Infoblox** - DNS/DHCP infrastructure, grid operations, RPZ policies (10 roles)
+- **Illumio** - Zero-trust micro-segmentation, policy lifecycle, VEN management (4 roles)
+- **Infoblox** - DNS/DHCP infrastructure, grid operations, RPZ policies (12 roles)
 - **Claroty** - OT security, inventory, secure access, segmentation (11 roles)
 
 ### ☁️ Cloud Platforms (4 platforms)
 - **Amazon Web Services (AWS)** - IAM, VPC, EC2, EKS, S3, RDS, Lambda, FedRAMP (40+ roles)
 - **Microsoft Azure** - Azure AD, VNets, AKS, SQL, Key Vault, Sentinel, Gov Cloud (45+ roles)
-- **Google Cloud Platform** - GCP IAM, VPCs, GKE, BigQuery, Cloud Run, compliance (28 roles)
-- **VMware vSphere** - vCenter, ESXi, vSAN, NSX-T SDN, STIG hardening (35+ roles)
+- **Google Cloud Platform** - GCP IAM, VPCs, GKE, BigQuery, Cloud Run, compliance (30 roles)
+- **VMware vSphere** - vCenter, ESXi, vSAN, NSX-T SDN, STIG hardening (32 roles)
 
 ### 🔄 Container & Orchestration (2 platforms)
 - **Kubernetes** - Cluster hardening (STIG V1R11), RBAC, namespaces, secrets (4 roles)
@@ -75,15 +75,15 @@ Each top-level directory focuses on a specific technology platform and contains 
 
 ### 🐧 Operating Systems (2 platforms)
 - **Red Hat Enterprise Linux** - Hardening, patching, audit logging, firewall, SELinux (5 roles)
-- **Microsoft Windows Server** - STIG hardening, Active Directory, Group Policy, DHCP/DNS, IIS (20+ roles) ⭐ NEW
+- **Microsoft Windows Server** - STIG hardening, Active Directory, Group Policy, DHCP/DNS, IIS (10 roles)
 
 ### 💾 Storage & Backup (6 platforms)
-- **Pure Storage** - FlashArray, FlashBlade, provisioning, protection (7 roles)
+- **Pure Storage** - FlashArray, FlashBlade, provisioning, protection (14 roles)
 - **VAST Data** - All-flash NAS storage, monitoring, security hardening (4 roles)
-- **NetApp ONTAP** - Cluster, SVM, volumes, SnapMirror, SnapVault (12 roles)
-- **Veeam** - Backup & recovery, replication, cloud tier, SureBackup (6 roles)
+- **NetApp ONTAP** - Cluster, SVM, volumes, SnapMirror, SnapVault (3 roles)
+- **Veeam** - Backup & recovery, replication, cloud tier, SureBackup (8 roles)
 - **Cohesity** - Cluster config, protection policies, recovery, cloud archive (6 roles)
-- **Splunk** - Log aggregation, forwarder, monitoring, security (5 roles)
+- **Splunk** - Log aggregation, forwarder, monitoring, security (6 roles)
 
 ### 🗄️ Database Platforms (3 platforms)
 - **PostgreSQL** - Installation, replication, pgPool, Barman backup, security (8 roles)
@@ -91,9 +91,9 @@ Each top-level directory focuses on a specific technology platform and contains 
 - **Oracle Database** - Installation, Data Guard, RAC, RMAN, Flashback (8 roles)
 
 ### 📊 Monitoring & Observability (4 platforms)
-- **ScienceLogic SL1** - Platform monitoring, RBA, powerflow, governance (31 roles)
+- **ScienceLogic SL1** - Platform monitoring, RBA, powerflow, governance (33 roles)
 - **Dragos** - OT threat detection, inventory, topology, integration (12 roles)
-- **Prometheus/Grafana** - Metrics collection, alerting, dashboarding (8 roles)
+- **Prometheus/Grafana** - Metrics collection, alerting, dashboarding (3 roles)
 - **ELK Stack** - Elasticsearch, Logstash, Kibana, Filebeat, Metricbeat (10 roles)
 
 ### 🔐 Security & Compliance (2 platforms)
@@ -224,7 +224,7 @@ Fourth-Estate-Ansible-Playbooks/
 │   ├── README.md
 │   └── roles/
 │
-├── google_cloud_platform/         # GCP (28 roles)
+├── google_cloud_platform/         # GCP (30 roles)
 │   ├── README.md
 │   ├── roles/
 │   └── tasks/
@@ -233,13 +233,13 @@ Fourth-Estate-Ansible-Playbooks/
 │   ├── README.md
 │   └── roles/
 │
-├── illumio/                       # Illumio micro-segmentation (3 roles)
+├── illumio/                       # Illumio micro-segmentation (4 roles)
 │   ├── README.md
 │   ├── roles/
 │   ├── playbooks/
 │   └── tasks/
 │
-├── infoblox/                      # Infoblox DNS/DHCP (10 roles)
+├── infoblox/                      # Infoblox DNS/DHCP (12 roles)
 │   ├── README.md
 │   ├── day0_deploy_config/        # Day-0 deployment framework
 │   ├── roles/
@@ -252,7 +252,7 @@ Fourth-Estate-Ansible-Playbooks/
 │   ├── playbook-deploy-app.yml
 │   └── playbook-full-setup.yml
 │
-├── netapp/                        # NetApp ONTAP (12 roles)
+├── netapp/                        # NetApp ONTAP (3 roles)
 │   ├── README.md
 │   └── roles/
 │
@@ -265,7 +265,7 @@ Fourth-Estate-Ansible-Playbooks/
 │   ├── README.md
 │   └── roles/
 │
-├── palo_alto/                     # Palo Alto Networks (10 roles)
+├── palo_alto/                     # Palo Alto Networks (13 roles)
 │   ├── README.md
 │   ├── roles/
 │   ├── playbooks/
@@ -282,11 +282,11 @@ Fourth-Estate-Ansible-Playbooks/
 │   ├── artifacts/                 # Compliance reports
 │   └── inventory/                 # Example inventories
 │
-├── prometheus_grafana/            # Prometheus & Grafana (8 roles)
+├── prometheus_grafana/            # Prometheus & Grafana (3 roles)
 │   ├── README.md
 │   └── roles/
 │
-├── pure_storage/                  # Pure Storage (7 roles)
+├── pure_storage/                  # Pure Storage (14 roles)
 │   ├── README.md
 │   └── roles/
 │
@@ -295,7 +295,7 @@ Fourth-Estate-Ansible-Playbooks/
 │   ├── roles/
 │   └── requirements.yml
 │
-├── sciencelogic/                  # ScienceLogic SL1 (31 roles)
+├── sciencelogic/                  # ScienceLogic SL1 (33 roles)
 │   ├── README.md
 │   ├── roles/
 │   └── tasks/
@@ -308,7 +308,7 @@ Fourth-Estate-Ansible-Playbooks/
 │   ├── README.md
 │   └── roles/
 │
-├── splunk/                        # Splunk logging (5 roles)
+├── splunk/                        # Splunk logging (6 roles)
 │   ├── README.md
 │   ├── roles/
 │   └── playbooks/
@@ -322,17 +322,17 @@ Fourth-Estate-Ansible-Playbooks/
 │   ├── roles/
 │   └── inventories/
 │
-├── veeam/                         # Veeam backup (6 roles)
+├── veeam/                         # Veeam backup (8 roles)
 │   ├── README.md
 │   ├── roles/
 │   └── playbooks/
 │
-├── vmware/                        # VMware vSphere + NSX-T (35+ roles)
+├── vmware/                        # VMware vSphere + NSX-T (32 roles)
 │   ├── README.md
 │   ├── roles/
 │   └── tasks/
 │
-└── windows/                       # Windows Server (20+ roles)
+└── windows/                       # Windows Server (10 roles)
     ├── README.md
     ├── roles/
     ├── playbooks/

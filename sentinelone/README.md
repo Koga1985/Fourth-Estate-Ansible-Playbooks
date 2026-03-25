@@ -57,11 +57,7 @@ All roles and tasks have been developed to meet the following compliance framewo
 ```
 sentinelone/
 ├── roles/                              # Ansible roles for SentinelOne deployment
-│   ├── s1_agent_install/               # SentinelOne agent installation
-│   ├── s1_security_hardening/          # DoD STIG security hardening
-│   ├── s1_policy_management/           # Policy configuration management
-│   ├── s1_threat_intel/                # Threat intelligence integration
-│   └── s1_monitoring/                  # Monitoring and health checks
+│   └── s1_agent_install/               # SentinelOne agent install, configure, monitor
 ├── tasks/                              # Standalone operational tasks
 │   ├── agent_health_check.yml          # Agent health verification
 │   ├── update_agent.yml                # Agent update task
@@ -69,17 +65,13 @@ sentinelone/
 │   └── compliance_check.yml            # STIG compliance verification
 ├── playbooks/                          # Complete deployment playbooks
 │   ├── deploy_s1_agents.yml            # Agent deployment playbook
-│   ├── configure_policies.yml          # Policy configuration playbook
-│   └── tests/                          # Functional test playbooks
-│       ├── test_agent_installation.yml
-│       ├── test_security_hardening.yml
-│       └── test_policy_enforcement.yml
+│   └── configure_policies.yml          # Policy configuration playbook
 └── README.md                           # This file
 ```
 
 ## Roles
 
-### 1. s1_agent_install
+### s1_agent_install (1 role)
 
 Installs and configures SentinelOne agent with full DoD STIG compliance.
 
@@ -103,76 +95,6 @@ s1_tags: "Fourth-Estate,Production"
 s1_group_name: "Default"
 ```
 
-### 2. s1_security_hardening
-
-Applies DoD STIG security hardening to SentinelOne deployment.
-
-**Features:**
-- Agent tamper protection
-- Secure credential management
-- Audit logging configuration
-- File integrity monitoring
-- Network traffic inspection
-- USB device control
-- Application control policies
-- Ransomware protection
-- Fourth Estate security baseline
-
-**Compliance Coverage:**
-- V-245877: Endpoint protection deployed (CAT I)
-- V-245878: Real-time protection enabled (CAT I)
-- V-245879: Automatic updates configured (CAT II)
-- V-245880: Audit logging enabled (CAT II)
-- V-245881: Tamper protection enabled (CAT I)
-
-### 3. s1_policy_management
-
-Manages SentinelOne policies including prevention, detection, and response.
-
-**Features:**
-- Policy creation and deployment
-- Detection engine configuration
-- Response action automation
-- Exclusion management
-- Custom detection rules
-- Machine learning configuration
-- Agent visibility settings
-- Policy inheritance and override
-
-**Policy Categories:**
-- **Static AI Engine**: Signature-based detection
-- **Behavioral AI Engine**: Behavioral analysis and anomaly detection
-- **Pre-execution AI**: Static file analysis
-- **On-execution AI**: Runtime behavioral analysis
-
-### 4. s1_threat_intel
-
-Integrates SentinelOne Threat Intelligence with Fourth Estate systems.
-
-**Features:**
-- Threat intelligence feed integration
-- IOC (Indicator of Compromise) import/export
-- Threat hunting automation
-- MITRE ATT&CK mapping
-- STIX/TAXII integration
-- Automated threat response workflows
-- Integration with external threat feeds
-- Reputation service configuration
-
-### 5. s1_monitoring
-
-Implements comprehensive monitoring and health checking.
-
-**Features:**
-- Agent health monitoring
-- Detection event streaming
-- SIEM integration (Splunk, ELK, Chronicle)
-- Syslog export
-- Prometheus metrics export
-- Grafana dashboards
-- Alert notification (PagerDuty, Slack, Email)
-- Performance metrics collection
-- Fourth Estate operational dashboards
 
 ## Playbooks
 
@@ -187,8 +109,6 @@ Complete agent deployment across infrastructure.
   become: true
   roles:
     - s1_agent_install
-    - s1_security_hardening
-    - s1_policy_management
 ```
 
 **Usage:**
@@ -341,17 +261,11 @@ s1_malicious_activity_action: "protect"  # detect, protect
 
 ## Testing
 
-Run comprehensive tests:
+Run agent health checks:
 
 ```bash
-# Test agent installation
-ansible-playbook sentinelone/playbooks/tests/test_agent_installation.yml
-
-# Test security hardening
-ansible-playbook sentinelone/playbooks/tests/test_security_hardening.yml
-
-# Test policy enforcement
-ansible-playbook sentinelone/playbooks/tests/test_policy_enforcement.yml
+# Run agent health check
+ansible-playbook -i inventory site.yml --tags monitoring
 ```
 
 ## Operational Procedures

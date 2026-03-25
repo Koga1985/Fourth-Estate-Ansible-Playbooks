@@ -1,31 +1,24 @@
 # Prometheus & Grafana Monitoring Stack
 
-This directory contains **8 Ansible roles** for deploying and configuring **Prometheus** and **Grafana** for comprehensive infrastructure monitoring and observability.
+This directory contains **3 Ansible roles** for deploying and configuring **Prometheus** and **Grafana** for comprehensive infrastructure monitoring and observability.
 
 ## 📋 Roles
 
-### Prometheus (4 roles)
-- **prometheus_server** - Prometheus server installation and configuration
-- **prometheus_alertmanager** - Alertmanager for alert routing
-- **prometheus_node_exporter** - Node metrics collection
-- **prometheus_blackbox_exporter** - Endpoint monitoring
-
-### Grafana (4 roles)
-- **grafana_server** - Grafana server installation
-- **grafana_dashboards** - Dashboard provisioning
-- **grafana_datasources** - Datasource configuration (Prometheus, Loki, etc.)
-- **grafana_alerting** - Grafana alerting rules
+- **prometheus_install** - Prometheus server installation
+- **prometheus_config** - Prometheus configuration (scrape targets, alerting rules, retention)
+- **prometheus_exporters** - Prometheus exporter deployment (node, blackbox, and others)
 
 ## 🚀 Quick Start
 
 ```bash
-# Deploy Prometheus stack
-ansible-playbook playbooks/prometheus_stack.yml \
-  -i inventory/monitoring.yml
+# Deploy monitoring stack
+ansible-playbook -i inventory site.yml --ask-vault-pass
 
-# Configure Grafana with dashboards
-ansible-playbook playbooks/grafana_setup.yml \
-  -e "grafana_admin_password=SecurePass123!"
+# Deploy Prometheus and config only
+ansible-playbook -i inventory site.yml --tags prometheus
+
+# Deploy exporters only
+ansible-playbook -i inventory site.yml --tags exporters
 ```
 
 ## ⚙️ Configuration

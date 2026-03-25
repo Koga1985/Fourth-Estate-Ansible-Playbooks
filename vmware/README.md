@@ -1,10 +1,10 @@
 # VMware Automation (Ansible)
 
-This directory contains **35+ Ansible roles** for automating **VMware vSphere** and **NSX-T** operations (vCenter, ESXi, clusters, VMs, networking, snapshots, RBAC, software-defined networking, and security/STIG tasks).
+This directory contains **32 Ansible roles** for automating **VMware vSphere** and **NSX-T** operations (vCenter, ESXi, clusters, VMs, networking, snapshots, RBAC, software-defined networking, and security/STIG tasks).
 
 ## What this folder provides
 
-### vSphere Operations (27 existing roles)
+### vSphere Operations (29 existing roles)
 - vCenter & ESXi inventory and facts collection
 - Datacenter/cluster baseline tasks (create/update clusters, add hosts)
 - VM lifecycle (create from template/ISO, reconfigure CPU/RAM/Disk/NICs, customize guest)
@@ -14,15 +14,10 @@ This directory contains **35+ Ansible roles** for automating **VMware vSphere** 
 - Network & storage tasks (portgroups, vSwitch/Distributed Switch, datastores)
 - Security baselines and STIG/compliance helpers
 
-### NSX-T Software-Defined Networking (8 NEW roles)
+### NSX-T Software-Defined Networking (3 roles)
 - **nsx_t_networking** - NSX-T Manager deployment and configuration
 - **nsx_t_security** - Distributed firewall and security policies
 - **nsx_t_load_balancer** - NSX-T load balancer configuration
-- **nsx_t_edge_cluster** - Edge cluster deployment
-- **nsx_t_segments** - Network segments (overlay networking)
-- **nsx_t_firewall** - Gateway and distributed firewall rules
-- **nsx_t_tier_gateways** - Tier-0 and Tier-1 gateway configuration
-- **nsx_t_vpn** - IPsec and L2 VPN configuration
 
 Tip: run `ls -1 *.yml` in this folder to see available playbooks.
 

@@ -1,6 +1,6 @@
 # Veeam Backup & Replication
 
-This directory contains **6 Ansible roles** for automating **Veeam Backup & Replication** lifecycle management including installation, backup job configuration, restore operations, replication, cloud tiering, and automated testing with SureBackup.
+This directory contains **8 Ansible roles** for automating **Veeam Backup & Replication** lifecycle management including installation, backup job configuration, restore operations, replication, cloud tiering, and automated testing with SureBackup.
 
 ## 🚀 Quick Start (Drop-In Deployment)
 
@@ -38,8 +38,12 @@ Comprehensive Veeam automation covering backup server installation, repository m
 
 ## 📋 Roles
 
-### Installation & Configuration (1 role)
+### Installation & Configuration (2 roles)
 - **veeam_backup_server_install** - Veeam Backup & Replication server installation and initial configuration
+- **veeam_backup_server_config** - Server configuration management and post-install setup
+
+### Repository Management (1 role)
+- **veeam_repositories** - Backup repository creation and management
 
 ### Backup Operations (2 roles)
 - **veeam_backup_jobs** - Backup job creation, scheduling, and management

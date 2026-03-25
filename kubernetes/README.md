@@ -20,7 +20,11 @@ kubernetes/
 │   ├── k8s-cluster-hardening/     # Complete cluster security hardening
 │   ├── k8s-rbac-management/       # RBAC and access control
 │   ├── k8s-namespace-management/  # Namespace lifecycle management
-│   └── k8s-secrets-management/    # Secure secrets handling
+│   ├── k8s-secrets-management/    # Secure secrets handling
+│   ├── k8s_cluster_install/       # Cluster installation and bootstrapping
+│   ├── k8s_pod_security/          # Pod Security Standards enforcement
+│   ├── k8s_network_policies/      # Network policy management
+│   └── k8s_backup_velero/         # Cluster backup with Velero
 ├── tasks/                          # Reusable tasks
 │   ├── deploy-application.yml     # Secure app deployment
 │   ├── backup-resources.yml       # Cluster backup

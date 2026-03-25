@@ -1,6 +1,6 @@
 # ScienceLogic SL1 Ansible Automation
 
-This directory contains **31 Ansible roles** for automating **ScienceLogic SL1** platform monitoring, discovery, device management, governance, and ITSM integration.
+This directory contains **33 Ansible roles** for automating **ScienceLogic SL1** platform monitoring, discovery, device management, governance, and ITSM integration.
 
 ## 🚀 Quick Start (Drop-In Deployment)
 

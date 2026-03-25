@@ -1,28 +1,18 @@
 # ELK Stack (Elasticsearch, Logstash, Kibana)
 
-This directory contains **10 Ansible roles** for deploying and configuring the **Elastic Stack** for log aggregation, analysis, and visualization.
+This directory contains **3 implemented Ansible roles** for deploying and configuring the **Elastic Stack** (Elasticsearch). Kibana, Logstash, and Fleet Server are covered by placeholder tasks in site.yml pending role implementation.
 
 ## 📋 Roles
 
-### Elasticsearch (2 roles)
-- **elasticsearch_cluster** - Elasticsearch cluster deployment
-- **elasticsearch_indices** - Index lifecycle management
+### Elasticsearch (3 roles — implemented)
+- **elasticsearch_install** - Elasticsearch cluster installation and node setup
+- **elasticsearch_config** - Cluster configuration, index lifecycle, and tuning
+- **elasticsearch_security** - TLS/SSL, X-Pack security, built-in user configuration
 
-### Logstash (2 roles)
-- **logstash_pipelines** - Logstash pipeline configuration
-- **logstash_filters** - Filter plugin management
-
-### Kibana (2 roles)
-- **kibana_server** - Kibana server installation
-- **kibana_dashboards** - Dashboard and visualization provisioning
-
-### Beats (2 roles)
-- **filebeat** - Log file collection
-- **metricbeat** - Metrics collection
-
-### Security (2 roles)
-- **elastic_security** - Elastic Security (SIEM) configuration
-- **elastic_fleet** - Fleet server for endpoint management
+### Other Components (placeholder — extend site.yml to add roles)
+- **Kibana** — site.yml includes a placeholder debug task; add `kibana_install` role when ready
+- **Logstash** — site.yml includes a placeholder debug task; add `logstash_install` role when ready
+- **Fleet Server** — site.yml includes a placeholder debug task; add `fleet_server` role when ready
 
 ## 🚀 Quick Start (Drop-In Deployment)
 

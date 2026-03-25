@@ -23,15 +23,14 @@ This directory contains **8 Ansible roles** for automating **ServiceNow** integr
 ## 🚀 Quick Start
 
 ```bash
-# Configure CMDB integration
-ansible-playbook playbooks/servicenow_setup.yml \
-  -e "snow_instance=dev12345" \
-  -e "snow_user=ansible_api"
+# Deploy full ServiceNow integration
+ansible-playbook -i inventory site.yml --ask-vault-pass
 
-# Discover and sync infrastructure
-ansible-playbook playbooks/servicenow_discovery.yml \
-  -e "discovery_source=aws" \
-  -e "cmdb_class=cmdb_ci_server"
+# Configure CMDB only
+ansible-playbook -i inventory site.yml --tags cmdb
+
+# Configure ITSM workflows
+ansible-playbook -i inventory site.yml --tags incidents,changes
 ```
 
 ## ⚙️ Configuration
@@ -269,29 +268,23 @@ asset_config:
 ### Use Case 2: Create Incident from Monitoring Alert
 
 ```bash
-ansible-playbook playbooks/servicenow_create_incident.yml \
-  -e "alert_severity=critical" \
+ansible-playbook -i inventory site.yml --tags incidents \
   -e "ci_name=web-server-01" \
-  -e "alert_message=Server not responding"
+  -e "alert_severity=critical"
 ```
 
 ### Use Case 3: Automated Change Request
 
 ```bash
-ansible-playbook playbooks/servicenow_change_request.yml \
+ansible-playbook -i inventory site.yml --tags changes \
   -e "change_type=standard" \
-  -e "change_category=patching" \
-  -e "affected_cis=prod-servers" \
-  -e "scheduled_time=2026-01-20T02:00:00"
+  -e "change_category=patching"
 ```
 
 ### Use Case 4: Asset Discovery and Registration
 
 ```bash
-ansible-playbook playbooks/servicenow_asset_discovery.yml \
-  -e "discovery_method=network_scan" \
-  -e "network_range=10.0.0.0/16" \
-  -e "asset_category=hardware"
+ansible-playbook -i inventory site.yml --tags assets
 ```
 
 ## 🔄 Integration Examples
@@ -370,9 +363,6 @@ ansible-playbook playbooks/servicenow_asset_discovery.yml \
 # Test ServiceNow credentials
 curl -u "username:password" \
   "https://dev12345.service-now.com/api/now/table/incident?sysparm_limit=1"
-
-# Verify OAuth token
-ansible-playbook playbooks/test_snow_auth.yml -vvv
 ```
 
 ### Issue: CI Not Found in CMDB
@@ -385,9 +375,7 @@ ansible-playbook playbooks/test_snow_auth.yml -vvv
 curl "https://dev12345.service-now.com/api/now/table/cmdb_ci_server?sysparm_query=name=web-server-01"
 
 # Run discovery
-ansible-playbook playbooks/servicenow_ci_discovery.yml \
-  -e "force_discovery=true" \
-  -e "ci_name=web-server-01"
+ansible-playbook -i inventory site.yml --tags discovery
 ```
 
 ### Issue: API Rate Limit Exceeded

@@ -56,28 +56,20 @@ All roles and tasks have been developed to meet the following compliance framewo
 
 ```
 crowdstrike/
-├── roles/                              # Ansible roles for CrowdStrike deployment
-│   ├── falcon_sensor_install/          # Falcon sensor installation
-│   ├── falcon_security_hardening/      # DoD STIG security hardening
-│   ├── falcon_policy_management/       # Prevention policy management
-│   ├── falcon_threat_intel/            # Threat intelligence integration
-│   └── falcon_monitoring/              # Monitoring and health checks
-├── tasks/                              # Standalone operational tasks
-│   ├── sensor_health_check.yml         # Sensor health verification
-│   ├── update_sensor.yml               # Sensor update task
-│   ├── quarantine_host.yml             # Host containment task
-│   └── compliance_check.yml            # STIG compliance verification
-├── playbooks/                          # Complete deployment playbooks
-│   ├── deploy_falcon_sensors.yml       # Sensor deployment playbook
-│   ├── configure_prevention_policies.yml # Policy configuration playbook
-│   └── tests/                          # Functional test playbooks
-│       ├── test_sensor_installation.yml
-│       ├── test_security_hardening.yml
-│       └── test_policy_enforcement.yml
-└── README.md                           # This file
+├── site.yml                            # Main entry-point playbook
+├── inventory.example                   # Example inventory
+├── requirements.yml                    # Collection dependencies
+├── vault.yml.example                   # Vault variable template
+├── roles/                              # Ansible roles
+│   └── falcon_sensor_install/          # Falcon sensor install, configure, and monitor
+│                                       # (handles install, security hardening, and monitoring
+│                                       #  via tasks_from: configure / tasks_from: monitoring)
+└── playbooks/                          # Additional deployment playbooks
 ```
 
 ## Roles
+
+This platform implements a single comprehensive role (`falcon_sensor_install`) that handles all phases of Falcon deployment via task files. The site.yml calls different `tasks_from` entry points for installation, configuration/hardening, and monitoring.
 
 ### 1. falcon_sensor_install
 
@@ -105,9 +97,9 @@ falcon_tags: "Fourth-Estate,Production"
 falcon_provisioning_wait: true
 ```
 
-### 2. falcon_security_hardening
+### 2. Security Hardening (via tasks_from: configure)
 
-Applies DoD STIG security hardening to CrowdStrike Falcon deployment.
+Applies DoD STIG security hardening as part of the `falcon_sensor_install` role.
 
 **Features:**
 - Sensor tamper protection
@@ -127,49 +119,14 @@ Applies DoD STIG security hardening to CrowdStrike Falcon deployment.
 - V-245880: Audit logging enabled (CAT II)
 - V-245881: Tamper protection enabled (CAT I)
 
-### 3. falcon_policy_management
+### 3. Monitoring & Health (via tasks_from: monitoring)
 
-Manages CrowdStrike prevention policies, detection policies, and response policies.
-
-**Features:**
-- Prevention policy deployment
-- Detection policy configuration
-- Response policy automation
-- IOA (Indicator of Attack) exclusions
-- Custom IOA rules
-- Machine learning configuration
-- Sensor visibility settings
-- Policy assignment and enforcement
-
-**Policy Categories:**
-- **Prevention Policies**: Malware protection, exploit prevention, behavioral analysis
-- **Detection Policies**: Custom IOA rules, threat intelligence integration
-- **Response Policies**: Automated containment, network isolation, forensic collection
-
-### 4. falcon_threat_intel
-
-Integrates CrowdStrike Threat Intelligence with Fourth Estate systems.
-
-**Features:**
-- Threat intelligence feed integration
-- IOC (Indicator of Compromise) management
-- Custom watchlists
-- Adversary tracking
-- Threat hunting automation
-- MITRE ATT&CK mapping
-- STIX/TAXII integration
-- Automated threat response workflows
-
-### 5. falcon_monitoring
-
-Implements comprehensive monitoring and health checking.
+Implements health checking and monitoring as part of the `falcon_sensor_install` role.
 
 **Features:**
 - Sensor health monitoring
 - Detection event streaming
 - SIEM integration (Splunk, ELK, Chronicle)
-- Prometheus metrics export
-- Grafana dashboards
 - Alert notification (PagerDuty, Slack, Email)
 - Performance metrics collection
 - Fourth Estate operational dashboards

@@ -50,17 +50,15 @@ ansible-playbook -i inventory site.yml --tags compliance
 ansible-playbook -i inventory site.yml --tags reporting
 ```
 
-### Individual Role Execution (Alternative)
+### Individual Component Deployment
 
 ```bash
-# Install Security Center
-ansible-playbook playbooks/tenable_install.yml \
-  -e "tenable_version=5.23.0" \
-  -e "tenable_license_file=license.key"
+# Install Security Center only
+ansible-playbook -i inventory site.yml --tags install \
+  -e "tenable_version=5.23.0"
 
-# Configure scan policies
-ansible-playbook playbooks/tenable_scan_config.yml \
-  -e "scan_zone=corporate-network" \
+# Configure scan policies only
+ansible-playbook -i inventory site.yml --tags policies \
   -e "scan_frequency=weekly"
 ```
 
@@ -308,28 +306,21 @@ reports:
 ### Use Case 2: Configure Vulnerability Scanning
 
 ```bash
-ansible-playbook playbooks/tenable_scan_setup.yml \
-  -e "scan_zone=production" \
-  -e "scan_policy=authenticated" \
-  -e "schedule=weekly"
+ansible-playbook -i inventory site.yml --tags policies \
+  -e "scan_frequency=weekly"
 ```
 
 ### Use Case 3: Generate Compliance Report
 
 ```bash
-ansible-playbook playbooks/tenable_compliance_report.yml \
-  -e "framework=nist_800_53" \
-  -e "report_format=pdf" \
-  -e "email=compliance@example.com"
+ansible-playbook -i inventory site.yml --tags reporting \
+  -e "framework=nist_800_53"
 ```
 
-### Use Case 4: Automated Remediation Workflow
+### Use Case 4: Run Compliance Checks
 
 ```bash
-ansible-playbook playbooks/tenable_remediation.yml \
-  -e "severity=critical" \
-  -e "create_tickets=true" \
-  -e "servicenow_instance=prod"
+ansible-playbook -i inventory site.yml --tags compliance
 ```
 
 ## 🛡️ Security Best Practices

@@ -61,7 +61,7 @@ ansible-playbook -i inventory site.yml --tags compliance
 ```yaml
 # group_vars/claroty.yml
 claroty_api_url: "https://xdome.example.com"
-claroty_api_key: "{{ vault_claroty_api_key }}"
+claroty_api_token: "{{ vault_claroty_api_token }}"
 claroty_organization: "Fourth Estate"
 
 # SIEM Integration

@@ -8,25 +8,29 @@ Dragos Platform provides industrial cybersecurity threat detection and response.
 
 ## 📋 Role Categories
 
-### Platform Configuration (4 roles)
-- **dragos_platform_config** - Initial platform setup
-- **dragos_sensor_deployment** - Deploy Dragos sensors
-- **dragos_collector_config** - Data collector configuration
-- **dragos_api_integration** - API client setup
+### Sensor & Operations (2 roles)
+- **dragos_sensor_ops** - Sensor deployment, health monitoring, and lifecycle management
+- **dragos_mssp_orchestrator** - MSSP-mode multi-tenant orchestration (optional)
 
 ### Asset Management (3 roles)
-- **dragos_asset_discovery** - OT asset enumeration
-- **dragos_asset_inventory** - Asset database synchronization
-- **dragos_topology_mapping** - Network topology visualization
+- **dragos_inventory_model** - OT asset inventory and CMDB synchronization
+- **dragos_topology_baseline** - Network topology baselining and change detection
+- **dragos_vulnerability_mgmt** - OT vulnerability tracking and risk scoring
 
-### Threat Detection (3 roles)
-- **dragos_threat_intel** - Threat intelligence feed integration
-- **dragos_detection_rules** - Custom detection logic
-- **dragos_behavioral_analytics** - Anomaly detection baselines
+### Threat Intelligence & Alerts (2 roles)
+- **dragos_intel_ops** - Threat intelligence feed management and IOC integration
+- **dragos_alerts_pipeline** - Alert routing, deduplication, and SIEM forwarding
 
-### Incident Response (2 roles)
-- **dragos_alert_integration** - SIEM/SOAR integration
-- **dragos_incident_playbooks** - Automated response workflows
+### Case Management (1 role)
+- **dragos_cases_workflow** - Case creation, escalation, and workflow automation
+
+### Integrations (2 roles)
+- **dragos_servicenow_integration** - ServiceNow ITSM integration for ticket creation
+- **dragos_jira_integration** - Jira issue tracking integration
+
+### Governance & Segmentation (2 roles)
+- **dragos_governance_pack** - Compliance reporting and governance policy enforcement
+- **dragos_segmentation_assist** - Network segmentation recommendations and enforcement
 
 ## 🚀 Quick Start (Drop-In Deployment)
 
@@ -85,26 +89,22 @@ dragos_sensors:
 ### Deploy Dragos Sensors
 
 ```bash
-ansible-playbook playbooks/dragos_sensor_deployment.yml \
-  -i inventory/ot_network.yml \
-  -e "sensor_mode=passive"
+ansible-playbook -i inventory site.yml --tags sensors
 ```
 
 ### Synchronize Asset Inventory
 
 ```bash
-ansible-playbook roles/dragos_asset_inventory/playbook.yml \
-  -i inventory/dragos.yml \
+ansible-playbook -i inventory site.yml --tags inventory \
   -e "sync_to_cmdb=true"
 ```
 
 ### Integrate with SIEM
 
 ```bash
-ansible-playbook roles/dragos_alert_integration/playbook.yml \
-  -i inventory/dragos.yml \
-  -e "siem_platform=splunk" \
-  -e "siem_host=splunk.example.com"
+ansible-playbook -i inventory site.yml --tags alerts \
+  -e "dragos_siem_type=splunk" \
+  -e "dragos_siem_host=splunk.example.com"
 ```
 
 ## 🛡️ Security Features

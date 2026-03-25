@@ -1,6 +1,6 @@
 # Microsoft Azure
 
-This directory contains **30+ Ansible roles** for managing **Microsoft Azure** infrastructure with emphasis on security, compliance (FedRAMP, NIST 800-53), Azure Government Cloud, and Fourth Estate requirements.
+This directory contains **50+ Ansible roles** for managing **Microsoft Azure** infrastructure with emphasis on security, compliance (FedRAMP, NIST 800-53), Azure Government Cloud, and Fourth Estate requirements.
 
 ## Overview
 
