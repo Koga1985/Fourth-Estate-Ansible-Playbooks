@@ -55,6 +55,7 @@ splunk/
 │   ├── splunk_enterprise_install/  # Core Splunk Enterprise installation
 │   ├── splunk_security_hardening/  # DoD STIG security hardening
 │   ├── splunk_forwarder/           # Universal Forwarder deployment
+│   ├── splunk_indexer_cluster/     # Indexer cluster configuration
 │   ├── splunk_monitoring/          # Health checks and monitoring
 │   └── splunk_backup_dr/           # Backup and disaster recovery
 ├── tasks/                          # Standalone operational tasks
