@@ -1,6 +1,6 @@
 # Palo Alto Networks Ansible Automation
 
-This directory contains **10 Ansible roles** for automating **Palo Alto Networks** PAN-OS firewalls and Panorama management, including security policies, VPN configuration, QoS, and compliance hardening.
+This directory contains **13 Ansible roles** for automating **Palo Alto Networks** PAN-OS firewalls and Panorama management, including security policies, VPN configuration, QoS, and compliance hardening.
 
 ## 🚀 Quick Start (Drop-In Deployment)
 
@@ -34,23 +34,30 @@ ansible-playbook -i inventory site.yml --tags vpn
 
 ## 📋 Roles
 
-### Platform Configuration (3 roles)
-- **panos_baseline_config** - System settings, DNS, NTP, management profile
-- **panos_network_config** - Zones, interfaces, virtual routers, static routes
-- **panos_ha_config** - Active/passive and active/active high availability
+### Platform Baseline (2 roles)
+- **pa_platform_baseline** - System settings, DNS, NTP, management profile
+- **panos_system_config** - PAN-OS system configuration
+
+### Objects & Policy (2 roles)
+- **pa_objects_catalog** - Address, service, and application object catalog
+- **panos_objects** - PAN-OS object management
+
+### Networking (2 roles)
+- **pa_network_fabric** - Zones, interfaces, and virtual router fabric
+- **panos_network_config** - PAN-OS network configuration
 
 ### Security (3 roles)
-- **panos_security_policies** - Security rules, address/service objects, groups
-- **panos_nat_policies** - Source and destination NAT rules
-- **panos_ssl_decryption** - SSL decryption profiles and policies
+- **pa_protection_qos** - Security profiles, threat prevention, and QoS
+- **pa_ssl_decryption** - SSL decryption profiles and policies
+- **pa_userid_identity** - User-ID and identity integration
 
-### Connectivity (2 roles)
-- **panos_ipsec_vpn** - Site-to-site and GlobalProtect VPN configuration
-- **panos_qos** - QoS profiles and traffic shaping policies
+### VPN (2 roles)
+- **pa_vpn_ipsec** - Site-to-site IPSec VPN configuration
+- **pa_vpn_remoteaccess** - GlobalProtect remote access VPN
 
 ### Operations (2 roles)
-- **panos_panorama_management** - Panorama device groups, templates, and log forwarding
-- **panos_backup_operations** - Configuration backups and commit scheduling
+- **pa_logging_telemetry** - Log forwarding and telemetry
+- **panorama_fleet_package** - Panorama fleet management and device groups
 
 ## Prerequisites
 

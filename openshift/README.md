@@ -8,62 +8,70 @@ The OpenShift automation covers the complete platform lifecycle from initial dep
 
 ## 📋 Role Categories
 
-### Cluster Management (12 roles)
-- **ocp_cluster_install** - Initial cluster deployment
-- **ocp_cluster_upgrade** - Cluster version management
-- **ocp_cluster_scaling** - Node scaling and machine sets
-- **ocp_cluster_config** - Cluster-wide configuration
-- **ocp_node_management** - Node lifecycle and maintenance
-- **ocp_etcd_backup** - etcd backup and recovery
-- **ocp_certificate_management** - Certificate lifecycle
-- **ocp_ingress_config** - Ingress controller configuration
-- **ocp_storage_config** - Storage class and PV management
-- **ocp_network_policies** - Network segmentation
-- **ocp_cluster_monitoring** - Prometheus/Grafana setup
-- **ocp_cluster_logging** - EFK/Loki stack configuration
+### Cluster Lifecycle (6 roles)
+- **ocp_upgrade_channel** - Cluster upgrade channel management
+- **ocp_machine_configs** - MachineConfig and node configuration
+- **ocp_node_tuning** - Node tuning and performance
+- **ocp_autoscaling** - Cluster autoscaling configuration
+- **ocp_hpa_vpa_autoscaling** - HPA/VPA workload autoscaling
+- **ocp_maintenance_windows** - Maintenance window management
 
-### Security & Compliance (10 roles)
-- **ocp_stig_hardening** - DoD STIG compliance automation
-- **ocp_nist_compliance** - NIST 800-53 control implementation
-- **ocp_rbac_management** - Role-based access control
-- **ocp_security_contexts** - Pod security contexts
-- **ocp_pod_security_admission** - PSA policy enforcement
-- **ocp_oauth_config** - Authentication providers (LDAP, OIDC)
-- **ocp_service_accounts** - Service account management
+### Security & Identity (9 roles)
+- **ocp_rbac_baseline** - RBAC baseline configuration
+- **ocp_group_sync** - LDAP group synchronization
+- **ocp_sso_tuning** - SSO and authentication tuning
+- **ocp_psa_enforce** - Pod Security Admission enforcement
+- **ocp_scc_legacy_mgmt** - Legacy SecurityContextConstraints management
 - **ocp_secrets_management** - Secret encryption and rotation
-- **ocp_image_scanning** - Container image vulnerability scanning
-- **ocp_audit_logging** - Comprehensive audit logging
+- **ocp_gatekeeper_policies** - OPA/Gatekeeper policy enforcement
+- **ocp_cert_manager_operator** - Certificate Manager operator
+- **ocp_icsp_mirroring** - Image Content Source Policy and mirroring
 
-### Operators & Applications (8 roles)
-- **ocp_olm_management** - Operator Lifecycle Manager
-- **ocp_operator_install** - Operator deployment automation
-- **ocp_catalogsource_config** - Custom catalog sources
-- **ocp_subscription_management** - Operator subscriptions
-- **ocp_application_deployment** - Application lifecycle
-- **ocp_helm_integration** - Helm chart deployment
-- **ocp_argocd_gitops** - GitOps with ArgoCD
-- **ocp_tekton_pipelines** - CI/CD with Tekton
+### Registry & Images (3 roles)
+- **ocp_internal_registry** - Internal container registry management
+- **ocp_quay_external_registry** - Quay external registry integration
+- **ocp_image_signing_policy** - Image signing and verification policy
 
-### Monitoring & Observability (5 roles)
-- **ocp_prometheus_config** - Prometheus configuration
-- **ocp_grafana_dashboards** - Custom Grafana dashboards
-- **ocp_alertmanager_config** - Alert routing and notification
-- **ocp_servicemonitor_config** - Application monitoring
-- **ocp_distributed_tracing** - Jaeger tracing setup
+### Networking (5 roles)
+- **ocp_network_policies_baseline** - Network policy baseline
+- **ocp_routes_tls_policy** - Route TLS policy enforcement
+- **ocp_proxy_trust_bundle** - Proxy configuration and trust bundle
+- **ocp_service_mesh** - Service mesh (OpenShift Service Mesh)
+- **ocp_multicluster_services** - Multi-cluster service federation
 
-### Multi-Cluster & DR (5 roles)
-- **ocp_multicluster_hub** - Red Hat Advanced Cluster Management
-- **ocp_gitops_federation** - Multi-cluster GitOps
-- **ocp_disaster_recovery** - Backup and recovery procedures
-- **ocp_cluster_federation** - Cluster federation setup
-- **ocp_migration_toolkit** - Application migration
+### Storage (4 roles)
+- **ocp_storage_classes** - Storage class management
+- **ocp_csi_operators** - CSI driver operator management
+- **ocp_odf_baseline** - OpenShift Data Foundation baseline
+- **ocp_snapshot_policies** - Volume snapshot policies
 
-### Cost & Resource Management (5 roles)
-- **ocp_cost_management** - Cost metrics and reporting
-- **ocp_resource_quotas** - Namespace resource limits
-- **ocp_limit_ranges** - Container resource constraints
-- **ocp_chargeback** - Resource usage tracking
-- **ocp_capacity_planning** - Cluster capacity analysis
+### Observability (4 roles)
+- **ocp_monitoring_user_workloads** - User workload monitoring
+- **ocp_log_forwarding** - Log forwarding configuration
+- **ocp_events_exporter** - Kubernetes events exporter
+- **ocp_audit_config** - API audit logging configuration
+
+### GitOps & CI/CD (3 roles)
+- **ocp_argocd_gitops** - GitOps with ArgoCD/OpenShift GitOps
+- **ocp_pipelines_tekton** - CI/CD with Tekton Pipelines
+- **ocp_build_configs** - BuildConfig management
+
+### Multi-Cluster (ACM) (3 roles)
+- **ocp_acm_hub** - ACM hub cluster setup
+- **ocp_acm_cluster_sets** - ACM cluster sets management
+- **ocp_acm_governance** - ACM governance policies
+
+### Resource & Namespace Management (4 roles)
+- **ocp_namespace_blueprints** - Namespace blueprint templates
+- **ocp_resource_quotas_limits** - Resource quotas and limit ranges
+- **ocp_project_request_template** - Project request template
+- **ocp_labels_annotations** - Labels and annotations standards
+
+### Operations & Compliance (4 roles)
+- **ocp_preflight_drift_report** - Preflight checks and drift reporting
+- **ocp_operands_lifecycle** - Operand lifecycle management
+- **ocp_cost_management** - Cost management and reporting
+- **ocp_serverless_knative** - Serverless/Knative configuration
 
 ## 🚀 Quick Start (Drop-In Deployment)
 
@@ -141,19 +149,15 @@ ocp_context: "default/api-ocp-example-com:6443/admin"
 2. **Deploy Cluster Monitoring:**
 
 ```bash
-# Set up monitoring stack
-ansible-playbook playbooks/ocp_cluster_monitoring.yml \
-  -i inventory/openshift.yml \
-  --ask-vault-pass
+# Set up user workload monitoring
+ansible-playbook -i inventory site.yml --tags monitoring
 ```
 
-3. **Apply STIG Hardening:**
+3. **Apply Policy Enforcement:**
 
 ```bash
-# Apply DoD STIG controls
-ansible-playbook playbooks/ocp_stig_hardening.yml \
-  -i inventory/openshift.yml \
-  -e "apply_changes=true"
+# Apply Gatekeeper/PSA controls
+ansible-playbook -i inventory site.yml --tags security,compliance
 ```
 
 ## 📁 Directory Structure
@@ -162,23 +166,21 @@ ansible-playbook playbooks/ocp_stig_hardening.yml \
 openshift/
 ├── README.md                           # This file
 ├── roles/                              # OpenShift roles (45 total)
-│   ├── ocp_cluster_install/
-│   ├── ocp_cluster_upgrade/
-│   ├── ocp_cluster_scaling/
-│   ├── ocp_stig_hardening/
-│   ├── ocp_nist_compliance/
-│   ├── ocp_rbac_management/
-│   ├── ocp_oauth_config/
-│   ├── ocp_olm_management/
-│   ├── ocp_operator_install/
+│   ├── ocp_upgrade_channel/
+│   ├── ocp_machine_configs/
+│   ├── ocp_rbac_baseline/
+│   ├── ocp_group_sync/
+│   ├── ocp_psa_enforce/
+│   ├── ocp_gatekeeper_policies/
+│   ├── ocp_network_policies_baseline/
 │   ├── ocp_argocd_gitops/
-│   ├── ocp_tekton_pipelines/
-│   ├── ocp_prometheus_config/
+│   ├── ocp_pipelines_tekton/
+│   ├── ocp_acm_hub/
+│   ├── ocp_acm_cluster_sets/
+│   ├── ocp_acm_governance/
 │   ├── ocp_cost_management/
 │   └── [32 more roles...]
 └── tasks/                              # Standalone task files
-    ├── ocp_olm__subscriptions_lifecycle.yml
-    └── [other tasks...]
 ```
 
 ## 🔑 Key Features
@@ -216,70 +218,52 @@ openshift/
 
 ## 📖 Common Use Cases
 
-### Use Case 1: Deploy Production Cluster with STIG Hardening
+### Use Case 1: Configure RBAC and Policy Enforcement
 
 ```yaml
 ---
-# playbook_production_cluster.yml
-- name: Deploy Production OpenShift Cluster
+# playbook_security_baseline.yml
+- name: Apply OpenShift Security Baseline
   hosts: localhost
   connection: local
 
   tasks:
-    - name: Install OpenShift cluster
+    - name: Configure RBAC baseline
       include_role:
-        name: ocp_cluster_install
-      vars:
-        ocp_version: "4.14"
-        ocp_install_type: "ipi"  # or upi
+        name: ocp_rbac_baseline
 
-    - name: Apply STIG hardening
+    - name: Enforce Pod Security Admission
       include_role:
-        name: ocp_stig_hardening
-      vars:
-        stig_profile: "high"
+        name: ocp_psa_enforce
 
-    - name: Configure monitoring
+    - name: Apply Gatekeeper policies
       include_role:
-        name: ocp_cluster_monitoring
+        name: ocp_gatekeeper_policies
 
     - name: Set up GitOps
       include_role:
         name: ocp_argocd_gitops
 ```
 
-### Use Case 2: Configure OAuth with LDAP
+### Use Case 2: Configure Group Sync and SSO
 
 ```bash
-# Configure LDAP authentication
-ansible-playbook playbooks/ocp_oauth_config.yml \
-  -i inventory/openshift.yml \
-  -e "oauth_provider=ldap" \
-  -e "ldap_url=ldaps://ldap.example.com" \
-  --ask-vault-pass
+# Configure LDAP group sync
+ansible-playbook -i inventory site.yml --tags group_sync
 ```
 
-### Use Case 3: Deploy Operator via OLM
+### Use Case 3: Configure GitOps and Pipelines
 
 ```bash
-# Install cert-manager operator
-ansible-playbook playbooks/ocp_operator_install.yml \
-  -i inventory/openshift.yml \
-  -e "operator_name=cert-manager" \
-  -e "operator_channel=stable"
+# Deploy ArgoCD and Tekton
+ansible-playbook -i inventory site.yml --tags gitops
 ```
 
-### Use Case 4: Multi-Cluster GitOps Setup
+### Use Case 4: Multi-Cluster with ACM
 
 ```bash
 # Configure Red Hat Advanced Cluster Management
-ansible-playbook playbooks/ocp_multicluster_hub.yml \
-  -i inventory/openshift.yml
-
-# Deploy applications to multiple clusters
-ansible-playbook playbooks/ocp_gitops_federation.yml \
-  -i inventory/openshift.yml \
-  -e "target_clusters=prod-east,prod-west"
+ansible-playbook -i inventory site.yml --tags acm
 ```
 
 ## ⚙️ Configuration Variables
@@ -375,16 +359,11 @@ ocp_alertmanager_config:
 ### Compliance Verification
 
 ```bash
-# Generate STIG compliance report
-ansible-playbook playbooks/ocp_stig_hardening.yml \
-  -i inventory/openshift.yml \
-  --tags verify_only \
-  -e "report_format=html"
+# Run preflight checks and drift report
+ansible-playbook -i inventory site.yml --tags preflight
 
-# Verify NIST controls
-ansible-playbook playbooks/ocp_nist_compliance.yml \
-  -i inventory/openshift.yml \
-  --tags nist_verify
+# Run Gatekeeper policy compliance check
+ansible-playbook -i inventory site.yml --tags compliance
 ```
 
 ## 🔧 Troubleshooting
