@@ -1,8 +1,6 @@
 # Pure Storage FlashArray
 
-This directory contains **7 Ansible roles** for automating **Pure Storage FlashArray** including installation, configuration, volume provisioning, data protection, replication, and performance tuning.
-
-> **Note:** This directory covers both FlashArray and FlashBlade automation for Pure Storage environments.
+This directory contains **14 Ansible roles** for automating **Pure Storage FlashArray and FlashBlade** including installation, configuration, volume provisioning, data protection, replication, and performance tuning.
 
 ## 🚀 Quick Start (Drop-In Deployment)
 
@@ -39,20 +37,25 @@ ansible-playbook -i inventory site.yml --tags replication
 
 ## 📋 Roles
 
-### Installation & Configuration (2 roles)
+### FlashArray (7 roles)
 - **pure_flasharray_install** - Initial array setup
 - **pure_flasharray_config** - Array configuration
-
-### Provisioning (2 roles)
 - **pure_flasharray_hosts** - Host and host group configuration
 - **pure_flasharray_volumes** - Volume provisioning
-
-### Data Protection (2 roles)
 - **pure_flasharray_protection** - Snapshot and protection groups
 - **pure_flasharray_replication** - Async and sync replication
-
-### Performance (1 role)
 - **pure_flasharray_performance** - Performance tuning and QoS
+
+### FlashArray Extended (4 roles)
+- **pure_fa_provisioning** - Advanced FlashArray provisioning
+- **pure_fa_data_protection** - Extended FlashArray data protection
+- **pure_fa_ops_governance** - FlashArray operational governance
+- **pure_fa_integrations** - FlashArray integrations (vSphere, Kubernetes, etc.)
+
+### FlashBlade (3 roles)
+- **pure_fb_provisioning** - FlashBlade filesystem and object store provisioning
+- **pure_fb_data_protection** - FlashBlade snapshots and replication
+- **pure_fb_ops** - FlashBlade operational management
 
 ## ⚙️ Configuration
 
