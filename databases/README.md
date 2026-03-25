@@ -1,6 +1,6 @@
 # Database Platforms
 
-This directory contains **24 Ansible roles** across **3 database platforms** for automated installation, configuration, replication, backup, security hardening, and compliance.
+This directory contains **25 Ansible roles** across **3 database platforms** for automated installation, configuration, replication, backup, security hardening, and compliance.
 
 ## Overview
 
@@ -10,7 +10,7 @@ Enterprise database automation with emphasis on high availability, disaster reco
 
 | Platform | Roles | Key Features |
 |----------|-------|-------------|
-| **PostgreSQL** | 8 | Installation, streaming replication, PgPool-II, Barman backup, pgAudit |
+| **PostgreSQL** | 9 | Installation, streaming replication, PgPool-II, Barman backup, pgAudit, restore |
 | **MySQL/MariaDB** | 8 | Installation, master-replica replication, Galera cluster, XtraBackup |
 | **Oracle Database** | 8 | Installation, Data Guard, RAC, RMAN, Flashback, unified auditing |
 
