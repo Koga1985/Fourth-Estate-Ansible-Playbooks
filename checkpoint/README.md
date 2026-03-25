@@ -33,10 +33,10 @@ This directory contains **6 Ansible roles** for managing **Check Point** firewal
   - Cluster status
   - Version tracking
 
-- **cp_monitoring_logging** - Logging and monitoring
-  - Log forwarding
-  - Smart Event
-  - Compliance reporting
+- **cp_inventory_prune** - Stale object cleanup and inventory hygiene
+  - Remove unused network objects
+  - Clean up stale hosts and groups
+  - Inventory validation
 
 ## 🏗️ Day-0 Deployment Framework
 
@@ -76,8 +76,8 @@ ansible-galaxy collection install check_point.mgmt
 ```yaml
 # group_vars/checkpoint.yml
 checkpoint_host: "mgmt.checkpoint.example.com"
-checkpoint_username: "{{ vault_checkpoint_user }}"
-checkpoint_password: "{{ vault_checkpoint_pass }}"
+checkpoint_username: "{{ vault_checkpoint_username }}"
+checkpoint_password: "{{ vault_checkpoint_password }}"
 checkpoint_api_version: "1.8"
 ```
 

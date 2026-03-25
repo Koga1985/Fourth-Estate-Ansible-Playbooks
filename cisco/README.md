@@ -7,6 +7,7 @@ Comprehensive Ansible roles and playbooks for Cisco infrastructure automation ac
 | **Cisco ACI** | 5 | Phases 1–5 | Fabric, Tenant, Networking, Security, Monitoring |
 | **Cisco ISE** | 28 | Phases 1–9 | Policy, Profiling, Posture, Guest, pxGrid, Reporting |
 | **Cisco UCS** | 5 | Phases 10–14 | Infrastructure, Networking, Security, Backup/DR, Monitoring |
+| **Cisco CyberVision** | 5 | (standalone) | OT asset visibility, sensor config, monitoring, security |
 
 All roles implement **DoD STIG** and **NIST 800-53** compliance controls and default to **dry-run mode** (`apply_changes: false`).
 
