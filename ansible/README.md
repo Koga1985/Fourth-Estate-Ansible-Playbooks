@@ -4,32 +4,34 @@ This directory contains Ansible roles and tasks for managing and configuring **A
 
 ## Overview
 
-The Ansible automation includes **17 roles** covering the full lifecycle of Ansible Automation Platform including controller configuration, execution environment management, inventory synchronization, credential management, and CI/CD integration.
+The Ansible automation includes **17 roles** covering the full lifecycle of Ansible Automation Platform including runtime baseline, controller configuration, content management, execution environment management, SSO/directory integration, CI/CD integration, and operational tasks. An additional **45+ standalone task files** provide granular control for individual operations.
 
 ## 📋 Role Categories
 
-### Controller Configuration (8 roles)
+### Core & Runtime (3 roles)
+- **ans_core_runtime_baseline** - Runtime environment validation and baseline
+- **ans_core_secrets_identity** - Secrets and identity management
 - **ans_core_inventory_hygiene** - Inventory validation and cleanup
-- **ans_ctrl__orgs_teams** - Organization and team management
-- **ans_ctrl__projects_git** - Git project synchronization
-- **ans_ctrl__credentials** - Credential management (vault, SSH, API keys)
-- **ans_ctrl__ee_images_map** - Execution environment image mapping
-- **ans_ctrl__ee_registries** - Container registry configuration
-- **ans_ctrl__org_settings** - Organization-level settings
-- **ans_ctrl__upgrade_window** - Maintenance window management
 
-### Execution & Performance (3 roles)
-- **ans_perf__forks_strategy** - Parallel execution optimization
-- **ans_secrets__env_to_vault** - Environment variable to Ansible Vault migration
-- **ans_ctrl__backups_export** - Backup and export automation
+### Controller Configuration (6 roles)
+- **ans_ctrl_inventory_model** - Controller inventory model management
+- **ans_ctrl_job_lifecycle** - Job template and lifecycle management
+- **ans_ctrl_workflow_pipelines** - Workflow pipeline automation
+- **ans_ctrl_policy_guardrails** - Policy and compliance guardrails
+- **ans_ctrl_backup_and_audit** - Backup and audit automation
+- **ans_access_sso_directory** - SSO and directory integration
 
-### CI/CD & Automation (6 roles)
-- Integration with GitLab/GitHub
-- Automated playbook testing
-- Job template management
-- Workflow orchestration
-- Notification configuration
-- Credential rotation
+### Content & Execution Environments (4 roles)
+- **ans_content_pah_bootstrap** - Private Automation Hub bootstrap
+- **ans_content_trust_and_lock** - Content trust and version locking
+- **ans_content_qa_ci** - Content QA and CI integration
+- **ans_ee_factory** - Execution environment build pipeline
+
+### Operations & Performance (4 roles)
+- **ans_ops_artifacts_retention** - Artifact cleanup and retention
+- **ans_ops_upgrade_window** - Maintenance window management
+- **ans_perf_scaling** - Performance and scaling optimization
+- **ans_ci_pipelines** - CI/CD pipeline integration
 
 ## 🚀 Quick Start
 
@@ -62,21 +64,23 @@ controller_password: "{{ vault_controller_password }}"
 controller_validate_certs: true
 ```
 
-2. **Create Organizations and Teams:**
+2. **Run the full AAP configuration playbook:**
 
 ```bash
-# Run organization setup
-ansible-playbook tasks/ans_ctrl__orgs_teams.yml \
-  -i inventory/controller.yml \
-  --ask-vault-pass
+# Run full site deployment
+ansible-playbook -i inventory site.yml --ask-vault-pass
 ```
 
-3. **Configure Execution Environments:**
+3. **Or run individual task operations:**
 
 ```bash
+# Configure organizations and teams
+ansible-playbook tasks/ans_ctrl__orgs_teams.yml \
+  -i inventory --ask-vault-pass
+
 # Set up execution environment registries
 ansible-playbook tasks/ans_ctrl__ee_registries.yml \
-  -i inventory/controller.yml
+  -i inventory --ask-vault-pass
 ```
 
 ## 📁 Directory Structure
@@ -84,19 +88,29 @@ ansible-playbook tasks/ans_ctrl__ee_registries.yml \
 ```text
 ansible/
 ├── README.md                           # This file
-├── roles/                              # Ansible roles
+├── site.yml                            # Main entry-point playbook
+├── inventory.example                   # Example inventory
+├── requirements.yml                    # Collection dependencies
+├── vault.yml.example                   # Vault variable template
+├── roles/                              # Ansible roles (17 total)
+│   ├── ans_core_runtime_baseline/     # Runtime baseline
+│   ├── ans_core_secrets_identity/     # Secrets and identity
 │   ├── ans_core_inventory_hygiene/    # Inventory validation
-│   ├── ans_ctrl__credentials/         # Credential management
-│   ├── ans_ctrl__ee_images_map/       # EE image mapping
-│   ├── ans_ctrl__ee_registries/       # Registry config
-│   ├── ans_ctrl__orgs_teams/          # Org/team management
-│   ├── ans_ctrl__org_settings/        # Org settings
-│   ├── ans_ctrl__projects_git/        # Git projects
-│   ├── ans_ctrl__upgrade_window/      # Maintenance windows
-│   ├── ans_ctrl__backups_export/      # Backup automation
-│   ├── ans_perf__forks_strategy/      # Performance tuning
-│   └── ans_secrets__env_to_vault/     # Secret migration
-└── tasks/                              # Standalone task files
+│   ├── ans_ctrl_inventory_model/      # Controller inventory model
+│   ├── ans_ctrl_job_lifecycle/        # Job template management
+│   ├── ans_ctrl_workflow_pipelines/   # Workflow automation
+│   ├── ans_ctrl_policy_guardrails/    # Policy guardrails
+│   ├── ans_ctrl_backup_and_audit/     # Backup and audit
+│   ├── ans_access_sso_directory/      # SSO/directory integration
+│   ├── ans_content_pah_bootstrap/     # PAH bootstrap
+│   ├── ans_content_trust_and_lock/    # Content trust
+│   ├── ans_content_qa_ci/             # Content QA
+│   ├── ans_ee_factory/                # EE build pipeline
+│   ├── ans_ops_artifacts_retention/   # Artifact retention
+│   ├── ans_ops_upgrade_window/        # Maintenance windows
+│   ├── ans_perf_scaling/              # Performance scaling
+│   └── ans_ci_pipelines/              # CI/CD pipelines
+└── tasks/                              # Standalone task files (45+ tasks)
     ├── ans_ctrl__orgs_teams.yml
     ├── ans_ctrl__projects_git.yml
     ├── ans_ctrl__credentials.yml
@@ -106,7 +120,8 @@ ansible/
     ├── ans_ctrl__upgrade_window.yml
     ├── ans_ctrl__backups_export.yml
     ├── ans_perf__forks_strategy.yml
-    └── ans_secrets__env_to_vault.yml
+    ├── ans_secrets__env_to_vault.yml
+    └── ... (see tasks/ directory for full list)
 ```
 
 ## 🔑 Key Features

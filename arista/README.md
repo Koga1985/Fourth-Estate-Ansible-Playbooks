@@ -5,7 +5,7 @@ This directory contains **6 Ansible roles** for managing **Arista EOS** network 
 ## 📋 Roles
 
 ### Configuration Management (2 roles)
-- **arista_baseline_config** - Standard device configuration
+- **arista_platform_baseline** - Standard device configuration
   - System settings
   - Management interface
   - AAA configuration
@@ -17,23 +17,23 @@ This directory contains **6 Ansible roles** for managing **Arista EOS** network 
   - Emergency restore
 
 ### Routing & Switching (2 roles)
-- **arista_routing_protocols** - BGP, OSPF, VXLAN EVPN
+- **arista_routing_baseline** - BGP, OSPF, VXLAN EVPN
   - Dynamic routing
   - Route maps
   - Prefix lists
 
-- **arista_interfaces_vlans** - Interface and VLAN management
+- **arista_interfaces_fabric** - Interface and VLAN management
   - Port configuration
   - Trunk/access modes
   - VLAN database
 
 ### Automation & Security (2 roles)
-- **arista_cvp_integration** - CloudVision Portal integration
+- **arista_cvp_inventory_model** - CloudVision Portal integration
   - Device registration
   - Configlet management
   - Change control
 
-- **arista_acl_qos** - Access control and QoS
+- **arista_acl_qos_security** - Access control and QoS
   - ACL policies
   - QoS marking
   - Rate limiting
@@ -76,25 +76,19 @@ arista_syslog_servers:
 ### Apply Baseline Configuration
 
 ```bash
-ansible-playbook playbooks/arista_baseline.yml \
-  -i inventory/arista.yml \
-  --limit leaf-01
+ansible-playbook -i inventory site.yml --tags baseline
 ```
 
 ### Configure BGP EVPN
 
 ```bash
-ansible-playbook roles/arista_routing_protocols/playbook.yml \
-  -i inventory/arista.yml \
-  -e "routing_protocol=bgp_evpn"
+ansible-playbook -i inventory site.yml --tags routing
 ```
 
 ### Backup Configurations
 
 ```bash
-ansible-playbook roles/arista_backup_restore/playbook.yml \
-  -i inventory/arista.yml \
-  -e "operation=backup"
+ansible-playbook -i inventory site.yml --tags backup
 ```
 
 ## 📚 Additional Resources

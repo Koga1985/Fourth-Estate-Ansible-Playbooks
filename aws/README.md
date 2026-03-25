@@ -1,6 +1,6 @@
 # Amazon Web Services (AWS)
 
-This directory contains **40+ Ansible roles** for managing **Amazon Web Services (AWS)** infrastructure with emphasis on security, compliance (FedRAMP, NIST 800-53), and Fourth Estate requirements.
+This directory contains **30 Ansible roles** for managing **Amazon Web Services (AWS)** infrastructure with emphasis on security, compliance (FedRAMP, NIST 800-53), and Fourth Estate requirements.
 
 ## Overview
 
