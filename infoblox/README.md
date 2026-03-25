@@ -1,8 +1,6 @@
 # Infoblox DDI - Basic
 
-This directory contains **3 Ansible roles** for basic **Infoblox** DDI (DNS, DHCP, IPAM) automation.
-
-> **Note:** This directory provides the core Infoblox DDI automation roles. Additional roles for grid management, DNSSEC, RPZ, and compliance are available in the extended role set.
+This directory contains **12 Ansible roles** for **Infoblox** DDI (DNS, DHCP, IPAM) automation.
 
 ## 🚀 Quick Start (Drop-In Deployment)
 
@@ -33,9 +31,25 @@ ansible-playbook -i inventory site.yml --tags dhcp
 
 ## 📋 Roles
 
-- **infoblox_grid_config** - Grid Manager configuration
-- **infoblox_dns_config** - DNS zones and records
-- **infoblox_dhcp_config** - DHCP scopes and options
+### Grid Management (4 roles)
+- **infoblox_grid_bootstrap** - Initial Grid Manager bootstrap and setup
+- **infoblox_grid_config** - Grid Manager configuration and tuning
+- **infoblox_grid_upgrade** - Grid software upgrades
+- **infoblox_inventory_model** - Grid asset inventory and CMDB sync
+
+### DNS (4 roles)
+- **infoblox_dns_config** - DNS views, zones, and server settings
+- **infoblox_dns_records** - DNS record lifecycle management
+- **infoblox_dns_views_zones** - Advanced DNS views and zone management
+- **infoblox_dnssec** - DNSSEC signing and key management
+
+### DHCP (2 roles)
+- **infoblox_dhcp_config** - DHCP scopes, ranges, and options
+- **infoblox_dhcp_failover** - DHCP failover peer configuration
+
+### Security & Reporting (2 roles)
+- **infoblox_rpz_policies** - Response Policy Zones (RPZ) for DNS security
+- **infoblox_capacity_reports** - Grid capacity and utilization reporting
 
 ## ⚙️ Configuration
 
