@@ -1,0 +1,208 @@
+---
+# =============================================================================
+# Illumio OT ACL Deploy — Playbook 02
+# =============================================================================
+#
+# PURPOSE:
+#   Manually-triggered deployment of approved ACLs into the Illumio PCE for
+#   OT environments. This playbook MUST be run by a human after reviewing the
+#   alert produced by playbook 01. It is safe by default (dry_run: true) and
+#   requires explicit operator confirmation to apply or promote changes.
+#
+# WORKFLOW:
+#   1. Display a full summary of ACLs to be deployed (always — dry run or not)
+#   2. Validate ACLs against OT zone policy (Purdue model, protocol allowlist)
+#   3. [dry_run: true]  Stop here — show what WOULD happen. No PCE changes.
+#   4. [apply_changes: true]  Create/update rules in PCE draft policy
+#   5. [promote_policy: true]  Provision draft → active (live enforcement)
+#   6. Notify network team on completion
+#
+# SAFETY GATES:
+#   dry_run: true         → default; validates and previews only (no PCE writes)
+#   apply_changes: true   → writes rules to PCE draft (NOT yet enforced)
+#   promote_policy: true  → promotes draft to active (traffic NOW affected)
+#                           Requires apply_changes: true as well.
+#   brownout_enabled: true → checks estimated traffic impact before promoting;
+#                            aborts if newly-blocked flows exceed deny_threshold
+#
+# CUSTOMER QUICK START:
+#   Step 1 — Define your ACLs in inventory_ot under [localhost:vars]:
+#             ot_acls:
+#               - name: "Allow HMI to PLC Modbus"
+#                 rule_set_name: "OT Control Zone Rules"
+#                 ...  (see inventory_ot.example for full format)
+#
+#   Step 2 — Dry run (always do this first):
+#     ansible-playbook illumio/playbooks/02_illumio_ot_acl_deploy.yml \
+#       -i illumio/inventory_ot --ask-vault-pass
+#
+#   Step 3 — Apply to PCE draft (rules created, not yet enforced):
+#     ansible-playbook illumio/playbooks/02_illumio_ot_acl_deploy.yml \
+#       -i illumio/inventory_ot --ask-vault-pass \
+#       -e "apply_changes=true"
+#
+#   Step 4 — Promote to active enforcement (traffic is now affected):
+#     ansible-playbook illumio/playbooks/02_illumio_ot_acl_deploy.yml \
+#       -i illumio/inventory_ot --ask-vault-pass \
+#       -e "apply_changes=true promote_policy=true"
+#
+# TAG SHORTCUTS:
+#   --tags validate           Run validation only (no PCE calls)
+#   --tags apply              Run apply only (skip validation gate output)
+#   --tags promote            Run promotion only (assumes rules already in PCE)
+#   --skip-tags notify        Skip end-of-run notifications
+# =============================================================================
+
+- name: Illumio OT ACL Deploy — Manual Deployment Gate
+  hosts: localhost
+  connection: local
+  gather_facts: true
+  any_errors_fatal: true
+
+  vars:
+    # ── Override these in inventory_ot or pass via -e ───────────────────────
+    # pce_url:    set in inventory_ot
+    # org_id:     set in inventory_ot
+    # api_user:   "{{ vault_illumio_api_user }}"
+    # api_key:    "{{ vault_illumio_api_key }}"
+
+    # ── Safety gates (override with -e to advance) ───────────────────────────
+    dry_run: true              # false to write to PCE
+    apply_changes: false       # true to create/update rules in PCE draft
+    promote_policy: false      # true to provision draft → active enforcement
+
+    # ── Blast-radius guard for promotion ────────────────────────────────────
+    brownout_enabled: true     # check traffic impact before promoting
+    deny_threshold: 0          # max newly-blocked flows tolerated (0 = zero tolerance)
+
+    # ── Artifacts ────────────────────────────────────────────────────────────
+    ot_artifacts_dir: /tmp/illumio-ot-artifacts
+    verify_ssl: true
+
+    # ── Role mode — do not change ────────────────────────────────────────────
+    ot_run_mode: deploy
+
+  pre_tasks:
+    - name: Validate safety gate logic
+      ansible.builtin.assert:
+        that:
+          - not (promote_policy | bool and not apply_changes | bool)
+        fail_msg: >
+          promote_policy=true requires apply_changes=true.
+          You must write rules to PCE before promoting them.
+          Add -e "apply_changes=true promote_policy=true" to promote.
+      tags: ['always']
+
+    - name: Display deployment banner
+      ansible.builtin.debug:
+        msg:
+          - "══════════════════════════════════════════════════════════════════════"
+          - " Illumio OT ACL Deploy"
+          - " PCE            : {{ pce_url }}"
+          - " Org            : {{ org_id }}"
+          - " Operator       : {{ ansible_user_id }}"
+          - " Time           : {{ ansible_date_time.iso8601 }}"
+          - "────────────────────────────────────────────────────────────────────"
+          - " dry_run        : {{ dry_run }}"
+          - " apply_changes  : {{ apply_changes }}"
+          - " promote_policy : {{ promote_policy }}"
+          - " brownout_check : {{ brownout_enabled }}"
+          - " deny_threshold : {{ deny_threshold }} flows"
+          - "────────────────────────────────────────────────────────────────────"
+          - "{% if dry_run | bool %}"
+          - " !! DRY RUN — no changes will be made to PCE policy"
+          - " !! To apply: add -e 'apply_changes=true'"
+          - "{% elif not promote_policy | bool %}"
+          - " !! Rules will be written to PCE DRAFT only (not yet enforced)"
+          - " !! To enforce: add -e 'apply_changes=true promote_policy=true'"
+          - "{% else %}"
+          - " !! LIVE ENFORCEMENT — traffic will be affected after promotion"
+          - "{% endif %}"
+          - "══════════════════════════════════════════════════════════════════════"
+      tags: ['always']
+
+    - name: Create artifacts directory
+      ansible.builtin.file:
+        path: "{{ ot_artifacts_dir }}"
+        state: directory
+        mode: '0750'
+      tags: ['always']
+
+    - name: Record deployment start
+      ansible.builtin.copy:
+        dest: "{{ ot_artifacts_dir }}/deploy_start_{{ ansible_date_time.date }}.txt"
+        content: |
+          OT ACL Deployment
+          Operator   : {{ ansible_user_id }}
+          PCE        : {{ pce_url }}
+          Org        : {{ org_id }}
+          Started    : {{ ansible_date_time.iso8601 }}
+          dry_run    : {{ dry_run }}
+          apply      : {{ apply_changes }}
+          promote    : {{ promote_policy }}
+        mode: '0640'
+      tags: ['always']
+
+  tasks:
+    # ── PHASE 1: Validate ─────────────────────────────────────────────────────
+    - name: "PHASE 1: Validate ACL definitions against OT zone policy"
+      ansible.builtin.include_role:
+        name: illumio_ot_acl_deployment
+        tasks_from: "includes/illumio_ot__validate_acls.yml"
+      tags: ['validate', 'phase1']
+
+    # ── PHASE 2: Apply (dry-run safe) ─────────────────────────────────────────
+    - name: "PHASE 2: Apply ACLs to PCE draft policy"
+      ansible.builtin.include_role:
+        name: illumio_ot_acl_deployment
+        tasks_from: "includes/illumio_ot__apply_acls.yml"
+      tags: ['apply', 'phase2']
+
+    # ── PHASE 3: Promote (gated) ──────────────────────────────────────────────
+    - name: "PHASE 3: Promote draft policy to active enforcement"
+      ansible.builtin.include_role:
+        name: illumio_ot_acl_deployment
+        tasks_from: "includes/illumio_ot__promote_policy.yml"
+      when:
+        - apply_changes | bool
+        - promote_policy | bool
+      tags: ['promote', 'phase3']
+
+    - name: "PHASE 3 (skip): Promotion not requested"
+      ansible.builtin.debug:
+        msg:
+          - "Promotion skipped — rules are in PCE draft."
+          - "To enforce: re-run with -e 'apply_changes=true promote_policy=true'"
+      when: not (apply_changes | bool and promote_policy | bool)
+      tags: ['promote', 'phase3']
+
+    # ── PHASE 4: Notify ───────────────────────────────────────────────────────
+    - name: "PHASE 4: Send deployment completion notification"
+      ansible.builtin.include_role:
+        name: illumio_ot_acl_deployment
+        tasks_from: "includes/illumio_ot__alert_network_team.yml"
+      when:
+        - apply_changes | bool
+        - ot_notify_on_deploy | default(true) | bool
+      tags: ['notify', 'phase4']
+
+  post_tasks:
+    - name: Display deployment summary
+      ansible.builtin.debug:
+        msg:
+          - "══════════════════════════════════════════════════════════════════════"
+          - " OT ACL Deploy — Complete"
+          - " ACLs processed   : {{ ot_acls | default([]) | length }}"
+          - " ACLs applied     : {{ ot_acls_applied | default(0) }}"
+          - " Artifacts        : {{ ot_artifacts_dir }}"
+          - "{% if apply_changes | bool and promote_policy | bool %}"
+          - " Policy status    : PROMOTED — rules are now ACTIVE and enforced"
+          - "{% elif apply_changes | bool %}"
+          - " Policy status    : DRAFT — rules in PCE but NOT yet enforced"
+          - " Next step        : promote with -e 'apply_changes=true promote_policy=true'"
+          - "{% else %}"
+          - " Policy status    : DRY RUN — no changes made to PCE"
+          - " Next step        : apply with -e 'apply_changes=true'"
+          - "{% endif %}"
+          - "══════════════════════════════════════════════════════════════════════"
+      tags: ['always']

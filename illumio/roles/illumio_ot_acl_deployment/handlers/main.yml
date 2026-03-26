@@ -1,0 +1,41 @@
+---
+# handlers file for illumio_ot_acl_deployment
+
+- name: send ot acl email alert
+  ansible.builtin.mail:
+    host: "{{ ot_smtp_host }}"
+    port: "{{ ot_smtp_port }}"
+    username: "{{ ot_smtp_username | default(omit) }}"
+    password: "{{ ot_smtp_password | default(omit) }}"
+    from: "{{ ot_alert_email_from }}"
+    to: "{{ ot_alert_email_to }}"
+    cc: "{{ ot_alert_email_cc | default(omit) }}"
+    subject: "{{ ot_alert_subject_prefix }} {{ ot_alert_subject | default('OT ACL change detected') }}"
+    body: "{{ ot_alert_body | default('See attached report for details.') }}"
+  when: ot_email_enabled | default(true) | bool
+  ignore_errors: true
+  listen: "send ot acl email alert"
+
+- name: send ot acl webhook alert
+  ansible.builtin.uri:
+    url: "{{ ot_webhook_url }}"
+    method: POST
+    headers: "{{ ot_webhook_headers | default({'Content-Type': 'application/json'}) }}"
+    body_format: json
+    body: "{{ ot_webhook_payload | default({}) }}"
+    validate_certs: "{{ ot_webhook_verify_ssl | default(true) }}"
+    status_code: [200, 201, 202, 204]
+  when:
+    - ot_webhook_enabled | default(false) | bool
+    - ot_webhook_url | default('') | length > 0
+  ignore_errors: true
+  listen: "send ot acl webhook alert"
+
+- name: log ot acl event to syslog
+  ansible.builtin.syslog:
+    msg: "{{ ot_syslog_message | default('Illumio OT ACL event') }}"
+    priority: "info"
+    facility: "local4"
+  when: ot_syslog_enabled | default(false) | bool
+  ignore_errors: true
+  listen: "log ot acl event to syslog"

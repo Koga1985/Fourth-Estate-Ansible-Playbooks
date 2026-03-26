@@ -1,0 +1,161 @@
+# =============================================================================
+# Illumio OT ACL Deployment — Inventory Example
+# =============================================================================
+# Copy this file to: illumio/inventory_ot
+# Fill in every value marked "CHANGE ME".
+# Put credentials in vault_ot.yml (see vault_ot.yml.example) — never here.
+#
+# Usage after setup:
+#   ansible-playbook illumio/playbooks/01_illumio_ot_acl_monitor.yml \
+#     -i illumio/inventory_ot --ask-vault-pass
+# =============================================================================
+
+[localhost]
+localhost ansible_connection=local ansible_python_interpreter=/usr/bin/python3
+
+[localhost:vars]
+
+# ── Illumio PCE Connection ────────────────────────────────────────────────────
+# CHANGE ME: your PCE URL and org ID
+pce_url=https://pce.example.com:8443
+org_id=1
+api_user={{ vault_illumio_api_user }}
+api_key={{ vault_illumio_api_key }}
+
+# ── Artifacts directory ───────────────────────────────────────────────────────
+# Where detection baseline, pending reports, and deployment logs are saved.
+ot_artifacts_dir=/opt/illumio-ot-artifacts
+
+# ── SSL verification ──────────────────────────────────────────────────────────
+# Set to false ONLY in isolated lab environments with self-signed certs.
+verify_ssl=true
+
+# ── Notification: Email ───────────────────────────────────────────────────────
+# CHANGE ME: set to match your mail relay
+ot_email_enabled=true
+ot_smtp_host={{ vault_smtp_host }}
+ot_smtp_port={{ vault_smtp_port }}
+ot_alert_email_from=ansible-ot@network.local
+ot_alert_email_to={{ vault_network_team_email }}
+ot_alert_email_cc=
+ot_alert_subject_prefix=[OT-ACL ALERT]
+
+# ── Notification: Webhook (optional) ─────────────────────────────────────────
+# Set ot_webhook_enabled=true and provide a URL for Slack/Teams/SOAR/PagerDuty.
+# The URL goes in vault_ot.yml as vault_ot_webhook_url.
+ot_webhook_enabled=false
+ot_webhook_url={{ vault_ot_webhook_url }}
+
+# ── Notification: Syslog (optional) ──────────────────────────────────────────
+ot_syslog_enabled=false
+ot_syslog_server={{ vault_syslog_server }}
+
+# ── Protocol allowlist (add any site-specific protocols below) ────────────────
+# Default allowlist is defined in the role defaults. Override here if needed.
+# ot_allowed_protocols:
+#   - { name: "Custom Proto", port: 9999, proto: tcp }
+
+# ── Purdue model boundary enforcement ────────────────────────────────────────
+ot_enforce_purdue_boundaries=true
+ot_purdue_max_level_jump=1
+ot_strict_protocol_validation=false
+
+# ── OT Zone Label Mapping ─────────────────────────────────────────────────────
+# CHANGE ME: update label_app values to match your PCE label schema exactly.
+ot_zones:
+  - { name: enterprise,  purdue_level: "4",   label_app: ent }
+  - { name: idmz,        purdue_level: "3.5", label_app: idmz }
+  - { name: supervisory, purdue_level: "3",   label_app: supervisory }
+  - { name: control,     purdue_level: "2",   label_app: control }
+  - { name: field,       purdue_level: "1",   label_app: field }
+  - { name: process,     purdue_level: "0",   label_app: process }
+
+# ── Promotion settings ────────────────────────────────────────────────────────
+brownout_enabled=true
+deny_threshold=0
+
+# =============================================================================
+# ACL DEFINITIONS — CHANGE ME
+# =============================================================================
+# Define every ACL you want to deploy here. The monitor playbook (01) is
+# independent of this list — it detects what's pending in the PCE. The
+# deploy playbook (02) reads THIS list and creates the rules you define.
+#
+# Provider / consumer types:
+#   type: label    — targets Illumio-managed workloads by label (VEN required)
+#   type: ip_list  — targets OT devices by IP range (no VEN needed: PLCs, RTUs)
+#
+# See the role README for the full field reference.
+# =============================================================================
+ot_acls:
+
+  # ── Example 1: Label-based — HMI to PLC (Modbus TCP) ─────────────────────
+  - name: "Allow HMI to PLC — Modbus TCP"
+    description: >
+      SCADA HMI workstations (Purdue L2) read/write PLC registers (Purdue L1)
+      via Modbus TCP port 502. Required for operator control screens.
+    rule_set_name: "OT Control Zone Rules"
+    ticket_ref: "CHG0012345"
+    services:
+      - port: 502
+        proto: tcp
+    providers:
+      - type: label
+        key: app
+        value: field          # PLCs at Purdue Level 1
+    consumers:
+      - type: label
+        key: app
+        value: control        # HMI/DCS at Purdue Level 2
+    enabled: true
+    purdue_src: "2"
+    purdue_dst: "1"
+
+  # ── Example 2: Label-based — Historian to SCADA (OPC-UA) ─────────────────
+  - name: "Allow Historian to SCADA — OPC-UA"
+    description: >
+      Enterprise historian (Purdue L4) collects process data from SCADA servers
+      (Purdue L3) via OPC-UA. Data flows upward through the IDMZ.
+    rule_set_name: "OT Supervisory Rules"
+    ticket_ref: "CHG0012346"
+    services:
+      - port: 4840
+        proto: tcp
+    providers:
+      - type: label
+        key: app
+        value: supervisory    # SCADA/historian servers at Purdue Level 3
+    consumers:
+      - type: label
+        key: app
+        value: ent            # Enterprise historian at Purdue Level 4
+    enabled: true
+    purdue_src: "4"
+    purdue_dst: "3"
+
+  # ── Example 3: IP-list-based — Remote I/O modules (no VEN) ───────────────
+  - name: "Allow PLC to Remote I/O — EtherNet/IP"
+    description: >
+      PLC controllers (Purdue L2, with VEN) communicate with remote I/O modules
+      (Purdue L1, no VEN — use IP list) via EtherNet/IP.
+    rule_set_name: "OT Field Device Rules"
+    ticket_ref: "CHG0012347"
+    services:
+      - port: 44818
+        proto: tcp
+      - port: 2222
+        proto: udp
+    providers:
+      - type: ip_list
+        name: "Remote IO Modules Building A"
+        ranges:
+          - from_ip: "10.20.1.0"
+            to_ip: "10.20.1.63"
+            description: "Remote I/O subnet — Building A, Rack 1-4"
+    consumers:
+      - type: label
+        key: app
+        value: control
+    enabled: true
+    purdue_src: "2"
+    purdue_dst: "1"

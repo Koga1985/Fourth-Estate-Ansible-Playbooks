@@ -1,0 +1,52 @@
+---
+# tasks/main.yml — illumio_ot_acl_deployment
+# Orchestrates sub-tasks based on ot_run_mode (set by the calling playbook).
+# Do not call this role directly — use playbook 01 or 02.
+
+- name: Ensure artifacts directory exists
+  ansible.builtin.file:
+    path: "{{ ot_artifacts_dir }}"
+    state: directory
+    mode: '0750'
+
+- name: Set common PCE API headers
+  ansible.builtin.set_fact:
+    illumio_headers:
+      Accept: "application/json"
+      Content-Type: "application/json"
+      X-Illumio-Org: "{{ org_id }}"
+
+# ── Detect mode (playbook 01) ─────────────────────────────────────────────────
+- name: Detect new pending ACLs
+  ansible.builtin.include_tasks: "includes/illumio_ot__detect_new_acls.yml"
+  when: ot_run_mode == 'detect'
+
+- name: Alert network team (detect mode)
+  ansible.builtin.include_tasks: "includes/illumio_ot__alert_network_team.yml"
+  when:
+    - ot_run_mode == 'detect'
+    - ot_new_acls_detected | default(false) | bool
+    - ot_notify_on_detect | default(true) | bool
+
+# ── Deploy mode (playbook 02) ─────────────────────────────────────────────────
+- name: Validate ACL definitions
+  ansible.builtin.include_tasks: "includes/illumio_ot__validate_acls.yml"
+  when: ot_run_mode == 'deploy'
+
+- name: Apply ACLs to PCE
+  ansible.builtin.include_tasks: "includes/illumio_ot__apply_acls.yml"
+  when: ot_run_mode == 'deploy'
+
+- name: Promote policy to active enforcement
+  ansible.builtin.include_tasks: "includes/illumio_ot__promote_policy.yml"
+  when:
+    - ot_run_mode == 'deploy'
+    - apply_changes | bool
+    - promote_policy | bool
+
+- name: Alert network team (deploy mode)
+  ansible.builtin.include_tasks: "includes/illumio_ot__alert_network_team.yml"
+  when:
+    - ot_run_mode == 'deploy'
+    - apply_changes | bool
+    - ot_notify_on_deploy | default(true) | bool

@@ -1,0 +1,185 @@
+---
+# illumio_ot__alert_network_team.yml
+#
+# Sends notifications to the network team via email and/or webhook.
+# Works in both detect mode (new ACLs found) and deploy mode (deployment done).
+# All notification methods are individually gated by their *_enabled variable,
+# so customers can enable only what they use.
+
+- name: Set alert subject — detect mode
+  ansible.builtin.set_fact:
+    ot_alert_subject: >-
+      {{ ot_alert_subject_prefix }}
+      {{ ot_new_acl_count | default(0) }} new pending OT ACL(s) require review
+      — {{ pce_url }}
+    ot_alert_event_type: "DETECTION"
+  when: ot_run_mode | default('detect') == 'detect'
+
+- name: Set alert subject — deploy mode
+  ansible.builtin.set_fact:
+    ot_alert_subject: >-
+      {{ ot_alert_subject_prefix }}
+      OT ACL deployment {{ 'COMPLETE' if apply_changes | bool else 'DRY-RUN COMPLETE' }}
+      — {{ pce_url }}
+    ot_alert_event_type: "DEPLOYMENT"
+  when: ot_run_mode | default('detect') == 'deploy'
+
+# ── Build plain-text email body ───────────────────────────────────────────────
+- name: Build email body — detect mode
+  ansible.builtin.set_fact:
+    ot_alert_body: |
+      ======================================================================
+      ILLUMIO OT ACL MONITOR — ACTION REQUIRED
+      ======================================================================
+
+      New pending ACL(s) have been detected in the Illumio PCE that have not
+      yet been provisioned (enforced). A network team member must review these
+      changes and run the deployment playbook to approve and apply them.
+
+      Detection Summary
+      -----------------
+      PCE URL         : {{ pce_url }}
+      Organisation    : {{ org_id }}
+      Detected at     : {{ ansible_date_time.iso8601 }}
+      New ACL objects : {{ ot_new_acl_count | default(0) }}
+
+      New Pending Items
+      -----------------
+      {% for item in ot_new_acl_items | default([]) %}
+      {{ loop.index }}. {{ item.name | default(item.href) }}
+         HREF    : {{ item.href | default('N/A') }}
+         Updated : {{ item.updated_at | default('N/A') }}
+      {% endfor %}
+
+      Next Steps
+      ----------
+      1. Review the full pending report:
+           {{ ot_acl_pending_file }}
+
+      2. If the changes are approved, run the deployment playbook:
+           ansible-playbook illumio/playbooks/02_illumio_ot_acl_deploy.yml \
+             -i illumio/inventory_ot --ask-vault-pass \
+             -e "apply_changes=true"
+
+      3. To promote to active enforcement (traffic affected):
+           ansible-playbook illumio/playbooks/02_illumio_ot_acl_deploy.yml \
+             -i illumio/inventory_ot --ask-vault-pass \
+             -e "apply_changes=true promote_policy=true"
+
+      ======================================================================
+      This message was generated automatically by Ansible.
+      Do not reply to this email.
+      ======================================================================
+  when: ot_run_mode | default('detect') == 'detect'
+
+- name: Build email body — deploy mode
+  ansible.builtin.set_fact:
+    ot_alert_body: |
+      ======================================================================
+      ILLUMIO OT ACL DEPLOYMENT — {{ 'COMPLETE' if apply_changes | bool else 'DRY-RUN COMPLETE' }}
+      ======================================================================
+
+      An OT ACL deployment playbook has completed on {{ pce_url }}.
+
+      Deployment Summary
+      ------------------
+      PCE URL         : {{ pce_url }}
+      Organisation    : {{ org_id }}
+      Operator        : {{ ansible_user_id }}
+      Completed at    : {{ ansible_date_time.iso8601 }}
+      Dry run only    : {{ dry_run | default(true) }}
+      Rules applied   : {{ apply_changes | default(false) }}
+      Policy promoted : {{ promote_policy | default(false) }}
+      ACLs processed  : {{ ot_acls | default([]) | length }}
+
+      ACLs Processed
+      --------------
+      {% for acl in ot_acls | default([]) %}
+      {{ loop.index }}. {{ acl.name }}
+         Rule Set : {{ acl.rule_set_name }}
+         Services : {{ acl.services | map(attribute='port') | list | join(', ') }}
+         Ticket   : {{ acl.ticket_ref | default('N/A') }}
+      {% endfor %}
+
+      Policy Status
+      -------------
+      {% if apply_changes | bool and promote_policy | bool %}
+      ACTIVE — rules are now enforced in the OT environment.
+      {% elif apply_changes | bool %}
+      DRAFT — rules are in PCE but NOT yet enforced.
+      Run with promote_policy=true to enforce.
+      {% else %}
+      DRY RUN — no changes were made to PCE policy.
+      {% endif %}
+
+      Artifacts saved to: {{ ot_artifacts_dir }}
+
+      ======================================================================
+      This message was generated automatically by Ansible.
+      ======================================================================
+  when: ot_run_mode | default('detect') == 'deploy'
+
+# ── Build webhook payload ─────────────────────────────────────────────────────
+- name: Build webhook payload
+  ansible.builtin.set_fact:
+    ot_webhook_payload:
+      event_type: "illumio_ot_acl_{{ ot_alert_event_type | lower }}"
+      timestamp: "{{ ansible_date_time.iso8601 }}"
+      pce_url: "{{ pce_url }}"
+      org_id: "{{ org_id | string }}"
+      operator: "{{ ansible_user_id }}"
+      summary:
+        new_acl_count: "{{ ot_new_acl_count | default(ot_acls | default([]) | length) | int }}"
+        apply_changes: "{{ apply_changes | default(false) | bool }}"
+        promote_policy: "{{ promote_policy | default(false) | bool }}"
+        dry_run: "{{ dry_run | default(true) | bool }}"
+      message: "{{ ot_alert_subject }}"
+
+# ── Send notifications ────────────────────────────────────────────────────────
+- name: Send email alert to network team
+  ansible.builtin.mail:
+    host: "{{ ot_smtp_host }}"
+    port: "{{ ot_smtp_port | int }}"
+    username: "{{ ot_smtp_username | default(omit) }}"
+    password: "{{ ot_smtp_password | default(omit) }}"
+    from: "{{ ot_alert_email_from }}"
+    to: "{{ ot_alert_email_to }}"
+    cc: "{{ ot_alert_email_cc | default(omit) }}"
+    subject: "{{ ot_alert_subject }}"
+    body: "{{ ot_alert_body }}"
+  when: ot_email_enabled | default(true) | bool
+  ignore_errors: true
+  no_log: true
+
+- name: Send webhook notification
+  ansible.builtin.uri:
+    url: "{{ ot_webhook_url }}"
+    method: POST
+    headers: "{{ ot_webhook_headers | default({'Content-Type': 'application/json'}) }}"
+    body_format: json
+    body: "{{ ot_webhook_payload }}"
+    validate_certs: "{{ ot_webhook_verify_ssl | default(true) }}"
+    status_code: [200, 201, 202, 204]
+  when:
+    - ot_webhook_enabled | default(false) | bool
+    - ot_webhook_url | default('') | length > 0
+  ignore_errors: true
+
+- name: Log event to syslog
+  ansible.builtin.syslog:
+    msg: >-
+      illumio-ot-acl {{ ot_alert_event_type | lower }}:
+      {{ ot_alert_subject }}
+    priority: "info"
+    facility: "local4"
+  when: ot_syslog_enabled | default(false) | bool
+  ignore_errors: true
+
+- name: Confirm notifications dispatched
+  ansible.builtin.debug:
+    msg:
+      - "Notifications sent:"
+      - "  Email   : {{ ot_email_enabled | default(true) | bool }}"
+      - "  Webhook : {{ ot_webhook_enabled | default(false) | bool }}"
+      - "  Syslog  : {{ ot_syslog_enabled | default(false) | bool }}"
+      - "  Subject : {{ ot_alert_subject }}"

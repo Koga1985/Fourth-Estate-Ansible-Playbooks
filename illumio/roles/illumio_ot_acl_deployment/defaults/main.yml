@@ -1,0 +1,212 @@
+---
+# =============================================================================
+# illumio_ot_acl_deployment — Default Variables
+# =============================================================================
+# Customers: the variables below are safe defaults. Override the ones marked
+# "CHANGE ME" in your inventory_ot file or group_vars/all/. Credentials go
+# in vault_ot.yml (encrypted). See inventory_ot.example for a complete
+# working example.
+# =============================================================================
+
+# ── Runtime & Artifacts ──────────────────────────────────────────────────────
+ot_artifacts_dir: /tmp/illumio-ot-artifacts   # Where reports/baselines are saved
+verify_ssl: true                               # Set false only in lab environments
+
+# ── Safety Gates (set by playbook — override with -e flags) ─────────────────
+dry_run: true              # true = preview only; false = write to PCE
+apply_changes: false       # true = create/update rules in PCE draft
+promote_policy: false      # true = provision draft → active enforcement
+brownout_enabled: true     # true = traffic-impact check before promotion
+deny_threshold: 0          # Max newly-blocked flows before promotion aborts (0 = zero tolerance)
+ot_provision_comment: "OT ACL deployment via Ansible — {{ ansible_date_time.date }}"
+
+# ── Detection Baseline ────────────────────────────────────────────────────────
+reset_baseline: false                          # true = treat all current pending as new
+ot_acl_baseline_file: "{{ ot_artifacts_dir }}/acl_baseline.json"
+ot_acl_pending_file: "{{ ot_artifacts_dir }}/acl_pending.json"
+ot_acl_report_file: "{{ ot_artifacts_dir }}/acl_report_{{ ansible_date_time.date }}.json"
+
+# ── OT Zone Definitions (Purdue Model) ───────────────────────────────────────
+# Maps Purdue levels to Illumio 'app' label values in your PCE.
+# CHANGE ME: update label_app values to match your PCE label schema.
+ot_zones:
+  - name: enterprise
+    purdue_level: "4"
+    label_app: ent           # Illumio app-label value for enterprise/IT zone
+  - name: idmz
+    purdue_level: "3.5"
+    label_app: idmz          # Illumio app-label value for IDMZ
+  - name: supervisory
+    purdue_level: "3"
+    label_app: supervisory   # Illumio app-label value for SCADA/HMI servers
+  - name: control
+    purdue_level: "2"
+    label_app: control       # Illumio app-label value for DCS/controllers
+  - name: field
+    purdue_level: "1"
+    label_app: field         # Illumio app-label value for PLCs/RTUs
+  - name: process
+    purdue_level: "0"
+    label_app: process       # Illumio app-label value for sensors/actuators
+
+# ── OT Protocol Allowlist ─────────────────────────────────────────────────────
+# Validation warns (or fails if ot_strict_protocol_validation: true) when an
+# ACL uses a port/protocol not in this list.
+ot_allowed_protocols:
+  - { name: "Modbus TCP",      port: 502,   proto: tcp }
+  - { name: "DNP3 TCP",        port: 20000, proto: tcp }
+  - { name: "DNP3 UDP",        port: 20000, proto: udp }
+  - { name: "EtherNet/IP TCP", port: 44818, proto: tcp }
+  - { name: "EtherNet/IP UDP", port: 2222,  proto: udp }
+  - { name: "OPC-UA",          port: 4840,  proto: tcp }
+  - { name: "OPC-DA DCOM",     port: 135,   proto: tcp }
+  - { name: "PROFINET",        port: 34964, proto: udp }
+  - { name: "BACnet",          port: 47808, proto: udp }
+  - { name: "IEC 60870-5-104", port: 2404,  proto: tcp }
+  - { name: "ICMP",            port: -1,    proto: icmp }
+  - { name: "HTTPS",           port: 443,   proto: tcp }
+  - { name: "SSH",             port: 22,    proto: tcp }
+  - { name: "RDP",             port: 3389,  proto: tcp }
+  - { name: "SNMP",            port: 161,   proto: udp }
+  - { name: "Syslog",          port: 514,   proto: udp }
+
+# Set true to hard-fail validation on non-allowlisted protocols.
+# Set false (default) to warn and continue.
+ot_strict_protocol_validation: false
+
+# Enforce Purdue model level boundaries — block rules that jump more than
+# ot_purdue_max_level_jump levels (e.g. Level 0 ↔ Level 4 is a 4-level jump).
+ot_enforce_purdue_boundaries: true
+ot_purdue_max_level_jump: 1
+
+# ── Notification Settings ─────────────────────────────────────────────────────
+ot_notify_on_detect: true          # Alert when monitor finds new pending ACLs
+ot_notify_on_deploy: true          # Alert when deployment completes
+
+# -- Email (primary channel) --
+# CHANGE ME: set these in inventory_ot or group_vars
+ot_email_enabled: true
+ot_smtp_host: "{{ vault_smtp_host | default('localhost') }}"
+ot_smtp_port: "{{ vault_smtp_port | default(25) }}"
+ot_smtp_username: "{{ vault_smtp_username | default(omit) }}"
+ot_smtp_password: "{{ vault_smtp_password | default(omit) }}"
+ot_alert_email_from: "ansible-ot@network.local"     # CHANGE ME
+ot_alert_email_to: "{{ vault_network_team_email }}"  # set in vault_ot.yml
+ot_alert_email_cc: ""                                # optional CC
+ot_alert_subject_prefix: "[OT-ACL ALERT]"
+
+# -- Webhook (Slack, Teams, SOAR, PagerDuty — optional) --
+ot_webhook_enabled: false
+ot_webhook_url: "{{ vault_ot_webhook_url | default('') }}"
+ot_webhook_headers: {}       # e.g. {"Authorization": "Bearer {{ vault_ot_webhook_token }}"}
+ot_webhook_verify_ssl: true
+
+# -- Syslog (optional) --
+ot_syslog_enabled: false
+ot_syslog_server: "{{ vault_syslog_server | default('localhost') }}"
+ot_syslog_port: 514
+
+# ── ACL Deployment List ───────────────────────────────────────────────────────
+# THIS IS THE MAIN CUSTOMER INPUT.
+# Define each ACL/rule to deploy. See inventory_ot.example for full examples.
+#
+# Each entry supports two provider/consumer formats:
+#
+#   Label-based (workloads with Illumio VEN installed):
+#     providers:
+#       - type: label
+#         key: app          # label dimension: app, env, loc, role
+#         value: field      # label value matching your PCE labels
+#
+#   IP-List-based (OT devices WITHOUT Illumio VEN — PLCs, RTUs, sensors):
+#     providers:
+#       - type: ip_list
+#         name: "PLC Network"          # IP list name (created if absent)
+#         ranges:
+#           - from_ip: "10.10.1.0"
+#             to_ip: "10.10.1.255"
+#             description: "Level-1 PLC subnet"
+#
+# Required fields per ACL entry:
+#   name          - short human name (used in alerts and reports)
+#   description   - what this rule allows and why
+#   rule_set_name - name of the Illumio Rule Set to add the rule into
+#   services      - list of {port, proto} pairs; use port: -1 proto: icmp for ICMP
+#   providers     - destination workloads/IP lists
+#   consumers     - source workloads/IP lists
+#
+# Optional fields:
+#   enabled       - true/false (default: true)
+#   purdue_src    - source Purdue level string e.g. "2" (enables boundary validation)
+#   purdue_dst    - destination Purdue level string e.g. "1"
+#   ticket_ref    - change ticket number for audit trail (e.g. "CHG0012345")
+
+ot_acls: []
+# Uncomment and customize:
+# ot_acls:
+#   - name: "Allow HMI to PLC — Modbus TCP"
+#     description: >
+#       SCADA HMI workstations read/write PLC registers via Modbus TCP.
+#       Required for Level-2 DCS operator screens.
+#     rule_set_name: "OT Control Zone Rules"
+#     ticket_ref: "CHG0012345"
+#     services:
+#       - port: 502
+#         proto: tcp
+#     providers:
+#       - type: label
+#         key: app
+#         value: field          # PLCs at Purdue Level 1
+#     consumers:
+#       - type: label
+#         key: app
+#         value: control        # HMI/DCS at Purdue Level 2
+#     enabled: true
+#     purdue_src: "2"
+#     purdue_dst: "1"
+#
+#   - name: "Allow Historian to SCADA — OPC-UA"
+#     description: >
+#       Enterprise historian server collects process data from SCADA via OPC-UA.
+#       Data flows from Supervisory (Level 3) up to Enterprise (Level 4).
+#     rule_set_name: "OT Supervisory Rules"
+#     ticket_ref: "CHG0012346"
+#     services:
+#       - port: 4840
+#         proto: tcp
+#     providers:
+#       - type: label
+#         key: app
+#         value: supervisory
+#     consumers:
+#       - type: label
+#         key: app
+#         value: ent
+#     enabled: true
+#     purdue_src: "4"
+#     purdue_dst: "3"
+#
+#   - name: "Allow Remote I/O — EtherNet/IP (IP-list based)"
+#     description: >
+#       Level-1 remote I/O modules (no VEN) communicate with PLC controllers.
+#       Uses IP lists because these devices cannot run the Illumio VEN.
+#     rule_set_name: "OT Field Device Rules"
+#     services:
+#       - port: 44818
+#         proto: tcp
+#       - port: 2222
+#         proto: udp
+#     providers:
+#       - type: ip_list
+#         name: "Remote IO Modules"
+#         ranges:
+#           - from_ip: "10.20.1.0"
+#             to_ip: "10.20.1.63"
+#             description: "Remote I/O subnet - Building A"
+#     consumers:
+#       - type: label
+#         key: app
+#         value: control
+#     enabled: true
+#     purdue_src: "2"
+#     purdue_dst: "1"
