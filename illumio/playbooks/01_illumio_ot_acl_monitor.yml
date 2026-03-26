@@ -1,0 +1,133 @@
+---
+# =============================================================================
+# Illumio OT ACL Monitor — Playbook 01
+# =============================================================================
+#
+# PURPOSE:
+#   Polls the Illumio PCE for new or pending ACL/security-rule changes in OT-
+#   labeled workload scopes, compares them against the last known baseline, and
+#   alerts the network team whenever new items are detected. This playbook is
+#   designed to run on a schedule (cron / AAP schedule) OR manually, and it
+#   produces no firewall changes itself — it only detects and alerts.
+#
+# WORKFLOW:
+#   1. Connect to PCE and query pending (draft, not yet provisioned) policy
+#   2. Load previous baseline from disk (created on first run)
+#   3. Diff — anything in pending but NOT in baseline is "new"
+#   4. If new ACLs found → email network team + optional webhook
+#   5. Persist updated baseline so next run only alerts on truly new items
+#   6. Save a human-readable report artifact for audit trail
+#
+# SCHEDULING (choose one):
+#   # Linux cron — every 15 minutes
+#   */15 * * * * ansible-playbook /opt/playbooks/illumio/playbooks/01_illumio_ot_acl_monitor.yml \
+#     -i /opt/playbooks/illumio/inventory_ot --ask-vault-pass 2>&1 | logger -t illumio-ot-monitor
+#
+#   # Ansible Automation Platform — add a Schedule to the Job Template
+#   # Set the schedule frequency in AAP; no cron line needed.
+#
+# USAGE:
+#   # Standard scan (alerts only on new items since last run)
+#   ansible-playbook illumio/playbooks/01_illumio_ot_acl_monitor.yml \
+#     -i illumio/inventory_ot --ask-vault-pass
+#
+#   # Reset baseline — treat ALL current pending items as new (re-alerts)
+#   ansible-playbook illumio/playbooks/01_illumio_ot_acl_monitor.yml \
+#     -i illumio/inventory_ot --ask-vault-pass -e "reset_baseline=true"
+#
+#   # Scan only — skip alerting (useful for debugging)
+#   ansible-playbook illumio/playbooks/01_illumio_ot_acl_monitor.yml \
+#     -i illumio/inventory_ot --ask-vault-pass --tags detect
+#
+# AFTER THIS PLAYBOOK:
+#   When alerts fire, the network team reviews the pending ACL report at:
+#     {{ ot_artifacts_dir }}/acl_pending.json
+#   Then runs playbook 02 to deploy approved ACLs:
+#     ansible-playbook illumio/playbooks/02_illumio_ot_acl_deploy.yml ...
+# =============================================================================
+
+- name: Illumio OT ACL Monitor — Detect and Alert
+  hosts: localhost
+  connection: local
+  gather_facts: true
+  any_errors_fatal: false
+
+  vars:
+    # ── Override these in inventory_ot or pass via -e ───────────────────────
+    # pce_url:    set in inventory_ot (e.g. https://pce.example.com:8443)
+    # org_id:     set in inventory_ot (e.g. 1)
+    # api_user:   "{{ vault_illumio_api_user }}"   — from vault
+    # api_key:    "{{ vault_illumio_api_key }}"    — from vault
+
+    # Detection control
+    reset_baseline: false          # true → treat all current pending as new
+
+    # Artifacts
+    ot_artifacts_dir: /tmp/illumio-ot-artifacts
+    verify_ssl: true
+
+    # Role mode — do not change
+    ot_run_mode: detect
+
+  pre_tasks:
+    - name: Display monitor banner
+      ansible.builtin.debug:
+        msg:
+          - "══════════════════════════════════════════════════════════════════════"
+          - " Illumio OT ACL Monitor"
+          - " PCE  : {{ pce_url }}"
+          - " Org  : {{ org_id }}"
+          - " Time : {{ ansible_date_time.iso8601 }}"
+          - " Mode : Detect-only (no changes to firewall policy)"
+          - "══════════════════════════════════════════════════════════════════════"
+      tags: ['always']
+
+    - name: Create artifacts directory
+      ansible.builtin.file:
+        path: "{{ ot_artifacts_dir }}"
+        state: directory
+        mode: '0750'
+      tags: ['always']
+
+  tasks:
+    # ── PHASE 1: Detect ───────────────────────────────────────────────────────
+    - name: "PHASE 1: Detect new OT ACLs in PCE pending policy"
+      ansible.builtin.include_role:
+        name: illumio_ot_acl_deployment
+        tasks_from: "includes/illumio_ot__detect_new_acls.yml"
+      tags: ['detect', 'phase1']
+
+    # ── PHASE 2: Alert ────────────────────────────────────────────────────────
+    - name: "PHASE 2: Alert network team of new pending ACLs"
+      ansible.builtin.include_role:
+        name: illumio_ot_acl_deployment
+        tasks_from: "includes/illumio_ot__alert_network_team.yml"
+      when:
+        - ot_new_acls_detected | default(false) | bool
+        - ot_notify_on_detect | default(true) | bool
+      tags: ['alert', 'phase2']
+
+    - name: "PHASE 2 (skip): No new ACLs — alert suppressed"
+      ansible.builtin.debug:
+        msg: "No new pending ACLs detected since last scan. No alert sent."
+      when: not (ot_new_acls_detected | default(false) | bool)
+      tags: ['alert', 'phase2']
+
+  post_tasks:
+    - name: Display scan summary
+      ansible.builtin.debug:
+        msg:
+          - "══════════════════════════════════════════════════════════════════════"
+          - " OT ACL Monitor — Scan Complete"
+          - " New ACLs detected : {{ ot_new_acl_count | default(0) }}"
+          - " Pending file      : {{ ot_artifacts_dir }}/acl_pending.json"
+          - " Baseline file     : {{ ot_artifacts_dir }}/acl_baseline.json"
+          - "{% if ot_new_acls_detected | default(false) %}"
+          - " !! ACTION REQUIRED — Review pending ACLs and run playbook 02:"
+          - "    ansible-playbook illumio/playbooks/02_illumio_ot_acl_deploy.yml \\"
+          - "      -i illumio/inventory_ot --ask-vault-pass"
+          - "{% else %}"
+          - " All clear — no new ACLs detected."
+          - "{% endif %}"
+          - "══════════════════════════════════════════════════════════════════════"
+      tags: ['always']

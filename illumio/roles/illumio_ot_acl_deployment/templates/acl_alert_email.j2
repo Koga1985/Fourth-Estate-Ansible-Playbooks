@@ -1,0 +1,105 @@
+{# acl_alert_email.j2 — plain-text OT ACL alert email body                     #}
+{# Used as an alternative to inline body building in the alert task.            #}
+{# Variables provided by illumio_ot__alert_network_team.yml                    #}
+======================================================================
+ILLUMIO OT ACL MONITOR — {{ ot_alert_event_type | default('EVENT') }}
+======================================================================
+
+{% if ot_alert_event_type | default('') == 'DETECTION' %}
+New pending ACL objects have been detected in the Illumio PCE that
+have NOT yet been provisioned (enforced). A network team member must
+review these changes and run the deployment playbook to approve them.
+
+Detection Summary
+-----------------
+PCE URL         : {{ pce_url }}
+Organisation ID : {{ org_id }}
+Detected at     : {{ ansible_date_time.iso8601 }}
+New ACL objects : {{ ot_new_acl_count | default(0) }}
+
+New Pending Items
+-----------------
+{% for item in ot_new_acl_items | default([]) %}
+  {{ loop.index }}. {{ item.name | default('(unnamed)') }}
+     HREF        : {{ item.href | default('N/A') }}
+     Updated at  : {{ item.updated_at | default('N/A') }}
+     Created by  : {{ item.created_by.href | default('N/A') }}
+{% endfor %}
+
+Pending Report
+--------------
+Full JSON report saved at:
+  {{ ot_acl_pending_file | default(ot_artifacts_dir + '/acl_pending.json') }}
+
+Next Steps
+----------
+  1. Review the pending report listed above.
+
+  2. If changes are approved, run the deployment playbook:
+
+       ansible-playbook illumio/playbooks/02_illumio_ot_acl_deploy.yml \
+         -i illumio/inventory_ot --ask-vault-pass \
+         -e "apply_changes=true"
+
+  3. To promote rules to ACTIVE ENFORCEMENT (traffic affected):
+
+       ansible-playbook illumio/playbooks/02_illumio_ot_acl_deploy.yml \
+         -i illumio/inventory_ot --ask-vault-pass \
+         -e "apply_changes=true promote_policy=true"
+
+  4. If the detected changes are NOT authorised, investigate immediately.
+     Contact the PCE administrator: {{ pce_url }}
+
+{% elif ot_alert_event_type | default('') == 'DEPLOYMENT' %}
+An OT ACL deployment has completed on the Illumio PCE.
+
+Deployment Summary
+------------------
+PCE URL         : {{ pce_url }}
+Organisation ID : {{ org_id }}
+Operator        : {{ ansible_user_id }}
+Completed at    : {{ ansible_date_time.iso8601 }}
+Dry run only    : {{ dry_run | default(true) }}
+Rules applied   : {{ apply_changes | default(false) }}
+Policy promoted : {{ promote_policy | default(false) }}
+ACLs processed  : {{ ot_acls | default([]) | length }}
+ACLs applied    : {{ ot_acls_applied | default(0) }}
+
+ACLs Processed
+--------------
+{% for acl in ot_acls | default([]) %}
+  {{ loop.index }}. {{ acl.name }}
+     Rule Set  : {{ acl.rule_set_name }}
+     Services  : {{ acl.services | map(attribute='port') | list | join(', ') }}
+     Ticket    : {{ acl.ticket_ref | default('N/A') }}
+     Enabled   : {{ acl.enabled | default(true) }}
+{% endfor %}
+
+Policy Status
+-------------
+{% if apply_changes | bool and promote_policy | bool %}
+  ACTIVE — rules are now enforced in the OT environment.
+  Affected traffic is subject to the new segmentation policy.
+{% elif apply_changes | bool %}
+  DRAFT — rules have been written to PCE but are NOT yet enforced.
+  Run the playbook again with promote_policy=true to enforce.
+{% else %}
+  DRY RUN — no changes were made to PCE policy.
+  Run the playbook again with apply_changes=true to write rules.
+{% endif %}
+
+Artifacts
+---------
+  Deployment log : {{ ot_artifacts_dir }}/acl_apply_{{ ansible_date_time.date }}.json
+{% if apply_changes | bool and promote_policy | bool %}
+  Promotion log  : {{ ot_artifacts_dir }}/acl_promotion_{{ ansible_date_time.date }}.json
+{% endif %}
+{% endif %}
+
+======================================================================
+This alert was generated automatically by Ansible.
+Playbook : illumio/playbooks/
+PCE      : {{ pce_url }}
+Host     : {{ ansible_hostname | default('localhost') }}
+Do not reply to this email.
+======================================================================

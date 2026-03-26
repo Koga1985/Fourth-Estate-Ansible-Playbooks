@@ -1,0 +1,134 @@
+---
+# illumio_ot__validate_acls.yml
+#
+# Validates the ot_acls list before any PCE changes are attempted.
+# Checks:
+#   1. ot_acls is defined and non-empty
+#   2. Each ACL has required fields
+#   3. Services use OT-allowlisted protocols (warn or fail based on ot_strict_protocol_validation)
+#   4. Purdue level boundary rules are not violated (if purdue_src/dst provided)
+#
+# This task always runs (including dry runs) and never modifies PCE.
+
+- name: Assert ot_acls is defined and non-empty
+  ansible.builtin.assert:
+    that:
+      - ot_acls is defined
+      - ot_acls | length > 0
+    fail_msg: >
+      ot_acls is empty or undefined. Define at least one ACL entry in your
+      inventory_ot file under [localhost:vars]. See inventory_ot.example for
+      the full variable format.
+
+- name: Validate required fields on each ACL entry
+  ansible.builtin.assert:
+    that:
+      - item.name is defined and item.name | length > 0
+      - item.rule_set_name is defined and item.rule_set_name | length > 0
+      - item.services is defined and item.services | length > 0
+      - item.providers is defined and item.providers | length > 0
+      - item.consumers is defined and item.consumers | length > 0
+    fail_msg: >
+      ACL entry {{ loop.index }} is missing required fields.
+      Each entry needs: name, rule_set_name, services, providers, consumers.
+      Offending entry: {{ item | to_json }}
+  loop: "{{ ot_acls }}"
+  loop_control:
+    label: "{{ item.name | default('entry-' + loop.index | string) }}"
+
+- name: Validate service provider/consumer type field
+  ansible.builtin.assert:
+    that:
+      - provider.type in ['label', 'ip_list']
+    fail_msg: >
+      ACL '{{ item.name }}' has a provider with type '{{ provider.type }}'.
+      Valid types are: label, ip_list.
+  loop: "{{ ot_acls }}"
+  loop_control:
+    label: "{{ item.name }}"
+  vars:
+    provider: "{{ item.providers | first }}"
+  when: item.providers | length > 0
+
+# ── Protocol allowlist check ──────────────────────────────────────────────────
+- name: Build allowed port/proto lookup set
+  ansible.builtin.set_fact:
+    _allowed_svc_set: >-
+      {{
+        ot_allowed_protocols
+        | map(attribute='port') | zip(ot_allowed_protocols | map(attribute='proto'))
+        | map('join', '/')
+        | list
+      }}
+
+- name: Check ACL services against OT protocol allowlist
+  ansible.builtin.assert:
+    that:
+      - (svc.port | string + '/' + svc.proto) in _allowed_svc_set
+        or not (ot_strict_protocol_validation | default(false) | bool)
+    fail_msg: >
+      ACL '{{ item.name }}' uses port {{ svc.port }}/{{ svc.proto }} which is
+      NOT in the OT protocol allowlist. Either add it to ot_allowed_protocols
+      or set ot_strict_protocol_validation: false to warn-only.
+      Current allowlist: {{ _allowed_svc_set | join(', ') }}
+  loop: "{{ ot_acls }}"
+  loop_control:
+    label: "{{ item.name }}"
+  vars:
+    svc: "{{ item.services | first }}"
+  when: item.services | length > 0
+
+- name: Warn on non-allowlisted protocols (strict mode off)
+  ansible.builtin.debug:
+    msg: >-
+      WARNING: ACL '{{ item.name }}' uses port {{ svc.port }}/{{ svc.proto }}
+      which is NOT in ot_allowed_protocols. Verify this is intentional before
+      applying to the OT environment.
+  loop: "{{ ot_acls }}"
+  loop_control:
+    label: "{{ item.name }}"
+  vars:
+    svc: "{{ item.services | first }}"
+  when:
+    - not (ot_strict_protocol_validation | default(false) | bool)
+    - item.services | length > 0
+    - (svc.port | string + '/' + svc.proto) not in _allowed_svc_set
+
+# ── Purdue boundary check ─────────────────────────────────────────────────────
+- name: Check Purdue model level boundaries
+  ansible.builtin.assert:
+    that:
+      - >-
+        not (ot_enforce_purdue_boundaries | default(true) | bool)
+        or item.purdue_src is not defined
+        or item.purdue_dst is not defined
+        or ((item.purdue_src | float - item.purdue_dst | float) | abs) <= (ot_purdue_max_level_jump | default(1))
+    fail_msg: >
+      ACL '{{ item.name }}' spans Purdue levels {{ item.purdue_src }} → {{ item.purdue_dst }}
+      ({{ ((item.purdue_src | float - item.purdue_dst | float) | abs) | round(1) }} levels).
+      Maximum allowed jump is {{ ot_purdue_max_level_jump }}.
+      Either reduce the scope of this rule or set ot_enforce_purdue_boundaries: false.
+  loop: "{{ ot_acls }}"
+  loop_control:
+    label: "{{ item.name | default('acl-' + loop.index | string) }}"
+  when:
+    - item.purdue_src is defined
+    - item.purdue_dst is defined
+
+# ── Summary ───────────────────────────────────────────────────────────────────
+- name: Display validation summary
+  ansible.builtin.debug:
+    msg:
+      - "═══ ACL Validation Complete ═══"
+      - "ACLs validated     : {{ ot_acls | length }}"
+      - "Strict protocols   : {{ ot_strict_protocol_validation | default(false) }}"
+      - "Purdue boundaries  : {{ ot_enforce_purdue_boundaries | default(true) }}"
+      - "Max Purdue jump    : {{ ot_purdue_max_level_jump | default(1) }}"
+      - "All checks passed."
+      - "ACLs to process:"
+      - "{% for acl in ot_acls %}"
+      - "  {{ loop.index }}. {{ acl.name }}"
+      - "     Rule set : {{ acl.rule_set_name }}"
+      - "     Services : {{ acl.services | map(attribute='port') | list | join(', ') }}"
+      - "     Enabled  : {{ acl.enabled | default(true) }}"
+      - "{% endfor %}"

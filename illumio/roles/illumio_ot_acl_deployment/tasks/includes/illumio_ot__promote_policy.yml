@@ -1,0 +1,130 @@
+---
+# illumio_ot__promote_policy.yml
+#
+# Promotes the PCE draft policy to active enforcement. This makes all pending
+# rules go live and begin affecting OT network traffic.
+#
+# SAFETY: Only called when apply_changes=true AND promote_policy=true.
+# If brownout_enabled=true, first queries estimated traffic impact and aborts
+# if newly-blocked flows exceed deny_threshold.
+#
+# This is gated in the calling playbook — this file should not be included
+# directly.
+
+- name: Set common PCE API headers
+  ansible.builtin.set_fact:
+    illumio_headers:
+      Accept: "application/json"
+      Content-Type: "application/json"
+      X-Illumio-Org: "{{ org_id }}"
+
+# ── Brownout / traffic impact check ──────────────────────────────────────────
+- name: Query PCE for traffic impact of pending rules (brownout check)
+  ansible.builtin.uri:
+    url: "{{ pce_url }}/api/v2/orgs/{{ org_id }}/sec_policy/pending/rule_coverage"
+    method: GET
+    user: "{{ api_user }}"
+    password: "{{ api_key }}"
+    force_basic_auth: true
+    validate_certs: "{{ verify_ssl | default(true) }}"
+    headers: "{{ illumio_headers }}"
+    return_content: true
+    status_code: [200, 404]
+  no_log: true
+  register: _brownout_result
+  when: brownout_enabled | default(true) | bool
+  ignore_errors: true
+
+- name: Parse brownout impact data
+  ansible.builtin.set_fact:
+    _blocked_flows: >-
+      {{
+        (_brownout_result.json.blocked_connection_count | default(0))
+        if (_brownout_result is not skipped and _brownout_result.status == 200)
+        else 0
+      }}
+  when: brownout_enabled | default(true) | bool
+
+- name: Display traffic impact summary
+  ansible.builtin.debug:
+    msg:
+      - "═══ Brownout / Traffic Impact Check ═══"
+      - "Newly blocked flows : {{ _blocked_flows | default(0) }}"
+      - "Deny threshold      : {{ deny_threshold }}"
+      - "{% if (_blocked_flows | default(0) | int) > (deny_threshold | int) %}"
+      - "!! IMPACT EXCEEDS THRESHOLD — promotion will be aborted"
+      - "{% else %}"
+      - "Impact within threshold — safe to promote"
+      - "{% endif %}"
+  when: brownout_enabled | default(true) | bool
+
+- name: Abort promotion — blocked flows exceed deny_threshold
+  ansible.builtin.fail:
+    msg: >
+      Promotion aborted. The pending policy would block {{ _blocked_flows }} flows,
+      which exceeds the configured deny_threshold of {{ deny_threshold }}.
+      Review the pending rules and adjust, or raise deny_threshold if intentional.
+      Run without promote_policy=true to leave rules in draft for manual review.
+  when:
+    - brownout_enabled | default(true) | bool
+    - (_blocked_flows | default(0) | int) > (deny_threshold | int)
+
+# ── Promote ───────────────────────────────────────────────────────────────────
+- name: Provision pending policy to active enforcement
+  ansible.builtin.uri:
+    url: "{{ pce_url }}/api/v2/orgs/{{ org_id }}/sec_policy"
+    method: POST
+    user: "{{ api_user }}"
+    password: "{{ api_key }}"
+    force_basic_auth: true
+    validate_certs: "{{ verify_ssl | default(true) }}"
+    headers: "{{ illumio_headers }}"
+    body_format: json
+    body:
+      update_description: "{{ ot_provision_comment }}"
+    return_content: true
+    status_code: [200, 201]
+  no_log: true
+  register: _promotion_result
+  retries: 3
+  delay: 10
+  until: _promotion_result.status in [200, 201]
+
+- name: Parse promotion response
+  ansible.builtin.set_fact:
+    _promotion_version: "{{ _promotion_result.json.version | default('unknown') }}"
+    _promotion_href: "{{ _promotion_result.json.href | default('') }}"
+
+- name: Save promotion artifact
+  ansible.builtin.copy:
+    dest: "{{ ot_artifacts_dir }}/acl_promotion_{{ ansible_date_time.date }}.json"
+    mode: '0640'
+    content: >-
+      {{
+        {
+          'promotion_time': ansible_date_time.iso8601,
+          'operator': ansible_user_id,
+          'pce_url': pce_url,
+          'org_id': org_id,
+          'policy_version': _promotion_version,
+          'policy_href': _promotion_href,
+          'provision_comment': ot_provision_comment,
+          'blocked_flows_at_promotion': _blocked_flows | default(0),
+          'deny_threshold': deny_threshold,
+          'acls_promoted': ot_acls_applied | default(0)
+        } | to_nice_json
+      }}
+
+- name: Display promotion summary
+  ansible.builtin.debug:
+    msg:
+      - "══════════════════════════════════════════════════════════════════════"
+      - " POLICY PROMOTED TO ACTIVE ENFORCEMENT"
+      - " Policy version : {{ _promotion_version }}"
+      - " Policy href    : {{ _promotion_href }}"
+      - " Promoted at    : {{ ansible_date_time.iso8601 }}"
+      - " Operator       : {{ ansible_user_id }}"
+      - " Comment        : {{ ot_provision_comment }}"
+      - "══════════════════════════════════════════════════════════════════════"
+      - " OT network traffic is NOW subject to the new rules."
+      - "══════════════════════════════════════════════════════════════════════"

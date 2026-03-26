@@ -1,0 +1,160 @@
+---
+# illumio_ot__detect_new_acls.yml
+#
+# Polls the PCE for pending (draft, not-yet-provisioned) security policy items,
+# compares them against the on-disk baseline from the previous run, and exposes
+# the delta as facts that the alert task uses.
+#
+# Sets facts:
+#   ot_new_acls_detected  (bool)   — true when there are new pending items
+#   ot_new_acl_count      (int)    — number of newly-detected items
+#   ot_new_acl_items      (list)   — the new pending rule objects
+#   ot_all_pending_items  (list)   — full current pending list (for report)
+
+- name: Ensure artifacts directory
+  ansible.builtin.file:
+    path: "{{ ot_artifacts_dir }}"
+    state: directory
+    mode: '0750'
+
+- name: Set common PCE API headers
+  ansible.builtin.set_fact:
+    illumio_headers:
+      Accept: "application/json"
+      Content-Type: "application/json"
+      X-Illumio-Org: "{{ org_id }}"
+
+# ── Step 1: Query PCE pending policy ─────────────────────────────────────────
+- name: Query PCE for pending (draft) security policy — rule sets
+  ansible.builtin.uri:
+    url: "{{ pce_url }}/api/v2/orgs/{{ org_id }}/sec_policy/pending"
+    method: GET
+    user: "{{ api_user }}"
+    password: "{{ api_key }}"
+    force_basic_auth: true
+    validate_certs: "{{ verify_ssl | default(true) }}"
+    headers: "{{ illumio_headers }}"
+    return_content: true
+    status_code: [200, 204]
+  no_log: true
+  register: _pce_pending_raw
+  retries: 3
+  delay: 5
+  until: _pce_pending_raw.status in [200, 204]
+
+- name: Query PCE audit log for recent rule-create events
+  ansible.builtin.uri:
+    url: "{{ pce_url }}/api/v2/orgs/{{ org_id }}/events?event_type=sec_rule.create&max_results=50"
+    method: GET
+    user: "{{ api_user }}"
+    password: "{{ api_key }}"
+    force_basic_auth: true
+    validate_certs: "{{ verify_ssl | default(true) }}"
+    headers: "{{ illumio_headers }}"
+    return_content: true
+    status_code: [200, 204]
+  no_log: true
+  register: _pce_audit_raw
+  retries: 3
+  delay: 5
+  until: _pce_audit_raw.status in [200, 204]
+
+- name: Parse pending policy response
+  ansible.builtin.set_fact:
+    _pending_policy: "{{ _pce_pending_raw.json | default({}) }}"
+    _audit_events: "{{ _pce_audit_raw.json | default([]) }}"
+
+# Flatten all pending rule hrefs from the pending policy object.
+# The PCE pending response contains keys like rule_sets, ip_lists, services.
+- name: Collect pending rule HREFs
+  ansible.builtin.set_fact:
+    _pending_rule_hrefs: >-
+      {{
+        ((_pending_policy.rule_sets | default([])) | map(attribute='href') | list)
+        + ((_pending_policy.ip_lists | default([])) | map(attribute='href') | list)
+        + ((_pending_policy.services | default([])) | map(attribute='href') | list)
+      }}
+
+- name: Collect pending items (full objects for reporting)
+  ansible.builtin.set_fact:
+    ot_all_pending_items: >-
+      {{
+        (_pending_policy.rule_sets | default([]))
+        + (_pending_policy.ip_lists | default([]))
+        + (_pending_policy.services | default([]))
+      }}
+
+# ── Step 2: Load or initialize baseline ──────────────────────────────────────
+- name: Check whether baseline file exists
+  ansible.builtin.stat:
+    path: "{{ ot_acl_baseline_file }}"
+  register: _baseline_stat
+
+- name: Load existing baseline
+  ansible.builtin.slurp:
+    src: "{{ ot_acl_baseline_file }}"
+  register: _baseline_raw
+  when: _baseline_stat.stat.exists and not (reset_baseline | bool)
+
+- name: Parse baseline HREFs
+  ansible.builtin.set_fact:
+    _baseline_hrefs: "{{ (_baseline_raw.content | b64decode | from_json) if (_baseline_stat.stat.exists and not reset_baseline | bool) else [] }}"
+
+# ── Step 3: Compute delta ─────────────────────────────────────────────────────
+- name: Identify new pending HREFs (not in baseline)
+  ansible.builtin.set_fact:
+    _new_hrefs: "{{ _pending_rule_hrefs | difference(_baseline_hrefs) }}"
+
+- name: Filter full pending objects to new-only
+  ansible.builtin.set_fact:
+    ot_new_acl_items: >-
+      {{
+        ot_all_pending_items
+        | selectattr('href', 'in', _new_hrefs)
+        | list
+      }}
+
+- name: Expose detection facts
+  ansible.builtin.set_fact:
+    ot_new_acl_count: "{{ ot_new_acl_items | length }}"
+    ot_new_acls_detected: "{{ (ot_new_acl_items | length) > 0 }}"
+
+- name: Report detection result
+  ansible.builtin.debug:
+    msg:
+      - "PCE pending objects   : {{ ot_all_pending_items | length }}"
+      - "Baseline known HREFs  : {{ _baseline_hrefs | length }}"
+      - "New (delta) objects   : {{ ot_new_acl_count }}"
+      - "{% if ot_new_acls_detected | bool %}!! New ACLs require network team review{% else %}All clear — no new items since last scan{% endif %}"
+
+# ── Step 4: Update baseline ───────────────────────────────────────────────────
+- name: Persist updated baseline (current pending = new known state)
+  ansible.builtin.copy:
+    dest: "{{ ot_acl_baseline_file }}"
+    content: "{{ _pending_rule_hrefs | to_nice_json }}"
+    mode: '0640'
+
+# ── Step 5: Save pending report ───────────────────────────────────────────────
+- name: Save pending ACL report artifact
+  ansible.builtin.copy:
+    dest: "{{ ot_acl_pending_file }}"
+    mode: '0640'
+    content: "{{ ot_all_pending_items | to_nice_json }}"
+
+- name: Save timestamped detection report
+  ansible.builtin.copy:
+    dest: "{{ ot_acl_report_file }}"
+    mode: '0640'
+    content: |
+      {{
+        {
+          'scan_time': ansible_date_time.iso8601,
+          'pce_url': pce_url,
+          'org_id': org_id,
+          'total_pending': ot_all_pending_items | length,
+          'new_since_last_scan': ot_new_acl_count,
+          'new_items': ot_new_acl_items,
+          'all_pending': ot_all_pending_items,
+          'audit_events_sampled': _audit_events | length
+        } | to_nice_json
+      }}
