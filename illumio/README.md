@@ -1,6 +1,6 @@
 # Illumio Core Zero Trust Segmentation
 
-This directory contains **4 Ansible roles** for managing **Illumio Core** zero trust micro-segmentation platform.
+This directory contains **5 Ansible roles** for managing **Illumio Core** zero trust micro-segmentation platform.
 
 ## Overview
 
@@ -31,6 +31,12 @@ Illumio Core provides application-centric segmentation and zero trust security. 
   - Policy coverage analysis
   - Compliance reporting
   - Risk assessment
+
+### OT/ICS Security (1 role)
+- **illumio_ot_acl_deployment** - OT/ICS ACL deployment and enforcement
+  - Operational technology access control lists
+  - ICS network segmentation policies
+  - OT workload labeling and enforcement
 
 ## 🚀 Quick Start
 

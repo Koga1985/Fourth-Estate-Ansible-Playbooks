@@ -1,12 +1,19 @@
 # NetApp ONTAP Storage Automation
 
-This directory contains **3 Ansible roles** for automating **NetApp ONTAP** storage management including cluster configuration, SVM management, and volume provisioning.
+This directory contains **10 Ansible roles** for automating **NetApp ONTAP** storage management including cluster configuration, SVM management, volume provisioning, snapshots, SnapMirror replication, and security hardening.
 
 ## 📋 Roles
 
 - **netapp_cluster_setup** - Cluster initialization and configuration
-- **netapp_svm_management** - Storage Virtual Machine (SVM) management
+- **netapp_ontap_cluster** - ONTAP cluster management and operations
+- **netapp_svm** - Storage Virtual Machine (SVM) lifecycle management
+- **netapp_svm_management** - SVM configuration and administration
 - **netapp_volume_provisioning** - Volume, LUN, NFS, and CIFS provisioning
+- **netapp_volumes** - Volume management, thin provisioning, and tiering
+- **netapp_snapshots** - Snapshot policy creation and management
+- **netapp_snapmirror** - SnapMirror and SnapVault replication
+- **netapp_performance_tuning** - QoS policies and performance optimization
+- **netapp_security** - Security hardening, encryption, and audit logging
 
 ## 🚀 Quick Start
 
