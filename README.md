@@ -1,21 +1,21 @@
 # Fourth Estate Ansible Playbooks
 
-An enterprise-grade collection of **516+ roles** and **2,500+ YAML files** for infrastructure automation across **39+ technology platforms** with emphasis on **DoD STIG, NIST 800-53, NIST 800-171, FedRAMP, and FISMA compliance**.
+An enterprise-grade collection of **550 roles** and **3,395 YAML files** for infrastructure automation across **37 technology platforms** with emphasis on **DoD STIG, NIST 800-53, NIST 800-171, FedRAMP, and FISMA compliance**.
 
 This repository provides production-ready Ansible automation for network infrastructure, cloud platforms, container orchestration, storage systems, backup solutions, security scanning, secrets management, ITSM integration, and operational technology (OT/ICS) security with a special focus on **Fourth Estate** (free press/media) organizations.
 
 ## 📊 Repository Statistics
 
-- **Total Roles:** 521+ (Phase 1: 360, Phase 2: 470, Phase 3: 516, Phase 4: 521)
-- **Total YAML Files:** 2,550+
-- **README Documentation Files:** 330+
-- **Technology Platforms:** 40+ (started with 25)
+- **Total Roles:** 550
+- **Total YAML Files:** 3,395
+- **README Documentation Files:** 620
+- **Technology Platforms:** 37
 - **Compliance Frameworks:** DoD STIG, NIST 800-53 Rev 5, NIST 800-171, FedRAMP, FISMA, CIS Benchmarks
 - **Cloud Platforms:** 4 (AWS, Azure, GCP, VMware vSphere)
 - **Database Platforms:** 4 (PostgreSQL, MySQL, Oracle, Cloud Databases)
 - **Test Playbooks:** 9+
-- **Jinja2 Templates:** 15+
-- **Inventory Examples:** 5
+- **Jinja2 Templates:** 208
+- **Inventory Examples:** 43
 
 ## Table of Contents
 
@@ -59,18 +59,18 @@ Each top-level directory focuses on a specific technology platform and contains 
 - **Palo Alto Networks** - PAN-OS firewalls, Panorama management, VPN, QoS (13 roles)
 - **Check Point** - Firewalls, access policies, threat prevention, identity awareness (6 roles)
 - **Arista EOS** - Network switches, CVP, routing, fabric, baseline configuration (6 roles)
-- **Illumio** - Zero-trust micro-segmentation, policy lifecycle, VEN management (4 roles)
+- **Illumio** - Zero-trust micro-segmentation, policy lifecycle, VEN management (5 roles)
 - **Infoblox** - DNS/DHCP infrastructure, grid operations, RPZ policies (12 roles)
 - **Claroty** - OT security, inventory, secure access, segmentation (11 roles)
 
 ### ☁️ Cloud Platforms (4 platforms)
-- **Amazon Web Services (AWS)** - IAM, VPC, EC2, EKS, S3, RDS, Lambda, FedRAMP (40+ roles)
-- **Microsoft Azure** - Azure AD, VNets, AKS, SQL, Key Vault, Sentinel, Gov Cloud (45+ roles)
+- **Amazon Web Services (AWS)** - IAM, VPC, EC2, EKS, S3, RDS, Lambda, FedRAMP (30 roles)
+- **Microsoft Azure** - Azure AD, VNets, AKS, SQL, Key Vault, Sentinel, Gov Cloud (46 roles)
 - **Google Cloud Platform** - GCP IAM, VPCs, GKE, BigQuery, Cloud Run, compliance (30 roles)
 - **VMware vSphere** - vCenter, ESXi, vSAN, NSX-T SDN, STIG hardening (32 roles)
 
 ### 🔄 Container & Orchestration (2 platforms)
-- **Kubernetes** - Cluster hardening (STIG V1R11), RBAC, namespaces, secrets (4 roles)
+- **Kubernetes** - Cluster hardening (STIG V1R11), RBAC, namespaces, secrets (8 roles)
 - **Red Hat OpenShift** - Full OCP lifecycle, operators, GitOps, monitoring (45 roles)
 
 ### 🐧 Operating Systems (2 platforms)
@@ -80,9 +80,9 @@ Each top-level directory focuses on a specific technology platform and contains 
 ### 💾 Storage & Backup (6 platforms)
 - **Pure Storage** - FlashArray, FlashBlade, provisioning, protection (14 roles)
 - **VAST Data** - All-flash NAS storage, monitoring, security hardening (4 roles)
-- **NetApp ONTAP** - Cluster, SVM, volumes, SnapMirror, SnapVault (3 roles)
+- **NetApp ONTAP** - Cluster, SVM, volumes, SnapMirror, SnapVault (10 roles)
 - **Veeam** - Backup & recovery, replication, cloud tier, SureBackup (8 roles)
-- **Cohesity** - Cluster config, protection policies, recovery, cloud archive (6 roles)
+- **Cohesity** - Cluster config, protection policies, recovery, cloud archive (7 roles)
 - **Splunk** - Log aggregation, forwarder, monitoring, security (6 roles)
 
 ### 🗄️ Database Platforms (3 platforms)
@@ -93,8 +93,8 @@ Each top-level directory focuses on a specific technology platform and contains 
 ### 📊 Monitoring & Observability (4 platforms)
 - **ScienceLogic SL1** - Platform monitoring, RBA, powerflow, governance (33 roles)
 - **Dragos** - OT threat detection, inventory, topology, integration (12 roles)
-- **Prometheus/Grafana** - Metrics collection, alerting, dashboarding (3 roles)
-- **ELK Stack** - Elasticsearch, Logstash, Kibana, Filebeat, Metricbeat (10 roles)
+- **Prometheus/Grafana** - Metrics collection, alerting, dashboarding (11 roles)
+- **ELK Stack** - Elasticsearch, Logstash, Kibana, Filebeat, Metricbeat (12 roles)
 
 ### 🔐 Security & Compliance (2 platforms)
 - **Tenable Security Center** - Vulnerability scanning, compliance checks, reporting (8 roles)
@@ -141,13 +141,13 @@ Fourth-Estate-Ansible-Playbooks/
 │   ├── roles/
 │   └── tasks/
 │
-├── aws/                           # Amazon Web Services (40+ roles)
+├── aws/                           # Amazon Web Services (30 roles)
 │   ├── README.md
 │   ├── roles/
 │   ├── playbooks/
 │   └── tasks/
 │
-├── azure/                         # Microsoft Azure (30+ roles)
+├── azure/                         # Microsoft Azure (46 roles)
 │   ├── README.md
 │   ├── roles/
 │   └── tasks/
@@ -158,7 +158,7 @@ Fourth-Estate-Ansible-Playbooks/
 │   ├── roles/
 │   └── tasks/
 │
-├── cisco/                         # Cisco ACI, ISE & UCS (38 roles)
+├── cisco/                         # Cisco ACI, ISE & UCS (43 roles)
 │   ├── README.md
 │   ├── site.yml                   # Entry-point playbook (ACI + ISE + UCS)
 │   ├── requirements.yml
@@ -194,7 +194,7 @@ Fourth-Estate-Ansible-Playbooks/
 │   ├── README.md
 │   └── roles/
 │
-├── cohesity/                      # Cohesity backup (6 roles)
+├── cohesity/                      # Cohesity backup (7 roles)
 │   ├── README.md
 │   └── roles/
 │
@@ -212,7 +212,7 @@ Fourth-Estate-Ansible-Playbooks/
 │   ├── README.md
 │   └── roles/
 │
-├── elk_stack/                     # ELK Stack (10 roles)
+├── elk_stack/                     # ELK Stack (12 roles)
 │   ├── README.md
 │   └── roles/
 │
@@ -233,7 +233,7 @@ Fourth-Estate-Ansible-Playbooks/
 │   ├── README.md
 │   └── roles/
 │
-├── illumio/                       # Illumio micro-segmentation (4 roles)
+├── illumio/                       # Illumio micro-segmentation (5 roles)
 │   ├── README.md
 │   ├── roles/
 │   ├── playbooks/
@@ -245,14 +245,14 @@ Fourth-Estate-Ansible-Playbooks/
 │   ├── roles/
 │   └── tasks/
 │
-├── kubernetes/                    # Kubernetes cluster mgmt (4 roles)
+├── kubernetes/                    # Kubernetes cluster mgmt (8 roles)
 │   ├── README.md
 │   ├── roles/
 │   ├── playbook-cluster-hardening.yml
 │   ├── playbook-deploy-app.yml
 │   └── playbook-full-setup.yml
 │
-├── netapp/                        # NetApp ONTAP (3 roles)
+├── netapp/                        # NetApp ONTAP (10 roles)
 │   ├── README.md
 │   └── roles/
 │
@@ -282,7 +282,7 @@ Fourth-Estate-Ansible-Playbooks/
 │   ├── artifacts/                 # Compliance reports
 │   └── inventory/                 # Example inventories
 │
-├── prometheus_grafana/            # Prometheus & Grafana (3 roles)
+├── prometheus_grafana/            # Prometheus & Grafana (11 roles)
 │   ├── README.md
 │   └── roles/
 │
@@ -377,7 +377,7 @@ Each technology directory contains:
 - **Hybrid Networking** - VPN, service mesh, network policies
 
 ### 📊 Enterprise Monitoring & Observability
-- **ScienceLogic SL1** - 31 roles for comprehensive monitoring
+- **ScienceLogic SL1** - 33 roles for comprehensive monitoring
 - **Splunk Integration** - Log forwarding, security event monitoring
 - **Metrics Collection** - Custom dashboards, KPIs, reporting
 - **Audit & Compliance Reporting** - Automated artifact generation

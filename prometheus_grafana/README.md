@@ -1,12 +1,23 @@
 # Prometheus & Grafana Monitoring Stack
 
-This directory contains **3 Ansible roles** for deploying and configuring **Prometheus** and **Grafana** for comprehensive infrastructure monitoring and observability.
+This directory contains **11 Ansible roles** for deploying and configuring **Prometheus** and **Grafana** for comprehensive infrastructure monitoring and observability.
 
 ## 📋 Roles
 
+### Prometheus (7 roles)
 - **prometheus_install** - Prometheus server installation
+- **prometheus_server** - Prometheus server configuration and management
 - **prometheus_config** - Prometheus configuration (scrape targets, alerting rules, retention)
 - **prometheus_exporters** - Prometheus exporter deployment (node, blackbox, and others)
+- **prometheus_node_exporter** - Node exporter for host-level metrics
+- **prometheus_alertmanager** - Alertmanager deployment and routing configuration
+- **prometheus_blackbox_exporter** - Blackbox exporter for endpoint probing
+
+### Grafana (4 roles)
+- **grafana_server** - Grafana server installation and configuration
+- **grafana_datasources** - Datasource provisioning (Prometheus, Loki, etc.)
+- **grafana_dashboards** - Dashboard provisioning and management
+- **grafana_alerting** - Grafana alerting rules and notification channels
 
 ## 🚀 Quick Start
 
