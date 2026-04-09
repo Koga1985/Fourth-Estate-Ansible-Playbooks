@@ -1,0 +1,55 @@
+---
+# tasks file: users.yml for sdwan_vmanage_config
+# Configure user groups and local accounts on vManage
+# NIST AC-2, AC-3, AC-6 | STIG CISC-ND-000360
+
+- name: Create vManage user groups
+  ansible.builtin.uri:
+    url: "https://{{ sdwan_vmanage_host }}:{{ sdwan_vmanage_port }}/dataservice/admin/usergroup"
+    method: POST
+    headers:
+      Cookie: "{{ sdwan_session_cookie }}"
+      X-XSRF-TOKEN: "{{ sdwan_csrf_token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      groupName: "{{ item.name }}"
+      description: "{{ item.description }}"
+    validate_certs: "{{ sdwan_vmanage_verify_ssl }}"
+    timeout: "{{ sdwan_vmanage_timeout }}"
+    status_code: [200, 201, 409]
+  loop: "{{ sdwan_vmanage_user_groups }}"
+  when: apply_changes | bool
+  register: sdwan_groups_result
+  tags: [sdwan, vmanage, users, rbac, phase16]
+
+- name: Create local vManage user accounts
+  ansible.builtin.uri:
+    url: "https://{{ sdwan_vmanage_host }}:{{ sdwan_vmanage_port }}/dataservice/admin/user"
+    method: POST
+    headers:
+      Cookie: "{{ sdwan_session_cookie }}"
+      X-XSRF-TOKEN: "{{ sdwan_csrf_token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      userName: "{{ item.username }}"
+      password: "{{ item.password }}"
+      group: ["{{ item.group }}"]
+      description: "{{ item.description }}"
+    validate_certs: "{{ sdwan_vmanage_verify_ssl }}"
+    timeout: "{{ sdwan_vmanage_timeout }}"
+    status_code: [200, 201, 409]
+  loop: "{{ sdwan_vmanage_users }}"
+  when: apply_changes | bool
+  no_log: true
+  register: sdwan_users_result
+  tags: [sdwan, vmanage, users, phase16]
+
+- name: Display user configuration status
+  ansible.builtin.debug:
+    msg:
+      - "User groups created: {{ sdwan_vmanage_user_groups | length }}"
+      - "Local users configured: {{ sdwan_vmanage_users | length }}"
+      - "Status: {{ apply_changes | ternary('APPLIED', 'CHECK ONLY') }}"
+  tags: [sdwan, vmanage, users, phase16]

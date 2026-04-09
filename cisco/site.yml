@@ -3,9 +3,10 @@
 # Entry point for Cisco ACI, ISE, and UCS automation
 #
 # Platforms:
-#   - Cisco ACI  (5 roles  — Phases  1–5)
-#   - Cisco ISE  (28 roles — Phases  1–9)
-#   - Cisco UCS  (5 roles  — Phases 10–14)
+#   - Cisco ACI     (5 roles  — Phases  1–5)
+#   - Cisco ISE     (28 roles — Phases  1–9)
+#   - Cisco UCS     (5 roles  — Phases 10–14)
+#   - Cisco SD-WAN  (6 roles  — Phases 15–20)
 #
 # Usage:
 #   ansible-galaxy collection install -r requirements.yml
@@ -16,15 +17,17 @@
 #   - aci        : Cisco ACI only
 #   - ise        : Cisco ISE only
 #   - ucs        : Cisco UCS only
+#   - sdwan      : Cisco SD-WAN only
 #   - policy     : Policy configuration
-#   - security   : Security hardening
+#   - security   : Security hardening (all platforms)
+#   - stig       : DISA STIG controls only
 #   - monitoring : Monitoring configuration
 #   - reporting  : Reporting and audit tasks
 #
 # Dry-run (check mode):
 #   ansible-playbook -i inventory site.yml --check --diff --ask-vault-pass
 #
-# Last Updated: 2026-03-16
+# Last Updated: 2026-04-08
 # Maintained By: Fourth Estate Infrastructure Team
 
 - name: Cisco ACI Configuration
@@ -358,6 +361,77 @@
       tags: ['ucs', 'monitoring', 'phase14']
 
 
+- name: Cisco SD-WAN Configuration
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  any_errors_fatal: true
+
+  vars:
+    # SD-WAN Deployment control
+    deploy_sdwan_vmanage: true
+    deploy_sdwan_vmanage_config: true
+    deploy_sdwan_controllers: true
+    deploy_sdwan_vedge: true
+    deploy_sdwan_security: true
+    deploy_sdwan_monitoring: true
+
+  tasks:
+    # =========================================
+    # Phase 15: SD-WAN vManage Deployment
+    # =========================================
+    - name: Phase 15 - SD-WAN vManage Deployment
+      ansible.builtin.include_role:
+        name: sdwan_vmanage_deploy
+      when: deploy_sdwan_vmanage | bool
+      tags: ['sdwan', 'vmanage', 'phase15']
+
+    # =========================================
+    # Phase 16: SD-WAN vManage Configuration
+    # =========================================
+    - name: Phase 16 - SD-WAN vManage Configuration
+      ansible.builtin.include_role:
+        name: sdwan_vmanage_config
+      when: deploy_sdwan_vmanage_config | bool
+      tags: ['sdwan', 'vmanage', 'config', 'phase16']
+
+    # =========================================
+    # Phase 17: SD-WAN Controller Configuration
+    # =========================================
+    - name: Phase 17 - SD-WAN vBond/vSmart Controllers
+      ansible.builtin.include_role:
+        name: sdwan_controllers_config
+      when: deploy_sdwan_controllers | bool
+      tags: ['sdwan', 'controllers', 'phase17']
+
+    # =========================================
+    # Phase 18: SD-WAN Edge Device Onboarding
+    # =========================================
+    - name: Phase 18 - SD-WAN Edge Device Onboarding
+      ansible.builtin.include_role:
+        name: sdwan_vedge_onboard
+      when: deploy_sdwan_vedge | bool
+      tags: ['sdwan', 'vedge', 'phase18']
+
+    # =========================================
+    # Phase 19: SD-WAN DISA STIG Hardening
+    # =========================================
+    - name: Phase 19 - SD-WAN DISA STIG Security Hardening
+      ansible.builtin.include_role:
+        name: sdwan_security_hardening
+      when: deploy_sdwan_security | bool
+      tags: ['sdwan', 'security', 'stig', 'phase19']
+
+    # =========================================
+    # Phase 20: SD-WAN Monitoring
+    # =========================================
+    - name: Phase 20 - SD-WAN Monitoring and Telemetry
+      ansible.builtin.include_role:
+        name: sdwan_monitoring
+      when: deploy_sdwan_monitoring | bool
+      tags: ['sdwan', 'monitoring', 'phase20']
+
+
 - name: Deployment Summary
   hosts: localhost
   gather_facts: false
@@ -393,5 +467,12 @@
           - "  Security      : {{ 'Hardened' if deploy_ucs_security | default(true) else 'Skipped' }}"
           - "  Backup/DR     : {{ 'Configured' if deploy_ucs_backup | default(true) else 'Skipped' }}"
           - "  Monitoring    : {{ 'Configured' if deploy_ucs_monitoring | default(true) else 'Skipped' }}"
+          - "--- Cisco SD-WAN (6 roles — Phases 15–20) ---"
+          - "  vManage Deploy: {{ 'Deployed' if deploy_sdwan_vmanage | default(true) else 'Skipped' }}"
+          - "  vManage Config: {{ 'Configured' if deploy_sdwan_vmanage_config | default(true) else 'Skipped' }}"
+          - "  Controllers   : {{ 'Configured' if deploy_sdwan_controllers | default(true) else 'Skipped' }}"
+          - "  Edge Onboard  : {{ 'Onboarded' if deploy_sdwan_vedge | default(true) else 'Skipped' }}"
+          - "  STIG Hardening: {{ 'Hardened' if deploy_sdwan_security | default(true) else 'Skipped' }}"
+          - "  Monitoring    : {{ 'Configured' if deploy_sdwan_monitoring | default(true) else 'Skipped' }}"
           - "==========================================="
       tags: ['always']

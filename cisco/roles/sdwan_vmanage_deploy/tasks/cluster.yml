@@ -1,0 +1,32 @@
+---
+# tasks file: cluster.yml for sdwan_vmanage_deploy
+# Configure vManage HA cluster (when sdwan_vmanage_cluster_enabled is true)
+
+- name: Configure vManage cluster nodes
+  ansible.builtin.uri:
+    url: "https://{{ sdwan_vmanage_host }}:{{ sdwan_vmanage_port }}/dataservice/clusterManagement/setup"
+    method: PUT
+    headers:
+      Cookie: "{{ sdwan_session_cookie }}"
+      X-XSRF-TOKEN: "{{ sdwan_csrf_token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      vManageID: "{{ sdwan_vmanage_system_ip }}"
+      clusterNodes: "{{ sdwan_vmanage_cluster_nodes }}"
+    validate_certs: "{{ sdwan_vmanage_verify_ssl }}"
+    timeout: "{{ sdwan_vmanage_timeout }}"
+    status_code: [200, 201]
+  when: apply_changes | bool and sdwan_vmanage_cluster_enabled | bool
+  no_log: true
+  register: sdwan_cluster_result
+  tags: [sdwan, vmanage, cluster, ha, phase15]
+
+- name: Display cluster configuration status
+  ansible.builtin.debug:
+    msg:
+      - "Cluster configuration:"
+      - "  Cluster enabled: {{ sdwan_vmanage_cluster_enabled }}"
+      - "  Cluster nodes: {{ sdwan_vmanage_cluster_nodes | length }}"
+      - "  Status: {{ apply_changes | ternary('APPLIED', 'CHECK ONLY') }}"
+  tags: [sdwan, vmanage, cluster, ha, phase15]

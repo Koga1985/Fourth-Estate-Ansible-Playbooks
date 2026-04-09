@@ -1,0 +1,85 @@
+---
+# tasks file: encryption.yml for sdwan_security_hardening
+# Configure TLS, cipher suites, FIPS mode, and IPSec data-plane encryption
+# STIG: CISC-ND-001440 | NIST SC-8, SC-13, SC-28
+# CAT: I | SRG: SRG-APP-000514-NDM-000325, SRG-APP-000439-NDM-000301
+
+# ============================================================
+# vManage TLS Configuration (web UI and API)
+# Enforces TLS 1.2+; disables HTTP; FIPS-approved cipher suites
+# ============================================================
+- name: "STIG SC-8 [CISC-ND-001440] - Disable HTTP and enforce TLS on vManage"
+  ansible.builtin.uri:
+    url: "https://{{ sdwan_vmanage_host }}:{{ sdwan_vmanage_port }}/dataservice/settings/configuration/webServer"
+    method: PUT
+    headers:
+      Cookie: "{{ sdwan_session_cookie }}"
+      X-XSRF-TOKEN: "{{ sdwan_csrf_token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      httpEnabled: "{{ sdwan_http_enabled | lower }}"
+      httpsEnabled: "{{ sdwan_https_enabled | lower }}"
+      tlsMinVersion: "{{ sdwan_min_tls_version }}"
+      ciphers: "{{ sdwan_allowed_tls_ciphers | join(':') }}"
+    validate_certs: "{{ sdwan_vmanage_verify_ssl }}"
+    timeout: "{{ sdwan_vmanage_timeout }}"
+    status_code: [200, 201]
+  when: apply_changes | bool
+  register: sdwan_tls_result
+  tags: [sdwan, security, stig, stig_cat1, crypto, tls, nist_sc]
+
+- name: "STIG SC-13 - Enable FIPS 140-2 mode on vManage"
+  ansible.builtin.uri:
+    url: "https://{{ sdwan_vmanage_host }}:{{ sdwan_vmanage_port }}/dataservice/settings/configuration/fips"
+    method: PUT
+    headers:
+      Cookie: "{{ sdwan_session_cookie }}"
+      X-XSRF-TOKEN: "{{ sdwan_csrf_token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      fipsEnabled: "{{ sdwan_fips_enabled | lower }}"
+    validate_certs: "{{ sdwan_vmanage_verify_ssl }}"
+    timeout: "{{ sdwan_vmanage_timeout }}"
+    status_code: [200, 201]
+  when:
+    - apply_changes | bool
+    - sdwan_fips_enabled | bool
+  register: sdwan_fips_result
+  tags: [sdwan, security, stig, stig_cat1, fips, crypto, nist_sc]
+
+- name: "STIG SC-8 - Configure SD-WAN IPSec data-plane cipher suite"
+  ansible.builtin.uri:
+    url: "https://{{ sdwan_vmanage_host }}:{{ sdwan_vmanage_port }}/dataservice/settings/configuration/ipsec"
+    method: PUT
+    headers:
+      Cookie: "{{ sdwan_session_cookie }}"
+      X-XSRF-TOKEN: "{{ sdwan_csrf_token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      cipherSuite: "{{ sdwan_ipsec_cipher_suite }}"
+      integrity: "{{ sdwan_ipsec_integrity }}"
+      rekeyInterval: "{{ sdwan_ipsec_rekey_interval }}"
+      replayWindow: "{{ sdwan_ipsec_replay_window }}"
+      dtlsPort: "{{ sdwan_dtls_port }}"
+    validate_certs: "{{ sdwan_vmanage_verify_ssl }}"
+    timeout: "{{ sdwan_vmanage_timeout }}"
+    status_code: [200, 201]
+  when: apply_changes | bool
+  register: sdwan_ipsec_result
+  tags: [sdwan, security, stig, stig_cat1, ipsec, crypto, nist_sc]
+
+- name: Display encryption compliance status
+  ansible.builtin.debug:
+    msg:
+      - "STIG Control: CISC-ND-001440 (SC-8 - Transmission Confidentiality)"
+      - "HTTP enabled: {{ sdwan_http_enabled }} (must be false)"
+      - "HTTPS enabled: {{ sdwan_https_enabled }} (must be true)"
+      - "Min TLS version: {{ sdwan_min_tls_version }} (DoD minimum: TLSv1.2)"
+      - "FIPS 140-2 mode: {{ sdwan_fips_enabled }}"
+      - "IPSec cipher: {{ sdwan_ipsec_cipher_suite }}"
+      - "IPSec DH group minimum: {{ sdwan_fips_ipsec_dh_group }}"
+      - "Status: {{ apply_changes | ternary('APPLIED', 'CHECK ONLY') }}"
+  tags: [sdwan, security, stig, stig_cat1, crypto, tls, nist_sc]

@@ -1,0 +1,39 @@
+---
+# tasks file: snmp.yml for sdwan_monitoring
+# Configure SNMPv3 monitoring (authPriv)
+# NIST SC-8 | STIG CISC-ND-000090
+
+- name: "STIG SC-8 [CISC-ND-000090] - Configure SNMPv3 monitoring"
+  ansible.builtin.uri:
+    url: "https://{{ sdwan_vmanage_host }}:{{ sdwan_vmanage_port }}/dataservice/settings/configuration/snmp"
+    method: PUT
+    headers:
+      Cookie: "{{ sdwan_session_cookie }}"
+      X-XSRF-TOKEN: "{{ sdwan_csrf_token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      shutdown: false
+      v2: false
+      v3: true
+      views: "{{ sdwan_monitor_snmp_views }}"
+      users: "{{ sdwan_monitor_snmp_users }}"
+      trapTargets: "{{ sdwan_monitor_snmp_traps }}"
+    validate_certs: "{{ sdwan_vmanage_verify_ssl }}"
+    timeout: "{{ sdwan_vmanage_timeout }}"
+    status_code: [200, 201]
+  when: apply_changes | bool and sdwan_monitor_snmp_v3_enabled | bool
+  no_log: true
+  register: sdwan_monitor_snmp_result
+  tags: [sdwan, monitoring, snmp, phase20]
+
+- name: Display SNMP monitoring status
+  ansible.builtin.debug:
+    msg:
+      - "SNMP monitoring configuration:"
+      - "  SNMPv3 enabled: {{ sdwan_monitor_snmp_v3_enabled }}"
+      - "  SNMPv1/v2c: disabled (STIG CISC-ND-000090)"
+      - "  Users: {{ sdwan_monitor_snmp_users | length }}"
+      - "  Trap destinations: {{ sdwan_monitor_snmp_traps | length }}"
+      - "  Status: {{ apply_changes | ternary('APPLIED', 'CHECK ONLY') }}"
+  tags: [sdwan, monitoring, snmp, phase20]

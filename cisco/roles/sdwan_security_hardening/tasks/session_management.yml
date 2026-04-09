@@ -1,0 +1,49 @@
+---
+# tasks file: session_management.yml for sdwan_security_hardening
+# Configure session timeout and concurrent session limits
+# STIG: CISC-ND-000200, CISC-ND-000390 | NIST AC-11, AC-12
+# CAT: II | SRG: SRG-APP-000190-NDM-000267, SRG-APP-000295-NDM-000290
+
+- name: "STIG AC-12 [CISC-ND-000200] - Configure vManage session idle timeout"
+  ansible.builtin.uri:
+    url: "https://{{ sdwan_vmanage_host }}:{{ sdwan_vmanage_port }}/dataservice/settings/configuration/session"
+    method: PUT
+    headers:
+      Cookie: "{{ sdwan_session_cookie }}"
+      X-XSRF-TOKEN: "{{ sdwan_csrf_token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      sessionLifeTime: "{{ sdwan_session_max_duration // 60 }}"
+      sessionServerTimeout: "{{ sdwan_session_idle_timeout // 60 }}"
+      maxSessionsPerUser: "{{ sdwan_session_max_concurrent }}"
+    validate_certs: "{{ sdwan_vmanage_verify_ssl }}"
+    timeout: "{{ sdwan_vmanage_timeout }}"
+    status_code: [200, 201]
+  when: apply_changes | bool
+  register: sdwan_session_result
+  tags: [sdwan, security, stig, stig_cat2, sessions, nist_ac]
+
+- name: "STIG AC-12 - Verify session configuration (dry run)"
+  ansible.builtin.uri:
+    url: "https://{{ sdwan_vmanage_host }}:{{ sdwan_vmanage_port }}/dataservice/settings/configuration/session"
+    method: GET
+    headers:
+      Cookie: "{{ sdwan_session_cookie }}"
+      X-XSRF-TOKEN: "{{ sdwan_csrf_token }}"
+    validate_certs: "{{ sdwan_vmanage_verify_ssl }}"
+    timeout: "{{ sdwan_vmanage_timeout }}"
+  when: not apply_changes | bool
+  register: sdwan_session_check
+  check_mode: false
+  tags: [sdwan, security, stig, stig_cat2, sessions, nist_ac]
+
+- name: Display session management compliance status
+  ansible.builtin.debug:
+    msg:
+      - "STIG Controls: CISC-ND-000200, CISC-ND-000390 (AC-11/AC-12 - Session Termination)"
+      - "Idle timeout: {{ sdwan_session_idle_timeout // 60 }} minutes (DoD maximum: 10)"
+      - "Max session: {{ sdwan_session_max_duration // 3600 }} hours"
+      - "Max concurrent sessions per user: {{ sdwan_session_max_concurrent }}"
+      - "Status: {{ apply_changes | ternary('APPLIED', 'CHECK ONLY') }}"
+  tags: [sdwan, security, stig, stig_cat2, sessions, nist_ac]

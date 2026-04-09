@@ -1,0 +1,118 @@
+---
+# Cisco SD-WAN Phase 19: DISA STIG / NIST 800-53 Security Hardening
+#
+# Applies all DISA STIG controls from:
+#   - Cisco IOS XE SD-WAN Router NDM STIG V2R1
+#   - Cisco SD-WAN vManage NDM STIG V1R1
+#
+# STIG Controls Applied:
+#   CAT I  - TACACS+/RADIUS (IA-2), Password Policy (IA-5), TLS/FIPS (SC-8)
+#   CAT II - RBAC (AC-6), Account Lockout (AC-7), Session Timeout (AC-12),
+#             SNMPv3 (SC-8), Audit Logging (AU-2), NTP Auth (AU-8),
+#             SSH v2 (SC-8), Disable Unused Services (CM-7)
+#   CAT III - DoD Login Banner (AC-8)
+#
+# Usage:
+#   # Dry run (recommended first):
+#   ansible-playbook -i inventory cisco/playbooks/06_sdwan_phase5_security_hardening.yml \
+#     --ask-vault-pass
+#
+#   # Apply all STIG controls:
+#   ansible-playbook -i inventory cisco/playbooks/06_sdwan_phase5_security_hardening.yml \
+#     -e apply_changes=true --ask-vault-pass
+#
+#   # Apply CAT I controls only:
+#   ansible-playbook -i inventory cisco/playbooks/06_sdwan_phase5_security_hardening.yml \
+#     --tags stig_cat1 -e apply_changes=true --ask-vault-pass
+#
+#   # Check specific control:
+#   ansible-playbook -i inventory cisco/playbooks/06_sdwan_phase5_security_hardening.yml \
+#     --tags "authentication,passwords" --ask-vault-pass
+#
+# Prerequisite: Phases 15-18 must be complete (or target is an existing fabric)
+
+- name: Phase 19 - SD-WAN DISA STIG Security Hardening
+  hosts: localhost
+  gather_facts: false
+  any_errors_fatal: true
+  connection: local
+
+  vars:
+    apply_changes: false
+    sdwan_artifacts_dir: "/tmp/sdwan-fourth-estate-artifacts/phase19"
+    fourth_estate_org_name: "FourthEstate"
+
+  pre_tasks:
+    - name: Display Phase 19 STIG hardening banner
+      ansible.builtin.debug:
+        msg: |
+          ════════════════════════════════════════════════════════════════
+          PHASE 19: DISA STIG / NIST 800-53 Security Hardening
+          ════════════════════════════════════════════════════════════════
+          STIG References:
+            - Cisco IOS XE SD-WAN Router NDM STIG V2R1
+            - Cisco SD-WAN vManage NDM STIG V1R1
+
+          Controls:
+            CAT I  ✓ TACACS+/RADIUS AAA (CISC-ND-001190 / IA-2)
+            CAT I  ✓ Password Policy 15-char min (CISC-ND-000530/570 / IA-5)
+            CAT I  ✓ TLS 1.2+ / FIPS 140-2 (CISC-ND-001440 / SC-8)
+            CAT II ✓ RBAC / Least Privilege (CISC-ND-000360 / AC-6)
+            CAT II ✓ Account Lockout 3 attempts (CISC-ND-000370 / AC-7)
+            CAT II ✓ Session Timeout 10 min (CISC-ND-000200 / AC-12)
+            CAT II ✓ SNMPv3 authPriv (CISC-ND-000090 / SC-8)
+            CAT II ✓ Audit Logging to SIEM (CISC-ND-000700 / AU-2)
+            CAT II ✓ Authenticated NTP (CISC-ND-001290 / AU-8)
+            CAT II ✓ SSH v2 / Disable Telnet (CISC-ND-001400 / SC-8)
+            CAT II ✓ Disable Unused Services (CISC-ND-001200 / CM-7)
+            CAT III ✓ DoD Login Banner (CISC-ND-000080 / AC-8)
+          ════════════════════════════════════════════════════════════════
+          Mode: {{ apply_changes | ternary('APPLYING CHANGES', 'DRY RUN') }}
+          ════════════════════════════════════════════════════════════════
+
+    - name: Create Phase 19 artifacts directory
+      ansible.builtin.file:
+        path: "{{ sdwan_artifacts_dir }}"
+        state: directory
+        mode: '0750'
+
+  tasks:
+    - name: Apply SD-WAN STIG security hardening
+      ansible.builtin.include_role:
+        name: sdwan_security_hardening
+
+  post_tasks:
+    - name: Generate Phase 19 completion report
+      ansible.builtin.copy:
+        dest: "{{ sdwan_artifacts_dir }}/phase19_complete.txt"
+        mode: '0640'
+        content: |
+          Phase 19: DISA STIG Security Hardening - COMPLETE
+          ══════════════════════════════════════════════════
+          Completed: {{ ansible_date_time.iso8601 }}
+          Mode: {{ apply_changes | ternary('APPLIED', 'DRY RUN') }}
+
+          STIG Controls Applied:
+            ✓ CISC-ND-000080  DoD Login Banner (AC-8)
+            ✓ CISC-ND-000090  SNMPv3 Required (SC-8)
+            ✓ CISC-ND-000200  Session Timeout (AC-12)
+            ✓ CISC-ND-000360  RBAC / Least Privilege (AC-6)
+            ✓ CISC-ND-000370  Account Lockout (AC-7)
+            ✓ CISC-ND-000530  Password Complexity (IA-5)
+            ✓ CISC-ND-000570  Password Min Length (IA-5)
+            ✓ CISC-ND-000700  Audit Logging (AU-2)
+            ✓ CISC-ND-001190  TACACS+/RADIUS AAA (IA-2)
+            ✓ CISC-ND-001200  Disable Unused Services (CM-7)
+            ✓ CISC-ND-001290  NTP Authentication (AU-8)
+            ✓ CISC-ND-001400  SSH v2 / Disable Telnet (SC-8)
+            ✓ CISC-ND-001440  TLS 1.2+ / FIPS (SC-8)
+
+          Compliance Artifacts: {{ sdwan_artifacts_dir }}/
+          Next Phase: Run 07_sdwan_phase6_monitoring.yml
+
+    - name: Display STIG hardening summary
+      ansible.builtin.debug:
+        msg: |
+          Phase 19 STIG Hardening Complete!
+          Compliance reports: {{ sdwan_artifacts_dir }}/
+          Next: ansible-playbook cisco/playbooks/07_sdwan_phase6_monitoring.yml

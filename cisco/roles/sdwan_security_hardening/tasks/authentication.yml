@@ -1,0 +1,72 @@
+---
+# tasks file: authentication.yml for sdwan_security_hardening
+# Configure AAA authentication (TACACS+/RADIUS) and account lockout policy
+# STIG: CISC-ND-001190 | NIST IA-2, IA-3, AC-7
+# CAT: I | SRG: SRG-APP-000025-NDM-000103, SRG-APP-000345-NDM-000000
+
+# ============================================================
+# vManage AAA Configuration
+# ============================================================
+- name: "STIG IA-2 [CISC-ND-001190] - Configure TACACS+ authentication servers"
+  ansible.builtin.uri:
+    url: "https://{{ sdwan_vmanage_host }}:{{ sdwan_vmanage_port }}/dataservice/settings/configuration/aaa"
+    method: PUT
+    headers:
+      Cookie: "{{ sdwan_session_cookie }}"
+      X-XSRF-TOKEN: "{{ sdwan_csrf_token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      authOrder:
+        - "local"
+        - "radius"
+      authFallback: true
+      adminAuthOrder: "local"
+      auditDisable: false
+      netconfSystemAuth: false
+      radiusRetries: 3
+      radiusTimeout: 10
+      radiusServers:
+        "{{ sdwan_radius_servers | default([]) | map(attribute='host') | list }}"
+      tacacsServers: "{{ sdwan_tacacs_servers | default([]) }}"
+    validate_certs: "{{ sdwan_vmanage_verify_ssl }}"
+    timeout: "{{ sdwan_vmanage_timeout }}"
+    status_code: [200, 201]
+  when:
+    - apply_changes | bool
+    - sdwan_auth_method in ['tacacs', 'radius']
+  no_log: true
+  register: sdwan_aaa_result
+  tags: [sdwan, security, stig, stig_cat1, authentication, aaa, nist_ia]
+
+- name: "STIG AC-7 [CISC-ND-000370] - Configure account lockout policy on vManage"
+  ansible.builtin.uri:
+    url: "https://{{ sdwan_vmanage_host }}:{{ sdwan_vmanage_port }}/dataservice/settings/configuration/password"
+    method: PUT
+    headers:
+      Cookie: "{{ sdwan_session_cookie }}"
+      X-XSRF-TOKEN: "{{ sdwan_csrf_token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      lockoutTime: "{{ sdwan_lockout_duration_seconds // 60 }}"
+      maxAttempts: "{{ sdwan_lockout_max_attempts }}"
+      maxAttemptTime: "{{ sdwan_lockout_window_seconds // 60 }}"
+    validate_certs: "{{ sdwan_vmanage_verify_ssl }}"
+    timeout: "{{ sdwan_vmanage_timeout }}"
+    status_code: [200, 201]
+  when: apply_changes | bool
+  register: sdwan_lockout_result
+  tags: [sdwan, security, stig, stig_cat2, authentication, lockout, nist_ac]
+
+- name: Display AAA compliance status
+  ansible.builtin.debug:
+    msg:
+      - "STIG Control: CISC-ND-001190 (IA-2 - Identification and Authentication)"
+      - "Auth Method: {{ sdwan_auth_method | upper }}"
+      - "TACACS+ servers: {{ sdwan_tacacs_servers | length }}"
+      - "RADIUS servers: {{ sdwan_radius_servers | length }}"
+      - "Lockout after: {{ sdwan_lockout_max_attempts }} failed attempts"
+      - "Lockout duration: {{ sdwan_lockout_duration_seconds // 60 }} minutes"
+      - "Status: {{ apply_changes | ternary('APPLIED', 'CHECK ONLY') }}"
+  tags: [sdwan, security, stig, stig_cat1, authentication, nist_ia]

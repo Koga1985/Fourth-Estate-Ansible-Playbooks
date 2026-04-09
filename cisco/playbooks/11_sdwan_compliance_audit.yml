@@ -1,0 +1,192 @@
+---
+# Cisco SD-WAN Compliance Audit Playbook
+# Audits SD-WAN fabric against DISA STIG and NIST 800-53 Rev 5
+# Non-destructive: queries only, never modifies configuration
+#
+# Usage:
+#   ansible-playbook -i inventory cisco/playbooks/11_sdwan_compliance_audit.yml --ask-vault-pass
+#
+# Output: Compliance audit report in /tmp/sdwan-artifacts/audit/
+
+- name: SD-WAN STIG Compliance Audit
+  hosts: localhost
+  gather_facts: false
+  connection: local
+
+  vars:
+    apply_changes: false   # ALWAYS false for audit - never modify
+    sdwan_artifacts_dir: "/tmp/sdwan-fourth-estate-artifacts/audit"
+
+  pre_tasks:
+    - name: Display audit banner
+      ansible.builtin.debug:
+        msg: |
+          ════════════════════════════════════════════════════════════════
+          SD-WAN DISA STIG COMPLIANCE AUDIT
+          ════════════════════════════════════════════════════════════════
+          STIG References:
+            - Cisco IOS XE SD-WAN Router NDM STIG V2R1
+            - Cisco SD-WAN vManage NDM STIG V1R1
+          Mode: READ ONLY — No changes will be made
+          ════════════════════════════════════════════════════════════════
+
+    - name: Create audit artifacts directory
+      ansible.builtin.file:
+        path: "{{ sdwan_artifacts_dir }}"
+        state: directory
+        mode: '0750'
+
+    - name: Authenticate to vManage
+      ansible.builtin.uri:
+        url: "https://{{ sdwan_vmanage_host }}:{{ sdwan_vmanage_port | default(443) }}/j_security_check"
+        method: POST
+        body_format: form-urlencoded
+        body:
+          j_username: "{{ sdwan_vmanage_username }}"
+          j_password: "{{ sdwan_vmanage_password }}"
+        validate_certs: "{{ sdwan_vmanage_verify_ssl | default(true) }}"
+        status_code: [200, 302]
+      register: sdwan_audit_auth
+      no_log: true
+
+    - name: Set session and CSRF facts
+      ansible.builtin.set_fact:
+        sdwan_session_cookie: "{{ sdwan_audit_auth.cookies_string }}"
+      no_log: true
+
+    - name: Get CSRF token
+      ansible.builtin.uri:
+        url: "https://{{ sdwan_vmanage_host }}:{{ sdwan_vmanage_port | default(443) }}/dataservice/client/token"
+        method: GET
+        headers:
+          Cookie: "{{ sdwan_session_cookie }}"
+        validate_certs: "{{ sdwan_vmanage_verify_ssl | default(true) }}"
+      register: sdwan_audit_csrf
+
+    - name: Set CSRF token
+      ansible.builtin.set_fact:
+        sdwan_csrf_token: "{{ sdwan_audit_csrf.json }}"
+
+  tasks:
+    # ---- CISC-ND-000080 : DoD Login Banner (AC-8) ----
+    - name: "AUDIT CISC-ND-000080 - Check DoD login banner"
+      ansible.builtin.uri:
+        url: "https://{{ sdwan_vmanage_host }}:{{ sdwan_vmanage_port | default(443) }}/dataservice/settings/configuration/banner"
+        method: GET
+        headers:
+          Cookie: "{{ sdwan_session_cookie }}"
+          X-XSRF-TOKEN: "{{ sdwan_csrf_token }}"
+        validate_certs: "{{ sdwan_vmanage_verify_ssl | default(true) }}"
+      register: sdwan_audit_banner
+      tags: [audit, banners, stig_cat3]
+
+    - name: "AUDIT CISC-ND-000080 - Assert banner is configured"
+      ansible.builtin.assert:
+        that:
+          - sdwan_audit_banner.json.mode == 'on'
+          - sdwan_audit_banner.json.bannerDetail | length > 100
+        fail_msg: "FAIL: CISC-ND-000080 (AC-8) - DoD login banner NOT configured or too short"
+        success_msg: "PASS: CISC-ND-000080 (AC-8) - DoD login banner is configured"
+      tags: [audit, banners, stig_cat3]
+
+    # ---- CISC-ND-000090 : SNMPv3 Required (SC-8) ----
+    - name: "AUDIT CISC-ND-000090 - Check SNMP configuration"
+      ansible.builtin.uri:
+        url: "https://{{ sdwan_vmanage_host }}:{{ sdwan_vmanage_port | default(443) }}/dataservice/settings/configuration/snmp"
+        method: GET
+        headers:
+          Cookie: "{{ sdwan_session_cookie }}"
+          X-XSRF-TOKEN: "{{ sdwan_csrf_token }}"
+        validate_certs: "{{ sdwan_vmanage_verify_ssl | default(true) }}"
+      register: sdwan_audit_snmp
+      tags: [audit, snmp, stig_cat2]
+
+    - name: "AUDIT CISC-ND-000090 - Assert SNMPv1/v2c disabled"
+      ansible.builtin.assert:
+        that:
+          - not (sdwan_audit_snmp.json.v2 | default(false) | bool)
+          - sdwan_audit_snmp.json.v3 | default(false) | bool
+        fail_msg: "FAIL: CISC-ND-000090 (SC-8) - SNMPv1/v2c not disabled or SNMPv3 not enabled"
+        success_msg: "PASS: CISC-ND-000090 (SC-8) - SNMPv3 enabled, v1/v2c disabled"
+      tags: [audit, snmp, stig_cat2]
+
+    # ---- CISC-ND-000370 : Account Lockout (AC-7) ----
+    - name: "AUDIT CISC-ND-000370 - Check account lockout policy"
+      ansible.builtin.uri:
+        url: "https://{{ sdwan_vmanage_host }}:{{ sdwan_vmanage_port | default(443) }}/dataservice/settings/configuration/password"
+        method: GET
+        headers:
+          Cookie: "{{ sdwan_session_cookie }}"
+          X-XSRF-TOKEN: "{{ sdwan_csrf_token }}"
+        validate_certs: "{{ sdwan_vmanage_verify_ssl | default(true) }}"
+      register: sdwan_audit_password
+      tags: [audit, passwords, stig_cat1, stig_cat2]
+
+    - name: "AUDIT CISC-ND-000370/000530/000570 - Assert password and lockout policy"
+      ansible.builtin.assert:
+        that:
+          - (sdwan_audit_password.json.maxAttempts | default(99) | int) <= 3
+          - (sdwan_audit_password.json.passwordMinLen | default(0) | int) >= 15
+        fail_msg: >-
+          FAIL: Password/lockout policy non-compliant.
+          Lockout max attempts must be <= 3 (found: {{ sdwan_audit_password.json.maxAttempts | default('not set') }}).
+          Min password length must be >= 15 (found: {{ sdwan_audit_password.json.passwordMinLen | default('not set') }}).
+        success_msg: "PASS: CISC-ND-000370/530/570 - Password and lockout policy compliant"
+      tags: [audit, passwords, stig_cat1, stig_cat2]
+
+    # ---- CISC-ND-001290 : NTP Authentication (AU-8) ----
+    - name: "AUDIT CISC-ND-001290 - Check NTP authentication"
+      ansible.builtin.uri:
+        url: "https://{{ sdwan_vmanage_host }}:{{ sdwan_vmanage_port | default(443) }}/dataservice/settings/configuration/ntp"
+        method: GET
+        headers:
+          Cookie: "{{ sdwan_session_cookie }}"
+          X-XSRF-TOKEN: "{{ sdwan_csrf_token }}"
+        validate_certs: "{{ sdwan_vmanage_verify_ssl | default(true) }}"
+      register: sdwan_audit_ntp
+      tags: [audit, ntp, stig_cat2]
+
+    - name: "AUDIT CISC-ND-001290 - Assert NTP authentication is enabled"
+      ansible.builtin.assert:
+        that:
+          - sdwan_audit_ntp.json.enabled | default(false) | bool
+          - sdwan_audit_ntp.json.authenticate | default(false) | bool
+          - sdwan_audit_ntp.json.servers | default([]) | length > 0
+        fail_msg: "FAIL: CISC-ND-001290 (AU-8) - NTP not configured or authentication not enabled"
+        success_msg: "PASS: CISC-ND-001290 (AU-8) - Authenticated NTP is configured"
+      tags: [audit, ntp, stig_cat2]
+
+  post_tasks:
+    - name: Generate compliance audit report
+      ansible.builtin.copy:
+        dest: "{{ sdwan_artifacts_dir }}/sdwan_compliance_audit_{{ ansible_date_time.epoch }}.txt"
+        mode: '0640'
+        content: |
+          SD-WAN DISA STIG Compliance Audit Report
+          ════════════════════════════════════════════════════════════════
+          Organization: {{ fourth_estate_org | default('FourthEstate') }}
+          vManage: {{ sdwan_vmanage_host }}
+          Audited: {{ ansible_date_time.iso8601 }}
+          Mode: READ ONLY (no changes made)
+          ════════════════════════════════════════════════════════════════
+          STIG References:
+            - Cisco IOS XE SD-WAN Router NDM STIG V2R1
+            - Cisco SD-WAN vManage NDM STIG V1R1
+
+          Controls Audited:
+            CISC-ND-000080  DoD Login Banner         (AC-8)
+            CISC-ND-000090  SNMPv3 Required           (SC-8)
+            CISC-ND-000370  Account Lockout Policy    (AC-7)
+            CISC-ND-000530  Password Complexity       (IA-5)
+            CISC-ND-000570  Password Min Length       (IA-5)
+            CISC-ND-001290  NTP Authentication        (AU-8)
+
+          See task output above for individual PASS/FAIL results.
+          Compliance Frameworks: DoD STIG, NIST 800-53 Rev 5, FISMA
+          ════════════════════════════════════════════════════════════════
+
+    - name: Display audit completion message
+      ansible.builtin.debug:
+        msg: |
+          SD-WAN Compliance Audit Complete.
+          Report saved to: {{ sdwan_artifacts_dir }}/sdwan_compliance_audit_*.txt

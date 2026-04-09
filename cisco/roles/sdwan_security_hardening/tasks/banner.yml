@@ -1,0 +1,52 @@
+---
+# tasks file: banner.yml for sdwan_security_hardening
+# Configure DoD login banner on vManage and via feature template for edge devices
+# STIG: CISC-ND-000080 | NIST AC-8
+# CAT: III | SRG: SRG-APP-000068-NDM-000215
+
+# ============================================================
+# vManage Login Banner
+# Applies the DoD warning banner to the vManage web UI and CLI
+# ============================================================
+- name: "STIG AC-8 [CISC-ND-000080] - Configure vManage login banner"
+  ansible.builtin.uri:
+    url: "https://{{ sdwan_vmanage_host }}:{{ sdwan_vmanage_port }}/dataservice/settings/configuration/banner"
+    method: POST
+    headers:
+      Cookie: "{{ sdwan_session_cookie }}"
+      X-XSRF-TOKEN: "{{ sdwan_csrf_token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      mode: "on"
+      bannerDetail: "{{ sdwan_login_banner }}"
+    validate_certs: "{{ sdwan_vmanage_verify_ssl }}"
+    timeout: "{{ sdwan_vmanage_timeout }}"
+    status_code: [200, 201]
+  when: apply_changes | bool
+  no_log: false
+  register: sdwan_banner_result
+  tags: [sdwan, security, stig, stig_cat3, banners, nist_ac]
+
+- name: "STIG AC-8 [CISC-ND-000080] - Verify vManage banner is configured (dry run)"
+  ansible.builtin.uri:
+    url: "https://{{ sdwan_vmanage_host }}:{{ sdwan_vmanage_port }}/dataservice/settings/configuration/banner"
+    method: GET
+    headers:
+      Cookie: "{{ sdwan_session_cookie }}"
+      X-XSRF-TOKEN: "{{ sdwan_csrf_token }}"
+    validate_certs: "{{ sdwan_vmanage_verify_ssl }}"
+    timeout: "{{ sdwan_vmanage_timeout }}"
+  when: not apply_changes | bool
+  register: sdwan_banner_check
+  check_mode: false
+  tags: [sdwan, security, stig, stig_cat3, banners, nist_ac]
+
+- name: Display banner compliance status
+  ansible.builtin.debug:
+    msg:
+      - "STIG Control: CISC-ND-000080 (AC-8 - System Use Notification)"
+      - "Finding: DoD login banner"
+      - "Status: {{ apply_changes | ternary('APPLIED', 'CHECK ONLY') }}"
+      - "Banner length: {{ sdwan_login_banner | length }} chars"
+  tags: [sdwan, security, stig, stig_cat3, banners, nist_ac]

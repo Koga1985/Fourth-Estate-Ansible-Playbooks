@@ -1,0 +1,135 @@
+---
+# Cisco SD-WAN Validation Playbook
+# Validates the entire SD-WAN fabric health and connectivity
+# Run after deployment to verify all components are operational
+
+- name: SD-WAN Fabric Validation
+  hosts: localhost
+  gather_facts: false
+  connection: local
+
+  vars:
+    apply_changes: false
+    sdwan_artifacts_dir: "/tmp/sdwan-fourth-estate-artifacts/validation"
+
+  pre_tasks:
+    - name: Display validation banner
+      ansible.builtin.debug:
+        msg: |
+          ════════════════════════════════════════════════════════════════
+          SD-WAN FABRIC VALIDATION
+          ════════════════════════════════════════════════════════════════
+          Validating:
+            ✓ vManage API connectivity
+            ✓ Controller registration (vBond, vSmart)
+            ✓ Edge device sync status
+            ✓ Control connections
+            ✓ Tunnel statistics
+          ════════════════════════════════════════════════════════════════
+
+    - name: Create validation artifacts directory
+      ansible.builtin.file:
+        path: "{{ sdwan_artifacts_dir }}"
+        state: directory
+        mode: '0750'
+
+    - name: Authenticate to vManage
+      ansible.builtin.uri:
+        url: "https://{{ sdwan_vmanage_host }}:{{ sdwan_vmanage_port | default(443) }}/j_security_check"
+        method: POST
+        body_format: form-urlencoded
+        body:
+          j_username: "{{ sdwan_vmanage_username }}"
+          j_password: "{{ sdwan_vmanage_password }}"
+        validate_certs: "{{ sdwan_vmanage_verify_ssl | default(true) }}"
+        status_code: [200, 302]
+      register: sdwan_val_auth
+      no_log: true
+
+    - name: Set auth facts
+      ansible.builtin.set_fact:
+        sdwan_session_cookie: "{{ sdwan_val_auth.cookies_string }}"
+      no_log: true
+
+    - name: Get CSRF token
+      ansible.builtin.uri:
+        url: "https://{{ sdwan_vmanage_host }}:{{ sdwan_vmanage_port | default(443) }}/dataservice/client/token"
+        method: GET
+        headers:
+          Cookie: "{{ sdwan_session_cookie }}"
+        validate_certs: "{{ sdwan_vmanage_verify_ssl | default(true) }}"
+      register: sdwan_val_csrf
+
+    - name: Set CSRF token
+      ansible.builtin.set_fact:
+        sdwan_csrf_token: "{{ sdwan_val_csrf.json }}"
+
+  tasks:
+    - name: Check vManage API health
+      ansible.builtin.uri:
+        url: "https://{{ sdwan_vmanage_host }}:{{ sdwan_vmanage_port | default(443) }}/dataservice/system/device/controllers"
+        method: GET
+        headers:
+          Cookie: "{{ sdwan_session_cookie }}"
+          X-XSRF-TOKEN: "{{ sdwan_csrf_token }}"
+        validate_certs: "{{ sdwan_vmanage_verify_ssl | default(true) }}"
+      register: sdwan_controllers
+      tags: [validation, controllers]
+
+    - name: Check edge device status
+      ansible.builtin.uri:
+        url: "https://{{ sdwan_vmanage_host }}:{{ sdwan_vmanage_port | default(443) }}/dataservice/system/device/vedges"
+        method: GET
+        headers:
+          Cookie: "{{ sdwan_session_cookie }}"
+          X-XSRF-TOKEN: "{{ sdwan_csrf_token }}"
+        validate_certs: "{{ sdwan_vmanage_verify_ssl | default(true) }}"
+      register: sdwan_vedges
+      tags: [validation, vedges]
+
+    - name: Check fabric device counters
+      ansible.builtin.uri:
+        url: "https://{{ sdwan_vmanage_host }}:{{ sdwan_vmanage_port | default(443) }}/dataservice/device/counters"
+        method: GET
+        headers:
+          Cookie: "{{ sdwan_session_cookie }}"
+          X-XSRF-TOKEN: "{{ sdwan_csrf_token }}"
+        validate_certs: "{{ sdwan_vmanage_verify_ssl | default(true) }}"
+      register: sdwan_counters
+      tags: [validation, health]
+
+    - name: Assert controllers are reachable
+      ansible.builtin.assert:
+        that:
+          - sdwan_controllers.status == 200
+        fail_msg: "vManage API returned {{ sdwan_controllers.status }} — check connectivity"
+        success_msg: "vManage API is healthy"
+      tags: [validation]
+
+    - name: Display validation summary
+      ansible.builtin.debug:
+        msg:
+          - "════════════════════════════════════════════════════════════════"
+          - " SD-WAN Fabric Validation Summary"
+          - "════════════════════════════════════════════════════════════════"
+          - " vManage API: REACHABLE"
+          - " Controllers: {{ sdwan_controllers.json.data | length | default(0) }}"
+          - " Edge devices: {{ sdwan_vedges.json.data | length | default(0) }}"
+          - " Total devices: {{ sdwan_counters.json.data[0].totalCount | default('unknown') }}"
+          - " Reachable: {{ sdwan_counters.json.data[0].reachableCount | default('unknown') }}"
+          - " Unreachable: {{ sdwan_counters.json.data[0].unreachableCount | default('unknown') }}"
+          - "════════════════════════════════════════════════════════════════"
+      tags: [validation]
+
+  post_tasks:
+    - name: Save validation report
+      ansible.builtin.copy:
+        dest: "{{ sdwan_artifacts_dir }}/validation_{{ ansible_date_time.epoch }}.txt"
+        mode: '0640'
+        content: |
+          SD-WAN Fabric Validation Report
+          Generated: {{ ansible_date_time.iso8601 }}
+          vManage: {{ sdwan_vmanage_host }}
+          Controllers: {{ sdwan_controllers.json.data | length | default(0) }}
+          Edge devices: {{ sdwan_vedges.json.data | length | default(0) }}
+      tags: [always]

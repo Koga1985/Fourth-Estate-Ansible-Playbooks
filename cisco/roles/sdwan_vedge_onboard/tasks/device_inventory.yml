@@ -1,0 +1,35 @@
+---
+# tasks file: device_inventory.yml for sdwan_vedge_onboard
+# Register edge devices in vManage inventory
+
+- name: Add edge devices to vManage inventory
+  ansible.builtin.uri:
+    url: "https://{{ sdwan_vmanage_host }}:{{ sdwan_vmanage_port }}/dataservice/system/device/vedges"
+    method: POST
+    headers:
+      Cookie: "{{ sdwan_session_cookie }}"
+      X-XSRF-TOKEN: "{{ sdwan_csrf_token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      csv-deviceId: "{{ item.uuid }}"
+      csv-host-name: "{{ item.hostname }}"
+      csv-deviceIP: "{{ item.system_ip }}"
+      csv-site-id: "{{ item.site_id }}"
+      csv-otp: "{{ item.token }}"
+    validate_certs: "{{ sdwan_vmanage_verify_ssl }}"
+    timeout: "{{ sdwan_vmanage_timeout }}"
+    status_code: [200, 201, 409]
+  loop: "{{ sdwan_edge_devices }}"
+  when: apply_changes | bool
+  no_log: true
+  register: sdwan_inventory_result
+  tags: [sdwan, vedge, inventory, phase18]
+
+- name: Display inventory registration status
+  ansible.builtin.debug:
+    msg:
+      - "Device inventory registration:"
+      - "  Devices to register: {{ sdwan_edge_devices | length }}"
+      - "  Status: {{ apply_changes | ternary('APPLIED', 'CHECK ONLY') }}"
+  tags: [sdwan, vedge, inventory, phase18]

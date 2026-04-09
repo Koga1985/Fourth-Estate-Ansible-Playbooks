@@ -1,0 +1,69 @@
+---
+# tasks file: compliance_report.yml for sdwan_security_hardening
+# Generate STIG compliance report artifact
+
+- name: Generate STIG compliance report
+  ansible.builtin.template:
+    src: sdwan_security_hardening_report.json.j2
+    dest: "{{ sdwan_artifacts_dir }}/sdwan_stig_compliance_{{ ansible_date_time.epoch }}.json"
+    mode: '0640'
+  tags: [sdwan, security, compliance, report, artifact]
+
+- name: Generate STIG findings summary
+  ansible.builtin.copy:
+    dest: "{{ sdwan_artifacts_dir }}/sdwan_stig_summary_{{ ansible_date_time.epoch }}.txt"
+    mode: '0640'
+    content: |
+      Cisco SD-WAN STIG Compliance Report
+      ════════════════════════════════════════════════════════════════
+      Organization:  {{ fourth_estate_org }}
+      Environment:   {{ fourth_estate_environment }}
+      vManage Host:  {{ sdwan_vmanage_host }}
+      Generated:     {{ ansible_date_time.iso8601 }}
+      Mode:          {{ apply_changes | ternary('APPLIED', 'DRY RUN') }}
+      ════════════════════════════════════════════════════════════════
+
+      STIG References:
+        - Cisco IOS XE SD-WAN Router NDM STIG V2R1
+        - Cisco SD-WAN vManage NDM STIG V1R1
+
+      NIST SP 800-53 Rev 5 Controls Implemented:
+        AC-2   Account Management              - {{ enable_access_control | ternary('CONFIGURED', 'SKIPPED') }}
+        AC-3   Access Enforcement (RBAC)       - {{ enable_access_control | ternary('CONFIGURED', 'SKIPPED') }}
+        AC-6   Least Privilege                 - {{ enable_access_control | ternary('CONFIGURED', 'SKIPPED') }}
+        AC-7   Unsuccessful Logon Attempts     - {{ enable_auth_hardening | ternary('CONFIGURED', 'SKIPPED') }}
+        AC-8   System Use Notification Banner  - {{ enable_banners | ternary('CONFIGURED', 'SKIPPED') }}
+        AC-11  Session Lock                    - {{ enable_session_management | ternary('CONFIGURED', 'SKIPPED') }}
+        AC-12  Session Termination             - {{ enable_session_management | ternary('CONFIGURED', 'SKIPPED') }}
+        AC-17  Remote Access (SSH)             - {{ enable_ssh_hardening | ternary('CONFIGURED', 'SKIPPED') }}
+        AU-2   Event Logging                   - {{ enable_audit_logging | ternary('CONFIGURED', 'SKIPPED') }}
+        AU-3   Content of Audit Records        - {{ enable_audit_logging | ternary('CONFIGURED', 'SKIPPED') }}
+        AU-8   Time Stamps (NTP)               - {{ enable_ntp_hardening | ternary('CONFIGURED', 'SKIPPED') }}
+        AU-9   Protection of Audit Information - {{ enable_audit_logging | ternary('CONFIGURED', 'SKIPPED') }}
+        AU-12  Audit Record Generation         - {{ enable_audit_logging | ternary('CONFIGURED', 'SKIPPED') }}
+        CM-6   Configuration Settings          - CONFIGURED (by design)
+        CM-7   Least Functionality             - {{ enable_unused_services | ternary('CONFIGURED', 'SKIPPED') }}
+        IA-2   Authentication                  - {{ enable_auth_hardening | ternary('CONFIGURED', 'SKIPPED') }}
+        IA-3   Device Identification           - CONFIGURED (certificates)
+        IA-5   Authenticator Management        - {{ enable_password_policy | ternary('CONFIGURED', 'SKIPPED') }}
+        SC-8   Transmission Confidentiality    - {{ enable_crypto_tls | ternary('CONFIGURED', 'SKIPPED') }}
+        SC-13  Cryptographic Protection (FIPS) - {{ enable_fips_mode | ternary('CONFIGURED', 'SKIPPED') }}
+        SC-17  PKI Certificates                - CONFIGURED (certificates)
+        SC-28  Protection at Rest              - {{ enable_fips_mode | ternary('CONFIGURED', 'SKIPPED') }}
+
+      STIG Finding Status:
+        CAT I  (High)   - Authentication, TLS, FIPS, Password Policy
+        CAT II (Medium) - RBAC, Session, SNMP, Logging, NTP, SSH, Services
+        CAT III (Low)   - Login Banner, System Info
+
+      Compliance Frameworks: {{ compliance_frameworks | join(', ') }}
+      ════════════════════════════════════════════════════════════════
+  tags: [sdwan, security, compliance, report, artifact]
+
+- name: Display compliance report location
+  ansible.builtin.debug:
+    msg:
+      - "Compliance reports saved to: {{ sdwan_artifacts_dir }}/"
+      - "  - sdwan_stig_compliance_<epoch>.json"
+      - "  - sdwan_stig_summary_<epoch>.txt"
+  tags: [sdwan, security, compliance, report, artifact]

@@ -1,0 +1,139 @@
+---
+# tasks file: prerequisites.yml for sdwan_security_hardening
+# Validates connectivity and required variables before applying STIG controls
+
+- name: Validate required connection variables are defined
+  ansible.builtin.assert:
+    that:
+      - sdwan_vmanage_host is defined and sdwan_vmanage_host | length > 0
+      - sdwan_vmanage_username is defined and sdwan_vmanage_username | length > 0
+      - sdwan_vmanage_password is defined and sdwan_vmanage_password | length > 0
+    fail_msg: >-
+      Required SD-WAN vManage connection variables are not defined.
+      Set sdwan_vmanage_host, sdwan_vmanage_username, and sdwan_vmanage_password
+      (use vault_sdwan_* references in defaults/main.yml).
+    success_msg: "SD-WAN connection variables validated"
+  tags: [always, prerequisites, validation]
+
+- name: Validate TACACS+ server list when auth method is tacacs
+  ansible.builtin.assert:
+    that:
+      - sdwan_tacacs_servers | length > 0
+    fail_msg: >-
+      sdwan_auth_method is 'tacacs' but sdwan_tacacs_servers list is empty.
+      Define at least one TACACS+ server or change sdwan_auth_method.
+    success_msg: "TACACS+ server list validated"
+  when: sdwan_auth_method == "tacacs"
+  tags: [always, prerequisites, validation]
+
+- name: Validate RADIUS server list when auth method is radius
+  ansible.builtin.assert:
+    that:
+      - sdwan_radius_servers | length > 0
+    fail_msg: >-
+      sdwan_auth_method is 'radius' but sdwan_radius_servers list is empty.
+      Define at least one RADIUS server or change sdwan_auth_method.
+    success_msg: "RADIUS server list validated"
+  when: sdwan_auth_method == "radius"
+  tags: [always, prerequisites, validation]
+
+- name: Validate SNMPv3 configuration when SNMP is enabled
+  ansible.builtin.assert:
+    that:
+      - sdwan_snmp_v3_users | length > 0
+    fail_msg: >-
+      sdwan_snmp_v3_enabled is true but sdwan_snmp_v3_users list is empty.
+      Define at least one SNMPv3 user with authPriv security level.
+    success_msg: "SNMPv3 user list validated"
+  when: sdwan_snmp_v3_enabled | bool
+  tags: [always, prerequisites, validation]
+
+- name: Validate syslog destination list
+  ansible.builtin.assert:
+    that:
+      - sdwan_syslog_destinations | length > 0
+    fail_msg: >-
+      sdwan_syslog_enabled is true but sdwan_syslog_destinations is empty.
+      Define at least one remote syslog server for STIG AU-2 compliance.
+    success_msg: "Syslog destination list validated"
+  when: sdwan_syslog_enabled | bool
+  tags: [always, prerequisites, validation]
+
+- name: Create artifacts directory
+  ansible.builtin.file:
+    path: "{{ sdwan_artifacts_dir }}"
+    state: directory
+    mode: '0750'
+  tags: [always, prerequisites]
+
+- name: Display dry-run warning when apply_changes is false
+  ansible.builtin.debug:
+    msg: |
+      ════════════════════════════════════════════════════════════════
+      DRY RUN MODE — No changes will be applied to SD-WAN fabric
+      ════════════════════════════════════════════════════════════════
+      Set apply_changes: true (or -e apply_changes=true) to apply.
+      All tasks will run in check/query mode only.
+      ════════════════════════════════════════════════════════════════
+  when: not apply_changes | bool
+  tags: [always, prerequisites]
+
+- name: Authenticate to vManage and retrieve session token
+  ansible.builtin.uri:
+    url: "https://{{ sdwan_vmanage_host }}:{{ sdwan_vmanage_port }}/j_security_check"
+    method: POST
+    body_format: form-urlencoded
+    body:
+      j_username: "{{ sdwan_vmanage_username }}"
+      j_password: "{{ sdwan_vmanage_password }}"
+    validate_certs: "{{ sdwan_vmanage_verify_ssl }}"
+    status_code: [200, 302]
+    timeout: "{{ sdwan_vmanage_timeout }}"
+  register: sdwan_auth_result
+  no_log: true
+  check_mode: false
+  tags: [always, prerequisites]
+
+- name: Extract vManage session cookie
+  ansible.builtin.set_fact:
+    sdwan_session_cookie: "{{ sdwan_auth_result.cookies_string }}"
+  no_log: true
+  tags: [always, prerequisites]
+
+- name: Get vManage CSRF token
+  ansible.builtin.uri:
+    url: "https://{{ sdwan_vmanage_host }}:{{ sdwan_vmanage_port }}/dataservice/client/token"
+    method: GET
+    headers:
+      Cookie: "{{ sdwan_session_cookie }}"
+    validate_certs: "{{ sdwan_vmanage_verify_ssl }}"
+    timeout: "{{ sdwan_vmanage_timeout }}"
+  register: sdwan_csrf_result
+  check_mode: false
+  tags: [always, prerequisites]
+
+- name: Set vManage CSRF token fact
+  ansible.builtin.set_fact:
+    sdwan_csrf_token: "{{ sdwan_csrf_result.json }}"
+  tags: [always, prerequisites]
+
+- name: Verify vManage connectivity - get system status
+  ansible.builtin.uri:
+    url: "https://{{ sdwan_vmanage_host }}:{{ sdwan_vmanage_port }}/dataservice/system/device/controllers"
+    method: GET
+    headers:
+      Cookie: "{{ sdwan_session_cookie }}"
+      X-XSRF-TOKEN: "{{ sdwan_csrf_token }}"
+    validate_certs: "{{ sdwan_vmanage_verify_ssl }}"
+    timeout: "{{ sdwan_vmanage_timeout }}"
+  register: sdwan_controller_status
+  check_mode: false
+  tags: [always, prerequisites]
+
+- name: Assert vManage API is reachable
+  ansible.builtin.assert:
+    that:
+      - sdwan_controller_status.status == 200
+    fail_msg: "vManage API returned status {{ sdwan_controller_status.status }}. Check connectivity and credentials."
+    success_msg: "vManage API is reachable and authenticated"
+  tags: [always, prerequisites]

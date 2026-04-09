@@ -1,0 +1,48 @@
+---
+# tasks file: controller_certificates.yml for sdwan_controllers_config
+# Issue and install certificates on vBond and vSmart
+# NIST SC-17, IA-3 | Device identity certificates
+
+- name: Issue certificate for vBond
+  ansible.builtin.uri:
+    url: "https://{{ sdwan_vmanage_host }}:{{ sdwan_vmanage_port }}/dataservice/certificate/generate/csr"
+    method: POST
+    headers:
+      Cookie: "{{ sdwan_session_cookie }}"
+      X-XSRF-TOKEN: "{{ sdwan_csrf_token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      deviceIP: "{{ sdwan_vbond_system_ip }}"
+    validate_certs: "{{ sdwan_vmanage_verify_ssl }}"
+    timeout: "{{ sdwan_vmanage_timeout }}"
+    status_code: [200, 201]
+  when: apply_changes | bool and enable_controller_certificates | bool
+  register: sdwan_vbond_csr
+  tags: [sdwan, controllers, certificates, pki, phase17]
+
+- name: Issue certificate for vSmart
+  ansible.builtin.uri:
+    url: "https://{{ sdwan_vmanage_host }}:{{ sdwan_vmanage_port }}/dataservice/certificate/generate/csr"
+    method: POST
+    headers:
+      Cookie: "{{ sdwan_session_cookie }}"
+      X-XSRF-TOKEN: "{{ sdwan_csrf_token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      deviceIP: "{{ sdwan_vsmart_system_ip }}"
+    validate_certs: "{{ sdwan_vmanage_verify_ssl }}"
+    timeout: "{{ sdwan_vmanage_timeout }}"
+    status_code: [200, 201]
+  when: apply_changes | bool and enable_controller_certificates | bool
+  register: sdwan_vsmart_csr
+  tags: [sdwan, controllers, certificates, pki, phase17]
+
+- name: Display certificate status
+  ansible.builtin.debug:
+    msg:
+      - "Controller certificate issuance:"
+      - "  vBond CSR: {{ apply_changes | ternary('REQUESTED', 'SKIPPED (dry run)') }}"
+      - "  vSmart CSR: {{ apply_changes | ternary('REQUESTED', 'SKIPPED (dry run)') }}"
+  tags: [sdwan, controllers, certificates, pki, phase17]

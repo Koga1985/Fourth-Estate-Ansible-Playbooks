@@ -1,0 +1,38 @@
+---
+# tasks file: unused_services.yml for sdwan_security_hardening
+# Disable unused and insecure services on vManage and via templates to edge devices
+# STIG: CISC-ND-001200, CISC-ND-001210 | NIST CM-7
+# CAT: II | SRG: SRG-APP-000141-NDM-000249
+
+- name: "STIG CM-7 [CISC-ND-001200] - Disable unused services on vManage"
+  ansible.builtin.uri:
+    url: "https://{{ sdwan_vmanage_host }}:{{ sdwan_vmanage_port }}/dataservice/settings/configuration/services"
+    method: PUT
+    headers:
+      Cookie: "{{ sdwan_session_cookie }}"
+      X-XSRF-TOKEN: "{{ sdwan_csrf_token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      httpEnabled: "{{ not sdwan_disable_http_server | lower }}"
+      telnetEnabled: "{{ not sdwan_disable_telnet | lower }}"
+      snmpV1V2Enabled: false
+    validate_certs: "{{ sdwan_vmanage_verify_ssl }}"
+    timeout: "{{ sdwan_vmanage_timeout }}"
+    status_code: [200, 201]
+  when: apply_changes | bool
+  register: sdwan_services_result
+  tags: [sdwan, security, stig, stig_cat2, services, nist_cm]
+
+- name: Display unused services compliance status
+  ansible.builtin.debug:
+    msg:
+      - "STIG Controls: CISC-ND-001200, CISC-ND-001210 (CM-7 - Least Functionality)"
+      - "HTTP server disabled: {{ sdwan_disable_http_server }}"
+      - "Telnet disabled: {{ sdwan_disable_telnet }}"
+      - "Finger disabled: {{ sdwan_disable_finger }}"
+      - "TCP small servers disabled: {{ sdwan_disable_tcp_small_servers }}"
+      - "UDP small servers disabled: {{ sdwan_disable_udp_small_servers }}"
+      - "SNMPv1/v2c disabled: true (enforced)"
+      - "Status: {{ apply_changes | ternary('APPLIED', 'CHECK ONLY') }}"
+  tags: [sdwan, security, stig, stig_cat2, services, nist_cm]

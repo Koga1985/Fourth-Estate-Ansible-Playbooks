@@ -1,0 +1,57 @@
+---
+# tasks file: ntp.yml for sdwan_security_hardening
+# Configure authenticated NTP with DoD-approved sources
+# STIG: CISC-ND-001290, CISC-ND-001420 | NIST AU-8
+# CAT: II | SRG: SRG-APP-000373-NDM-000298, SRG-APP-000374-NDM-000300
+
+- name: "STIG AU-8 [CISC-ND-001290] - Configure authenticated NTP servers on vManage"
+  ansible.builtin.uri:
+    url: "https://{{ sdwan_vmanage_host }}:{{ sdwan_vmanage_port }}/dataservice/settings/configuration/ntp"
+    method: PUT
+    headers:
+      Cookie: "{{ sdwan_session_cookie }}"
+      X-XSRF-TOKEN: "{{ sdwan_csrf_token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      enabled: true
+      servers: "{{ sdwan_ntp_servers }}"
+      authenticate: "{{ sdwan_ntp_authenticate | lower }}"
+      authentication:
+        - keyId: "{{ sdwan_ntp_key_id }}"
+          keyType: "{{ sdwan_ntp_key_type }}"
+          key: "{{ sdwan_ntp_key }}"
+          trusted: true
+    validate_certs: "{{ sdwan_vmanage_verify_ssl }}"
+    timeout: "{{ sdwan_vmanage_timeout }}"
+    status_code: [200, 201]
+  when: apply_changes | bool and sdwan_ntp_enabled | bool
+  no_log: true
+  register: sdwan_ntp_result
+  tags: [sdwan, security, stig, stig_cat2, ntp, nist_au]
+
+- name: "STIG AU-8 [CISC-ND-001290] - Verify NTP configuration (dry run)"
+  ansible.builtin.uri:
+    url: "https://{{ sdwan_vmanage_host }}:{{ sdwan_vmanage_port }}/dataservice/settings/configuration/ntp"
+    method: GET
+    headers:
+      Cookie: "{{ sdwan_session_cookie }}"
+      X-XSRF-TOKEN: "{{ sdwan_csrf_token }}"
+    validate_certs: "{{ sdwan_vmanage_verify_ssl }}"
+    timeout: "{{ sdwan_vmanage_timeout }}"
+  when: not apply_changes | bool
+  register: sdwan_ntp_check
+  check_mode: false
+  tags: [sdwan, security, stig, stig_cat2, ntp, nist_au]
+
+- name: Display NTP compliance status
+  ansible.builtin.debug:
+    msg:
+      - "STIG Controls: CISC-ND-001290, CISC-ND-001420 (AU-8 - Time Stamps)"
+      - "NTP authentication enabled: {{ sdwan_ntp_authenticate }} (must be true)"
+      - "NTP servers:"
+      - "{% for srv in sdwan_ntp_servers %}  - {{ srv.server }} (preferred: {{ srv.preferred }}){% endfor %}"
+      - "Key ID: {{ sdwan_ntp_key_id }}"
+      - "Key type: {{ sdwan_ntp_key_type }}"
+      - "Status: {{ apply_changes | ternary('APPLIED', 'CHECK ONLY') }}"
+  tags: [sdwan, security, stig, stig_cat2, ntp, nist_au]

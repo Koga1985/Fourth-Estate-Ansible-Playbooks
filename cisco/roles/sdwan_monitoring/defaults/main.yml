@@ -1,0 +1,144 @@
+---
+# defaults file for sdwan_monitoring
+# Cisco SD-WAN Monitoring and Telemetry Configuration
+# Configures SNMP, syslog, streaming telemetry, and alerts
+# Last Updated: 2026-04-08
+
+# ============================================================
+# vManage Connection Parameters
+# ============================================================
+sdwan_vmanage_host: "{{ vault_sdwan_vmanage_host }}"
+sdwan_vmanage_port: 443
+sdwan_vmanage_username: "{{ vault_sdwan_vmanage_username }}"
+sdwan_vmanage_password: "{{ vault_sdwan_vmanage_password }}"
+sdwan_vmanage_verify_ssl: true
+sdwan_vmanage_timeout: 30
+
+# ============================================================
+# Deployment Control
+# ============================================================
+apply_changes: false
+sdwan_artifacts_dir: "/tmp/sdwan-artifacts"
+
+# ============================================================
+# Fourth Estate Organization
+# ============================================================
+fourth_estate_org: "FourthEstate"
+fourth_estate_contact: "{{ vault_fourth_estate_contact }}"
+fourth_estate_environment: "production"
+fourth_estate_region: "primary"
+
+# ============================================================
+# Feature Toggles
+# ============================================================
+enable_snmp_monitoring: true
+enable_syslog_monitoring: true
+enable_streaming_telemetry: true
+enable_alert_rules: true
+enable_health_monitoring: true
+
+# ============================================================
+# SNMP Monitoring (SNMPv3 only - STIG SC-8)
+# NIST SC-8 | CISC-ND-000090
+# ============================================================
+sdwan_monitor_snmp_v3_enabled: true
+
+sdwan_monitor_snmp_users:
+  - username: "snmpv3-monitor"
+    auth_protocol: "SHA"
+    auth_password: "{{ vault_sdwan_snmp_auth_password }}"
+    priv_protocol: "AES128"
+    priv_password: "{{ vault_sdwan_snmp_priv_password }}"
+
+sdwan_monitor_snmp_traps:
+  - host: "{{ vault_snmp_trap_host }}"
+    port: 162
+    version: "v3"
+    user: "snmpv3-monitor"
+
+# SNMP MIB views - restrict to necessary OIDs
+sdwan_monitor_snmp_views:
+  - name: "sdwan-ro-view"
+    oid: "1.3.6.1"      # Full MIB tree for monitoring
+    include: true
+
+# ============================================================
+# Syslog / Audit Logging
+# NIST AU-2, AU-12 | CISC-ND-000700
+# ============================================================
+sdwan_monitor_syslog_servers:
+  - host: "{{ vault_syslog_server_primary }}"
+    port: 514
+    vpn_id: 512
+    description: "Primary SIEM syslog"
+  - host: "{{ vault_syslog_server_secondary }}"
+    port: 514
+    vpn_id: 512
+    description: "Secondary syslog"
+
+sdwan_monitor_syslog_severity: "informational"
+sdwan_monitor_syslog_facility: "local6"
+
+# ============================================================
+# Streaming Telemetry (Model-Driven Telemetry)
+# Streams real-time metrics to SIEM / monitoring platform
+# ============================================================
+sdwan_streaming_enabled: true
+
+sdwan_streaming_profiles:
+  - name: "FourthEstate-Telemetry"
+    description: "Real-time SD-WAN metrics stream"
+    destination_ip: "{{ vault_sdwan_telemetry_collector_ip }}"
+    destination_port: 57000
+    vpn_id: 512
+    transport: "grpc"
+    subscriptions:
+      - "tunnel-statistics"
+      - "app-route-statistics"
+      - "interface-statistics"
+      - "system-statistics"
+      - "control-connection"
+
+# ============================================================
+# Alert Rules
+# ============================================================
+sdwan_alert_rules:
+  - name: "Control Connection Down"
+    description: "Alert when control connection to vSmart/vBond drops"
+    severity: "critical"
+    email: "{{ vault_fourth_estate_contact }}"
+    enabled: true
+
+  - name: "Tunnel SLA Violation"
+    description: "Alert when tunnel exceeds SLA thresholds"
+    severity: "major"
+    email: "{{ vault_fourth_estate_contact }}"
+    enabled: true
+
+  - name: "Device Certificate Expiry"
+    description: "Alert 30 days before device certificate expires"
+    severity: "major"
+    email: "{{ vault_fourth_estate_contact }}"
+    enabled: true
+
+  - name: "Authentication Failure"
+    description: "Alert on repeated authentication failures (STIG AU-2)"
+    severity: "critical"
+    email: "{{ vault_fourth_estate_contact }}"
+    enabled: true
+
+# ============================================================
+# Health Monitoring
+# ============================================================
+sdwan_health_check_interval: 300      # 5-minute health check interval
+sdwan_health_check_vpn: 512
+
+# ============================================================
+# Compliance Frameworks
+# ============================================================
+compliance_frameworks:
+  - "dod_stig"
+  - "nist_800_53"
+  - "nist_800_171"
+  - "fisma_moderate"
+  - "fisma_high"

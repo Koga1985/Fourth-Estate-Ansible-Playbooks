@@ -1,0 +1,67 @@
+---
+# Cisco SD-WAN Phase 15: vManage Controller Initial Deployment
+# Deploy and initialize the vManage management controller
+# Use for initial deployment or vManage-only configuration updates
+
+- name: Phase 15 - SD-WAN vManage Controller Deployment
+  hosts: localhost
+  gather_facts: false
+  any_errors_fatal: true
+  connection: local
+
+  vars:
+    apply_changes: false
+    sdwan_artifacts_dir: "/tmp/sdwan-fourth-estate-artifacts/phase15"
+    fourth_estate_org_name: "FourthEstate"
+
+  pre_tasks:
+    - name: Display Phase 15 banner
+      ansible.builtin.debug:
+        msg: |
+          ════════════════════════════════════════════════════════════════
+          PHASE 15: vManage Controller Deployment
+          ════════════════════════════════════════════════════════════════
+          Deploying:
+            ✓ vManage system settings (org, vBond address, timezone)
+            ✓ PKI certificate configuration
+            ✓ Management VPN (VPN 512) interface
+            ✓ vManage HA cluster (if enabled)
+          ════════════════════════════════════════════════════════════════
+          Mode: {{ apply_changes | ternary('APPLYING CHANGES', 'DRY RUN') }}
+          ════════════════════════════════════════════════════════════════
+
+    - name: Create Phase 15 artifacts directory
+      ansible.builtin.file:
+        path: "{{ sdwan_artifacts_dir }}"
+        state: directory
+        mode: '0750'
+
+  tasks:
+    - name: Deploy vManage controller
+      ansible.builtin.include_role:
+        name: sdwan_vmanage_deploy
+
+  post_tasks:
+    - name: Generate Phase 15 completion report
+      ansible.builtin.copy:
+        dest: "{{ sdwan_artifacts_dir }}/phase15_complete.txt"
+        mode: '0640'
+        content: |
+          Phase 15: vManage Controller Deployment - COMPLETE
+          ══════════════════════════════════════════════════
+          Completed: {{ ansible_date_time.iso8601 }}
+          Mode: {{ apply_changes | ternary('APPLIED', 'DRY RUN') }}
+
+          Components Deployed:
+            ✓ vManage system configuration
+            ✓ PKI certificate configuration
+            ✓ VPN 512 management interface
+            ✓ HA cluster (if enabled)
+
+          Next Phase: Run 03_sdwan_phase2_vmanage_config.yml
+
+    - name: Display next steps
+      ansible.builtin.debug:
+        msg: |
+          Phase 15 Complete!
+          Next: ansible-playbook cisco/playbooks/03_sdwan_phase2_vmanage_config.yml

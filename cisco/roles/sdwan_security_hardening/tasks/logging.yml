@@ -1,0 +1,63 @@
+---
+# tasks file: logging.yml for sdwan_security_hardening
+# Configure remote syslog to SIEM and enable full audit logging
+# STIG: CISC-ND-000700, CISC-ND-000710, CISC-ND-000720 | NIST AU-2, AU-3, AU-9, AU-12
+# CAT: II | SRG: SRG-APP-000091-NDM-000223, SRG-APP-000092-NDM-000225
+
+# ============================================================
+# vManage Audit Logging and Syslog Configuration
+# ============================================================
+- name: "STIG AU-2 [CISC-ND-000700] - Configure remote syslog servers"
+  ansible.builtin.uri:
+    url: "https://{{ sdwan_vmanage_host }}:{{ sdwan_vmanage_port }}/dataservice/settings/configuration/syslog"
+    method: PUT
+    headers:
+      Cookie: "{{ sdwan_session_cookie }}"
+      X-XSRF-TOKEN: "{{ sdwan_csrf_token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      enable: true
+      servers: "{{ sdwan_syslog_destinations }}"
+      priority: "{{ sdwan_syslog_severity }}"
+    validate_certs: "{{ sdwan_vmanage_verify_ssl }}"
+    timeout: "{{ sdwan_vmanage_timeout }}"
+    status_code: [200, 201]
+  when: apply_changes | bool and sdwan_syslog_enabled | bool
+  register: sdwan_syslog_result
+  tags: [sdwan, security, stig, stig_cat2, logging, audit, nist_au]
+
+- name: "STIG AU-12 [CISC-ND-000720] - Enable vManage audit log for all events"
+  ansible.builtin.uri:
+    url: "https://{{ sdwan_vmanage_host }}:{{ sdwan_vmanage_port }}/dataservice/settings/configuration/auditLog"
+    method: PUT
+    headers:
+      Cookie: "{{ sdwan_session_cookie }}"
+      X-XSRF-TOKEN: "{{ sdwan_csrf_token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      auditAll: "{{ sdwan_audit_all_access | lower }}"
+      auditConfiguration: "{{ sdwan_audit_config_changes | lower }}"
+      auditAuthentication: "{{ sdwan_audit_auth_events | lower }}"
+      auditPrivilege: "{{ sdwan_audit_privilege_use | lower }}"
+    validate_certs: "{{ sdwan_vmanage_verify_ssl }}"
+    timeout: "{{ sdwan_vmanage_timeout }}"
+    status_code: [200, 201]
+  when: apply_changes | bool
+  register: sdwan_audit_result
+  tags: [sdwan, security, stig, stig_cat2, logging, audit, nist_au]
+
+- name: Display logging compliance status
+  ansible.builtin.debug:
+    msg:
+      - "STIG Controls: CISC-ND-000700/710/720 (AU-2/3/9/12 - Audit Logging)"
+      - "Syslog enabled: {{ sdwan_syslog_enabled }}"
+      - "Syslog severity: {{ sdwan_syslog_severity }}"
+      - "Syslog destinations: {{ sdwan_syslog_destinations | length }}"
+      - "Audit all access: {{ sdwan_audit_all_access }}"
+      - "Audit config changes: {{ sdwan_audit_config_changes }}"
+      - "Audit auth events: {{ sdwan_audit_auth_events }}"
+      - "Local retention: {{ sdwan_local_log_retention_days }} days"
+      - "Status: {{ apply_changes | ternary('APPLIED', 'CHECK ONLY') }}"
+  tags: [sdwan, security, stig, stig_cat2, logging, audit, nist_au]

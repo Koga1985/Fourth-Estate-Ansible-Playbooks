@@ -1,0 +1,167 @@
+---
+# Cisco SD-WAN Full Deployment Playbook
+# Orchestrates all 6 phases of SD-WAN deployment in sequence
+#
+# Phases:
+#   Phase 15 - vManage Controller Initial Deployment
+#   Phase 16 - vManage Configuration (users, templates, policies)
+#   Phase 17 - vBond/vSmart Controller Configuration
+#   Phase 18 - vEdge/cEdge Device Onboarding
+#   Phase 19 - DISA STIG / NIST 800-53 Security Hardening
+#   Phase 20 - Monitoring (SNMPv3, syslog, streaming telemetry)
+#
+# Usage:
+#   # Dry run (default):
+#   ansible-playbook -i inventory cisco/playbooks/01_sdwan_full_deployment.yml --ask-vault-pass
+#
+#   # Apply all phases:
+#   ansible-playbook -i inventory cisco/playbooks/01_sdwan_full_deployment.yml \
+#     -e apply_changes=true --ask-vault-pass
+#
+#   # Run specific platform:
+#   ansible-playbook -i inventory cisco/playbooks/01_sdwan_full_deployment.yml \
+#     --tags sdwan --ask-vault-pass
+#
+#   # Security hardening only:
+#   ansible-playbook -i inventory cisco/playbooks/01_sdwan_full_deployment.yml \
+#     --tags security -e apply_changes=true --ask-vault-pass
+#
+# IMPORTANT: Run ansible-galaxy collection install -r requirements.yml first
+# Last Updated: 2026-04-08
+# Maintained By: Fourth Estate Infrastructure Team
+
+- name: Cisco SD-WAN Full Deployment
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  any_errors_fatal: true
+
+  vars:
+    apply_changes: false
+    sdwan_artifacts_dir: "/tmp/sdwan-fourth-estate-artifacts"
+
+    # Phase deployment control
+    deploy_sdwan_vmanage: true
+    deploy_sdwan_vmanage_config: true
+    deploy_sdwan_controllers: true
+    deploy_sdwan_vedge: true
+    deploy_sdwan_security: true
+    deploy_sdwan_monitoring: true
+
+  pre_tasks:
+    - name: Display SD-WAN deployment banner
+      ansible.builtin.debug:
+        msg: |
+          ════════════════════════════════════════════════════════════════
+          CISCO SD-WAN FULL DEPLOYMENT - Fourth Estate
+          ════════════════════════════════════════════════════════════════
+          Phases:
+            Phase 15  ✓ vManage Controller Deployment
+            Phase 16  ✓ vManage Configuration
+            Phase 17  ✓ vBond / vSmart Controllers
+            Phase 18  ✓ vEdge / cEdge Onboarding
+            Phase 19  ✓ DISA STIG / NIST 800-53 Hardening
+            Phase 20  ✓ Monitoring & Telemetry
+          ════════════════════════════════════════════════════════════════
+          Mode: {{ apply_changes | ternary('APPLYING CHANGES', 'DRY RUN') }}
+          ════════════════════════════════════════════════════════════════
+
+    - name: Create artifacts directory
+      ansible.builtin.file:
+        path: "{{ sdwan_artifacts_dir }}"
+        state: directory
+        mode: '0750'
+
+  tasks:
+    # =========================================
+    # Phase 15: vManage Controller Deployment
+    # =========================================
+    - name: Phase 15 - vManage Controller Deployment
+      ansible.builtin.include_role:
+        name: sdwan_vmanage_deploy
+      when: deploy_sdwan_vmanage | bool
+      tags: ['sdwan', 'vmanage', 'deploy', 'phase15']
+
+    # =========================================
+    # Phase 16: vManage Configuration
+    # =========================================
+    - name: Phase 16 - vManage Configuration
+      ansible.builtin.include_role:
+        name: sdwan_vmanage_config
+      when: deploy_sdwan_vmanage_config | bool
+      tags: ['sdwan', 'vmanage', 'config', 'phase16']
+
+    # =========================================
+    # Phase 17: Controller Configuration
+    # =========================================
+    - name: Phase 17 - vBond and vSmart Controller Configuration
+      ansible.builtin.include_role:
+        name: sdwan_controllers_config
+      when: deploy_sdwan_controllers | bool
+      tags: ['sdwan', 'controllers', 'vbond', 'vsmart', 'phase17']
+
+    # =========================================
+    # Phase 18: Edge Device Onboarding
+    # =========================================
+    - name: Phase 18 - vEdge / cEdge Device Onboarding
+      ansible.builtin.include_role:
+        name: sdwan_vedge_onboard
+      when: deploy_sdwan_vedge | bool
+      tags: ['sdwan', 'vedge', 'onboarding', 'phase18']
+
+    # =========================================
+    # Phase 19: DISA STIG Security Hardening
+    # =========================================
+    - name: Phase 19 - DISA STIG / NIST 800-53 Security Hardening
+      ansible.builtin.include_role:
+        name: sdwan_security_hardening
+      when: deploy_sdwan_security | bool
+      tags: ['sdwan', 'security', 'stig', 'hardening', 'phase19']
+
+    # =========================================
+    # Phase 20: Monitoring and Telemetry
+    # =========================================
+    - name: Phase 20 - Monitoring and Telemetry
+      ansible.builtin.include_role:
+        name: sdwan_monitoring
+      when: deploy_sdwan_monitoring | bool
+      tags: ['sdwan', 'monitoring', 'telemetry', 'phase20']
+
+  post_tasks:
+    - name: Generate full deployment completion report
+      ansible.builtin.copy:
+        dest: "{{ sdwan_artifacts_dir }}/sdwan_deployment_complete.txt"
+        mode: '0640'
+        content: |
+          Cisco SD-WAN Full Deployment - COMPLETE
+          ════════════════════════════════════════════════════════════════
+          Completed: {{ ansible_date_time.iso8601 }}
+          Mode: {{ apply_changes | ternary('APPLIED', 'DRY RUN') }}
+          Organization: {{ fourth_estate_org | default('FourthEstate') }}
+
+          Phases Executed:
+            Phase 15  ✓ vManage Controller Deployment
+            Phase 16  ✓ vManage Configuration
+            Phase 17  ✓ vBond / vSmart Controllers
+            Phase 18  ✓ vEdge / cEdge Onboarding
+            Phase 19  ✓ DISA STIG / NIST 800-53 Hardening
+            Phase 20  ✓ Monitoring & Telemetry
+
+          STIG References:
+            - Cisco IOS XE SD-WAN Router NDM STIG V2R1
+            - Cisco SD-WAN vManage NDM STIG V1R1
+
+          Compliance Frameworks: DoD STIG, NIST 800-53, NIST 800-171, FISMA
+
+          Artifacts: {{ sdwan_artifacts_dir }}/
+          ════════════════════════════════════════════════════════════════
+
+    - name: Display deployment summary
+      ansible.builtin.debug:
+        msg: |
+          ════════════════════════════════════════════════════════════════
+          SD-WAN Full Deployment Complete!
+          ════════════════════════════════════════════════════════════════
+          Mode: {{ apply_changes | ternary('CHANGES APPLIED', 'DRY RUN') }}
+          Run compliance audit: ansible-playbook cisco/playbooks/11_sdwan_compliance_audit.yml
+          ════════════════════════════════════════════════════════════════

@@ -1,0 +1,37 @@
+---
+# tasks file: certificates.yml for sdwan_vmanage_deploy
+# Initialize PKI certificates for vManage
+# NIST SC-17, IA-3
+
+- name: "STIG SC-17 - Configure certificate authority type"
+  ansible.builtin.uri:
+    url: "https://{{ sdwan_vmanage_host }}:{{ sdwan_vmanage_port }}/dataservice/settings/configuration/certificate"
+    method: PUT
+    headers:
+      Cookie: "{{ sdwan_session_cookie }}"
+      X-XSRF-TOKEN: "{{ sdwan_csrf_token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      certificateDetail: "{{ sdwan_cert_auth_type }}"
+      country: "{{ sdwan_csr_country }}"
+      state: "{{ sdwan_csr_state }}"
+      city: "{{ sdwan_csr_city }}"
+      org: "{{ sdwan_csr_org }}"
+      orgUnit: "{{ sdwan_csr_org_unit }}"
+      email: "{{ sdwan_csr_email }}"
+    validate_certs: "{{ sdwan_vmanage_verify_ssl }}"
+    timeout: "{{ sdwan_vmanage_timeout }}"
+    status_code: [200, 201]
+  when: apply_changes | bool
+  register: sdwan_cert_result
+  tags: [sdwan, vmanage, certificates, pki, phase15]
+
+- name: Display certificate configuration status
+  ansible.builtin.debug:
+    msg:
+      - "Certificate configuration:"
+      - "  CA type: {{ sdwan_cert_auth_type }}"
+      - "  Org: {{ sdwan_csr_org }}"
+      - "  Status: {{ apply_changes | ternary('APPLIED', 'CHECK ONLY') }}"
+  tags: [sdwan, vmanage, certificates, pki, phase15]

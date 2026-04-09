@@ -1,0 +1,33 @@
+---
+# tasks file: bootstrap.yml for sdwan_vedge_onboard
+# Generate Day-0 bootstrap configuration for each edge device
+
+- name: Generate bootstrap configuration for each edge device
+  ansible.builtin.uri:
+    url: "https://{{ sdwan_vmanage_host }}:{{ sdwan_vmanage_port }}/dataservice/system/device/bootstrap/device/{{ item.uuid }}?configtype={{ sdwan_bootstrap_transport }}&inclDefRootCert={{ sdwan_bootstrap_include_certs | lower }}"
+    method: GET
+    headers:
+      Cookie: "{{ sdwan_session_cookie }}"
+      X-XSRF-TOKEN: "{{ sdwan_csrf_token }}"
+    validate_certs: "{{ sdwan_vmanage_verify_ssl }}"
+    timeout: "{{ sdwan_vmanage_timeout }}"
+  loop: "{{ sdwan_edge_devices }}"
+  check_mode: false
+  register: sdwan_bootstrap_configs
+  tags: [sdwan, vedge, bootstrap, phase18]
+
+- name: Save bootstrap configuration to artifacts
+  ansible.builtin.copy:
+    dest: "{{ sdwan_artifacts_dir }}/bootstrap_{{ item.item.hostname }}.cfg"
+    content: "{{ item.json | to_nice_yaml }}"
+    mode: '0600'
+  loop: "{{ sdwan_bootstrap_configs.results }}"
+  when: sdwan_bootstrap_configs.results is defined
+  tags: [sdwan, vedge, bootstrap, phase18]
+
+- name: Display bootstrap generation status
+  ansible.builtin.debug:
+    msg:
+      - "Bootstrap configs generated for {{ sdwan_edge_devices | length }} devices"
+      - "Saved to: {{ sdwan_artifacts_dir }}/bootstrap_<hostname>.cfg"
+  tags: [sdwan, vedge, bootstrap, phase18]
