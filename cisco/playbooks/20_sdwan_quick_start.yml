@@ -1,0 +1,73 @@
+---
+# Cisco SD-WAN Quick Start Playbook
+# Runs STIG security hardening against an EXISTING SD-WAN fabric
+# Use when vManage, controllers, and edge devices are already deployed
+#
+# This is the fastest path to DISA STIG compliance on an existing fabric.
+#
+# Usage:
+#   # Dry run - audit current state:
+#   ansible-playbook -i inventory cisco/playbooks/20_sdwan_quick_start.yml --ask-vault-pass
+#
+#   # Apply STIG hardening:
+#   ansible-playbook -i inventory cisco/playbooks/20_sdwan_quick_start.yml \
+#     -e apply_changes=true --ask-vault-pass
+#
+#   # CAT I controls only (highest priority):
+#   ansible-playbook -i inventory cisco/playbooks/20_sdwan_quick_start.yml \
+#     --tags stig_cat1 -e apply_changes=true --ask-vault-pass
+
+- name: SD-WAN Quick Start - STIG Hardening (Existing Fabric)
+  hosts: localhost
+  gather_facts: false
+  any_errors_fatal: false   # Continue on non-fatal errors for existing fabrics
+  connection: local
+
+  vars:
+    apply_changes: false
+    sdwan_artifacts_dir: "/tmp/sdwan-fourth-estate-artifacts/quick-start"
+
+  pre_tasks:
+    - name: Display quick start banner
+      ansible.builtin.debug:
+        msg: |
+          ════════════════════════════════════════════════════════════════
+          CISCO SD-WAN QUICK START - STIG Hardening
+          ════════════════════════════════════════════════════════════════
+          Target: Existing SD-WAN fabric
+          Action: Apply DISA STIG controls
+
+          PREREQUISITES:
+            1. vManage reachable on port 443
+            2. vault_sdwan_vmanage_host set
+            3. vault_sdwan_vmanage_username / password set
+            4. vault_sdwan_tacacs_* set (for AAA hardening)
+            5. vault_syslog_server_* set (for audit logging)
+            6. vault_sdwan_snmp_* set (for SNMPv3)
+
+          Mode: {{ apply_changes | ternary('APPLYING STIG CONTROLS', 'DRY RUN - AUDIT ONLY') }}
+          ════════════════════════════════════════════════════════════════
+
+    - name: Create quick start artifacts directory
+      ansible.builtin.file:
+        path: "{{ sdwan_artifacts_dir }}"
+        state: directory
+        mode: '0750'
+
+  tasks:
+    - name: Apply SD-WAN STIG hardening
+      ansible.builtin.include_role:
+        name: sdwan_security_hardening
+
+    - name: Configure monitoring (SNMPv3 + syslog)
+      ansible.builtin.include_role:
+        name: sdwan_monitoring
+
+  post_tasks:
+    - name: Display quick start completion
+      ansible.builtin.debug:
+        msg: |
+          Quick Start Complete!
+          Mode: {{ apply_changes | ternary('STIG CONTROLS APPLIED', 'DRY RUN ONLY') }}
+          Reports: {{ sdwan_artifacts_dir }}/
+          Full audit: ansible-playbook cisco/playbooks/11_sdwan_compliance_audit.yml

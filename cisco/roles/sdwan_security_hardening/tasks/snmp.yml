@@ -1,0 +1,72 @@
+---
+# tasks file: snmp.yml for sdwan_security_hardening
+# Disable SNMPv1/v2c; configure SNMPv3 with authPriv (AES-128/SHA)
+# STIG: CISC-ND-000090 | NIST SC-8
+# CAT: II | SRG: SRG-APP-000411-NDM-000310
+
+# ============================================================
+# Disable insecure SNMP versions via vManage API
+# ============================================================
+- name: "STIG SC-8 [CISC-ND-000090] - Disable SNMPv1 and SNMPv2c community strings"
+  ansible.builtin.uri:
+    url: "https://{{ sdwan_vmanage_host }}:{{ sdwan_vmanage_port }}/dataservice/settings/configuration/snmp"
+    method: PUT
+    headers:
+      Cookie: "{{ sdwan_session_cookie }}"
+      X-XSRF-TOKEN: "{{ sdwan_csrf_token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      shutdown: false
+      v2: false
+      v3: true
+      communities: []
+      views:
+        - name: "{{ sdwan_snmp_view_name }}"
+          oid: "1.3.6.1"
+          exclude: false
+      groups:
+        "{{ sdwan_snmp_v3_groups }}"
+      users:
+        "{{ sdwan_snmp_v3_users | map('combine', {'authProtocol': item.auth_protocol,
+           'authPassword': item.auth_password,
+           'privProtocol': item.priv_protocol,
+           'privPassword': item.priv_password}) | list }}"
+      trapTargets:
+        "{{ sdwan_snmp_trap_destinations }}"
+      sourceInterface: "{{ vault_sdwan_mgmt_interface | default('eth0') }}"
+    validate_certs: "{{ sdwan_vmanage_verify_ssl }}"
+    timeout: "{{ sdwan_vmanage_timeout }}"
+    status_code: [200, 201]
+  when: apply_changes | bool
+  no_log: true
+  register: sdwan_snmp_result
+  tags: [sdwan, security, stig, stig_cat2, snmp, nist_sc]
+
+- name: "STIG SC-8 [CISC-ND-000090] - Verify SNMP configuration (dry run)"
+  ansible.builtin.uri:
+    url: "https://{{ sdwan_vmanage_host }}:{{ sdwan_vmanage_port }}/dataservice/settings/configuration/snmp"
+    method: GET
+    headers:
+      Cookie: "{{ sdwan_session_cookie }}"
+      X-XSRF-TOKEN: "{{ sdwan_csrf_token }}"
+    validate_certs: "{{ sdwan_vmanage_verify_ssl }}"
+    timeout: "{{ sdwan_vmanage_timeout }}"
+  when: not apply_changes | bool
+  register: sdwan_snmp_check
+  check_mode: false
+  tags: [sdwan, security, stig, stig_cat2, snmp, nist_sc]
+
+- name: Display SNMP compliance status
+  ansible.builtin.debug:
+    msg:
+      - "STIG Control: CISC-ND-000090 (SC-8 - SNMP Security)"
+      - "SNMPv1 enabled: {{ sdwan_snmp_v1_enabled }} (must be false)"
+      - "SNMPv2c enabled: {{ sdwan_snmp_v2c_enabled }} (must be false)"
+      - "SNMPv3 enabled: {{ sdwan_snmp_v3_enabled }} (must be true)"
+      - "SNMPv3 users configured: {{ sdwan_snmp_v3_users | length }}"
+      - "Security level: authPriv (required)"
+      - "Auth protocol: {{ sdwan_snmp_v3_users[0].auth_protocol | default('SHA') }}"
+      - "Priv protocol: {{ sdwan_snmp_v3_users[0].priv_protocol | default('AES128') }}"
+      - "Status: {{ apply_changes | ternary('APPLIED', 'CHECK ONLY') }}"
+  tags: [sdwan, security, stig, stig_cat2, snmp, nist_sc]

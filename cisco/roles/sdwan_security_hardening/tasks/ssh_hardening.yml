@@ -1,0 +1,61 @@
+---
+# tasks file: ssh_hardening.yml for sdwan_security_hardening
+# Configure SSH hardening — SSHv2 only, disable telnet, FIPS-approved algorithms
+# Applies via vManage feature template push to vEdge/cEdge devices
+# STIG: CISC-ND-001400 | NIST AC-17, SC-8
+# CAT: II | SRG: SRG-APP-000516-NDM-000325
+
+# ============================================================
+# vManage SSH Settings (for vManage management access)
+# ============================================================
+- name: "STIG SC-8 [CISC-ND-001400] - Disable telnet on vManage"
+  ansible.builtin.uri:
+    url: "https://{{ sdwan_vmanage_host }}:{{ sdwan_vmanage_port }}/dataservice/settings/configuration/telnet"
+    method: PUT
+    headers:
+      Cookie: "{{ sdwan_session_cookie }}"
+      X-XSRF-TOKEN: "{{ sdwan_csrf_token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      enabled: false
+    validate_certs: "{{ sdwan_vmanage_verify_ssl }}"
+    timeout: "{{ sdwan_vmanage_timeout }}"
+    status_code: [200, 201]
+  when: apply_changes | bool and sdwan_disable_telnet | bool
+  register: sdwan_telnet_result
+  tags: [sdwan, security, stig, stig_cat2, ssh, telnet, nist_sc]
+
+- name: "STIG SC-8 [CISC-ND-001400] - Configure SSH version and algorithms on vManage"
+  ansible.builtin.uri:
+    url: "https://{{ sdwan_vmanage_host }}:{{ sdwan_vmanage_port }}/dataservice/settings/configuration/ssh"
+    method: PUT
+    headers:
+      Cookie: "{{ sdwan_session_cookie }}"
+      X-XSRF-TOKEN: "{{ sdwan_csrf_token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      sshVersion: "{{ sdwan_ssh_version }}"
+      idleTimeout: "{{ sdwan_ssh_idle_timeout // 60 }}"
+      maxAuthRetries: "{{ sdwan_ssh_max_auth_retries }}"
+      ciphers: "{{ sdwan_ssh_ciphers | join(',') }}"
+      kexAlgorithms: "{{ sdwan_ssh_kex_algorithms | join(',') }}"
+      macs: "{{ sdwan_ssh_hmacs | join(',') }}"
+    validate_certs: "{{ sdwan_vmanage_verify_ssl }}"
+    timeout: "{{ sdwan_vmanage_timeout }}"
+    status_code: [200, 201]
+  when: apply_changes | bool
+  register: sdwan_ssh_result
+  tags: [sdwan, security, stig, stig_cat2, ssh, nist_sc]
+
+- name: Display SSH hardening compliance status
+  ansible.builtin.debug:
+    msg:
+      - "STIG Control: CISC-ND-001400 (SC-8 / AC-17 - Remote Access)"
+      - "SSH version: {{ sdwan_ssh_version }} (must be v2)"
+      - "Telnet disabled: {{ sdwan_disable_telnet }}"
+      - "SSH idle timeout: {{ sdwan_ssh_idle_timeout // 60 }} minutes"
+      - "SSH ciphers: {{ sdwan_ssh_ciphers | join(', ') }}"
+      - "Status: {{ apply_changes | ternary('APPLIED', 'CHECK ONLY') }}"
+  tags: [sdwan, security, stig, stig_cat2, ssh, nist_sc]

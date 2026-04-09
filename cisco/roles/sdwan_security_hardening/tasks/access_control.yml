@@ -1,0 +1,69 @@
+---
+# tasks file: access_control.yml for sdwan_security_hardening
+# Configure RBAC, user groups, and local user accounts
+# STIG: CISC-ND-000360 | NIST AC-2, AC-3, AC-6
+# CAT: II | SRG: SRG-APP-000121-NDM-000237
+
+# ============================================================
+# Configure User Groups (RBAC)
+# ============================================================
+- name: "STIG AC-6 [CISC-ND-000360] - Create RBAC user groups on vManage"
+  ansible.builtin.uri:
+    url: "https://{{ sdwan_vmanage_host }}:{{ sdwan_vmanage_port }}/dataservice/admin/usergroup"
+    method: POST
+    headers:
+      Cookie: "{{ sdwan_session_cookie }}"
+      X-XSRF-TOKEN: "{{ sdwan_csrf_token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      groupName: "{{ item.name }}"
+      description: "{{ item.description }}"
+      tasks: "{{ item.tasks | default([]) }}"
+    validate_certs: "{{ sdwan_vmanage_verify_ssl }}"
+    timeout: "{{ sdwan_vmanage_timeout }}"
+    status_code: [200, 201, 409]  # 409 = already exists, acceptable
+  loop: "{{ sdwan_user_groups }}"
+  when: apply_changes | bool and sdwan_rbac_enabled | bool
+  register: sdwan_usergroup_result
+  tags: [sdwan, security, stig, stig_cat2, rbac, nist_ac]
+
+# ============================================================
+# Create Local Service Accounts (break-glass and automation)
+# Local accounts are minimal; AAA is primary auth method
+# ============================================================
+- name: "STIG AC-2 [CISC-ND-000360] - Create local service accounts on vManage"
+  ansible.builtin.uri:
+    url: "https://{{ sdwan_vmanage_host }}:{{ sdwan_vmanage_port }}/dataservice/admin/user"
+    method: POST
+    headers:
+      Cookie: "{{ sdwan_session_cookie }}"
+      X-XSRF-TOKEN: "{{ sdwan_csrf_token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      userName: "{{ item.username }}"
+      password: "{{ item.password }}"
+      group:
+        - "{{ item.group }}"
+      description: "{{ item.description }}"
+    validate_certs: "{{ sdwan_vmanage_verify_ssl }}"
+    timeout: "{{ sdwan_vmanage_timeout }}"
+    status_code: [200, 201, 409]
+  loop: "{{ sdwan_local_users }}"
+  when: apply_changes | bool
+  no_log: true
+  register: sdwan_users_result
+  tags: [sdwan, security, stig, stig_cat2, rbac, users, nist_ac]
+
+- name: Display access control compliance status
+  ansible.builtin.debug:
+    msg:
+      - "STIG Control: CISC-ND-000360 (AC-2/3/6 - Access Control / Least Privilege)"
+      - "RBAC enabled: {{ sdwan_rbac_enabled }}"
+      - "User groups configured: {{ sdwan_user_groups | length }}"
+      - "Local accounts configured: {{ sdwan_local_users | length }}"
+      - "Local accounts: break-glass-admin, ansible-automation only"
+      - "All other users authenticate via AAA ({{ sdwan_auth_method | upper }})"
+      - "Status: {{ apply_changes | ternary('APPLIED', 'CHECK ONLY') }}"
+  tags: [sdwan, security, stig, stig_cat2, rbac, nist_ac]

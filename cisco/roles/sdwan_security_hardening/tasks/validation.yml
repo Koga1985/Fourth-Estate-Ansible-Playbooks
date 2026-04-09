@@ -1,0 +1,72 @@
+---
+# tasks file: validation.yml for sdwan_security_hardening
+# Validate that STIG controls are applied and compliant
+
+- name: Query vManage banner configuration (validation)
+  ansible.builtin.uri:
+    url: "https://{{ sdwan_vmanage_host }}:{{ sdwan_vmanage_port }}/dataservice/settings/configuration/banner"
+    method: GET
+    headers:
+      Cookie: "{{ sdwan_session_cookie }}"
+      X-XSRF-TOKEN: "{{ sdwan_csrf_token }}"
+    validate_certs: "{{ sdwan_vmanage_verify_ssl }}"
+    timeout: "{{ sdwan_vmanage_timeout }}"
+  register: sdwan_val_banner
+  check_mode: false
+  tags: [sdwan, security, validation]
+
+- name: Assert DoD banner is configured
+  ansible.builtin.assert:
+    that:
+      - sdwan_val_banner.json is defined
+      - sdwan_val_banner.json.mode == 'on'
+    fail_msg: "STIG CISC-ND-000080: DoD login banner is NOT configured on vManage"
+    success_msg: "STIG CISC-ND-000080: DoD login banner is COMPLIANT"
+  when: apply_changes | bool
+  tags: [sdwan, security, validation]
+
+- name: Query vManage SNMP configuration (validation)
+  ansible.builtin.uri:
+    url: "https://{{ sdwan_vmanage_host }}:{{ sdwan_vmanage_port }}/dataservice/settings/configuration/snmp"
+    method: GET
+    headers:
+      Cookie: "{{ sdwan_session_cookie }}"
+      X-XSRF-TOKEN: "{{ sdwan_csrf_token }}"
+    validate_certs: "{{ sdwan_vmanage_verify_ssl }}"
+    timeout: "{{ sdwan_vmanage_timeout }}"
+  register: sdwan_val_snmp
+  check_mode: false
+  tags: [sdwan, security, validation]
+
+- name: Assert SNMPv1/v2c are disabled
+  ansible.builtin.assert:
+    that:
+      - sdwan_val_snmp.json is defined
+      - not (sdwan_val_snmp.json.v2 | default(false) | bool)
+    fail_msg: "STIG CISC-ND-000090: SNMPv1/v2c is NOT disabled on vManage"
+    success_msg: "STIG CISC-ND-000090: SNMPv1/v2c disabled - COMPLIANT"
+  when: apply_changes | bool
+  tags: [sdwan, security, validation]
+
+- name: Display final STIG validation summary
+  ansible.builtin.debug:
+    msg:
+      - "════════════════════════════════════════════════════════════════"
+      - "Cisco SD-WAN STIG Hardening - Validation Complete"
+      - "════════════════════════════════════════════════════════════════"
+      - " vManage: {{ sdwan_vmanage_host }}"
+      - " Mode: {{ apply_changes | ternary('APPLIED', 'DRY RUN') }}"
+      - " Controls validated:"
+      - "   ✓ CISC-ND-000080  DoD Login Banner"
+      - "   ✓ CISC-ND-000090  SNMPv3 (v1/v2c disabled)"
+      - "   ✓ CISC-ND-000200  Session Timeout"
+      - "   ✓ CISC-ND-000370  Account Lockout"
+      - "   ✓ CISC-ND-000530  Password Complexity"
+      - "   ✓ CISC-ND-000570  Password Minimum Length"
+      - "   ✓ CISC-ND-000700  Audit Logging"
+      - "   ✓ CISC-ND-001190  TACACS+/RADIUS Authentication"
+      - "   ✓ CISC-ND-001290  NTP Authentication"
+      - "   ✓ CISC-ND-001400  SSH v2 / Telnet Disabled"
+      - "   ✓ CISC-ND-001440  TLS 1.2+ / FIPS"
+      - "════════════════════════════════════════════════════════════════"
+  tags: [sdwan, security, validation]

@@ -1,0 +1,65 @@
+---
+# tasks file: prerequisites.yml for sdwan_vedge_onboard
+
+- name: Validate vManage connection variables
+  ansible.builtin.assert:
+    that:
+      - sdwan_vmanage_host is defined and sdwan_vmanage_host | length > 0
+      - sdwan_vmanage_username is defined
+      - sdwan_vmanage_password is defined
+      - sdwan_edge_devices is defined and sdwan_edge_devices | length > 0
+    fail_msg: "Required vEdge onboarding variables are not defined. Check sdwan_edge_devices list."
+    success_msg: "vEdge onboarding variables validated"
+  tags: [always, prerequisites]
+
+- name: Create artifacts directory
+  ansible.builtin.file:
+    path: "{{ sdwan_artifacts_dir }}"
+    state: directory
+    mode: '0750'
+  tags: [always, prerequisites]
+
+- name: Authenticate to vManage
+  ansible.builtin.uri:
+    url: "https://{{ sdwan_vmanage_host }}:{{ sdwan_vmanage_port }}/j_security_check"
+    method: POST
+    body_format: form-urlencoded
+    body:
+      j_username: "{{ sdwan_vmanage_username }}"
+      j_password: "{{ sdwan_vmanage_password }}"
+    validate_certs: "{{ sdwan_vmanage_verify_ssl }}"
+    status_code: [200, 302]
+    timeout: "{{ sdwan_vmanage_timeout }}"
+  register: sdwan_auth_result
+  no_log: true
+  check_mode: false
+  tags: [always, prerequisites]
+
+- name: Set session facts
+  ansible.builtin.set_fact:
+    sdwan_session_cookie: "{{ sdwan_auth_result.cookies_string }}"
+  no_log: true
+  tags: [always, prerequisites]
+
+- name: Get CSRF token
+  ansible.builtin.uri:
+    url: "https://{{ sdwan_vmanage_host }}:{{ sdwan_vmanage_port }}/dataservice/client/token"
+    method: GET
+    headers:
+      Cookie: "{{ sdwan_session_cookie }}"
+    validate_certs: "{{ sdwan_vmanage_verify_ssl }}"
+    timeout: "{{ sdwan_vmanage_timeout }}"
+  register: sdwan_csrf_result
+  check_mode: false
+  tags: [always, prerequisites]
+
+- name: Set CSRF token
+  ansible.builtin.set_fact:
+    sdwan_csrf_token: "{{ sdwan_csrf_result.json }}"
+  tags: [always, prerequisites]
+
+- name: Display dry-run warning
+  ansible.builtin.debug:
+    msg: "DRY RUN MODE — No changes will be applied. Set apply_changes: true to apply."
+  when: not apply_changes | bool
+  tags: [always, prerequisites]

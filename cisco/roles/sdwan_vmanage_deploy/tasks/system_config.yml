@@ -1,0 +1,73 @@
+---
+# tasks file: system_config.yml for sdwan_vmanage_deploy
+# Configure vManage system settings (org, vBond, timezone)
+
+- name: Authenticate to vManage
+  ansible.builtin.uri:
+    url: "https://{{ sdwan_vmanage_host }}:{{ sdwan_vmanage_port }}/j_security_check"
+    method: POST
+    body_format: form-urlencoded
+    body:
+      j_username: "{{ sdwan_vmanage_username }}"
+      j_password: "{{ sdwan_vmanage_password }}"
+    validate_certs: "{{ sdwan_vmanage_verify_ssl }}"
+    status_code: [200, 302]
+    timeout: "{{ sdwan_vmanage_timeout }}"
+  register: sdwan_auth_result
+  no_log: true
+  check_mode: false
+  tags: [sdwan, vmanage, system, phase15]
+
+- name: Set vManage session facts
+  ansible.builtin.set_fact:
+    sdwan_session_cookie: "{{ sdwan_auth_result.cookies_string }}"
+  no_log: true
+  tags: [sdwan, vmanage, system, phase15]
+
+- name: Get CSRF token
+  ansible.builtin.uri:
+    url: "https://{{ sdwan_vmanage_host }}:{{ sdwan_vmanage_port }}/dataservice/client/token"
+    method: GET
+    headers:
+      Cookie: "{{ sdwan_session_cookie }}"
+    validate_certs: "{{ sdwan_vmanage_verify_ssl }}"
+    timeout: "{{ sdwan_vmanage_timeout }}"
+  register: sdwan_csrf_result
+  check_mode: false
+  tags: [sdwan, vmanage, system, phase15]
+
+- name: Set CSRF token fact
+  ansible.builtin.set_fact:
+    sdwan_csrf_token: "{{ sdwan_csrf_result.json }}"
+  tags: [sdwan, vmanage, system, phase15]
+
+- name: "Configure vManage system settings - org name, vBond, timezone"
+  ansible.builtin.uri:
+    url: "https://{{ sdwan_vmanage_host }}:{{ sdwan_vmanage_port }}/dataservice/settings/configuration/organization"
+    method: PUT
+    headers:
+      Cookie: "{{ sdwan_session_cookie }}"
+      X-XSRF-TOKEN: "{{ sdwan_csrf_token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      org: "{{ sdwan_org_name }}"
+      vbond: "{{ sdwan_vbond_host }}"
+      vbondPort: "{{ sdwan_vbond_port }}"
+      timezone: "{{ sdwan_vmanage_system_config.timezone | default('UTC') }}"
+    validate_certs: "{{ sdwan_vmanage_verify_ssl }}"
+    timeout: "{{ sdwan_vmanage_timeout }}"
+    status_code: [200, 201]
+  when: apply_changes | bool
+  register: sdwan_org_result
+  tags: [sdwan, vmanage, system, phase15]
+
+- name: Display system config status
+  ansible.builtin.debug:
+    msg:
+      - "vManage system configuration:"
+      - "  Organization: {{ sdwan_org_name }}"
+      - "  vBond: {{ sdwan_vbond_host }}:{{ sdwan_vbond_port }}"
+      - "  Timezone: UTC"
+      - "  Status: {{ apply_changes | ternary('APPLIED', 'CHECK ONLY') }}"
+  tags: [sdwan, vmanage, system, phase15]

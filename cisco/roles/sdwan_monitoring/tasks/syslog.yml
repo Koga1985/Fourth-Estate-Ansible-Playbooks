@@ -1,0 +1,34 @@
+---
+# tasks file: syslog.yml for sdwan_monitoring
+# Configure syslog / audit logging
+# NIST AU-2, AU-12 | STIG CISC-ND-000700
+
+- name: "STIG AU-2 [CISC-ND-000700] - Configure syslog servers"
+  ansible.builtin.uri:
+    url: "https://{{ sdwan_vmanage_host }}:{{ sdwan_vmanage_port }}/dataservice/settings/configuration/syslog"
+    method: PUT
+    headers:
+      Cookie: "{{ sdwan_session_cookie }}"
+      X-XSRF-TOKEN: "{{ sdwan_csrf_token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      enable: true
+      servers: "{{ sdwan_monitor_syslog_servers }}"
+      priority: "{{ sdwan_monitor_syslog_severity }}"
+    validate_certs: "{{ sdwan_vmanage_verify_ssl }}"
+    timeout: "{{ sdwan_vmanage_timeout }}"
+    status_code: [200, 201]
+  when: apply_changes | bool and enable_syslog_monitoring | bool
+  register: sdwan_syslog_mon_result
+  tags: [sdwan, monitoring, syslog, logging, phase20]
+
+- name: Display syslog configuration status
+  ansible.builtin.debug:
+    msg:
+      - "Syslog monitoring:"
+      - "  Servers: {{ sdwan_monitor_syslog_servers | length }}"
+      - "  Severity: {{ sdwan_monitor_syslog_severity }}"
+      - "  Facility: {{ sdwan_monitor_syslog_facility }}"
+      - "  Status: {{ apply_changes | ternary('APPLIED', 'CHECK ONLY') }}"
+  tags: [sdwan, monitoring, syslog, logging, phase20]

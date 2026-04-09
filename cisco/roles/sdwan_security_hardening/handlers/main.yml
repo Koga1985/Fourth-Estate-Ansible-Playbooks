@@ -1,0 +1,31 @@
+---
+# handlers file for sdwan_security_hardening
+# Event handlers for post-configuration actions
+
+- name: backup sdwan vmanage configuration
+  ansible.builtin.uri:
+    url: "https://{{ sdwan_vmanage_host }}:{{ sdwan_vmanage_port }}/dataservice/settings/configuration/backup"
+    method: POST
+    headers:
+      Cookie: "{{ sdwan_session_cookie }}"
+      X-XSRF-TOKEN: "{{ sdwan_csrf_token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      description: "Post-STIG-hardening backup - {{ ansible_date_time.iso8601 }}"
+    validate_certs: "{{ sdwan_vmanage_verify_ssl }}"
+    timeout: "{{ sdwan_vmanage_timeout }}"
+    status_code: [200, 201]
+  when: apply_changes | bool
+  no_log: false
+
+- name: notify sdwan security hardening complete
+  ansible.builtin.debug:
+    msg:
+      - "════════════════════════════════════════════════════════════════"
+      - " SD-WAN STIG Hardening Complete - Fourth Estate"
+      - "════════════════════════════════════════════════════════════════"
+      - " vManage: {{ sdwan_vmanage_host }}"
+      - " Mode: {{ apply_changes | ternary('CHANGES APPLIED', 'DRY RUN ONLY') }}"
+      - " Artifacts: {{ sdwan_artifacts_dir }}/"
+      - "════════════════════════════════════════════════════════════════"

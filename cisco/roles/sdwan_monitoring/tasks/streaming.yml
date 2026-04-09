@@ -1,0 +1,31 @@
+---
+# tasks file: streaming.yml for sdwan_monitoring
+# Configure model-driven streaming telemetry
+
+- name: Configure streaming telemetry profile
+  ansible.builtin.uri:
+    url: "https://{{ sdwan_vmanage_host }}:{{ sdwan_vmanage_port }}/dataservice/settings/configuration/streaming"
+    method: POST
+    headers:
+      Cookie: "{{ sdwan_session_cookie }}"
+      X-XSRF-TOKEN: "{{ sdwan_csrf_token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      "{{ item }}"
+    validate_certs: "{{ sdwan_vmanage_verify_ssl }}"
+    timeout: "{{ sdwan_vmanage_timeout }}"
+    status_code: [200, 201, 409]
+  loop: "{{ sdwan_streaming_profiles }}"
+  when: apply_changes | bool and sdwan_streaming_enabled | bool
+  register: sdwan_streaming_result
+  tags: [sdwan, monitoring, telemetry, streaming, phase20]
+
+- name: Display streaming telemetry status
+  ansible.builtin.debug:
+    msg:
+      - "Streaming telemetry:"
+      - "  Enabled: {{ sdwan_streaming_enabled }}"
+      - "  Profiles: {{ sdwan_streaming_profiles | length }}"
+      - "  Status: {{ apply_changes | ternary('APPLIED', 'CHECK ONLY') }}"
+  tags: [sdwan, monitoring, telemetry, streaming, phase20]

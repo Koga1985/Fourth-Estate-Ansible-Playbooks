@@ -1,0 +1,383 @@
+---
+# defaults file for sdwan_security_hardening
+# Cisco SD-WAN Security Hardening - DoD STIG and NIST 800-53 Rev 5 compliance
+# Applies to: vManage, vBond, vSmart controllers and vEdge/cEdge routers
+# STIG References:
+#   - Cisco IOS XE SD-WAN Router NDM STIG V2R1
+#   - Cisco SD-WAN vManage NDM STIG V1R1
+# Last Updated: 2026-04-08
+
+# ============================================================
+# vManage Connection Parameters
+# ============================================================
+sdwan_vmanage_host: "{{ vault_sdwan_vmanage_host }}"
+sdwan_vmanage_port: 443
+sdwan_vmanage_username: "{{ vault_sdwan_vmanage_username }}"
+sdwan_vmanage_password: "{{ vault_sdwan_vmanage_password }}"
+sdwan_vmanage_verify_ssl: true
+sdwan_vmanage_timeout: 30
+
+# ============================================================
+# Deployment Control
+# ============================================================
+apply_changes: false
+sdwan_artifacts_dir: "/tmp/sdwan-artifacts"
+
+# ============================================================
+# Fourth Estate Organization
+# ============================================================
+fourth_estate_org: "FourthEstate"
+fourth_estate_contact: "{{ vault_fourth_estate_contact }}"
+fourth_estate_environment: "production"
+fourth_estate_region: "primary"
+
+# ============================================================
+# STIG Category Feature Toggles
+# ============================================================
+stig_cat1_enabled: true
+stig_cat2_enabled: true
+stig_cat3_enabled: true
+
+# ============================================================
+# Module Feature Toggles
+# ============================================================
+enable_auth_hardening: true
+enable_access_control: true
+enable_password_policy: true
+enable_session_management: true
+enable_audit_logging: true
+enable_crypto_tls: true
+enable_ssh_hardening: true
+enable_snmp_security: true
+enable_ntp_hardening: true
+enable_banners: true
+enable_unused_services: true
+enable_fips_mode: true
+enable_compliance_report: true
+
+# ============================================================
+# Authentication Configuration (STIG CAT I)
+# NIST IA-2, IA-3 | CISC-ND-001190
+# Applies to: vManage, vBond, vSmart, vEdge/cEdge
+# ============================================================
+sdwan_auth_method: "tacacs"   # Options: tacacs, radius, local
+
+# TACACS+ Servers (preferred for SD-WAN per DoD guidance)
+sdwan_tacacs_servers:
+  - host: "{{ vault_sdwan_tacacs_host_1 }}"
+    port: 49
+    key: "{{ vault_sdwan_tacacs_key }}"
+    timeout: 10
+    vpn_id: 512
+    description: "Primary TACACS+ server - DoD AAA"
+  - host: "{{ vault_sdwan_tacacs_host_2 }}"
+    port: 49
+    key: "{{ vault_sdwan_tacacs_key }}"
+    timeout: 10
+    vpn_id: 512
+    description: "Secondary TACACS+ server - DoD AAA"
+
+# RADIUS Servers (alternative to TACACS+)
+sdwan_radius_servers: []
+# Example:
+# sdwan_radius_servers:
+#   - host: "{{ vault_sdwan_radius_host_1 }}"
+#     auth_port: 1812
+#     acct_port: 1813
+#     key: "{{ vault_sdwan_radius_key }}"
+#     timeout: 10
+#     vpn_id: 512
+#     description: "Primary RADIUS server"
+
+# AAA login order: try AAA server first, fall back to local
+sdwan_aaa_auth_order:
+  - "local"
+  - "radius"
+
+# ============================================================
+# Password Policy (STIG CAT I)
+# NIST IA-5 | CISC-ND-000530, CISC-ND-000570
+# ============================================================
+sdwan_password_min_length: 15
+sdwan_password_min_uppercase: 1
+sdwan_password_min_lowercase: 1
+sdwan_password_min_digits: 1
+sdwan_password_min_special: 1
+sdwan_password_history_count: 5
+sdwan_password_max_age_days: 60
+sdwan_password_no_change_interval_hours: 24
+sdwan_password_strength_check: true
+
+# ============================================================
+# Account Lockout Policy (STIG CAT II)
+# NIST AC-7 | CISC-ND-000370
+# Lock after 3 failed attempts per DoD requirement
+# ============================================================
+sdwan_lockout_enabled: true
+sdwan_lockout_max_attempts: 3
+sdwan_lockout_window_seconds: 120
+sdwan_lockout_duration_seconds: 900   # 15-minute lockout
+
+# ============================================================
+# Session Management (STIG CAT II)
+# NIST AC-11, AC-12 | CISC-ND-000200, CISC-ND-000390
+# ============================================================
+sdwan_session_idle_timeout: 600       # 10 minutes idle timeout (CLI/GUI)
+sdwan_session_max_duration: 28800     # 8-hour maximum session
+sdwan_session_max_concurrent: 5       # per-user concurrent session limit
+
+# ============================================================
+# TLS and Cryptographic Controls (STIG CAT I)
+# NIST SC-8, SC-28 | CISC-ND-001440
+# vManage web interface and API transport security
+# ============================================================
+sdwan_https_enabled: true
+sdwan_http_enabled: false             # DISABLED per STIG CISC-ND-001440
+sdwan_min_tls_version: "TLSv1.2"     # TLS 1.2 minimum; prefer TLS 1.3
+
+sdwan_allowed_tls_ciphers:
+  - "TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384"
+  - "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256"
+  - "TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA384"
+  - "TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA256"
+  - "TLS_RSA_WITH_AES_256_GCM_SHA384"
+  - "TLS_RSA_WITH_AES_128_GCM_SHA256"
+
+# ============================================================
+# SSH Configuration (STIG CAT II)
+# NIST AC-17, SC-8 | CISC-ND-001400
+# Applies to all SD-WAN controllers and edge devices
+# ============================================================
+sdwan_ssh_enabled: true
+sdwan_telnet_enabled: false           # DISABLED per STIG CISC-ND-001400
+sdwan_ssh_version: 2                  # SSHv2 only per STIG
+sdwan_ssh_idle_timeout: 600           # 10-minute SSH idle timeout
+sdwan_ssh_max_auth_retries: 3
+
+sdwan_ssh_ciphers:
+  - "aes256-ctr"
+  - "aes192-ctr"
+  - "aes128-ctr"
+  - "aes256-gcm@openssh.com"
+  - "aes128-gcm@openssh.com"
+
+sdwan_ssh_kex_algorithms:
+  - "diffie-hellman-group-exchange-sha256"
+  - "diffie-hellman-group14-sha256"
+  - "ecdh-sha2-nistp256"
+  - "ecdh-sha2-nistp384"
+  - "ecdh-sha2-nistp521"
+
+sdwan_ssh_hmacs:
+  - "hmac-sha2-256"
+  - "hmac-sha2-512"
+  - "hmac-sha2-256-etm@openssh.com"
+  - "hmac-sha2-512-etm@openssh.com"
+
+# ============================================================
+# FIPS 140-2 Mode (STIG CAT I)
+# NIST SC-13, SC-28 | DoD IA control requirement
+# ============================================================
+sdwan_fips_enabled: true              # Enable FIPS 140-2 validated crypto
+sdwan_fips_ipsec_dh_group: 14        # Minimum DH group 14 (2048-bit)
+sdwan_fips_ipsec_encryption: "aes256-gcm-256"
+sdwan_fips_ipsec_integrity: "sha2-256"
+
+# ============================================================
+# SNMP Configuration (STIG CAT II)
+# NIST SC-8 | CISC-ND-000090
+# SNMPv1/v2c DISABLED; SNMPv3 authPriv REQUIRED
+# ============================================================
+sdwan_snmp_v1_enabled: false          # DISABLED per STIG CISC-ND-000090
+sdwan_snmp_v2c_enabled: false         # DISABLED per STIG CISC-ND-000090
+sdwan_snmp_v3_enabled: true           # REQUIRED per STIG CISC-ND-000090
+
+sdwan_snmp_community: ""              # Empty — v1/v2c disabled
+sdwan_snmp_view_name: "sdwan-ro-view"
+
+sdwan_snmp_v3_groups:
+  - name: "sdwan-monitor-group"
+    security_level: "authPriv"
+    read_view: "sdwan-ro-view"
+    description: "Read-only monitoring group (auth+priv)"
+
+sdwan_snmp_v3_users:
+  - username: "snmpv3-monitor"
+    group: "sdwan-monitor-group"
+    auth_protocol: "SHA"
+    auth_password: "{{ vault_sdwan_snmp_auth_password }}"
+    priv_protocol: "AES128"
+    priv_password: "{{ vault_sdwan_snmp_priv_password }}"
+    description: "SNMPv3 NMS monitoring user"
+
+sdwan_snmp_trap_destinations:
+  - host: "{{ vault_snmp_trap_host }}"
+    port: 162
+    version: "v3"
+    user: "snmpv3-monitor"
+    security_level: "authPriv"
+    description: "Primary SNMP trap receiver"
+
+# Restrict SNMP access to management subnet
+sdwan_snmp_allowed_sources:
+  - "{{ vault_snmp_management_subnet }}"
+
+# ============================================================
+# Audit Logging Configuration (STIG CAT II)
+# NIST AU-2, AU-3, AU-9, AU-12 | CISC-ND-000700/710/720
+# ============================================================
+sdwan_syslog_enabled: true
+sdwan_syslog_severity: "informational"  # Log at informational and above
+
+sdwan_syslog_destinations:
+  - host: "{{ vault_syslog_server_primary }}"
+    port: 514
+    vpn_id: 512
+    source_interface: "{{ vault_sdwan_mgmt_interface }}"
+    description: "Primary syslog / SIEM server"
+  - host: "{{ vault_syslog_server_secondary }}"
+    port: 514
+    vpn_id: 512
+    source_interface: "{{ vault_sdwan_mgmt_interface }}"
+    description: "Secondary syslog server"
+
+sdwan_audit_all_access: true
+sdwan_audit_config_changes: true
+sdwan_audit_auth_events: true
+sdwan_audit_privilege_use: true
+sdwan_local_log_retention_days: 90
+
+# ============================================================
+# NTP Configuration (STIG CAT II)
+# NIST AU-8 | CISC-ND-001290, CISC-ND-001420
+# Authenticated NTP required; DoD-approved sources
+# ============================================================
+sdwan_ntp_enabled: true
+sdwan_ntp_authenticate: true
+sdwan_ntp_key_id: 1
+sdwan_ntp_key: "{{ vault_sdwan_ntp_key }}"
+sdwan_ntp_key_type: "md5"             # Use SHA when platform supports it
+
+sdwan_ntp_servers:
+  - server: "time.nist.gov"
+    vpn_id: 512
+    key_id: 1
+    preferred: true
+    description: "NIST Primary NTP"
+  - server: "time-a-g.nist.gov"
+    vpn_id: 512
+    key_id: 1
+    preferred: false
+    description: "NIST Secondary NTP"
+
+sdwan_ntp_source_interface: "{{ vault_sdwan_mgmt_interface }}"
+
+# ============================================================
+# DoD Login Banner (STIG CAT III)
+# NIST AC-8 | CISC-ND-000080
+# ============================================================
+sdwan_login_banner: |
+  You are accessing a U.S. Government (USG) Information System (IS) that is
+  provided for USG-authorized use only. By using this IS (which includes any
+  device attached to this IS), you consent to the following conditions:
+  -The USG routinely intercepts and monitors communications on this IS for
+  purposes including, but not limited to, penetration testing, COMSEC monitoring,
+  network operations and defense, personnel misconduct (PM), law enforcement (LE),
+  and counterintelligence (CI) investigations.
+  -At any time, the USG may inspect and seize data stored on this IS.
+  -Communications using, or data stored on, this IS are not private, are subject
+  to routine monitoring, interception, and search, and may be disclosed or used
+  for any USG-authorized purpose.
+  -This IS includes security measures (e.g., authentication and access controls)
+  to protect USG interests--not for your personal benefit or privacy.
+  -Notwithstanding the above, using this IS does not constitute consent to PM, LE
+  or CI investigative searching or monitoring of the content of privileged
+  communications, or work product, related to personal representation or services
+  by attorneys, psychotherapists, or clergy, and their assistants. Such
+  communications and work product are private and confidential. See User Agreement
+  for details.
+
+# ============================================================
+# System Information (STIG CAT III)
+# NIST CM-8 | CISC-ND-001470
+# ============================================================
+sdwan_system_contact: "{{ vault_sdwan_system_contact }}"
+sdwan_system_location: "{{ vault_sdwan_system_location }}"
+sdwan_system_description: "Fourth Estate Cisco SD-WAN - DoD STIG Compliant"
+sdwan_organization_name: "FourthEstate"
+
+# ============================================================
+# RBAC - Role-Based Access Control (STIG CAT II)
+# NIST AC-2, AC-3, AC-6 | CISC-ND-000360
+# ============================================================
+sdwan_rbac_enabled: true
+
+# User groups for vManage RBAC
+sdwan_user_groups:
+  - name: "netadmin"
+    description: "Network administrators - full SD-WAN access"
+    tasks:
+      - "Alarms"
+      - "Audit Log"
+      - "Device Inventory"
+      - "Device Templates"
+      - "Feature Templates"
+      - "Policies"
+      - "Security"
+      - "System"
+  - name: "operator"
+    description: "Network operators - read and limited write"
+    tasks:
+      - "Alarms"
+      - "Audit Log"
+      - "Device Inventory"
+  - name: "readonly"
+    description: "Read-only auditors"
+    tasks:
+      - "Alarms"
+      - "Audit Log"
+
+# Local break-glass and automation service accounts
+sdwan_local_users:
+  - username: "break-glass-admin"
+    password: "{{ vault_sdwan_breakglass_password }}"
+    group: "netadmin"
+    description: "Emergency break-glass local account"
+  - username: "ansible-automation"
+    password: "{{ vault_sdwan_ansible_password }}"
+    group: "netadmin"
+    description: "Ansible automation service account"
+
+# ============================================================
+# Unused Services Hardening (STIG CAT II)
+# NIST CM-7 | CISC-ND-001200, CISC-ND-001210
+# ============================================================
+sdwan_disable_http_server: true       # Disable HTTP; use HTTPS only
+sdwan_disable_telnet: true            # Disable telnet; use SSH only
+sdwan_disable_finger: true
+sdwan_disable_tcp_small_servers: true
+sdwan_disable_udp_small_servers: true
+sdwan_disable_ip_identd: true
+sdwan_disable_cdp_global: false       # CDP may be required; review per site
+sdwan_disable_lldp: false             # LLDP may be required; review per site
+
+# ============================================================
+# Control Plane Security (IPSec)
+# NIST SC-8, SC-17 | SD-WAN data-plane encryption
+# ============================================================
+sdwan_ipsec_enabled: true
+sdwan_ipsec_rekey_interval: 86400     # 24-hour rekey
+sdwan_ipsec_replay_window: 512
+sdwan_ipsec_integrity: "ip-udp-esp"
+sdwan_ipsec_cipher_suite: "aes256-gcm"
+sdwan_dtls_port: 12346                # DTLS for control plane
+
+# ============================================================
+# Compliance Frameworks
+# ============================================================
+compliance_frameworks:
+  - "dod_stig"
+  - "nist_800_53"
+  - "nist_800_171"
+  - "fisma_moderate"
+  - "fisma_high"

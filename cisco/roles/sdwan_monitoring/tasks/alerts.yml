@@ -1,0 +1,31 @@
+---
+# tasks file: alerts.yml for sdwan_monitoring
+# Configure vManage alert rules for operational and security events
+
+- name: Configure vManage alert rules
+  ansible.builtin.uri:
+    url: "https://{{ sdwan_vmanage_host }}:{{ sdwan_vmanage_port }}/dataservice/settings/configuration/alarm/notification"
+    method: PUT
+    headers:
+      Cookie: "{{ sdwan_session_cookie }}"
+      X-XSRF-TOKEN: "{{ sdwan_csrf_token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      emailNotificationEnabled: true
+      rules: "{{ sdwan_alert_rules }}"
+    validate_certs: "{{ sdwan_vmanage_verify_ssl }}"
+    timeout: "{{ sdwan_vmanage_timeout }}"
+    status_code: [200, 201]
+  when: apply_changes | bool and enable_alert_rules | bool
+  register: sdwan_alerts_result
+  tags: [sdwan, monitoring, alerts, phase20]
+
+- name: Display alert rules status
+  ansible.builtin.debug:
+    msg:
+      - "Alert rules configured: {{ sdwan_alert_rules | length }}"
+      - "Critical alerts:"
+      - "{% for rule in sdwan_alert_rules | selectattr('severity', 'eq', 'critical') %}  - {{ rule.name }}{% endfor %}"
+      - "Status: {{ apply_changes | ternary('APPLIED', 'CHECK ONLY') }}"
+  tags: [sdwan, monitoring, alerts, phase20]

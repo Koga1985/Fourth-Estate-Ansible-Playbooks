@@ -6,7 +6,7 @@ applicable **DISA Security Technical Implementation Guide (STIG)** findings and
 
 **Classification:** UNCLASSIFIED
 **Frameworks Covered:** DISA STIG, NIST 800-53 Rev 5, NIST 800-171, FedRAMP
-**Last Updated:** 2026-03-16
+**Last Updated:** 2026-04-08
 
 ---
 
@@ -33,6 +33,7 @@ applicable **DISA Security Technical Implementation Guide (STIG)** findings and
    - [Microsoft Windows Server STIG V2R8](#microsoft-windows-server-stig-v2r8)
    - [Cisco IOS/NX-OS Network Infrastructure STIG V2R7](#cisco-iosnx-os-network-infrastructure-stig-v2r7)
    - [Cisco ACI STIG (APIC STIG / Network Infrastructure STIG)](#cisco-aci-stig-apic-stig--network-infrastructure-stig)
+   - [Cisco SD-WAN STIG (IOS XE SD-WAN Router NDM V2R1 / vManage NDM V1R1)](#cisco-sd-wan-stig-ios-xe-sd-wan-router-ndm-v2r1--vmanage-ndm-v1r1)
    - [Arista EOS Network Device STIG](#arista-eos-network-device-stig)
    - [Palo Alto Networks STIG V2R2](#palo-alto-networks-stig-v2r2)
    - [PostgreSQL STIG V2R1](#postgresql-stig-v2r1)
@@ -81,6 +82,14 @@ applicable **DISA Security Technical Implementation Guide (STIG)** findings and
 | AC-17 | Remote Access | `vmware/roles/vsphere_esxi_stig_hardening` (SSH/ESXi shell lockdown) | VMware ESXi |
 | AC-17 | Remote Access | `arista/roles/arista_backup_restore` (management plane hardening) | Arista |
 | AC-17 | Remote Access | `cisco/roles/aci_security_hardening` (out-of-band management access control) | Cisco ACI |
+| AC-2 | Account Management | `cisco/roles/sdwan_security_hardening` (RBAC user groups, break-glass accounts), `cisco/roles/sdwan_vmanage_config` | Cisco SD-WAN |
+| AC-3 | Access Enforcement | `cisco/roles/sdwan_security_hardening` (tasks/access_control.yml — netadmin/operator/readonly groups) | Cisco SD-WAN |
+| AC-6 | Least Privilege | `cisco/roles/sdwan_security_hardening` (CISC-ND-000360 — role-based group separation) | Cisco SD-WAN |
+| AC-7 | Unsuccessful Logon Attempts | `cisco/roles/sdwan_security_hardening` (CISC-ND-000370 — lockout after 3 attempts, 15 min) | Cisco SD-WAN |
+| AC-8 | System Use Notification | `cisco/roles/sdwan_security_hardening` (CISC-ND-000080 — DoD warning banner) | Cisco SD-WAN |
+| AC-11 | Session Lock | `cisco/roles/sdwan_security_hardening` (CISC-ND-000390 — idle session termination) | Cisco SD-WAN |
+| AC-12 | Session Termination | `cisco/roles/sdwan_security_hardening` (CISC-ND-000200 — 10-minute idle timeout) | Cisco SD-WAN |
+| AC-17 | Remote Access | `cisco/roles/sdwan_security_hardening` (CISC-ND-001400 — SSH v2 only, telnet disabled) | Cisco SD-WAN |
 | AC-18 | Wireless Access Control | `cisco/roles/ise_policy__*` (ISE wireless policy sets) | Cisco ISE |
 | AC-19 | Access Control for Mobile | `cisco/roles/ise_byod__workflow`, `ise_posture__*` (ISE MDM/BYOD integration) | Cisco ISE |
 | AC-20 | Use of External Systems | `illumio/roles` (micro-segmentation boundary) | Illumio |
@@ -116,6 +125,11 @@ applicable **DISA Security Technical Implementation Guide (STIG)** findings and
 | AU-12 | Audit Record Generation | `vmware/roles/vsphere_esxi_stig_hardening` (syslog, logDirUnique) | VMware ESXi |
 | AU-12 | Audit Record Generation | `cisco/roles/aci_monitoring` (Call Home, fault severity reporting) | Cisco ACI |
 | AU-12 | Audit Record Generation | `cisco/roles/ise_report__auth_failures`, `ise_report__endpoint_catalog` | Cisco ISE |
+| AU-2 | Event Logging | `cisco/roles/sdwan_security_hardening` (CISC-ND-000700 — syslog to SIEM, informational+), `cisco/roles/sdwan_monitoring` | Cisco SD-WAN |
+| AU-3 | Content of Audit Records | `cisco/roles/sdwan_security_hardening` (CISC-ND-000710 — auth events, config changes, privilege use) | Cisco SD-WAN |
+| AU-8 | Time Stamps | `cisco/roles/sdwan_security_hardening` (CISC-ND-001290/001420 — authenticated NTP, time.nist.gov) | Cisco SD-WAN |
+| AU-9 | Protection of Audit Information | `cisco/roles/sdwan_security_hardening` (CISC-ND-000720 — remote syslog, local retention 90 days) | Cisco SD-WAN |
+| AU-12 | Audit Record Generation | `cisco/roles/sdwan_security_hardening` (tasks/logging.yml — all admin/auth/config events), `cisco/roles/sdwan_monitoring` | Cisco SD-WAN |
 
 ---
 
@@ -162,6 +176,8 @@ applicable **DISA Security Technical Implementation Guide (STIG)** findings and
 | CM-7 | Least Functionality | `windows/roles/win_stig_hardening` | Windows |
 | CM-7 | Least Functionality | `rhel/roles` (disable unused services) | RHEL |
 | CM-7 | Least Functionality | `arista/roles/arista_acl_qos_security` (ACL hardening) | Arista |
+| CM-6 | Configuration Settings | `cisco/roles/sdwan_vmanage_deploy` (baseline system config), `cisco/roles/sdwan_vmanage_config` (STIG-embedded templates) | Cisco SD-WAN |
+| CM-7 | Least Functionality | `cisco/roles/sdwan_security_hardening` (CISC-ND-001200 — disable HTTP, telnet, finger, TCP/UDP small servers) | Cisco SD-WAN |
 | CM-8 | System Component Inventory | `servicenow/roles` (CMDB integration) | ServiceNow |
 | CM-8 | System Component Inventory | `ansible/roles/ans_core_inventory_hygiene` | AAP |
 | CM-8 | System Component Inventory | `vmware/tasks/vsphere_vm_info.yml` | VMware |
@@ -211,6 +227,9 @@ applicable **DISA Security Technical Implementation Guide (STIG)** findings and
 | IA-5 | Authenticator Management | STIG findings V-230502, V-230503, V-230505, V-230507, V-230509 | RHEL 8 |
 | IA-5 | Authenticator Management | `ansible/roles/ans_core_secrets_identity` | AAP |
 | IA-5 | Authenticator Management | `hashicorp_vault/roles` (dynamic credentials) | HashiCorp Vault |
+| IA-2 | Identification and Authentication | `cisco/roles/sdwan_security_hardening` (CISC-ND-001190 — TACACS+/RADIUS AAA, local fallback) | Cisco SD-WAN |
+| IA-3 | Device Identification | `cisco/roles/sdwan_vmanage_deploy` (PKI cert init), `cisco/roles/sdwan_controllers_config` (device cert issuance) | Cisco SD-WAN |
+| IA-5 | Authenticator Management | `cisco/roles/sdwan_security_hardening` (CISC-ND-000530/570 — 15-char min, complexity, 60-day max age, 5-password history) | Cisco SD-WAN |
 | IA-5(1) | Password-Based Authentication | `policy_as_code/policies/identification_auth/password_policy.yml` | Policy as Code |
 | IA-7 | Cryptographic Module Authentication | `ansible/roles/ans_core_runtime_baseline` (FIPS mode) | AAP |
 | IA-8 | Non-Organizational Users | `ansible/roles/ans_access_sso_directory` (SSO federation) | AAP |
@@ -307,6 +326,11 @@ applicable **DISA Security Technical Implementation Guide (STIG)** findings and
 | SC-28 | Protection of Information at Rest | `pure_storage/roles` (array-level encryption) | Pure Storage |
 | SC-28 | Protection of Information at Rest | `netapp/roles` (volume encryption) | NetApp |
 | SC-28 | Protection of Information at Rest | `databases/postgresql`, `databases/mysql`, `databases/oracle` (TDE) | Databases |
+| SC-8 | Transmission Confidentiality | `cisco/roles/sdwan_security_hardening` (CISC-ND-001440 — TLS 1.2+, disable HTTP; CISC-ND-000090 — SNMPv3 authPriv; CISC-ND-001400 — SSH v2; IPSec AES-256-GCM) | Cisco SD-WAN |
+| SC-8(1) | Cryptographic Protection | `cisco/roles/sdwan_security_hardening` (tasks/encryption.yml — FIPS cipher suites, DH group 14+) | Cisco SD-WAN |
+| SC-13 | Cryptographic Protection (FIPS) | `cisco/roles/sdwan_security_hardening` (tasks/encryption.yml — FIPS 140-2 mode enabled on vManage) | Cisco SD-WAN |
+| SC-17 | PKI Certificates | `cisco/roles/sdwan_vmanage_deploy` (enterprise CA init), `cisco/roles/sdwan_controllers_config` (vBond/vSmart cert issuance) | Cisco SD-WAN |
+| SC-28 | Protection of Information at Rest | `cisco/roles/sdwan_security_hardening` (FIPS 140-2 — data-at-rest encryption via FIPS mode) | Cisco SD-WAN |
 
 ---
 
@@ -492,6 +516,57 @@ Roles: `cisco/roles/aci_fabric_deploy`, `cisco/roles/aci_security_hardening`, `c
 
 ---
 
+### Cisco SD-WAN STIG (IOS XE SD-WAN Router NDM V2R1 / vManage NDM V1R1)
+
+Roles: `cisco/roles/sdwan_security_hardening`, `cisco/roles/sdwan_vmanage_deploy`, `cisco/roles/sdwan_vmanage_config`, `cisco/roles/sdwan_controllers_config`, `cisco/roles/sdwan_vedge_onboard`, `cisco/roles/sdwan_monitoring`
+
+Playbooks: `cisco/playbooks/06_sdwan_phase5_security_hardening.yml`, `cisco/playbooks/11_sdwan_compliance_audit.yml`, `cisco/playbooks/20_sdwan_quick_start.yml`
+
+#### Cisco SD-WAN vManage NDM STIG V1R1
+
+| STIG Finding | Severity | NIST Control | Description | Implementing Role / Task |
+|-------------|----------|--------------|-------------|--------------------------|
+| CISC-ND-000080 | Cat III | AC-8 | DoD login banner required on vManage | `sdwan_security_hardening/tasks/banner.yml` |
+| CISC-ND-000090 | Cat II | SC-8 | SNMPv3 authPriv required; disable v1/v2c | `sdwan_security_hardening/tasks/snmp.yml` |
+| CISC-ND-000200 | Cat II | AC-12 | Session idle timeout ≤ 10 minutes | `sdwan_security_hardening/tasks/session_management.yml` |
+| CISC-ND-000360 | Cat II | AC-2/AC-3/AC-6 | RBAC with least privilege (netadmin/operator/readonly) | `sdwan_security_hardening/tasks/access_control.yml` |
+| CISC-ND-000370 | Cat II | AC-7 | Account lockout after 3 failed attempts, 15-min lockout | `sdwan_security_hardening/tasks/authentication.yml` |
+| CISC-ND-000390 | Cat II | AC-11 | Terminate idle sessions; no unlimited idle | `sdwan_security_hardening/tasks/session_management.yml` |
+| CISC-ND-000530 | Cat I | IA-5 | Password complexity (upper, lower, digit, special) | `sdwan_security_hardening/tasks/password_policy.yml` |
+| CISC-ND-000570 | Cat I | IA-5 | Password minimum length ≥ 15 characters | `sdwan_security_hardening/tasks/password_policy.yml` |
+| CISC-ND-000700 | Cat II | AU-2 | Remote audit/syslog to SIEM; log all admin events | `sdwan_security_hardening/tasks/logging.yml` |
+| CISC-ND-000710 | Cat II | AU-3 | Audit records include event, timestamp, user, outcome | `sdwan_security_hardening/tasks/logging.yml` |
+| CISC-ND-000720 | Cat II | AU-9 | Protect audit logs from unauthorized access/modification | `sdwan_security_hardening/tasks/logging.yml` |
+| CISC-ND-001190 | Cat I | IA-2/IA-3 | TACACS+ or RADIUS required for management authentication | `sdwan_security_hardening/tasks/authentication.yml` |
+| CISC-ND-001200 | Cat II | CM-7 | Disable unused services (HTTP, telnet, finger, small servers) | `sdwan_security_hardening/tasks/unused_services.yml` |
+| CISC-ND-001290 | Cat II | AU-8 | Authenticated NTP; use DoD-approved sources | `sdwan_security_hardening/tasks/ntp.yml` |
+| CISC-ND-001420 | Cat II | AU-8 | NTP servers must be trusted/authenticated | `sdwan_security_hardening/tasks/ntp.yml` |
+| CISC-ND-001440 | Cat I | SC-8/SC-13 | TLS 1.2+ only; disable HTTP; FIPS 140-2 cipher suites | `sdwan_security_hardening/tasks/encryption.yml` |
+
+#### Cisco IOS XE SD-WAN Router NDM STIG V2R1
+
+Applies to vEdge (Viptela OS) and cEdge (IOS XE) routers. Settings are pushed via vManage feature templates.
+
+| STIG Finding | Severity | NIST Control | Description | Implementing Role / Task |
+|-------------|----------|--------------|-------------|--------------------------|
+| CISC-ND-000080 | Cat III | AC-8 | DoD login banner on all edge routers | `sdwan_vmanage_config` (Banner feature template) |
+| CISC-ND-000090 | Cat II | SC-8 | SNMPv3 authPriv on edge routers | `sdwan_monitoring/tasks/snmp.yml` |
+| CISC-ND-001190 | Cat I | IA-2 | TACACS+ AAA on edge routers | `sdwan_vmanage_config` (AAA feature template) |
+| CISC-ND-001290 | Cat II | AU-8 | Authenticated NTP on edge routers | `sdwan_vmanage_config` (NTP feature template) |
+| CISC-ND-001400 | Cat II | SC-8/AC-17 | SSH v2 only; telnet disabled | `sdwan_security_hardening/tasks/ssh_hardening.yml` |
+| CISC-ND-001440 | Cat I | SC-8 | IPSec AES-256-GCM data-plane encryption; FIPS mode | `sdwan_security_hardening/tasks/encryption.yml` |
+| CISC-ND-000700 | Cat II | AU-2 | Remote syslog on edge routers | `sdwan_vmanage_config` (Logging feature template) |
+
+#### SD-WAN Device Certificate and PKI Controls (NIST SC-17, IA-3)
+
+| Role | Task | Control | Description |
+|------|------|---------|-------------|
+| `sdwan_vmanage_deploy` | `tasks/certificates.yml` | SC-17, IA-3 | vManage enterprise CA initialization |
+| `sdwan_controllers_config` | `tasks/controller_certificates.yml` | SC-17, IA-3 | vBond/vSmart device certificate issuance |
+| `sdwan_vedge_onboard` | `tasks/bootstrap.yml` | SC-17, IA-3 | Edge device identity certificate via bootstrap |
+
+---
+
 ### Arista EOS Network Device STIG
 
 Roles: `arista/roles/arista_acl_qos_security`, `arista/roles/arista_baseline_config`, `arista/roles/arista_backup_restore`
@@ -629,7 +704,7 @@ control families for rapid lookup.
 | `aws/` | DoD CC SRG / FedRAMP | AC, AU, CM, IA, SC, SI | IAM, VPC, EC2, EKS, S3 roles |
 | `azure/` | DoD CC SRG / FedRAMP | AC, AU, CM, IA, SC, SI | Azure AD, AKS, Key Vault, Sentinel roles |
 | `checkpoint/` | Firewall STIG | AC, AU, SC, SI | Access policy, threat prevention roles |
-| `cisco/` | ACI STIG (APIC), IOS STIG V2R7, UCS STIG | AC, AU, CM, IA, SC, SI | `aci_security_hardening`, `aci_monitoring`, `aci_fabric_deploy`, ISE identity/policy/profiling/posture/reporting (28 roles), `ucs_security_hardening`, `ucs_prod_monitoring` |
+| `cisco/` | ACI STIG (APIC), IOS STIG V2R7, UCS STIG, **IOS XE SD-WAN Router NDM STIG V2R1**, **vManage NDM STIG V1R1** | AC, AU, CM, IA, SC, SI | `aci_security_hardening`, `aci_monitoring`, `aci_fabric_deploy`, ISE identity/policy/profiling/posture/reporting (28 roles), `ucs_security_hardening`, `ucs_prod_monitoring`, **`sdwan_security_hardening`** (STIG CAT I/II/III), `sdwan_vmanage_deploy`, `sdwan_vmanage_config`, `sdwan_controllers_config`, `sdwan_vedge_onboard`, `sdwan_monitoring` |
 | `claroty/` | ICS STIG | AU, CM, IA, SC, SI | OT asset mgmt, secure remote access roles |
 | `cohesity/` | General App STIG | CP, SC | Cluster config, protection, recovery roles |
 | `crowdstrike/` | Endpoint Security | RA, SI | EDR deployment, policy management |
