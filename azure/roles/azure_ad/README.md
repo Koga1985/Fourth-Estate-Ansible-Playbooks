@@ -22,9 +22,17 @@ Azure Ad role for Fourth Estate infrastructure automation.
 | `azure_ad_password_notification_days` | `14` |  |
 | `azure_ad_enable_audit_logging` | `true` |  |
 | `azure_ad_configure_diagnostics` | `true` |  |
-| `azure_ad_diagnostic_setting_name` | `"ad-diagnostics-fedramp"` |  |
-
-See `defaults/main.yml` for the full variable list.
+| `azure_ad_diagnostic_setting_name` | `"ad-diagnostics-fedramp"` |  | Name for the Azure Monitor diagnostic setting |
+| `azure_log_analytics_workspace` | `"law-identity-prod-usgovva"` |  | Log Analytics workspace name for audit log forwarding |
+| `azure_log_analytics_workspace_id` | `""` | **Yes** | Log Analytics workspace ID (required for diagnostics) |
+| `azure_ad_audit_retention_days` | `365` |  | Retention days for AD audit logs (FedRAMP High minimum: 365) |
+| `azure_ad_signin_retention_days` | `365` |  | Retention days for sign-in logs (FedRAMP High minimum: 365) |
+| `azure_ad_risk_retention_days` | `365` |  | Retention days for risk event logs |
+| `azure_ad_no_log` | `true` |  | Suppress sensitive variable values from Ansible output |
+| `azure_ad_display_summary` | `true` |  | Print a summary of changes at the end of the run |
+| `azure_environment` | `"Production"` |  | Environment label for cost/compliance tagging |
+| `azure_cost_center` | `"4thEstate-Identity"` |  | Cost center tag applied to managed resources |
+| `azure_classification` | `"SECRET"` |  | Data classification tag applied to managed resources |
 
 ## Requirements
 

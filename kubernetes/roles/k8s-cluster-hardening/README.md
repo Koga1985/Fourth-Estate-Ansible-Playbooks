@@ -122,15 +122,7 @@ Run compliance validation:
 ansible-playbook -i inventory site.yml --tags validation
 ```
 
-This generates a compliance report at `/tmp/k8s-compliance-report.html`.
-
-## Testing
-
-Molecule tests are included:
-```bash
-cd kubernetes/roles/k8s-cluster-hardening
-molecule test
-```
+This generates a compliance report at `/tmp/k8s-compliance-report.json`.
 
 ## Security Considerations
 
