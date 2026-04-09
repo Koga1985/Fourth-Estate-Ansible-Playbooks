@@ -22,7 +22,7 @@ Applies DoD STIG (RHEL 8 V1R14 / RHEL 9 V1R3) and NIST 800-53 Rev 5 system harde
 | `rhel_ssh_port` | `22` | No | SSH listening port |
 | `rhel_selinux_state` | `"enforcing"` | No | SELinux mode (STIG V-204401) |
 
-> **Note:** Setting `rhel_enable_fips: true` requires a reboot to take effect. The role will reboot the host if `rhel_auto_reboot: true` is set.
+> **Note:** Setting `rhel_enable_fips: true` requires a manual reboot to take effect. Plan a maintenance window when enabling FIPS mode.
 
 ## Example Playbook
 
