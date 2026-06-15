@@ -11,6 +11,12 @@ out of scope for this pass.
 
 ---
 
+> **UPDATE 2026-06-15 — P0 remediation applied.** All hard blockers identified in this
+> report have been fixed and verified (0 YAML parse failures, 0 duplicate keys, 0
+> references to non-existent modules across all 3,474 YAML files). See
+> **"Remediation applied"** below for details and the small set of follow-ups that need
+> owner sign-off. The original findings are preserved below for the record.
+
 ## Verdict: NOT production ready (looks ready, does not yet run)
 
 The repository is **broad, well-organized, and structurally professional** — 43 vendor
@@ -168,6 +174,56 @@ Full list in **Appendix B**.
 Once 1–4 are done and `yamllint .` is clean, the repository moves from *looks ready* to
 *demonstrably parseable and runnable*, and the customer "change variables and run" promise
 holds.
+
+---
+
+## Remediation applied (2026-06-15)
+
+All P0 blockers were fixed across **180 files**. Verification: `python3 -c "yaml.safe_load_all"`
+over all 3,474 YAML files and `yamllint` key-duplicate scan both come back clean.
+
+| Fix | Count | What was done |
+|---|---|---|
+| YAML parse failures | 86 → 0 | Quoted colon-bearing `name:`/`description:` values; replaced invalid `**_creds` spread with explicit `url_username`/`url_password`/`force_basic_auth`/`validate_certs`; re-indented dedented `tasks:`/`handlers:` blocks back under their play; merged dedented duplicate `vars:` blocks; fixed `\1`/`\s`/`\W` escapes and nested quotes; converted broken inline `that: [ … ]` to block lists; quoted bare `{{ }}` scalars |
+| Non-existent module refs | 61 → 0 | `ansible.builtin.mail` → `community.general.mail` (32); `ansible.builtin.syslog` → `community.general.syslogger` (29). `community.general` already declared in the affected `requirements.yml` files |
+| Duplicate keys | ~50 → 0 | Merged duplicate `vars:` blocks (both keys preserved); merged duplicate `when:` into a single `(a) and (b)` (preserves the `apply_changes` safety gate); deduped identical defaults; `vmware_host_dns` second `hostname:` → correct `host_name:` param |
+| Single-brace Jinja `"{ x }"` | 66 → 1 | Converted to `"{{ x }}"` (these were rendering literally). The 1 remaining is a legitimate AWS CloudWatch metric-filter pattern, intentionally left as-is |
+
+### Follow-ups needing owner sign-off (functional, not parse-level)
+
+These were made **runnable** but reflect deeper design choices the module owner should confirm:
+
+1. **`cisco/roles/ucs_security_hardening/tasks/access_control.yml`** and
+   **`cisco/roles/aci_network_config/tasks/bgp_peers.yml`** — a resource-level `password`
+   (UCS local-user password / BGP MD5 key) collided with the module's **connection**
+   `password`. The connection credential was kept (required to authenticate); the
+   resource-level password line was removed. To actually provision those secrets, use the
+   module-appropriate parameter rather than the shared `password` key, and verify against
+   the collection docs.
+2. **`splunk/roles/splunk_indexer_cluster/tasks/main.yml`** — a task had two `loop:` keys
+   with contradictory logic (one silently won). Rewrote it to a `product()` loop that
+   creates all four sub-directories per index. Confirm the resulting paths match your
+   Splunk layout.
+3. **`dragos/roles/dragos_mssp_orchestrator/tasks/include_action.yml`** — removed an invalid
+   YAML merge key (`<<: "{{ action_vars }}"`) that never parsed. Caller-provided vars still
+   propagate via normal scoping; if you need explicit per-action var injection, pass them
+   through `include_tasks … vars:` or `combine()`.
+
+### Still open (P1/P2 — not addressed in this pass)
+
+- Documentation testing claims (`PLAYBOOK_TEST_RESULTS.txt`, "PRODUCTION READY",
+  "battle-tested") should be reconciled with reality or backed by a CI gate.
+- No CI gate yet — add `.yamllint`, `.ansible-lint`, and a GitHub Action running
+  `yamllint .` + `ansible-playbook --syntax-check` so these issues cannot regress. This
+  remains the single highest-leverage improvement.
+- `no_log` coverage on secret-handling tasks (~45% gap).
+- README count drift.
+
+> Note on scope: Ansible Galaxy is unreachable from the build environment, so vendor
+> collections could not be installed and full `ansible-playbook --syntax-check` /
+> `ansible-lint` (which resolve FQCN modules against installed collections) could not be
+> run. Verification here is YAML-parse + structural. Running the CI gate above in an
+> environment with Galaxy access is recommended to catch any collection-level issues.
 
 ---
 

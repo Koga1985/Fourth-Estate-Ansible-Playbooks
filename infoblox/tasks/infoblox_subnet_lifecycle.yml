@@ -45,7 +45,10 @@
       _return_as_object: 1
       _max_results: 10000
       "_return_fields+": "network,network_view,_ref,extattrs,comment"
-    **_creds
+    url_username: "{{ _creds.user }}"
+    url_password: "{{ _creds.password }}"
+    force_basic_auth: "{{ _creds.force_basic_auth }}"
+    validate_certs: "{{ _creds.validate_certs }}"
   register: _containers
   failed_when: false
 
@@ -63,7 +66,10 @@
       _return_as_object: 1
       _max_results: 20000
       "_return_fields+": "network,network_view,_ref,comment,extattrs"
-    **_creds
+    url_username: "{{ _creds.user }}"
+    url_password: "{{ _creds.password }}"
+    force_basic_auth: "{{ _creds.force_basic_auth }}"
+    validate_certs: "{{ _creds.validate_certs }}"
   register: _nets
   failed_when: false
 
@@ -99,7 +105,7 @@
         _lifecycle_log: "{{ _lifecycle_log + [ {'action':'request','requested':item} ] }}"
 
     # ---------------- approve -> set EA on an existing network ------------
-    - name: APPROVE: set EAs on existing network
+    - name: "APPROVE: set EAs on existing network"
       when: item.action == "approve" and item.cidr is defined and _net_by_cidr.get(item.cidr) is defined
       vars:
         _ref: "{{ _net_by_cidr[item.cidr]._ref }}"
@@ -117,17 +123,20 @@
         body_format: json
         body: { extattrs: "{{ _merged_ea }}" }
         status_code: [200,400]
-        **_creds
+        url_username: "{{ _creds.user }}"
+        url_password: "{{ _creds.password }}"
+        force_basic_auth: "{{ _creds.force_basic_auth }}"
+        validate_certs: "{{ _creds.validate_certs }}"
       register: approve_put
       failed_when: false
 
-    - name: APPROVE: log when network missing
+    - name: "APPROVE: log when network missing"
       when: item.action == "approve" and (item.cidr is not defined or _net_by_cidr.get(item.cidr) is not defined)
       ansible.builtin.set_fact:
         _lifecycle_log: "{{ _lifecycle_log + [ {'action':'approve','skipped':'network-not-found','item':item} ] }}"
 
     # ---------------- create -> cidr or next_available --------------------
-    - name: CREATE: get next available network (if container & prefix given)
+    - name: "CREATE: get next available network (if container & prefix given)"
       when: item.action == "create" and (item.cidr is not defined) and (item.container is defined) and (item.new_prefix is defined) and (_cont_by_cidr.get(item.container) is defined)
       vars:
         _cref: "{{ _cont_by_cidr[item.container]._ref }}"
@@ -140,11 +149,14 @@
           num: 1
           cidr: "{{ item.new_prefix }}"
         status_code: [200,400]
-        **_creds
+        url_username: "{{ _creds.user }}"
+        url_password: "{{ _creds.password }}"
+        force_basic_auth: "{{ _creds.force_basic_auth }}"
+        validate_certs: "{{ _creds.validate_certs }}"
       register: navn
       failed_when: false
 
-    - name: CREATE: compute target CIDR
+    - name: "CREATE: compute target CIDR"
       when: item.action == "create"
       ansible.builtin.set_fact:
         _target_cidr: >-
@@ -152,7 +164,7 @@
           {% elif (navn.json | default({})).networks is defined and (navn.json.networks | length) > 0 %}{{ navn.json.networks[0] }}
           {% else %}{{ omit }}{% endif %}
 
-    - name: CREATE: ensure network present
+    - name: "CREATE: ensure network present"
       when: item.action == "create" and _target_cidr is defined
       infoblox.nios_modules.nios_network:
         network: "{{ _target_cidr }}"
@@ -166,13 +178,13 @@
           }}
         state: present
 
-    - name: CREATE: log insufficient info
+    - name: "CREATE: log insufficient info"
       when: item.action == "create" and (_target_cidr is not defined)
       ansible.builtin.set_fact:
         _lifecycle_log: "{{ _lifecycle_log + [ {'action':'create','skipped':'no-cidr-nor-next_available','item':item} ] }}"
 
     # ---------------- deprecate -> mark EAs (non-destructive) -------------
-    - name: DEPRECATE: set EA on existing network
+    - name: "DEPRECATE: set EA on existing network"
       when: item.action == "deprecate" and item.cidr is defined and _net_by_cidr.get(item.cidr) is defined
       vars:
         _ref: "{{ _net_by_cidr[item.cidr]._ref }}"
@@ -190,17 +202,20 @@
         body_format: json
         body: { extattrs: "{{ _merged_ea }}" }
         status_code: [200,400]
-        **_creds
+        url_username: "{{ _creds.user }}"
+        url_password: "{{ _creds.password }}"
+        force_basic_auth: "{{ _creds.force_basic_auth }}"
+        validate_certs: "{{ _creds.validate_certs }}"
       register: deprecate_put
       failed_when: false
 
-    - name: DEPRECATE: log when network missing
+    - name: "DEPRECATE: log when network missing"
       when: item.action == "deprecate" and (item.cidr is not defined or _net_by_cidr.get(item.cidr) is not defined)
       ansible.builtin.set_fact:
         _lifecycle_log: "{{ _lifecycle_log + [ {'action':'deprecate','skipped':'network-not-found','item':item} ] }}"
 
     # ---------------- subdivide -> split network to smaller prefix --------
-    - name: SUBDIVIDE: split network via WAPI (best-effort)
+    - name: "SUBDIVIDE: split network via WAPI (best-effort)"
       when: item.action == "subdivide" and item.cidr is defined and item.new_prefix is defined and _net_by_cidr.get(item.cidr) is defined
       vars:
         _nref: "{{ _net_by_cidr[item.cidr]._ref }}"
@@ -212,11 +227,14 @@
         body:
           prefix: "{{ item.new_prefix }}"     # desired child prefix (e.g., 26 to split /24 into /26s)
         status_code: [200,400]
-        **_creds
+        url_username: "{{ _creds.user }}"
+        url_password: "{{ _creds.password }}"
+        force_basic_auth: "{{ _creds.force_basic_auth }}"
+        validate_certs: "{{ _creds.validate_certs }}"
       register: split_post
       failed_when: false
 
-    - name: SUBDIVIDE: log when missing bits
+    - name: "SUBDIVIDE: log when missing bits"
       when: item.action == "subdivide" and (item.cidr is not defined or item.new_prefix is not defined or _net_by_cidr.get(item.cidr) is not defined)
       ansible.builtin.set_fact:
         _lifecycle_log: "{{ _lifecycle_log + [ {'action':'subdivide','skipped':'missing-cidr-or-prefix-or-network-not-found','item':item} ] }}"
