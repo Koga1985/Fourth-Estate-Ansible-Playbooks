@@ -1,0 +1,50 @@
+---
+# Join additional control-plane nodes to the cluster.
+# Uses the join command and certificate key produced by init_control_plane.yml
+# on the first control-plane node (exposed via hostvars).
+
+- name: Set first control-plane host
+  ansible.builtin.set_fact:
+    _k8s_first_cp: "{{ groups['k8s_control_plane'][0] }}"
+
+- name: Build control-plane join command
+  ansible.builtin.set_fact:
+    _k8s_cp_join_command: >-
+      {{ hostvars[_k8s_first_cp].k8s_join_command }}
+      --control-plane --certificate-key {{ hostvars[_k8s_first_cp].k8s_certificate_key }}
+  when:
+    - hostvars[_k8s_first_cp].k8s_join_command is defined
+    - hostvars[_k8s_first_cp].k8s_certificate_key is defined
+
+- name: Fail clearly if the join command is unavailable
+  ansible.builtin.fail:
+    msg: >-
+      No join command / certificate-key found on {{ _k8s_first_cp }}.
+      Ensure init_control_plane.yml ran successfully on the first control-plane node.
+  when: _k8s_cp_join_command is not defined
+
+- name: Check whether this node has already joined
+  ansible.builtin.stat:
+    path: /etc/kubernetes/kubelet.conf
+  register: _k8s_kubelet_conf
+
+- name: Join node to the cluster as a control-plane node
+  ansible.builtin.command: "{{ _k8s_cp_join_command }}"
+  args:
+    creates: /etc/kubernetes/kubelet.conf
+  register: _k8s_cp_join
+  changed_when: _k8s_cp_join.rc == 0
+  when: not _k8s_kubelet_conf.stat.exists
+
+- name: Ensure root kube config directory exists
+  ansible.builtin.file:
+    path: /root/.kube
+    state: directory
+    mode: '0700'
+
+- name: Install admin kubeconfig for kubectl
+  ansible.builtin.copy:
+    src: /etc/kubernetes/admin.conf
+    dest: /root/.kube/config
+    remote_src: true
+    mode: '0600'

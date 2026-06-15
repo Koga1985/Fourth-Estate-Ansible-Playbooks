@@ -226,3 +226,25 @@ Refer to each platform's `requirements.txt` or `requirements.yml` for the comple
 - Firewall rules, proxies, and routing must allow API traffic from the control host.
 - **TLS certificate verification:** The control host must trust the target system's TLS certificate. Add CA certificates to the control host CA bundle for environments using internal or self-signed certificates.
 - **Out-of-band management access** is strongly recommended for critical infrastructure before executing any playbook.
+
+---
+
+## 13. Advanced Features Not Yet Implemented
+
+The following optional/advanced workflows ship as **fail-fast placeholders**: the role
+loads and the default path runs, but enabling the feature stops with a clear, actionable
+message rather than executing unverified automation against critical systems. Provide a
+site-specific implementation (validated in a non-production environment) before enabling
+them.
+
+| Role | Feature (placeholder) | Enabled by |
+|------|----------------------|------------|
+| `operational_technology/ot_firmware_register` | register / verify / baseline / update_plan / rollback workflows | `ot_firmware_operation` |
+| `illumio/illumio_pce_install` | PCE database cluster, PgBouncer, load balancer | `illumio_pce_cluster_mode`, `illumio_pce_use_pgbouncer`, `illumio_pce_use_loadbalancer` |
+| `sciencelogic/sl1_platform_install` | database cluster, high availability, data/message collector install | `sl1_db_cluster.enabled`, `sl1_ha.enabled`, collector `install: true` |
+
+> **SentinelOne / CrowdStrike Windows** install tasks and **Kubernetes control-plane/worker
+> join, metrics-server, validation, and Fourth Estate namespace** tasks were implemented
+> following standard vendor / `kubeadm` procedures and the existing sibling tasks in each
+> role. They are not yet validated against live hosts — test in a non-production
+> environment and confirm installer versions/arguments for your environment first.

@@ -1,0 +1,30 @@
+---
+# CrowdStrike Falcon Windows Sensor Installation
+# Mirrors install_linux.yml using the Windows sensor executable and CID.
+# Requires the ansible.windows collection (declared in requirements.yml).
+
+- name: Download Falcon sensor installer (API method)
+  ansible.windows.win_get_url:
+    url: "{{ falcon_api_base_url }}/sensors/entities/download-installer/v1?id={{ falcon_sensor_version }}"
+    headers:
+      Authorization: "Bearer {{ falcon_api_token }}"
+    dest: "{{ falcon_windows_installer_path | default('C:\\Windows\\Temp\\WindowsSensor.exe') }}"
+  when:
+    - falcon_install_method == 'api'
+    - not falcon_air_gapped | bool
+  no_log: true
+
+- name: Install Falcon sensor (Windows)
+  ansible.windows.win_package:
+    path: "{{ falcon_windows_installer_path | default('C:\\Windows\\Temp\\WindowsSensor.exe') }}"
+    state: present
+    arguments: "/install /quiet /norestart CID={{ falcon_cid }}"
+  register: falcon_win_install
+  no_log: true
+
+- name: Verify Falcon sensor service is running
+  ansible.windows.win_service:
+    name: CSFalconService
+    state: started
+  register: falcon_win_service
+  failed_when: false

@@ -1,0 +1,27 @@
+---
+# SentinelOne Agent Windows Installation
+# Mirrors install_linux.yml using the Windows MSI installer and site token.
+# Requires the ansible.windows collection (declared in requirements.yml).
+
+- name: Download SentinelOne agent installer (URL method)
+  ansible.windows.win_get_url:
+    url: "{{ s1_agent_download_url }}"
+    dest: "{{ s1_windows_installer_path | default('C:\\Windows\\Temp\\SentinelInstaller.msi') }}"
+  when:
+    - s1_install_method == 'url'
+    - s1_agent_download_url | length > 0
+
+- name: Install SentinelOne agent (MSI)
+  ansible.windows.win_package:
+    path: "{{ s1_windows_installer_path | default('C:\\Windows\\Temp\\SentinelInstaller.msi') }}"
+    state: present
+    arguments: "/quiet /norestart SITE_TOKEN={{ s1_site_token }}"
+  register: s1_win_install
+  no_log: true
+
+- name: Verify SentinelOne agent service is running
+  ansible.windows.win_service:
+    name: SentinelAgent
+    state: started
+  register: s1_win_service
+  failed_when: false
