@@ -226,8 +226,13 @@ These were made **runnable** but reflect deeper design choices the module owner 
 
 ### Still open (P2)
 
-- `no_log` coverage on secret-handling tasks (~45% gap) — sweep `no_log: true` onto tasks
-  that pass passwords/tokens to modules.
+- ~~`no_log` coverage on secret-handling tasks~~ — **done (2026-06-15).** Audited every task
+  in `tasks/`, `handlers/`, and playbooks that passes a secret (password/token/PSK/key) to a
+  module. Coverage was already strong; only **3** genuine gaps remained, now fixed with
+  `no_log: true`: FortiGate `fortios_system_global` (admin SSH password),
+  `panos_ike_gateway` (pre-shared key), and the Illumio OT ACL email handler (SMTP). The
+  initial wider estimate was a false positive — most secret references live in `defaults/`
+  var files (not module calls) or already carried `no_log`.
 - Ratchet the informational `ansible-lint`/`--syntax-check` CI job to blocking once its
   findings are triaged (best done on a runner with Ansible Galaxy access).
 
