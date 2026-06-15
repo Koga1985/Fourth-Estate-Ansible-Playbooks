@@ -209,15 +209,27 @@ These were made **runnable** but reflect deeper design choices the module owner 
    propagate via normal scoping; if you need explicit per-action var injection, pass them
    through `include_tasks … vars:` or `combine()`.
 
-### Still open (P1/P2 — not addressed in this pass)
+### P1 — addressed (2026-06-15)
 
-- Documentation testing claims (`PLAYBOOK_TEST_RESULTS.txt`, "PRODUCTION READY",
-  "battle-tested") should be reconciled with reality or backed by a CI gate.
-- No CI gate yet — add `.yamllint`, `.ansible-lint`, and a GitHub Action running
-  `yamllint .` + `ansible-playbook --syntax-check` so these issues cannot regress. This
-  remains the single highest-leverage improvement.
-- `no_log` coverage on secret-handling tasks (~45% gap).
-- README count drift.
+- **CI gate added** — [`.github/workflows/ci.yml`](./.github/workflows/ci.yml) with
+  [`.yamllint`](./.yamllint), [`.ansible-lint`](./.ansible-lint), and
+  [`scripts/check_yaml.py`](./scripts/check_yaml.py). The **required** job runs a YAML parse
+  check over every file plus `yamllint` (syntax errors + duplicate keys) — verified passing
+  on the current tree. An **informational** job installs declared collections and runs
+  `ansible-lint` + `ansible-playbook --syntax-check` (non-blocking until findings are
+  triaged; flip `continue-on-error: false` to enforce).
+- **Documentation reconciled** — corrected README statistics (556 roles / 3,474 YAML files /
+  37 platforms; removed the "39+ technologies" inconsistency); reframed overstated testing
+  claims to reflect what was actually validated (static checks vs functional/live-hardware
+  testing) in `cisco/playbooks/PLAYBOOK_TEST_RESULTS.txt`, `cisco/IMPLEMENTATION_COMPLETE.md`,
+  `policy_as_code/IMPLEMENTATION_SUMMARY.md`, and `kubernetes/README.md`.
+
+### Still open (P2)
+
+- `no_log` coverage on secret-handling tasks (~45% gap) — sweep `no_log: true` onto tasks
+  that pass passwords/tokens to modules.
+- Ratchet the informational `ansible-lint`/`--syntax-check` CI job to blocking once its
+  findings are triaged (best done on a runner with Ansible Galaxy access).
 
 > Note on scope: Ansible Galaxy is unreachable from the build environment, so vendor
 > collections could not be installed and full `ansible-playbook --syntax-check` /

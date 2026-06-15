@@ -350,8 +350,8 @@ cisco/
 | Compliance Frameworks | 4 |
 | Security Controls | 60+ |
 | Implementation Time | Complete |
-| Validation Status | ✅ Passed |
-| Production Ready | ✅ Yes |
+| Static Validation (YAML parse/lint) | ✅ Passing in CI |
+| Functional Testing (live hardware) | ⚠️ Customer responsibility before production |
 
 ---
 
