@@ -1,0 +1,38 @@
+---
+# Validate cluster health (run on the first control-plane node).
+
+- name: Get node status
+  ansible.builtin.command: kubectl get nodes -o wide
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+  register: _k8s_nodes
+  changed_when: false
+
+- name: Show node status
+  ansible.builtin.debug:
+    var: _k8s_nodes.stdout_lines
+
+- name: Collect node readiness
+  ansible.builtin.command: kubectl get nodes --no-headers
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+  register: _k8s_node_lines
+  changed_when: false
+
+- name: Assert no nodes are NotReady
+  ansible.builtin.assert:
+    that:
+      - "'NotReady' not in _k8s_node_lines.stdout"
+    fail_msg: "One or more nodes are NotReady:\n{{ _k8s_node_lines.stdout }}"
+    success_msg: "All nodes report Ready."
+
+- name: Get kube-system pods
+  ansible.builtin.command: kubectl get pods -n kube-system
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+  register: _k8s_syspods
+  changed_when: false
+
+- name: Show kube-system pods
+  ansible.builtin.debug:
+    var: _k8s_syspods.stdout_lines

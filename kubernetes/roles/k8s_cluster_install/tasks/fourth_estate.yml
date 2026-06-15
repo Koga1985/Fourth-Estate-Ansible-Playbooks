@@ -1,0 +1,36 @@
+---
+# Fourth Estate specific cluster configuration (run on the first control-plane node).
+# Creates a dedicated namespace and enforces the restricted Pod Security Standards
+# baseline expected for Fourth Estate workloads.
+
+- name: Render Fourth Estate namespace manifest
+  ansible.builtin.command: >-
+    kubectl create namespace {{ k8s_fourth_estate_namespace | default('fourth-estate') }}
+    --dry-run=client -o yaml
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+  register: _fe_ns_manifest
+  changed_when: false
+
+- name: Apply Fourth Estate namespace
+  ansible.builtin.command:
+    cmd: kubectl apply -f -
+    stdin: "{{ _fe_ns_manifest.stdout }}"
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+  register: _fe_ns_apply
+  changed_when: >-
+    'created' in _fe_ns_apply.stdout or 'configured' in _fe_ns_apply.stdout
+
+- name: Enforce restricted Pod Security Standards on the namespace
+  ansible.builtin.command:
+    cmd: >-
+      kubectl label namespace {{ k8s_fourth_estate_namespace | default('fourth-estate') }}
+      pod-security.kubernetes.io/enforce=restricted
+      pod-security.kubernetes.io/audit=restricted
+      pod-security.kubernetes.io/warn=restricted
+      --overwrite
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+  register: _fe_psa
+  changed_when: "'labeled' in _fe_psa.stdout"

@@ -1,0 +1,27 @@
+---
+# Join worker nodes to the cluster using the join command produced by
+# init_control_plane.yml on the first control-plane node.
+
+- name: Set first control-plane host
+  ansible.builtin.set_fact:
+    _k8s_first_cp: "{{ groups['k8s_control_plane'][0] }}"
+
+- name: Fail clearly if the worker join command is unavailable
+  ansible.builtin.fail:
+    msg: >-
+      No join command found on {{ _k8s_first_cp }}.
+      Ensure init_control_plane.yml ran successfully on the first control-plane node.
+  when: hostvars[_k8s_first_cp].k8s_join_command is not defined
+
+- name: Check whether this node has already joined
+  ansible.builtin.stat:
+    path: /etc/kubernetes/kubelet.conf
+  register: _k8s_kubelet_conf
+
+- name: Join node to the cluster as a worker
+  ansible.builtin.command: "{{ hostvars[_k8s_first_cp].k8s_join_command }}"
+  args:
+    creates: /etc/kubernetes/kubelet.conf
+  register: _k8s_worker_join
+  changed_when: _k8s_worker_join.rc == 0
+  when: not _k8s_kubelet_conf.stat.exists

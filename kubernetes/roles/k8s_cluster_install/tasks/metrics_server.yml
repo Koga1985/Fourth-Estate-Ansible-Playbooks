@@ -1,0 +1,23 @@
+---
+# Install the Kubernetes Metrics Server (run on the first control-plane node).
+
+- name: Deploy metrics-server manifest
+  ansible.builtin.command: >-
+    kubectl apply -f
+    https://github.com/kubernetes-sigs/metrics-server/releases/{{ k8s_metrics_server_version | default('latest') }}/download/components.yaml
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+  register: _k8s_metrics_apply
+  changed_when: >-
+    'created' in _k8s_metrics_apply.stdout or 'configured' in _k8s_metrics_apply.stdout
+
+- name: Wait for the metrics-server deployment to become available
+  ansible.builtin.command: >-
+    kubectl -n kube-system rollout status deployment/metrics-server --timeout=120s
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+  register: _k8s_metrics_rollout
+  changed_when: false
+  retries: 3
+  delay: 10
+  until: _k8s_metrics_rollout.rc == 0
