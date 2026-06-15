@@ -248,3 +248,22 @@ them.
 > following standard vendor / `kubeadm` procedures and the existing sibling tasks in each
 > role. They are not yet validated against live hosts — test in a non-production
 > environment and confirm installer versions/arguments for your environment first.
+
+## 14. Templates Requiring Site Review
+
+Most previously-missing templates were implemented with working, variable-driven content
+(postgres backup/restore scripts, splunk `.conf` files, report/inventory artifacts, kubelet
+args, ELK role mappings, SL1 network config). The following **security/clustering** templates
+were added as **valid standard schemas but must be reviewed and populated for your site
+before production** — several require secrets/URLs that have *no default* and will fail-fast
+at render time if unset, rather than deploying an incomplete configuration:
+
+| Role | Template | Provide before enabling |
+|------|----------|------------------------|
+| `kubernetes/k8s-cluster-hardening` | `encryption-config-rotated.yaml` | `k8s_encryption_key` (from Vault) |
+| `kubernetes/k8s-cluster-hardening` | `audit-webhook-config.yaml` | `k8s_audit_webhook_url` |
+| `kubernetes/k8s-cluster-hardening` | `kube-apiserver-flags.yaml` | `k8s_apiserver_extra_flags` |
+| `kubernetes/k8s-cluster-hardening` | `security-context-admission.yaml` | PSA defaults (`k8s_psa_*`) |
+| `kubernetes/k8s-cluster-hardening` | `rsyslog-kubernetes.conf` | `k8s_rsyslog_remote` (optional) |
+| `illumio/illumio_pce_install` | `cluster_peers.yml`, `pce_environment`, `illumio_cli_config`, `pce-ctl` wrapper | PCE topology / FQDN / install paths |
+| `sciencelogic/sl1_platform_install` | `install_config_db` | `sl1_db_server.*` |

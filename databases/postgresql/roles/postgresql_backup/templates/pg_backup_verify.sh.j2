@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# Managed by Ansible (postgresql_backup) - verify latest physical backup
+set -euo pipefail
+BACKUP_DIR="{{ postgresql_backup_directory | default('/var/backups/postgresql') }}"
+LATEST="$(ls -1dt "${BACKUP_DIR}"/full_* 2>/dev/null | head -n1 || true)"
+if [ -z "${LATEST}" ]; then echo "No physical backup found in ${BACKUP_DIR}" >&2; exit 1; fi
+if command -v pg_verifybackup >/dev/null 2>&1 && [ -f "${LATEST}/backup_manifest" ]; then
+  pg_verifybackup "${LATEST}"
+else
+  test -s "${LATEST}/base.tar.gz" || test -s "${LATEST}/base.tar"
+fi
+echo "Verification OK: ${LATEST}"

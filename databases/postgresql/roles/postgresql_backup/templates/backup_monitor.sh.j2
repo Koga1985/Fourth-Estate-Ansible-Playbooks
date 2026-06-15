@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# Managed by Ansible (postgresql_backup) - alert if no recent backup
+set -euo pipefail
+BACKUP_DIR="{{ postgresql_backup_directory | default('/var/backups/postgresql') }}"
+MAX_AGE_HOURS="{{ postgresql_backup_max_age_hours | default(26) }}"
+LATEST="$(ls -1t "${BACKUP_DIR}" 2>/dev/null | head -n1 || true)"
+if [ -z "${LATEST}" ]; then echo "CRITICAL: no backups in ${BACKUP_DIR}"; exit 2; fi
+AGE_H=$(( ( $(date +%s) - $(stat -c %Y "${BACKUP_DIR}/${LATEST}") ) / 3600 ))
+if [ "${AGE_H}" -gt "${MAX_AGE_HOURS}" ]; then
+  echo "WARNING: latest backup ${LATEST} is ${AGE_H}h old (> ${MAX_AGE_HOURS}h)"; exit 1
+fi
+echo "OK: latest backup ${LATEST} is ${AGE_H}h old"
