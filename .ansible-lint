@@ -1,14 +1,16 @@
 # ansible-lint configuration for Fourth Estate Ansible Playbooks
 #
-# This is run as an INFORMATIONAL check in CI (it does not block merges yet),
-# because the codebase predates linting and will surface findings that need to
-# be triaged and ratcheted down over time. The enforced gate is yamllint +
-# the YAML parse check (see .github/workflows/ci.yml).
+# This is an ENFORCED gate in CI (see .github/workflows/ci.yml). It runs in
+# --offline mode so results are deterministic regardless of Ansible Galaxy
+# availability. Pre-existing findings are captured in .ansible-lint-ignore
+# (a baseline ratchet): the current tree passes, and any NEW violation fails CI.
 #
-# To make ansible-lint blocking once findings are addressed, set
-# `continue-on-error: false` on the ansible-lint job in the workflow.
+# A separate, INFORMATIONAL CI step installs the declared collections and runs
+# the full `ansible-lint` + `ansible-playbook --syntax-check` (those rules need
+# collections and a configured roles_path to resolve, which is not guaranteed on
+# every runner).
 #
-# Run locally:  ansible-lint
+# Run locally:  ansible-lint --offline <dir> [...]
 ---
 profile: basic
 
@@ -18,5 +20,14 @@ exclude_paths:
   - .vscode/
   - PRODUCTION_READINESS_ASSESSMENT.md
 
-# Use the repo's yamllint config rather than ansible-lint's stricter built-in one.
-use_default_rules: true
+# Rules intentionally skipped (with rationale), not bugs:
+skip_list:
+  # The repo convention names variables with a VENDOR prefix (e.g. tsc_*, ise_*),
+  # not the ansible-lint-preferred per-role-name prefix. Renaming ~hundreds of
+  # variables across 556 roles is an out-of-scope, high-risk refactor.
+  - var-naming[no-role-prefix]
+  # Task-name capitalization is cosmetic and does not affect execution.
+  - name[casing]
+  # YAML syntax/style is enforced by the dedicated yamllint job (.yamllint),
+  # which is the single source of truth; avoid double-linting / config conflicts.
+  - yaml

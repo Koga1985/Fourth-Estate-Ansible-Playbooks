@@ -212,12 +212,14 @@ These were made **runnable** but reflect deeper design choices the module owner 
 ### P1 — addressed (2026-06-15)
 
 - **CI gate added** — [`.github/workflows/ci.yml`](./.github/workflows/ci.yml) with
-  [`.yamllint`](./.yamllint), [`.ansible-lint`](./.ansible-lint), and
-  [`scripts/check_yaml.py`](./scripts/check_yaml.py). The **required** job runs a YAML parse
-  check over every file plus `yamllint` (syntax errors + duplicate keys) — verified passing
-  on the current tree. An **informational** job installs declared collections and runs
-  `ansible-lint` + `ansible-playbook --syntax-check` (non-blocking until findings are
-  triaged; flip `continue-on-error: false` to enforce).
+  [`.yamllint`](./.yamllint), [`.ansible-lint`](./.ansible-lint),
+  [`.ansible-lint-ignore`](./.ansible-lint-ignore), and
+  [`scripts/check_yaml.py`](./scripts/check_yaml.py). Two **required** (blocking) jobs:
+  (1) YAML parse check over every file + `yamllint` (syntax errors + duplicate keys);
+  (2) `ansible-lint --offline` ratcheted against a baseline (details below). A third,
+  **informational** job installs the declared collections and runs the full
+  `ansible-lint` + `ansible-playbook --syntax-check` (those rules need collections + a
+  resolved roles_path; promote to required once green on a Galaxy-enabled runner).
 - **Documentation reconciled** — corrected README statistics (556 roles / 3,474 YAML files /
   37 platforms; removed the "39+ technologies" inconsistency); reframed overstated testing
   claims to reflect what was actually validated (static checks vs functional/live-hardware
@@ -233,8 +235,26 @@ These were made **runnable** but reflect deeper design choices the module owner 
   `panos_ike_gateway` (pre-shared key), and the Illumio OT ACL email handler (SMTP). The
   initial wider estimate was a false positive — most secret references live in `defaults/`
   var files (not module calls) or already carried `no_log`.
-- Ratchet the informational `ansible-lint`/`--syntax-check` CI job to blocking once its
-  findings are triaged (best done on a runner with Ansible Galaxy access).
+- ~~Ratchet the `ansible-lint` CI job to blocking~~ — **done (2026-06-15).** `ansible-lint`
+  now runs `--offline` as a **required** job, ratcheted against a generated baseline
+  ([`.ansible-lint-ignore`](./.ansible-lint-ignore), 1,064 pre-existing findings): the
+  current tree passes and **any new violation fails the build**. Two opinionated rules are
+  skipped in [`.ansible-lint`](./.ansible-lint) with documented rationale —
+  `var-naming[no-role-prefix]` (the repo uses vendor-prefixed vars, not per-role-name
+  prefixes; a mass rename is out of scope) and `name[casing]` (cosmetic); the `yaml` rule
+  is deferred to the dedicated yamllint job.
+
+#### ansible-lint triage (1,064 baselined findings)
+
+| Bucket | Rules (count) | Disposition |
+|---|---|---|
+| **Environment / offline artifacts** (~238) | `syntax-check[specific]` 114, `parser-error` 100*, `load-failure` 18, `syntax-check[unknown-module]` 6 | Mostly missing collections + roles_path at lint time; *`parser-error` is the `ansible/tasks/ans_*` family — these are **playbooks** living in a `tasks/` dir, so ansible-lint misreads `hosts:`/`gather_facts:` as task keywords. They run correctly when invoked as playbooks. Resolve by moving them to `playbooks/` or by the informational job on a provisioned runner. |
+| **Cosmetic / style** (~464) | `jinja[spacing]` 306, `name[missing]` 119, `key-order[task]` 32, `name[template]` 7 | Non-bugs; baselined. Burn down opportunistically. |
+| **Galaxy metadata strictness** (~257) | `schema[meta]` 155, `schema[tasks]` 97, `schema[vars]` 4, `schema[inventory]` 1 | Non-standard `galaxy_info.platforms` names etc.; only matters if publishing to Galaxy. Baselined. |
+| **Real debt — recommended burndown** (~94) | `var-naming[no-reserved]` 40, `jinja[invalid]` 33, `command-instead-of-*` 11, `literal-compare` 3, `var-naming[pattern/read-only]` 5, `partial-become` 2 | **Highest priority to fix over time.** `var-naming[no-reserved]` flags variables named after Ansible reserved keywords (e.g. `strategy`, `environment`) which can collide at runtime — these are genuine footguns. `jinja[invalid]` are mostly lint-time type-inference false positives but a few should be checked for real type-mismatched comparisons. |
+
+All findings are **warning/`basic`-profile** severity (none are fatal); the baseline simply
+prevents regressions while the debt above is addressed.
 
 > Note on scope: Ansible Galaxy is unreachable from the build environment, so vendor
 > collections could not be installed and full `ansible-playbook --syntax-check` /

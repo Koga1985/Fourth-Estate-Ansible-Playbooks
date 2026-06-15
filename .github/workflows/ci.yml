@@ -14,7 +14,7 @@ permissions:
 
 jobs:
   # ---------------------------------------------------------------------------
-  # ENFORCED GATE: YAML must parse and have no duplicate keys.
+  # ENFORCED GATE 1: YAML must parse and have no duplicate keys.
   # Catches the class of bug that aborts ansible-playbook before any task runs.
   # Requires no Ansible collections, so it is fast and runner-agnostic.
   # ---------------------------------------------------------------------------
@@ -38,12 +38,38 @@ jobs:
         run: yamllint -c .yamllint .
 
   # ---------------------------------------------------------------------------
-  # INFORMATIONAL: ansible-lint + syntax-check. Does not block merges yet
-  # (continue-on-error) because the codebase predates linting. Installs the
-  # collections declared in the per-vendor requirements.yml files first.
-  # Flip continue-on-error to false once findings are triaged.
+  # ENFORCED GATE 2: ansible-lint (deterministic, --offline).
+  # Uses .ansible-lint (profile + documented skips) and the .ansible-lint-ignore
+  # baseline so the current tree passes and any NEW violation fails the build.
+  # --offline keeps results identical regardless of Ansible Galaxy availability;
+  # collection/roles-path-dependent rules (syntax-check, load-failure) are
+  # exercised by the informational job below where collections are installed.
   # ---------------------------------------------------------------------------
-  ansible:
+  ansible-lint:
+    name: ansible-lint (required, baseline-ratcheted)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install ansible-core + ansible-lint
+        run: pip install --quiet ansible-core ansible-lint
+
+      - name: ansible-lint (offline, baseline-ratcheted)
+        run: |
+          dirs=$(ls -d */ | grep -vE '^(docs|\.vscode|scripts)/' | tr -d '/' | tr '\n' ' ')
+          ansible-lint --offline $dirs
+
+  # ---------------------------------------------------------------------------
+  # INFORMATIONAL: full ansible-lint + ansible-playbook --syntax-check with the
+  # declared collections installed. Not blocking (continue-on-error) because it
+  # depends on Galaxy reachability and a fully resolved roles_path. Promote to a
+  # required gate once findings are triaged on a Galaxy-enabled runner.
+  # ---------------------------------------------------------------------------
+  ansible-syntax-check:
     name: ansible-lint + syntax-check (informational)
     runs-on: ubuntu-latest
     continue-on-error: true
@@ -67,8 +93,10 @@ jobs:
             echo "::endgroup::"
           done
 
-      - name: ansible-lint
-        run: ansible-lint || true
+      - name: Full ansible-lint (with collections)
+        run: |
+          dirs=$(ls -d */ | grep -vE '^(docs|\.vscode|scripts)/' | tr -d '/' | tr '\n' ' ')
+          ansible-lint $dirs || true
 
       - name: Syntax-check discoverable playbooks
         run: |
