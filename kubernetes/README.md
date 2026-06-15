@@ -8,9 +8,9 @@ This collection provides comprehensive Kubernetes automation with enterprise-gra
 
 - **DoD STIG V1R11 Compliant**: Full implementation of Kubernetes STIG controls
 - **NIST SP 800-190 Compliant**: Application Container Security Guide
-- **Production Ready**: Battle-tested configurations for enterprise environments
-- **Drop-in**: Minimal configuration required, works out of the box
-- **Functionally Tested**: Includes Molecule tests for all roles
+- **Production-oriented**: Hardening-focused configurations for enterprise environments
+- **Drop-in**: Designed to run with minimal configuration — set your inventory and variables
+- **Test scaffolding**: Molecule scenario provided for `k8s-cluster-hardening`; validate against a non-production cluster before rollout
 
 ## Directory Structure
 

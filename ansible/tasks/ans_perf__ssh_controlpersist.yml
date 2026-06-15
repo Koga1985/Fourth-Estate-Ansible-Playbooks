@@ -8,6 +8,9 @@
     artifacts_dir: "{{ artifacts_dir | default('/tmp/ansible-core-artifacts') }}"
     apply_changes: "{{ apply_changes | default(false) }}"
 
+    ssh_config_path: "{{ ssh_config_path | default('~/.ssh/config') }}"
+    control_path: "{{ control_path | default('~/.ssh/ansible-%r@%h:%p') }}"
+    control_persist: "{{ control_persist | default('600s') }}"
   pre_tasks:
     - name: Ensure artifacts directory
       ansible.builtin.file:
@@ -15,34 +18,30 @@
         state: directory
         mode: "0755"
 
-vars:
-  ssh_config_path: "{{ ssh_config_path | default('~/.ssh/config') }}"
-  control_path: "{{ control_path | default('~/.ssh/ansible-%r@%h:%p') }}"
-  control_persist: "{{ control_persist | default('600s') }}"
-tasks:
-  - name: Plan SSH multiplexing
-    ansible.builtin.copy:
-      dest: "{{ artifacts_dir }}/ssh_multiplex_plan.json"
-      mode: "0644"
-      content: "{{ {'config': ssh_config_path, 'control_path': control_path, 'persist': control_persist} | to_nice_json }}"
+  tasks:
+    - name: Plan SSH multiplexing
+      ansible.builtin.copy:
+        dest: "{{ artifacts_dir }}/ssh_multiplex_plan.json"
+        mode: "0644"
+        content: "{{ {'config': ssh_config_path, 'control_path': control_path, 'persist': control_persist} | to_nice_json }}"
 
-  - name: Ensure SSH config directory
-    when: apply_changes | bool
-    ansible.builtin.file:
-      path: "{{ ssh_config_path | dirname }}"
-      state: directory
-      mode: "0700"
+    - name: Ensure SSH config directory
+      when: apply_changes | bool
+      ansible.builtin.file:
+        path: "{{ ssh_config_path | dirname }}"
+        state: directory
+        mode: "0700"
 
-  - name: Configure SSH multiplexing
-    when: apply_changes | bool
-    ansible.builtin.blockinfile:
-      path: "{{ ssh_config_path }}"
-      mode: "0600"
-      create: true
-      block: |
-        Host *
-          ControlMaster auto
-          ControlPersist {{ control_persist }}
-          ControlPath {{ control_path }}
-          ServerAliveInterval 30
-          ServerAliveCountMax 10
+    - name: Configure SSH multiplexing
+      when: apply_changes | bool
+      ansible.builtin.blockinfile:
+        path: "{{ ssh_config_path }}"
+        mode: "0600"
+        create: true
+        block: |
+          Host *
+            ControlMaster auto
+            ControlPersist {{ control_persist }}
+            ControlPath {{ control_path }}
+            ServerAliveInterval 30
+            ServerAliveCountMax 10

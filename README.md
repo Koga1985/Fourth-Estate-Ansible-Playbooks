@@ -1,21 +1,24 @@
 # Fourth Estate Ansible Playbooks
 
-An enterprise-grade collection of **550 roles** and **3,395 YAML files** for infrastructure automation across **37 technology platforms** with emphasis on **DoD STIG, NIST 800-53, NIST 800-171, FedRAMP, and FISMA compliance**.
+An enterprise-grade collection of **556 roles** and **3,474 YAML files** for infrastructure automation across **37 technology platforms** with emphasis on **DoD STIG, NIST 800-53, NIST 800-171, FedRAMP, and FISMA compliance**.
 
 This repository provides production-ready Ansible automation for network infrastructure, cloud platforms, container orchestration, storage systems, backup solutions, security scanning, secrets management, ITSM integration, and operational technology (OT/ICS) security with a special focus on **Fourth Estate** (free press/media) organizations.
 
 ## 📊 Repository Statistics
 
-- **Total Roles:** 550
-- **Total YAML Files:** 3,395
-- **README Documentation Files:** 620
+- **Total Roles:** 556
+- **Total YAML Files:** 3,474
+- **README Documentation Files:** 627
 - **Technology Platforms:** 37
 - **Compliance Frameworks:** DoD STIG, NIST 800-53 Rev 5, NIST 800-171, FedRAMP, FISMA, CIS Benchmarks
 - **Cloud Platforms:** 4 (AWS, Azure, GCP, VMware vSphere)
 - **Database Platforms:** 4 (PostgreSQL, MySQL, Oracle, Cloud Databases)
-- **Test Playbooks:** 9+
-- **Jinja2 Templates:** 208
+- **Jinja2 Templates:** 209
 - **Inventory Examples:** 43
+
+> Repository statistics are verified in CI (`yamllint` + a YAML parse check over all
+> files). See [`PRODUCTION_READINESS_ASSESSMENT.md`](./PRODUCTION_READINESS_ASSESSMENT.md)
+> for the current validation status and known follow-ups.
 
 ## Table of Contents
 
@@ -42,7 +45,7 @@ This repository provides production-ready Ansible automation for network infrast
 
 This repository provides enterprise-grade Ansible automation for organizations requiring:
 
-- **Multi-platform infrastructure automation** across 39+ technologies
+- **Multi-platform infrastructure automation** across 37 technology platforms
 - **Security compliance** with DoD STIG and NIST 800-53/800-171 standards
 - **Fourth Estate operations** with specialized roles for free press/media infrastructure
 - **Production-ready automation** including Day-0/Day-1 deployment, monitoring, backup, and disaster recovery
@@ -550,18 +553,25 @@ ansible-playbook palo_alto/playbooks/panos_create_object.yml -i inventories/prod
 
 ## Testing and CI Guidance
 
-### Automated Testing
+### Enforced CI gate
 
-This repository includes multiple test frameworks:
+Every push and pull request runs [`.github/workflows/ci.yml`](./.github/workflows/ci.yml):
 
-**YAML Syntax Validation:**
+- **Required — YAML parse + lint:** `python3 scripts/check_yaml.py .` (every `.yml`/`.yaml`
+  must load) and `yamllint -c .yamllint .` (catches YAML syntax errors and duplicate keys).
+  This is what guarantees a customer can grab a playbook and have it parse and run.
+- **Informational — ansible-lint + `--syntax-check`:** installs the collections declared in
+  the per-vendor `requirements.yml` files and reports findings. Currently non-blocking; flip
+  `continue-on-error: false` in the workflow once findings are triaged.
+
+Reproduce the required gate locally:
 ```bash
-# Validate all YAML files
-find . -name "*.yml" -o -name "*.yaml" | xargs yamllint
-
-# Or use Python
-python3 -c "import yaml, sys; yaml.safe_load(open(sys.argv[1]))" playbook.yml
+pip install yamllint pyyaml
+python3 scripts/check_yaml.py .
+yamllint -c .yamllint .
 ```
+
+### Additional local validation
 
 **Ansible Linting:**
 ```bash

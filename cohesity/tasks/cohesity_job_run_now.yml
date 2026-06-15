@@ -26,6 +26,9 @@
   vars:
     run_timeout_sec: "{{ run_timeout_sec | default(3600) }}"
     poll_every_sec: "{{ poll_every_sec | default(15) }}"
+    run_state: "{{ (runs.json | sort(attribute='startTime') | last) | default({}) }}"
+
+- name: Fail if the run did not succeed
   until: run_state.status in ['Succeeded','Failed','Canceled','Warning']
   retries: "{{ (run_timeout_sec // poll_every_sec) | int }}"
   delay: "{{ poll_every_sec }}"
@@ -38,10 +41,6 @@
     validate_certs: "{{ cohesity_verify_tls }}"
   register: runs
   changed_when: false
-  vars:
-    run_state: "{{ (runs.json | sort(attribute='startTime') | last) | default({}) }}"
-
-- name: Fail if the run did not succeed
   when: run_state.status not in ['Succeeded','Warning']
   ansible.builtin.fail:
     msg: "Cohesity run ended with status {{ run_state.status }}"

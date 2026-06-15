@@ -194,7 +194,12 @@ policy_as_code/
 
 ---
 
-## Functional Test Results
+## Validation Test Suite Results
+
+These are static/assertion checks from the included suite (`tests/test_policies.yml`),
+reproducible with `ansible-playbook tests/test_policies.yml`. They validate framework
+structure, policy/control metadata, and safety defaults — not behavior against live
+target systems, which should be validated in a non-production environment first.
 
 ### Test Execution Summary
 
