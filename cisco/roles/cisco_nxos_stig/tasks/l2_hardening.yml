@@ -1,0 +1,57 @@
+---
+# Layer-2 hardening and Control Plane Policing
+# CISC-L2-000050 (DHCP snooping) | CISC-L2-000070 (DAI)
+# CISC-L2-000020 (BPDU guard) | CISC-L2-000030 (loop guard)
+# CISC-L2-000160 (native VLAN) | CISC-ND-001220 (CoPP)
+# NIST SC-5, SC-7
+
+- name: CISC-L2-000050 - Enable DHCP feature and snooping
+  cisco.nxos.nxos_config:
+    lines:
+      - feature dhcp
+      - ip dhcp snooping
+      - "ip dhcp snooping vlan {{ nxos_user_vlans | join(',') }}"
+  when: nxos_enable_dhcp_snooping | bool
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: nxos_dhcp_snoop
+  notify: save running-config
+  tags: [stig_cat2, "CISC-L2-000050"]
+
+- name: CISC-L2-000070 - Enable Dynamic ARP Inspection on user VLANs
+  cisco.nxos.nxos_config:
+    lines:
+      - "ip arp inspection vlan {{ nxos_user_vlans | join(',') }}"
+  when: nxos_enable_arp_inspection | bool
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: nxos_dai
+  notify: save running-config
+  tags: [stig_cat2, "CISC-L2-000070"]
+
+- name: CISC-L2-000020 - Enable BPDU Guard on edge ports by default
+  cisco.nxos.nxos_config:
+    lines:
+      - spanning-tree port type edge bpduguard default
+  when: nxos_enable_bpduguard_default | bool
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: nxos_bpduguard
+  notify: save running-config
+  tags: [stig_cat2, "CISC-L2-000020"]
+
+- name: CISC-L2-000030 - Enable Loop Guard by default
+  cisco.nxos.nxos_config:
+    lines:
+      - spanning-tree loopguard default
+  when: nxos_enable_loopguard_default | bool
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: nxos_loopguard
+  notify: save running-config
+  tags: [stig_cat2, "CISC-L2-000030"]
+
+- name: CISC-ND-001220 - Apply Control Plane Policing profile
+  cisco.nxos.nxos_config:
+    lines:
+      - "copp profile {{ nxos_copp_profile }}"
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: nxos_copp
+  notify: save running-config
+  tags: [stig_cat2, "CISC-ND-001220"]

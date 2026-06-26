@@ -1,0 +1,37 @@
+---
+# Logging and authenticated NTP
+# CISC-ND-000090/000100/000110 (logging) | CISC-ND-000470/000490 (NTP)
+# NIST AU-3, AU-4, AU-8
+
+- name: CISC-ND-000090 - Configure remote syslog servers
+  cisco.nxos.nxos_config:
+    lines:
+      - "logging server {{ item.host }} {{ item.severity }} use-vrf management"
+  loop: "{{ nxos_logging_servers }}"
+  loop_control:
+    label: "{{ item.host }}"
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: nxos_logging_servers_result
+  notify: save running-config
+  tags: [stig_cat2, "CISC-ND-000090"]
+
+- name: CISC-ND-000100/000110 - Logging timestamp and levels
+  cisco.nxos.nxos_config:
+    lines:
+      - logging timestamp milliseconds
+      - "logging console {{ nxos_logging_level_console }}"
+      - logging monitor 6
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: nxos_logging_opts
+  notify: save running-config
+  tags: [stig_cat2, "CISC-ND-000100", "CISC-ND-000110"]
+
+- name: CISC-ND-000470 - Configure authenticated NTP
+  cisco.nxos.nxos_config:
+    lines: "{{ ['ntp authenticate', 'ntp authentication-key ' + (nxos_ntp_key_id | string) + ' md5 ' + nxos_ntp_key, 'ntp trusted-key ' + (nxos_ntp_key_id | string)] + (nxos_ntp_servers | map('regex_replace', '^(.*)$', 'ntp server \\1 key ' + (nxos_ntp_key_id | string) + ' use-vrf management') | list) }}"
+  no_log: true
+  when: nxos_ntp_authenticate | bool
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: nxos_ntp
+  notify: save running-config
+  tags: [stig_cat2, "CISC-ND-000470"]

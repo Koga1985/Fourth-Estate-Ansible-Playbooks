@@ -1,0 +1,96 @@
+---
+# AAA / authentication, SSH key strength, DoD banner, VTY hardening
+# CISC-ND-000160 (AAA) | CISC-ND-000010 (banner) | CISC-ND-000280 (timeout)
+# CISC-ND-000490 (mgmt ACL) | CISC-ND-001000/001210 (SSH)
+# NIST IA-2, AC-8, AC-12, SC-23
+
+- name: CISC-ND-000160 - Configure TACACS+ servers
+  cisco.nxos.nxos_config:
+    lines:
+      - "tacacs-server host {{ item.host }} key 7 {{ item.key }}"
+  loop: "{{ nxos_tacacs_servers }}"
+  loop_control:
+    label: "{{ item.host }}"
+  no_log: true
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: nxos_tacacs_hosts
+  notify: save running-config
+  tags: [stig_cat2, "CISC-ND-000160"]
+
+- name: CISC-ND-000160 - Configure TACACS+ server group
+  cisco.nxos.nxos_config:
+    parents: "aaa group server tacacs+ {{ nxos_tacacs_group }}"
+    lines: "{{ nxos_tacacs_servers | map(attribute='host') | map('regex_replace', '^(.*)$', 'server \\1') | list }}"
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: nxos_tacacs_grp
+  notify: save running-config
+  tags: [stig_cat2, "CISC-ND-000160"]
+
+- name: CISC-ND-000160 - AAA authentication/accounting with local fallback
+  cisco.nxos.nxos_config:
+    lines:
+      - "aaa authentication login default group {{ nxos_tacacs_group }}"
+      - aaa authentication login error-enable
+      - "aaa accounting default group {{ nxos_tacacs_group }}"
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: nxos_aaa_methods
+  notify: save running-config
+  tags: [stig_cat2, "CISC-ND-000160", "CISC-ND-000550"]
+
+- name: CISC-ND-001000/001210 - Enforce SSH key strength
+  cisco.nxos.nxos_config:
+    lines:
+      - "ssh key {{ nxos_ssh_key_type }} {{ nxos_ssh_key_size }} force"
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: nxos_ssh_key
+  notify: save running-config
+  tags: [stig_cat2, "CISC-ND-001000", "CISC-ND-001210"]
+
+- name: CISC-ND-000010 - Configure DoD login banner
+  cisco.nxos.nxos_config:
+    lines:
+      - "banner motd ^{{ nxos_login_banner }}^"
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: nxos_banner
+  notify: save running-config
+  tags: [stig_cat3, "CISC-ND-000010"]
+
+- name: CISC-ND-000490 - Build management access ACL
+  cisco.nxos.nxos_config:
+    parents: "ip access-list {{ nxos_mgmt_acl_name }}"
+    lines: "{{ nxos_management_subnets | map('regex_replace', '^(.*)$', 'permit tcp \\1 any eq 22') | list }}"
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: nxos_mgmt_acl
+  notify: save running-config
+  tags: [stig_cat2, "CISC-ND-000490"]
+
+- name: CISC-ND-000280 - Harden VTY lines (idle timeout, ACL, SSH only)
+  cisco.nxos.nxos_config:
+    parents: "line vty"
+    lines:
+      - "exec-timeout {{ nxos_exec_timeout_minutes }}"
+      - "access-class {{ nxos_mgmt_acl_name }} in"
+      - session-limit 2
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: nxos_vty
+  notify: save running-config
+  tags: [stig_cat2, "CISC-ND-000280"]
+
+- name: CISC-ND-000280 - Harden console idle timeout
+  cisco.nxos.nxos_config:
+    parents: "line console"
+    lines:
+      - "exec-timeout {{ nxos_exec_timeout_minutes }}"
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: nxos_con
+  notify: save running-config
+  tags: [stig_cat2, "CISC-ND-000280"]
+
+- name: CISC-ND-000380 - Enforce password strength policy
+  cisco.nxos.nxos_config:
+    lines:
+      - password strength-check
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: nxos_pwd_strength
+  notify: save running-config
+  tags: [stig_cat2, "CISC-ND-000380"]
