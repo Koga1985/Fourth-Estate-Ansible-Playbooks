@@ -148,6 +148,23 @@ OT environments require additional precautions beyond standard IT deployments.
 ### VAST — SNMP Version Constraint
 - Only SNMPv3 is supported for DoD compliance. SNMPv1 and SNMPv2 are not supported.
 
+### Dedicated STIG / SRG roles (June 2026 expansion)
+
+| Role(s) | Limitation |
+|---------|-----------|
+| `ibm_zos/roles/*` (RACF, TSS, CICS, NetView, TDMF, zSecure) | **Assessment skeletons — no enforcement.** They generate a STIG checklist + read-only command reference and, in live mode (`zos_live_assessment=true`), run only read-only verify commands via `ibm.ibm_zos_core`. Remediation is performed by the z/OS systems programmer. Control-area IDs must be reconciled with the exact V-/rule-IDs in your STIG release. Live mode requires z/OS Python + ZOAU + SSH on the LPAR. |
+| `cisco/roles/cisco_ftd_stig`, `cisco/roles/cisco_ise_stig` | Enforcement is **data-driven** (`ftd_stig_operations` / `ise_stig_operations`). Because FMC/ISE OpenAPI request bodies vary by version, the enforcement list ships empty — validate each operation against your platform's API explorer before enabling. Assessment is fully functional out of the box. |
+| `cisco/roles/cisco_aci_router_stig` | You must supply the exact APIC managed-object DNs (`bgpPeerP`, `ospfIfP`, `l3extOut`); discover them first. `enforceRtctrl=import,export` makes an L3Out default-deny — confirm route-control profiles permit required prefixes. |
+| `policy_as_code/roles/app_sec_dev_stig` | The CI/CD gate depends on external scanners (gitleaks/semgrep/grype/checkov) being on `PATH`. Missing scanners are reported as `tool-not-available` (attach manual evidence), not failed. Several `APSC-DV-*` controls are procedural (`manual-review`). |
+| `network_policy/roles/ndm_srg_assessment`, `cloud_policy/roles/cloud_computing_srg_assessment` | Evidence rollups: run the underlying device/provider roles first so their artifacts exist. Coverage reflects implemented roles; DoD-specific and SaaS items are procedural checklists. |
+| `windows/roles/win_server2022_stig` | AD Domain and Windows DNS controls run only on hosts flagged `win_is_domain_controller` / `win_is_dns_server` and require the `ActiveDirectory` / `DnsServer` PowerShell modules. Account-policy changes on a DC apply to the whole domain. |
+| `app_web_server/roles/apache_web_server_srg` | Path defaults assume RHEL/EL (`/etc/httpd`); set the `apache_*` path vars for Debian/Ubuntu. |
+| `databases/db2/roles/db2_stig` | Several `dbm cfg` and SSL changes require a DB2 instance restart; native encryption (`ENCRLIB`) requires the instance to be licensed and a keystore configured. |
+
+> **CI note:** the repository CI gate validates YAML parse + `yamllint`. Full
+> `ansible-lint`/`--syntax-check` requires the per-role collections from Ansible
+> Galaxy; install them in your execution environment to run those checks locally.
+
 ---
 
 ## 8. Version and Compatibility Constraints

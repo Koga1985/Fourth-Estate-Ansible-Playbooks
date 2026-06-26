@@ -115,6 +115,40 @@ pip install netapp-lib      # NetApp
 
 ---
 
+### STIG role: `couldn't resolve module/action` for `cisco.*`, `kubernetes.core`, `ibm.ibm_zos_core`, etc.
+
+**Cause:** The dedicated STIG/SRG role needs the collection named in its
+`meta/main.yml`, which is not installed.
+
+**Fix:** Install from the role's (or platform's) requirements, then re-run:
+
+```bash
+ansible-galaxy collection install -r cisco/requirements.yml       # Cisco roles
+ansible-galaxy collection install ansible.posix                   # rhel9_stig
+ansible-galaxy collection install kubernetes.core redhat.openshift # ocp_stig_profile
+ansible-galaxy collection install community.general               # tomcat_app_server_srg
+ansible-galaxy collection install -r ibm_zos/requirements.yml     # z/OS live mode
+```
+
+The **z/OS checklist mode** needs **no** collection — only live assessment
+(`-e zos_live_assessment=true`) requires `ibm.ibm_zos_core`. The pure-assessment
+roles (`network_policy/`, `cloud_policy/`, `app_sec_dev_stig`) need no extra
+collection.
+
+---
+
+### App Security & Development gate reports every control as `tool-not-available`
+
+**Cause:** The scanners (`gitleaks`, `semgrep`, `grype`, `checkov`) are not on
+`PATH` on the CI runner.
+
+**Fix:** Install the scanner(s) you intend to use, or override `appsec_tools` to
+point at the tools you already run. Missing scanners are reported, not fatal —
+attach manual evidence for those `APSC-DV-*` controls. See
+`policy_as_code/roles/app_sec_dev_stig/README.md`.
+
+---
+
 ## Connectivity Errors
 
 ### `UNREACHABLE! => {"msg": "Failed to connect to the host via ssh"}`

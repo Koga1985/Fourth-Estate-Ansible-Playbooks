@@ -266,10 +266,51 @@ cat /tmp/cisco-aci-artifacts/aci_tenant_validation_report.json
 
 ---
 
+## Running a dedicated DoD STIG / SRG role
+
+The 21 STIG/SRG roles added in June 2026 are **self-contained** — each ships its
+own runnable playbook under `roles/<role>/playbooks/run.yml` plus an
+`inventory.example` and `vars.example.yml`. The flow is the same everywhere:
+
+```bash
+# 1. cd into the role's playbooks directory (any STIG role works the same way)
+cd cisco/roles/cisco_nxos_stig/playbooks
+
+# 2. install the collection named in the role's meta/main.yml (if any)
+ansible-galaxy collection install cisco.nxos ansible.netcommon ansible.utils
+
+# 3. set up inventory + vaulted credentials
+cp inventory.example inventory && $EDITOR inventory
+
+# 4. DRY-RUN / ASSESS (default — reports findings, changes nothing)
+ansible-playbook -i inventory run.yml
+
+# 5. review the per-host JSON evidence artifact
+cat /tmp/<platform>-artifacts/<host>_*.json
+
+# 6. ENFORCE only after reviewing the dry-run
+ansible-playbook -i inventory run.yml -e apply_changes=true
+```
+
+Notes:
+- **Safe by default** — every STIG role defaults to `apply_changes=false`
+  (assessment/check mode). Nothing is written until `-e apply_changes=true`.
+- **Pure-assessment roles** (`network_policy/`, `cloud_policy/`,
+  `policy_as_code/roles/app_sec_dev_stig`, and `ibm_zos/*` checklist mode) run on
+  the **control node** and never change a managed system.
+- **IBM z/OS** roles generate a checklist with no mainframe; live read-only
+  assessment needs `-e zos_live_assessment=true -e zos_target=<lpar>`.
+- The **App Security & Development** gate fails the build only with
+  `-e enforce_gate=true`.
+- Full benchmark-to-role mapping: [STIG_COVERAGE_MATRIX.md](STIG_COVERAGE_MATRIX.md).
+
+---
+
 ## Where to Go Next
 
 | Topic | Resource |
 |-------|----------|
+| Full STIG / SRG coverage matrix | [STIG_COVERAGE_MATRIX.md](STIG_COVERAGE_MATRIX.md) |
 | Known non-idempotent tasks | [KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md) |
 | Common errors and fixes | [TROUBLESHOOTING.md](TROUBLESHOOTING.md) |
 | NIST 800-53 / STIG mapping | [COMPLIANCE_MAPPING.md](COMPLIANCE_MAPPING.md) |

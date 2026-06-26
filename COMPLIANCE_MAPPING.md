@@ -5,8 +5,8 @@ applicable **DISA Security Technical Implementation Guide (STIG)** findings and
 **NIST SP 800-53 Rev 5** control families.
 
 **Classification:** UNCLASSIFIED
-**Frameworks Covered:** DISA STIG, NIST 800-53 Rev 5, NIST 800-171, FedRAMP
-**Last Updated:** 2026-04-08
+**Frameworks Covered:** DISA STIG, DoD Cloud Computing SRG, NIST 800-53 Rev 5, NIST 800-171, FedRAMP
+**Last Updated:** 2026-06-26
 
 ---
 
@@ -804,6 +804,42 @@ Cloud platform roles align to FedRAMP control baselines:
 | `azure/` | FedRAMP Moderate / High (Azure Gov) | AC, AU, CA, CM, IA, IR, RA, SA, SC, SI |
 | `google_cloud_platform/` | FedRAMP Moderate | AC, AU, CM, IA, SC, SI |
 | `openshift/` | FedRAMP Moderate | AC, AU, CM, IA, SC, SI |
+
+---
+
+## Dedicated DoD STIG / SRG roles (June 2026 expansion)
+
+The 21 roles below each target a specific DISA benchmark. They are safe-by-default
+(assessment / dry-run first) and emit per-host JSON evidence artifacts. For the
+authoritative request-to-role traceability and run instructions, see
+**[STIG_COVERAGE_MATRIX.md](./STIG_COVERAGE_MATRIX.md)**.
+
+| Role | DISA benchmark | Rule family | NIST 800-53 families |
+|------|----------------|-------------|----------------------|
+| `cisco/roles/cisco_ios_xe_l2_stig` | Cisco IOS XE Switch L2S/NDM | `CISC-L2-*`, `CISC-ND-*` | AC, AU, CM, IA, SC |
+| `cisco/roles/cisco_nxos_stig` | Cisco NX-OS Switch | `CISC-ND-*`, `CISC-L2-*` | AC, AU, CM, IA, SC |
+| `cisco/roles/cisco_asa_stig` | Cisco ASA NDM + Firewall | `CASA-ND-*`, `CASA-FW-*` | AC, AU, IA, SC, CM |
+| `cisco/roles/cisco_ftd_stig` | Cisco FTD (via FMC) | NDM / Firewall | AC, AU, IA, SC |
+| `cisco/roles/cisco_aci_router_stig` | Cisco Router (ACI L3Out) | `CISC-RT-*` | AC, SC, CM |
+| `cisco/roles/cisco_ise_stig` | Cisco ISE NDM | `CISC-ND-*` | AC, AU, IA, SC |
+| `rhel/roles/rhel9_stig` | RHEL 9 (V2R6) | `RHEL-09-*` | AC, AU, IA, CM, SC, SI |
+| `windows/roles/win_server2022_stig` | Windows Server 2022 (V2R6) + AD + DNS | `WN22-*`, `AD.*`, `WDNS-*` | AC, AU, IA, CM, SC |
+| `openshift/roles/ocp_stig_profile` | OpenShift 4.x (V2R4) | `CNTR-OS-*` | AC, AU, CM, SC |
+| `databases/db2/roles/db2_stig` | IBM DB2 V10.5 (V2R1) | `DB2X-00-*` | AC, AU, IA, SC, CP |
+| `app_web_server/roles/tomcat_app_server_srg` | Application Server SRG (V4R4) | `SRG-APP-*-AS-*` | AC, CM, SC, AU |
+| `app_web_server/roles/apache_web_server_srg` | Web Server SRG | `SRG-APP-*-WSR-*` | AC, CM, SC, AU |
+| `policy_as_code/roles/app_sec_dev_stig` | Application Security & Development (V6R4) | `APSC-DV-*` | SA, SI, RA, CM |
+| `network_policy/roles/ndm_srg_assessment` | Network Device Mgmt SRG (V5R3) + Network Infra Policy (V10R7) | `SRG-APP-*-NDM-*`, `NET-*` | AC, AU, CM, IA, SC |
+| `cloud_policy/roles/cloud_computing_srg_assessment` | DoD Cloud Computing SRG (IL2–IL6) + SaaS | FedRAMP/NIST families | AC, AU, CA, CM, CP, IA, IR, RA, SC, SI, SA |
+| `ibm_zos/roles/zos_racf_stig` | IBM z/OS RACF | ESM control set | AC, AU, IA, CM, SI |
+| `ibm_zos/roles/zos_tss_stig` | IBM z/OS CA Top Secret | ESM control set | AC, AU, IA, CM, SI |
+| `ibm_zos/roles/zos_cics_tss_stig` | CICS Transaction Server (TSS) V7R2 | resource security | AC, CM, SC |
+| `ibm_zos/roles/zos_netview_tss_stig` | NetView for TSS V7R2 | command/SAF security | AC, AU, CM |
+| `ibm_zos/roles/zos_tdmf_tss_stig` | TDMF for TSS V7R2 | dataset/STC security | AC, AU, CM |
+| `ibm_zos/roles/zos_zsecure_stig` | IBM zSecure Suite V1R3 | XFACILIT/dataset security | AC, AU, CM |
+
+> z/OS roles are read-only assessment skeletons (no blind enforcement); remediation
+> commands are documented for the systems programmer.
 
 ---
 
