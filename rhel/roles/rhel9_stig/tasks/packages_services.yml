@@ -1,0 +1,64 @@
+---
+# Package hygiene and required services
+# RHEL-09-215xxx (remove) | RHEL-09-214xxx (install) | RHEL-09-212010 (gpgcheck)
+# RHEL-09-251010 (firewalld) | RHEL-09-252010 (chrony) | NIST CM-7, SC-7, AU-8
+
+- name: RHEL-09-215xxx - Remove prohibited packages
+  ansible.builtin.dnf:
+    name: "{{ rhel9_packages_absent }}"
+    state: absent
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: r_pkgs_absent
+  tags: [stig_cat1, "RHEL-09-215025", "RHEL-09-215020", "RHEL-09-215075"]
+
+- name: RHEL-09-214xxx - Install required security packages
+  ansible.builtin.dnf:
+    name: "{{ rhel9_packages_present }}"
+    state: present
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: r_pkgs_present
+  tags: [stig_cat2, "RHEL-09-651010", "RHEL-09-653010"]
+
+- name: RHEL-09-212010 - Enforce dnf gpgcheck globally
+  ansible.builtin.lineinfile:
+    path: /etc/dnf/dnf.conf
+    regexp: '^#?gpgcheck='
+    line: 'gpgcheck=1'
+    owner: root
+    group: root
+    mode: "0644"
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: r_gpgcheck
+  tags: [stig_cat1, "RHEL-09-212010"]
+
+- name: RHEL-09-211020 - Disable local override of gpgcheck per-repo
+  ansible.builtin.lineinfile:
+    path: /etc/dnf/dnf.conf
+    regexp: '^#?localpkg_gpgcheck='
+    line: 'localpkg_gpgcheck=1'
+    owner: root
+    group: root
+    mode: "0644"
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: r_localgpg
+  tags: [stig_cat2, "RHEL-09-211020"]
+
+- name: RHEL-09-251010 - Enable and start firewalld
+  ansible.builtin.systemd:
+    name: firewalld
+    enabled: true
+    state: started
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: r_firewalld
+  when: apply_changes | bool
+  tags: [stig_cat2, "RHEL-09-251010"]
+
+- name: RHEL-09-252010 - Enable and start chronyd time sync
+  ansible.builtin.systemd:
+    name: chronyd
+    enabled: true
+    state: started
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: r_chronyd
+  when: apply_changes | bool
+  tags: [stig_cat2, "RHEL-09-252010"]

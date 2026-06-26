@@ -1,0 +1,41 @@
+---
+# SSH daemon hardening via a STIG drop-in (RHEL 9 uses Include sshd_config.d/*)
+# RHEL-09-255030/255035/255040/255045/255065/255090/255100/255105/255110
+# NIST AC-12, AC-17, IA-2, SC-23
+
+- name: RHEL-09-255xxx - Write SSH STIG drop-in configuration
+  ansible.builtin.copy:
+    dest: "{{ rhel9_sshd_dropin }}"
+    owner: root
+    group: root
+    mode: "0600"
+    content: |
+      # Managed by rhel9_stig - DoD RHEL 9 STIG {{ stig_version }}
+      Banner {{ rhel9_ssh_banner }}
+      PermitRootLogin {{ rhel9_ssh_permit_root_login }}
+      ClientAliveInterval {{ rhel9_ssh_client_alive_interval }}
+      ClientAliveCountMax {{ rhel9_ssh_client_alive_count_max }}
+      X11Forwarding {{ rhel9_ssh_x11_forwarding }}
+      PermitEmptyPasswords {{ rhel9_ssh_permit_empty_passwords }}
+      PrintLastLog {{ rhel9_ssh_print_last_log }}
+      IgnoreRhosts {{ rhel9_ssh_ignore_rhosts }}
+      GSSAPIAuthentication {{ rhel9_ssh_gss_api_auth }}
+      StrictModes yes
+      Compression no
+      MaxAuthTries 6
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: r_sshd_dropin
+  notify: restart sshd
+  tags:
+    - stig_cat2
+    - "RHEL-09-255030"
+    - "RHEL-09-255035"
+    - "RHEL-09-255040"
+    - "RHEL-09-255045"
+    - "RHEL-09-255065"
+
+- name: RHEL-09-255120 - Validate sshd configuration syntax
+  ansible.builtin.command: /usr/sbin/sshd -t
+  changed_when: false
+  when: apply_changes | bool
+  tags: [stig_cat2, "RHEL-09-255120"]

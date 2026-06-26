@@ -1,0 +1,67 @@
+---
+# tasks file for rhel9_stig
+
+- name: Verify target is RHEL/EL 9
+  ansible.builtin.assert:
+    that:
+      - ansible_facts['distribution_major_version'] | int == 9
+      - ansible_facts['os_family'] == "RedHat"
+    fail_msg: "rhel9_stig targets RHEL 9 hosts only (found {{ ansible_facts['distribution'] }} {{ ansible_facts['distribution_version'] }})."
+  tags: [always]
+
+- name: Ensure local artifacts directory exists
+  ansible.builtin.file:
+    path: "{{ artifacts_dir }}"
+    state: directory
+    mode: "0750"
+  delegate_to: localhost
+  run_once: true
+  changed_when: false
+  tags: [always]
+
+- name: Show run mode
+  ansible.builtin.debug:
+    msg: >-
+      rhel9_stig on {{ inventory_hostname }} -
+      {{ 'ENFORCING' if apply_changes | bool else 'DRY-RUN / check mode only' }}
+  tags: [always]
+
+- name: Banner and interactive controls (RHEL-09-211xxx)
+  ansible.builtin.import_tasks: banner_login.yml
+  when: stig_banner_login | bool
+  tags: [stig, banner]
+
+- name: Packages and services (RHEL-09-214xxx/215xxx)
+  ansible.builtin.import_tasks: packages_services.yml
+  when: stig_packages_services | bool
+  tags: [stig, packages]
+
+- name: SSH daemon hardening (RHEL-09-255xxx)
+  ansible.builtin.import_tasks: sshd.yml
+  when: stig_sshd | bool
+  tags: [stig, ssh]
+
+- name: System-wide crypto policy (RHEL-09-672xxx)
+  ansible.builtin.import_tasks: crypto_policy.yml
+  when: stig_crypto_policy | bool
+  tags: [stig, crypto]
+
+- name: Accounts, PAM, faillock, password policy (RHEL-09-411xxx/611xxx)
+  ansible.builtin.import_tasks: accounts_pam.yml
+  when: stig_accounts_pam | bool
+  tags: [stig, pam, accounts]
+
+- name: Audit subsystem (RHEL-09-653xxx)
+  ansible.builtin.import_tasks: auditd.yml
+  when: stig_auditd | bool
+  tags: [stig, audit]
+
+- name: Kernel sysctl hardening (RHEL-09-2xxxxx)
+  ansible.builtin.import_tasks: kernel_sysctl.yml
+  when: stig_kernel_sysctl | bool
+  tags: [stig, kernel]
+
+- name: Compliance report
+  ansible.builtin.import_tasks: compliance_report.yml
+  when: stig_compliance_report | bool
+  tags: [stig, report]
