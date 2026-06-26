@@ -1,0 +1,81 @@
+---
+# Cluster-scoped STIG controls (patched via kubernetes.core.k8s)
+# NIST AU-2, SC-8, SC-28, AC-2, AC-12
+
+- name: CNTR-OS-000100 - Set API server audit profile to {{ ocp_audit_profile }}
+  kubernetes.core.k8s:
+    kubeconfig: "{{ kubeconfig }}"
+    state: patched
+    api_version: config.openshift.io/v1
+    kind: APIServer
+    name: cluster
+    definition:
+      spec:
+        audit:
+          profile: "{{ ocp_audit_profile }}"
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: ocp_audit
+  tags: [stig_cat2, "CNTR-OS-000100"]
+
+- name: CNTR-OS-000800 - Enable etcd/API encryption at rest ({{ ocp_encryption_type }})
+  kubernetes.core.k8s:
+    kubeconfig: "{{ kubeconfig }}"
+    state: patched
+    api_version: config.openshift.io/v1
+    kind: APIServer
+    name: cluster
+    definition:
+      spec:
+        encryption:
+          type: "{{ ocp_encryption_type }}"
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: ocp_encryption
+  tags: [stig_cat2, "CNTR-OS-000800"]
+
+- name: CNTR-OS-000440 - Set TLS security profile to {{ ocp_tls_security_profile }}
+  kubernetes.core.k8s:
+    kubeconfig: "{{ kubeconfig }}"
+    state: patched
+    api_version: config.openshift.io/v1
+    kind: APIServer
+    name: cluster
+    definition:
+      spec:
+        tlsSecurityProfile:
+          type: "{{ ocp_tls_security_profile }}"
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: ocp_tls
+  tags: [stig_cat2, "CNTR-OS-000440"]
+
+- name: CNTR-OS-000070 - Configure OAuth token lifetimes
+  kubernetes.core.k8s:
+    kubeconfig: "{{ kubeconfig }}"
+    state: patched
+    api_version: config.openshift.io/v1
+    kind: OAuth
+    name: cluster
+    definition:
+      spec:
+        tokenConfig:
+          accessTokenInactivityTimeout: "{{ ocp_token_inactivity_timeout }}"
+          accessTokenMaxAgeSeconds: "{{ ocp_token_max_age_seconds }}"
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: ocp_oauth
+  tags: [stig_cat2, "CNTR-OS-000070"]
+
+- name: CNTR-OS-000200 - Remove self-provisioner role from authenticated users
+  kubernetes.core.k8s:
+    kubeconfig: "{{ kubeconfig }}"
+    state: patched
+    api_version: rbac.authorization.k8s.io/v1
+    kind: ClusterRoleBinding
+    name: self-provisioners
+    definition:
+      metadata:
+        annotations:
+          rbac.authorization.kubernetes.io/autoupdate: "false"
+      subjects: []
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: ocp_self_provisioner
+  when: ocp_disable_self_provisioner | bool
+  tags: [stig_cat2, "CNTR-OS-000200"]

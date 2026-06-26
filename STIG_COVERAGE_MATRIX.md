@@ -29,7 +29,7 @@ production-ready" Ansible playbooks against what exists in this repository.
 | 7 | **Cisco UCS** | 🟡 Existing | `cisco/roles/ucs_security_hardening` — DoD STIG CAT I/II/III. |
 | 8 | **Network Device Management SRG (V5R3)** | 🟡 Existing | Implemented transitively by every `CISC-ND-*` / `CASA-ND-*` control in the four delivered Cisco roles (the SRG is the parent of those STIGs). Cross-reference doc tracked in R3. |
 | 9 | **Red Hat Enterprise Linux 9 STIG (V2R6)** | ✅ Delivered | `rhel/roles/rhel9_stig` — `RHEL-09-*` CAT I/II/III via `ansible.builtin`/`ansible.posix`. (Existing `rhel-hardening` targets RHEL 8.) |
-| 10 | **Red Hat OpenShift Container Platform 4.x STIG (V2R4)** | 🟡 Existing | `openshift/roles/` (`ocp_audit_config`, `ocp_psa_enforce`, `ocp_rbac_baseline`, `ocp_scc_legacy_mgmt`, `ocp_network_policies_baseline`, …) cover the bulk of `CNTR-OS-*`. Consolidated STIG profile role tracked in R4. |
+| 10 | **Red Hat OpenShift Container Platform 4.x STIG (V2R4)** | ✅ Delivered | `openshift/roles/ocp_stig_profile` — consolidated `CNTR-OS-*` profile (audit, encryption-at-rest, TLS profile, OAuth tokens, self-provisioner, PSA restricted, default-deny netpol). Complemented by existing `ocp_audit_config`, `ocp_psa_enforce`, `ocp_rbac_baseline`, `ocp_scc_legacy_mgmt`, `ocp_network_policies_baseline`. |
 | 11 | **Microsoft Windows Server 2022 STIG (V2R6)** | 🟡 Existing | `windows/roles/win_stig_hardening` + `win_group_policy`. Version refresh to V2R6 tracked in R5. |
 | 12 | **Active Directory Domain STIG** | 🟡 Existing | `windows/roles/win_active_directory`. AD-Domain-STIG control mapping tracked in R6. |
 | 13 | **Microsoft Windows Server DNS STIG** | 🟡 Existing | `windows/roles/win_dhcp_dns`. DNS-STIG control mapping tracked in R6. |
@@ -56,7 +56,7 @@ production-ready" Ansible playbooks against what exists in this repository.
 | R1 | Cisco ACI **Router** STIG (`CISC-RT-*`) | Extend `cisco/roles/aci_security_hardening` with an `aci_router_stig` task set via `cisco.aci`/`aci_rest` (BGP/OSPF auth, uRPF, control-plane). |
 | R2 | Cisco ISE NDM STIG mapping | Add `CISC-ND-*` cross-map to existing `ise_admin__*` roles (banner, AAA, syslog, NTP, SNMPv3, session timeout). |
 | R3 | Network Device Management SRG / Network Infrastructure Policy STIG | Assessment-checklist role producing a control-by-control evidence artifact across managed network devices. |
-| R4 | OpenShift 4.x STIG consolidated profile | `openshift/roles/ocp_stig_profile` importing the existing `ocp_audit_config`, `ocp_psa_enforce`, `ocp_rbac_baseline`, `ocp_scc_legacy_mgmt`, `ocp_network_policies_baseline`, `ocp_routes_tls_policy` with `CNTR-OS-*` rule IDs. |
+| R4 | ✅ Done — OpenShift 4.x STIG consolidated profile | Delivered as `openshift/roles/ocp_stig_profile` (`CNTR-OS-*`). |
 | R5 | Windows Server 2022 STIG V2R6 refresh | Refresh `win_stig_hardening` rule IDs (`WN22-*`) and add a registry/secpol audit report. |
 | R6 | AD Domain STIG + Windows DNS STIG | Map `win_active_directory` / `win_dhcp_dns` tasks to `AD.*` and `WDNS-*` rule IDs; add assessment. |
 | R7 | Application Server SRG (V4R4) + Web Server SRG | `app_server/` roles for Tomcat/JBoss + generic web-server controls (TLS, logging, account mgmt). |

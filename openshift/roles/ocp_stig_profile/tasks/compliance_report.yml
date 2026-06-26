@@ -1,0 +1,39 @@
+---
+# OpenShift STIG compliance/remediation artifact (JSON).
+# In dry-run, changed: true means the control is NOT yet compliant.
+
+- name: Assemble result map
+  ansible.builtin.set_fact:
+    ocp_stig_results:
+      meta:
+        cluster_kubeconfig: "{{ kubeconfig }}"
+        timestamp: "{{ ansible_date_time.iso8601 | default(lookup('pipe', 'date -u +%Y-%m-%dT%H:%M:%SZ')) }}"
+        benchmark: "{{ stig_benchmark }}"
+        version: "{{ stig_version }}"
+        mode: "{{ 'enforce' if apply_changes | bool else 'dry-run' }}"
+        compliance_frameworks: "{{ compliance_frameworks }}"
+      controls:
+        - { id: "CNTR-OS-000070", title: "OAuth token lifetimes", would_change: "{{ ocp_oauth.changed | default(false) }}" }
+        - { id: "CNTR-OS-000100", title: "API server audit profile", would_change: "{{ ocp_audit.changed | default(false) }}" }
+        - { id: "CNTR-OS-000180", title: "Default-deny NetworkPolicy", would_change: "{{ ocp_netpol.changed | default(false) }}" }
+        - { id: "CNTR-OS-000200", title: "Self-provisioner removed", would_change: "{{ ocp_self_provisioner.changed | default(false) }}" }
+        - { id: "CNTR-OS-000440", title: "TLS security profile", would_change: "{{ ocp_tls.changed | default(false) }}" }
+        - { id: "CNTR-OS-000800", title: "Encryption at rest", would_change: "{{ ocp_encryption.changed | default(false) }}" }
+        - { id: "CNTR-OS-001050", title: "Pod Security Admission restricted", would_change: "{{ ocp_psa.changed | default(false) }}" }
+  tags: [report]
+
+- name: Write JSON compliance artifact
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/ocp_stig_profile.json"
+    mode: "0640"
+    content: "{{ ocp_stig_results | to_nice_json }}"
+  delegate_to: localhost
+  tags: [report]
+
+- name: Summarize compliance state
+  ansible.builtin.debug:
+    msg: >-
+      OpenShift STIG: {{ ocp_stig_results.controls | selectattr('would_change') | list | length }}
+      of {{ ocp_stig_results.controls | length }} controls
+      {{ 'still need remediation (dry-run)' if not (apply_changes | bool) else 'were remediated' }}.
+  tags: [report]
