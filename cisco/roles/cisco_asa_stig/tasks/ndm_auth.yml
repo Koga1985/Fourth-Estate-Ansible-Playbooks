@@ -1,0 +1,65 @@
+---
+# AAA, DoD banner, password policy
+# CASA-ND-000190 (AAA) | CASA-ND-000100 (banner) | CASA-ND-001440 (password policy)
+# NIST IA-2, AC-8, IA-5
+
+- name: CASA-ND-000190 - Configure AAA server group
+  cisco.asa.asa_config:
+    lines:
+      - "aaa-server {{ asa_aaa_server_group }} protocol {{ asa_aaa_protocol }}"
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: asa_aaa_group
+  notify: write memory
+  tags: [stig_cat2, "CASA-ND-000190"]
+
+- name: CASA-ND-000190 - Add TACACS+ hosts to AAA group
+  cisco.asa.asa_config:
+    parents: "aaa-server {{ asa_aaa_server_group }} ({{ asa_mgmt_interface }}) host {{ item.host }}"
+    lines:
+      - "key {{ item.key }}"
+  loop: "{{ asa_tacacs_servers }}"
+  loop_control:
+    label: "{{ item.host }}"
+  no_log: true
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: asa_aaa_hosts
+  notify: write memory
+  tags: [stig_cat2, "CASA-ND-000190"]
+
+- name: CASA-ND-000190 - Apply AAA authentication for management planes with local fallback
+  cisco.asa.asa_config:
+    lines:
+      - "aaa authentication ssh console {{ asa_aaa_server_group }} LOCAL"
+      - "aaa authentication serial console {{ asa_aaa_server_group }} LOCAL"
+      - "aaa authentication enable console {{ asa_aaa_server_group }} LOCAL"
+      - "aaa authentication http console {{ asa_aaa_server_group }} LOCAL"
+      - "aaa accounting command {{ asa_aaa_server_group }}"
+      - "aaa accounting ssh console {{ asa_aaa_server_group }}"
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: asa_aaa_auth
+  notify: write memory
+  tags: [stig_cat2, "CASA-ND-000190", "CASA-ND-000550"]
+
+- name: CASA-ND-000100 - Configure DoD login banner
+  cisco.asa.asa_config:
+    lines: "{{ asa_login_banner_lines | map('regex_replace', '^(.*)$', 'banner login \\1') | list }}"
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: asa_banner
+  notify: write memory
+  tags: [stig_cat3, "CASA-ND-000100"]
+
+- name: CASA-ND-001440 - Enforce password policy
+  cisco.asa.asa_config:
+    lines:
+      - "password-policy minimum-length {{ asa_password_min_length }}"
+      - "password-policy lifetime {{ asa_password_lifetime_days }}"
+      - "password-policy minimum-changes {{ asa_password_min_changes }}"
+      - password-policy minimum-uppercase 1
+      - password-policy minimum-lowercase 1
+      - password-policy minimum-numeric 1
+      - password-policy minimum-special 1
+      - password-policy authenticate enable
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: asa_pwd_policy
+  notify: write memory
+  tags: [stig_cat2, "CASA-ND-001440"]

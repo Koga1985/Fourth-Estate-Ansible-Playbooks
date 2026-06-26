@@ -1,0 +1,43 @@
+---
+# Per-host STIG compliance/remediation artifact (JSON).
+
+- name: Assemble per-control result map
+  ansible.builtin.set_fact:
+    asa_stig_results:
+      meta:
+        host: "{{ inventory_hostname }}"
+        timestamp: "{{ ansible_date_time.iso8601 | default(lookup('pipe', 'date -u +%Y-%m-%dT%H:%M:%SZ')) }}"
+        benchmark: "{{ stig_benchmark }}"
+        version: "{{ stig_version }}"
+        mode: "{{ 'enforce' if apply_changes | bool else 'dry-run' }}"
+        compliance_frameworks: "{{ compliance_frameworks }}"
+      controls:
+        - { id: "CASA-ND-000100", title: "DoD login banner", would_change: "{{ asa_banner.changed | default(false) }}" }
+        - { id: "CASA-ND-000160", title: "Idle timeouts (console/ssh)", would_change: "{{ asa_timeouts.changed | default(false) }}" }
+        - { id: "CASA-ND-000190", title: "AAA / TACACS+ for management", would_change: "{{ (asa_aaa_group.changed | default(false)) or (asa_aaa_auth.changed | default(false)) }}" }
+        - { id: "CASA-ND-000610", title: "Logging enabled + remote syslog", would_change: "{{ (asa_logging_opts.changed | default(false)) or (asa_logging_hosts_result.changed | default(false)) }}" }
+        - { id: "CASA-ND-001130", title: "SSHv2 + key exchange group", would_change: "{{ asa_ssh_version_cfg.changed | default(false) }}" }
+        - { id: "CASA-ND-001200", title: "Authenticated NTP", would_change: "{{ asa_ntp.changed | default(false) }}" }
+        - { id: "CASA-ND-001210", title: "SNMPv3 only", would_change: "{{ (asa_snmp_communities.changed | default(false)) or (asa_snmp_user.changed | default(false)) }}" }
+        - { id: "CASA-ND-001310", title: "Insecure HTTP server disabled", would_change: "{{ asa_http.changed | default(false) }}" }
+        - { id: "CASA-ND-001440", title: "Password policy", would_change: "{{ asa_pwd_policy.changed | default(false) }}" }
+        - { id: "CASA-ND-001550", title: "SSH management ACL", would_change: "{{ asa_ssh_acl.changed | default(false) }}" }
+        - { id: "CASA-FW-000010", title: "Threat detection enabled", would_change: "{{ asa_threat.changed | default(false) }}" }
+        - { id: "CASA-FW-000070", title: "ACL deny-any-any logging", would_change: "{{ asa_acl_deny.changed | default(false) }}" }
+  tags: [report]
+
+- name: Write JSON compliance artifact
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/{{ inventory_hostname }}_asa_stig.json"
+    mode: "0640"
+    content: "{{ asa_stig_results | to_nice_json }}"
+  delegate_to: localhost
+  tags: [report]
+
+- name: Summarize compliance state
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }}: {{ asa_stig_results.controls | selectattr('would_change') | list | length }}
+      of {{ asa_stig_results.controls | length }} controls
+      {{ 'still need remediation (dry-run)' if not (apply_changes | bool) else 'were remediated' }}.
+  tags: [report]

@@ -1,0 +1,39 @@
+---
+# Logging and authenticated NTP
+# CASA-ND-000610/000620 (logging) | CASA-ND-001200 (NTP)
+# NIST AU-3, AU-4, AU-8
+
+- name: CASA-ND-000610 - Enable logging with timestamps and buffer
+  cisco.asa.asa_config:
+    lines:
+      - logging enable
+      - logging timestamp
+      - "logging buffer-size {{ asa_logging_buffer_size }}"
+      - "logging buffered {{ asa_logging_buffer_level }}"
+      - "logging trap {{ asa_logging_trap_level }}"
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: asa_logging_opts
+  notify: write memory
+  tags: [stig_cat2, "CASA-ND-000610", "CASA-ND-000620"]
+
+- name: CASA-ND-000610 - Configure remote syslog hosts
+  cisco.asa.asa_config:
+    lines:
+      - "logging host {{ asa_mgmt_interface }} {{ item }}"
+  loop: "{{ asa_logging_hosts }}"
+  loop_control:
+    label: "{{ item }}"
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: asa_logging_hosts_result
+  notify: write memory
+  tags: [stig_cat2, "CASA-ND-000610"]
+
+- name: CASA-ND-001200 - Configure authenticated NTP
+  cisco.asa.asa_config:
+    lines: "{{ ['ntp authenticate', 'ntp authentication-key ' + (asa_ntp_key_id | string) + ' md5 ' + asa_ntp_key, 'ntp trusted-key ' + (asa_ntp_key_id | string)] + (asa_ntp_servers | map('regex_replace', '^(.*)$', 'ntp server \\1 key ' + (asa_ntp_key_id | string)) | list) }}"
+  no_log: true
+  when: asa_ntp_authenticate | bool
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: asa_ntp
+  notify: write memory
+  tags: [stig_cat2, "CASA-ND-001200"]

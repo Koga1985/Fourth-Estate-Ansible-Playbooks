@@ -1,0 +1,52 @@
+---
+# Management access - SSH version/keys, timeouts, management ACL
+# CASA-ND-000160 (timeout) | CASA-ND-001130 (SSHv2) | CASA-ND-001150 (kex/keys)
+# CASA-ND-000140 (concurrent sessions) | NIST AC-12, SC-23, AC-17
+
+- name: CASA-ND-001130 - Enforce SSH version 2 and key exchange group
+  cisco.asa.asa_config:
+    lines:
+      - "ssh version {{ asa_ssh_version }}"
+      - "ssh key-exchange group {{ asa_ssh_kex_group }}"
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: asa_ssh_version_cfg
+  notify: write memory
+  tags: [stig_cat2, "CASA-ND-001130", "CASA-ND-001150"]
+
+- name: CASA-ND-001150 - Generate RSA key with compliant modulus
+  cisco.asa.asa_config:
+    lines:
+      - "crypto key generate rsa modulus {{ asa_ssh_key_modulus }} noconfirm"
+  check_mode: "{{ not (apply_changes | bool) }}"
+  when: apply_changes | bool
+  register: asa_ssh_key
+  notify: write memory
+  tags: [stig_cat2, "CASA-ND-001150"]
+
+- name: CASA-ND-000160 - Configure idle timeouts
+  cisco.asa.asa_config:
+    lines:
+      - "console timeout {{ asa_console_timeout_minutes }}"
+      - "ssh timeout {{ asa_ssh_timeout_minutes }}"
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: asa_timeouts
+  notify: write memory
+  tags: [stig_cat2, "CASA-ND-000160"]
+
+- name: CASA-ND-001550 - Restrict SSH management to authorized subnets
+  cisco.asa.asa_config:
+    lines: "{{ asa_management_subnets | map('regex_replace', '^(.*)$', 'ssh \\1 ' + asa_mgmt_interface) | list }}"
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: asa_ssh_acl
+  notify: write memory
+  tags: [stig_cat2, "CASA-ND-001550"]
+
+- name: CASA-ND-001310 - Disable insecure HTTP server access defaults
+  cisco.asa.asa_config:
+    lines:
+      - no http server enable
+    # Re-enable only on a restricted interface/subnet if ASDM is required.
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: asa_http
+  notify: write memory
+  tags: [stig_cat2, "CASA-ND-001310"]
