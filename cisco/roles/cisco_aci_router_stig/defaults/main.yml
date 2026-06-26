@@ -1,0 +1,83 @@
+---
+# defaults file for cisco_aci_router_stig
+# Cisco ACI fabric routing-plane hardening to the DISA Cisco Router STIG
+# (CISC-RT-XXXXXX), applied to ACI L3Out BGP/OSPF peerings via the APIC REST API.
+#
+# ACI implements routing through L3Outs rather than a router CLI, so the
+# router-STIG controls (neighbor authentication, GTSM/TTL security, route
+# filtering) are configured as APIC managed objects with aci_rest.
+#
+# Safe by default: apply_changes=false issues GET (read) requests only and
+# reports; apply_changes=true issues POST to remediate.
+
+# ============================================================
+# APIC connection (reuse vault keys from aci_security_hardening)
+# ============================================================
+aci_host: "{{ vault_aci_apic_hostname }}"
+aci_username: "{{ vault_aci_apic_username }}"
+aci_password: "{{ vault_aci_apic_password }}"
+aci_verify_ssl: true
+aci_use_proxy: false
+
+# ============================================================
+# Deployment control
+# ============================================================
+apply_changes: false
+artifacts_dir: "/tmp/aci-router-stig-artifacts"
+
+# ============================================================
+# Control-area toggles
+# ============================================================
+stig_bgp_security: true
+stig_ospf_security: true
+stig_route_control: true
+stig_compliance_report: true
+
+# ============================================================
+# CISC-RT-000010 / CISC-RT-000490 - BGP neighbor authentication + GTSM (TTL)
+# Provide the exact APIC DN of each BGP peer connectivity profile (bgpPeerP).
+# Find them with: GET /api/class/bgpPeerP.json
+# ============================================================
+aci_bgp_peers: []
+# Example:
+# aci_bgp_peers:
+#   - dn: "uni/tn-PROD/out-L3OUT1/lnodep-NODES/lifp-INT/peerP-[10.1.1.2]"
+#     addr: "10.1.1.2"
+#     password: "{{ vault_aci_bgp_md5_key }}"
+#     ttl: 2            # GTSM - eBGP multihop/TTL security (CISC-RT-000490)
+#     allowed_self_as_cnt: 1
+
+# ============================================================
+# CISC-RT-000020 - OSPF interface authentication
+# Provide the DN of each OSPF interface profile (ospfIfP).
+# Find them with: GET /api/class/ospfIfP.json
+# ============================================================
+aci_ospf_auth_interfaces: []
+# Example:
+# aci_ospf_auth_interfaces:
+#   - dn: "uni/tn-PROD/out-L3OUT1/lnodep-NODES/lifp-INT/ospfIfP"
+#     auth_key: "{{ vault_aci_ospf_md5_key }}"
+#     auth_key_id: 1
+#     auth_type: "md5"   # md5 | simple
+
+# ============================================================
+# CISC-RT-000520 - Inbound/outbound route filtering (default-deny intent)
+# Each L3Out should enforce explicit import/export route control. Provide the
+# L3Out DNs to flag/enforce the 'import-security' (enforced RT control) flag.
+# ============================================================
+aci_l3outs_enforce_route_control: []
+# Example:
+# aci_l3outs_enforce_route_control:
+#   - dn: "uni/tn-PROD/out-L3OUT1"
+#     name: "L3OUT1"
+#     tenant: "PROD"
+
+# ============================================================
+# Reporting metadata
+# ============================================================
+compliance_frameworks:
+  - dod_stig
+  - nist_800_53
+  - nist_800_171
+stig_benchmark: "Cisco Router STIG applied to ACI L3Out (CISC-RT)"
+stig_version: "V3R2"

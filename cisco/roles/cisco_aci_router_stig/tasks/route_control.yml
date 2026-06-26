@@ -1,0 +1,32 @@
+---
+# Route control enforcement on L3Outs
+# CISC-RT-000520 (inbound/outbound route filtering) | NIST AC-4, CM-7
+# Sets l3extOut.enforceRtctrl to "import,export" so both directions require
+# explicit route-control (default-deny) rather than permitting all routes.
+
+- name: CISC-RT-000520 - Enforce import+export route control on L3Outs
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    path: "/api/mo/{{ item.dn }}.json"
+    method: "{{ 'post' if apply_changes | bool else 'get' }}"
+    content:
+      l3extOut:
+        attributes:
+          dn: "{{ item.dn }}"
+          name: "{{ item.name }}"
+          enforceRtctrl: "import,export"
+  loop: "{{ aci_l3outs_enforce_route_control }}"
+  loop_control:
+    label: "L3Out {{ item.name | default(item.dn) }}"
+  register: aci_rtctrl_result
+  tags: [stig_cat2, "CISC-RT-000520"]
+
+- name: Note when no L3Outs are defined for route control
+  ansible.builtin.debug:
+    msg: "No aci_l3outs_enforce_route_control defined - skipping route-control enforcement (CISC-RT-000520)."
+  when: aci_l3outs_enforce_route_control | length == 0
+  tags: [route_control]

@@ -1,0 +1,32 @@
+---
+# OSPF interface authentication
+# CISC-RT-000020 (OSPF area/interface authentication) | NIST AC-4, SC-5
+
+- name: CISC-RT-000020 - Configure OSPF interface MD5 authentication
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    path: "/api/mo/{{ item.dn }}.json"
+    method: "{{ 'post' if apply_changes | bool else 'get' }}"
+    content:
+      ospfIfP:
+        attributes:
+          dn: "{{ item.dn }}"
+          authKey: "{{ item.auth_key }}"
+          authKeyId: "{{ item.auth_key_id | default(1) | string }}"
+          authType: "{{ item.auth_type | default('md5') }}"
+  no_log: true
+  loop: "{{ aci_ospf_auth_interfaces }}"
+  loop_control:
+    label: "OSPF ifP {{ item.dn }}"
+  register: aci_ospf_result
+  tags: [stig_cat2, "CISC-RT-000020"]
+
+- name: Note when no OSPF interfaces are defined
+  ansible.builtin.debug:
+    msg: "No aci_ospf_auth_interfaces defined - skipping OSPF authentication (define ospfIfP DNs to enforce CISC-RT-000020)."
+  when: aci_ospf_auth_interfaces | length == 0
+  tags: [ospf]
