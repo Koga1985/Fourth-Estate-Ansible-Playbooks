@@ -35,7 +35,7 @@ production-ready" Ansible playbooks against what exists in this repository.
 | 13 | **Microsoft Windows Server DNS STIG** | ✅ Delivered | `windows/roles/win_server2022_stig` (DNS controls, `win_is_dns_server=true`, `WDNS-*`) + existing `win_dhcp_dns`. |
 | 14 | **Application Server SRG (V4R4)** | ✅ Delivered | `app_web_server/roles/tomcat_app_server_srg` — `SRG-APP-*-AS-*` (Tomcat; fork for JBoss/WebLogic). |
 | 15 | **Web Server SRG** | ✅ Delivered | `app_web_server/roles/apache_web_server_srg` — `SRG-APP-*-WSR-*` (Apache; IIS via `windows/roles/win_iis`). |
-| 16 | **Application Security & Development STIG (V6R4)** | 🛣️ Roadmap | R8 — pipeline/policy-as-code checks (not a host config STIG). |
+| 16 | **Application Security & Development STIG (V6R4)** | ✅ Delivered | `policy_as_code/roles/app_sec_dev_stig` — `APSC-DV-*` CI/CD gate (secret/SAST/SCA/IaC scanners → evidence, optional build-fail). |
 | 17 | **Network Infrastructure Policy STIG (V10R7)** | ✅ Delivered | `network_policy/roles/ndm_srg_assessment` — `NET-*` architecture controls + evidence rollup. |
 | 18 | **Cloud Computing SRG** | 🛣️ Roadmap | R9 — policy SRG; maps to existing AWS/Azure/GCP FedRAMP roles. |
 | 19 | **SaaS** | 🛣️ Roadmap | R9 — covered under Cloud Computing SRG / DoD Cloud guidance. |
@@ -60,7 +60,7 @@ production-ready" Ansible playbooks against what exists in this repository.
 | R5 | ✅ Done — Windows Server 2022 STIG V2R6 | Delivered as `windows/roles/win_server2022_stig` (`WN22-*`). |
 | R6 | ✅ Done — AD Domain STIG + Windows DNS STIG | Delivered in `windows/roles/win_server2022_stig` (DC/DNS toggles, `AD.*` / `WDNS-*`). |
 | R7 | ✅ Done — Application Server SRG (V4R4) + Web Server SRG | Delivered as `app_web_server/roles/{tomcat_app_server_srg,apache_web_server_srg}`. |
-| R8 | Application Security & Development STIG (V6R4) | Policy-as-code gate (SAST/DAST/dependency/secret scanning evidence) under `policy_as_code/`. |
+| R8 | ✅ Done — Application Security & Development STIG (V6R4) | Delivered as `policy_as_code/roles/app_sec_dev_stig` (`APSC-DV-*` CI/CD gate). |
 | R9 | Cloud Computing SRG / SaaS | Control-mapping doc + assessment tying existing `aws/`, `azure/`, `google_cloud_platform/` FedRAMP roles to the SRG. |
 | R10 | ✅ Done — IBM DB2 V10.5 STIG (V2R1) | Delivered as `databases/db2/roles/db2_stig`. |
 | R11 | IBM z/OS family (RACF, ACF2/TSS, CICS, NetView, TDMF, zSecure) | z/OS automation requires `ibm.ibm_zos_core` (Ansible for z/OS) running against a USS-enabled LPAR with SSH; controls applied via TSO/RACF commands and JCL. This is **environment-specific** and not "grab-and-go" without a z/OS managed node — delivered as documented role skeletons with the command sets, not blind enforcement. |

@@ -1,0 +1,38 @@
+---
+# Dependency / SCA scan (grype) - APSC-DV-003235 / 002950 (SBOM inventory)
+
+- name: Run dependency / SCA scan
+  ansible.builtin.command: "{{ appsec_tools.dependencies.cmd }}"
+  args:
+    chdir: "{{ app_src_dir }}"
+  register: sca_run
+  changed_when: false
+  failed_when: false
+  tags: [sca]
+
+- name: Read SCA report
+  ansible.builtin.slurp:
+    src: "{{ appsec_tools.dependencies.report }}"
+  register: sca_report_raw
+  failed_when: false
+  changed_when: false
+  tags: [sca]
+
+- name: Record SCA findings
+  ansible.builtin.set_fact:
+    appsec_findings: >-
+      {{ appsec_findings | default({}) | combine({
+           'dependencies': {
+             'tool': appsec_tools.dependencies.bin,
+             'ran': true,
+             'count': severities | length,
+             'critical': severities | select('equalto', 'Critical') | list | length,
+             'high': severities | select('equalto', 'High') | list | length,
+             'report': appsec_tools.dependencies.report
+           }}) }}
+  vars:
+    matches: >-
+      {{ (sca_report_raw.content | b64decode | from_json).matches | default([])
+         if (sca_report_raw.content is defined) else [] }}
+    severities: "{{ matches | map(attribute='vulnerability.severity') | list }}"
+  tags: [sca]

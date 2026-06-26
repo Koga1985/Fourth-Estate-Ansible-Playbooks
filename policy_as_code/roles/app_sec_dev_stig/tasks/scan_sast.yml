@@ -1,0 +1,37 @@
+---
+# Static application security testing (semgrep) - APSC-DV-002400/002560/003215
+
+- name: Run SAST scan
+  ansible.builtin.command: "{{ appsec_tools.sast.cmd }}"
+  args:
+    chdir: "{{ app_src_dir }}"
+  register: sast_run
+  changed_when: false
+  failed_when: false
+  tags: [sast]
+
+- name: Read SAST report
+  ansible.builtin.slurp:
+    src: "{{ appsec_tools.sast.report }}"
+  register: sast_report_raw
+  failed_when: false
+  changed_when: false
+  tags: [sast]
+
+- name: Record SAST findings
+  ansible.builtin.set_fact:
+    appsec_findings: >-
+      {{ appsec_findings | default({}) | combine({
+           'sast': {
+             'tool': appsec_tools.sast.bin,
+             'ran': true,
+             'count': results | length,
+             'high': results | selectattr('extra.severity', 'defined') | selectattr('extra.severity', 'equalto', 'ERROR') | list | length,
+             'critical': 0,
+             'report': appsec_tools.sast.report
+           }}) }}
+  vars:
+    results: >-
+      {{ (sast_report_raw.content | b64decode | from_json).results | default([])
+         if (sast_report_raw.content is defined) else [] }}
+  tags: [sast]

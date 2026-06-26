@@ -1,0 +1,90 @@
+---
+# Aggregate scanner findings, map to APSC-DV controls, write evidence, gate.
+
+- name: Initialize findings map if no scanners ran
+  ansible.builtin.set_fact:
+    appsec_findings: "{{ appsec_findings | default({}) }}"
+  tags: [report]
+
+- name: Compute severity totals
+  ansible.builtin.set_fact:
+    appsec_total_critical: "{{ appsec_findings.values() | map(attribute='critical') | map('int') | sum }}"
+    appsec_total_high: "{{ appsec_findings.values() | map(attribute='high') | map('int') | sum }}"
+    appsec_secret_count: "{{ appsec_findings.secrets.count | default(0) | int }}"
+  tags: [report]
+
+- name: Evaluate APSC-DV control catalog against collected evidence
+  ansible.builtin.set_fact:
+    appsec_controls_eval: >-
+      {{ appsec_controls_eval | default([]) + [
+           item | combine({
+             'evidence_collected': (item.evidence is not none) and (appsec_available[item.evidence] | default(false)),
+             'findings': (appsec_findings[item.evidence].count | default(0)) if (item.evidence is not none) else 'n/a',
+             'result': (
+               'manual-review' if item.status == 'manual'
+               else ('tool-not-available' if not (appsec_available[item.evidence] | default(false))
+                     else ('pass' if (appsec_findings[item.evidence].count | default(0) | int) == 0 else 'findings'))
+             )
+           })
+         ] }}
+  loop: "{{ app_sec_dev_catalog }}"
+  loop_control:
+    label: "{{ item.id }}"
+  tags: [report]
+
+- name: Assemble evidence package
+  ansible.builtin.set_fact:
+    appsec_evidence:
+      meta:
+        application: "{{ app_name }}"
+        source: "{{ app_src_dir }}"
+        timestamp: "{{ ansible_date_time.iso8601 | default(lookup('pipe', 'date -u +%Y-%m-%dT%H:%M:%SZ')) }}"
+        benchmark: "{{ stig_benchmark }}"
+        version: "{{ stig_version }}"
+        gate: "{{ 'enforced' if enforce_gate | bool else 'report-only' }}"
+        compliance_frameworks: "{{ compliance_frameworks }}"
+      scanners:
+        available: "{{ appsec_available }}"
+        findings: "{{ appsec_findings }}"
+      totals:
+        critical: "{{ appsec_total_critical | int }}"
+        high: "{{ appsec_total_high | int }}"
+        secrets: "{{ appsec_secret_count | int }}"
+      controls: "{{ appsec_controls_eval | default([]) }}"
+  tags: [report]
+
+- name: Write JSON evidence artifact
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/{{ app_name }}_app_sec_dev_stig.json"
+    mode: "0640"
+    content: "{{ appsec_evidence | to_nice_json }}"
+  tags: [report]
+
+- name: Render Markdown evidence report
+  ansible.builtin.template:
+    src: appsec_report.md.j2
+    dest: "{{ artifacts_dir }}/{{ app_name }}_app_sec_dev_stig.md"
+    mode: "0640"
+  tags: [report]
+
+- name: Summarize
+  ansible.builtin.debug:
+    msg: >-
+      {{ app_name }}: critical={{ appsec_total_critical }}, high={{ appsec_total_high }},
+      secrets={{ appsec_secret_count }};
+      scanners available={{ appsec_available | dict2items | selectattr('value') | map(attribute='key') | list }}.
+      Evidence: {{ artifacts_dir }}/{{ app_name }}_app_sec_dev_stig.md
+  tags: [report]
+
+- name: APSC-DV gate - fail build when policy thresholds exceeded
+  ansible.builtin.assert:
+    that:
+      - (appsec_total_critical | int) <= (gate_max_critical | int)
+      - (appsec_total_high | int) <= (gate_max_high | int)
+      - (not (gate_fail_on_secrets | bool)) or ((appsec_secret_count | int) == 0)
+    fail_msg: >-
+      APSC-DV gate FAILED: critical={{ appsec_total_critical }} (max {{ gate_max_critical }}),
+      high={{ appsec_total_high }} (max {{ gate_max_high }}), secrets={{ appsec_secret_count }}.
+    success_msg: "APSC-DV gate PASSED."
+  when: enforce_gate | bool
+  tags: [gate]

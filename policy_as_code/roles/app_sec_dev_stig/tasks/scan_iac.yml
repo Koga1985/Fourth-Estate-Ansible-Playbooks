@@ -1,0 +1,38 @@
+---
+# Infrastructure-as-Code scan (checkov) - APSC-DV-003180 and related CM controls
+
+- name: Run IaC scan
+  ansible.builtin.command: "{{ appsec_tools.iac.cmd }}"
+  args:
+    chdir: "{{ app_src_dir }}"
+  register: iac_run
+  changed_when: false
+  failed_when: false
+  tags: [iac]
+
+- name: Read IaC report
+  ansible.builtin.slurp:
+    src: "{{ appsec_tools.iac.report }}/results_json.json"
+  register: iac_report_raw
+  failed_when: false
+  changed_when: false
+  tags: [iac]
+
+- name: Record IaC findings
+  ansible.builtin.set_fact:
+    appsec_findings: >-
+      {{ appsec_findings | default({}) | combine({
+           'iac': {
+             'tool': appsec_tools.iac.bin,
+             'ran': true,
+             'count': failed | length,
+             'high': failed | length,
+             'critical': 0,
+             'report': appsec_tools.iac.report
+           }}) }}
+  vars:
+    parsed: >-
+      {{ (iac_report_raw.content | b64decode | from_json)
+         if (iac_report_raw.content is defined) else {} }}
+    failed: "{{ parsed.results.failed_checks | default([]) if parsed.results is defined else [] }}"
+  tags: [iac]
