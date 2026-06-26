@@ -1,0 +1,35 @@
+---
+# Live read-only assessment via ibm.ibm_zos_core (dynamically included).
+# Runs only when zos_live_assessment=true and zos_target is set.
+# READ-ONLY: display + TSO/RACF list commands only. Never issues a change.
+
+- name: Run operator (display) verification commands
+  ibm.ibm_zos_core.zos_operator:
+    cmd: "{{ item.command }}"
+  delegate_to: "{{ zos_target }}"
+  loop: "{{ zos_catalog | selectattr('command', 'match', '^D ') | list }}"
+  loop_control:
+    label: "{{ item.id }}"
+  register: zos_oper_results
+  ignore_errors: true
+  tags: [live]
+
+- name: Run TSO/RACF verification commands
+  ibm.ibm_zos_core.zos_tso_command:
+    commands:
+      - "{{ item.command }}"
+  delegate_to: "{{ zos_target }}"
+  loop: "{{ zos_catalog | rejectattr('command', 'match', '^D ') | list }}"
+  loop_control:
+    label: "{{ item.id }}"
+  register: zos_tso_results
+  ignore_errors: true
+  tags: [live]
+
+- name: Write live evidence artifact
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/{{ zos_slug }}_live_evidence.json"
+    mode: "0640"
+    content: "{{ {'target': zos_target, 'operator': zos_oper_results.results | default([]), 'tso': zos_tso_results.results | default([])} | to_nice_json }}"
+  delegate_to: localhost
+  tags: [live]

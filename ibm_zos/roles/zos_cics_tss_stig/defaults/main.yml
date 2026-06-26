@@ -1,0 +1,73 @@
+---
+# defaults file for zos_cics_tss_stig
+# DISA IBM z/OS CICS Transaction Server STIG (TSS ESM) - assessment skeleton.
+# Read-only verify references + documented remediation. No blind enforcement.
+
+ansible_connection: local
+artifacts_dir: "/tmp/zos-cics-tss-stig-artifacts"
+zos_live_assessment: false
+zos_target: ""
+
+# CICS SIT (System Initialization Table) parameters are verified in the region
+# startup JCL/SIT or via CEMT/CESN; TSS-protected resources via TSS LIST(RDT).
+# Confirm exact V-IDs/rule-IDs against the CICS TS (TSS) STIG release at audit.
+zos_cics_catalog:
+  - id: "CICS-SEC"
+    title: "CICS external security active (SIT SEC=YES)"
+    severity: CAT I
+    command: "F CICSPROD,CEMT INQUIRE SYSTEM"
+    note: "SEC=YES in the SIT; verify in startup JCL/SIT. (Replace CICSPROD with the region jobname.)"
+    remediation: "Set SEC=YES in the SIT; restart the region."
+  - id: "CICS-XTRAN"
+    title: "Transaction-attach security enabled (XTRAN=YES; TCICSTRN/GCICSTRN protected)"
+    severity: CAT II
+    command: "TSS LIST(RDT) RESCLASS(TCICSTRN)"
+    note: "Confirm transactions are protected and permitted by least privilege."
+    remediation: "Set XTRAN=YES; define TCICSTRN/GCICSTRN profiles in TSS."
+  - id: "CICS-XCMD"
+    title: "SPI command security enabled (XCMD=YES; CCICSCMD/VCICSCMD)"
+    severity: CAT II
+    command: "TSS LIST(RDT) RESCLASS(CCICSCMD)"
+    remediation: "Set XCMD=YES; protect CCICSCMD resources in TSS."
+  - id: "CICS-XRES"
+    title: "Resource security enabled (XFCT/XDCT/XJCT/XPCT/XPPT/XPSB/XRES=YES)"
+    severity: CAT II
+    command: "TSS LIST(RDT) RESCLASS(FCICSFCT)"
+    note: "Repeat for DCICSDCT, JCICSJCT, ACICSPCT, MCICSPPT, PCICSPSB, RCICSRES."
+    remediation: "Enable the corresponding X-resource SIT options and define TSS profiles."
+  - id: "CICS-SECPRFX"
+    title: "Resource names prefixed by region (SECPRFX=YES) to prevent cross-region access"
+    severity: CAT II
+    command: "F CICSPROD,CEMT INQUIRE SYSTEM"
+    note: "SECPRFX=YES (or qualified) in the SIT."
+    remediation: "Set SECPRFX=YES; align TSS profiles to the prefix."
+  - id: "CICS-DFLTUSER"
+    title: "DFLTUSER is a minimally-privileged userid"
+    severity: CAT I
+    command: "TSS LIST(CICSDFLT) DATA(ALL)"
+    note: "Default user must not hold access beyond unauthenticated needs."
+    remediation: "Define a least-privilege DFLTUSER ACID; remove excess access."
+  - id: "CICS-CAT1"
+    title: "Category 1 system transactions restricted to the region userid only"
+    severity: CAT II
+    command: "TSS WHOHAS TCICSTRN(CEMT)"
+    note: "Category 1 trans (e.g. CEMT/CESN/CESF) not granted to general users."
+    remediation: "Permit Category 1 transactions only to the region ACID."
+  - id: "CICS-REGIONID"
+    title: "CICS region userid is unique, protected, and not shared across regions"
+    severity: CAT II
+    command: "TSS LIST(CICSPROD) DATA(ALL)"
+    remediation: "Assign a unique STC ACID per region; protect it; no password sharing."
+  - id: "CICS-CMDSEC"
+    title: "CMDSEC/RESSEC enforced at the transaction level (no ASIS bypass)"
+    severity: CAT II
+    command: "TSS LIST(RDT) RESCLASS(TCICSTRN)"
+    note: "CMDSEC(ALWAYS)/RESSEC(ALWAYS) on sensitive transaction definitions."
+    remediation: "Set CMDSEC=ALWAYS / RESSEC=ALWAYS on transaction resource definitions."
+
+compliance_frameworks:
+  - dod_stig
+  - nist_800_53
+stig_benchmark: "IBM z/OS CICS Transaction Server (TSS) STIG"
+stig_version: "V7R2"
+zos_esm: TSS

@@ -8,6 +8,7 @@ production-ready" Ansible playbooks against what exists in this repository.
 | Status | Meaning |
 |--------|---------|
 | ✅ Delivered | New, self-contained, runnable role added in this effort (dry-run safe, real STIG rule IDs, certified-collection or `uri` modules, README + runnable playbook + inventory/vars examples + JSON artifact). |
+| ✅ Delivered (skeleton) | New role delivered as an **assessment + command-reference** skeleton (read-only). Used for IBM z/OS, where blind enforcement is unsafe; remediation commands are documented for the administrator. |
 | 🟡 Existing | The platform already has hardening/automation roles in the repo that cover most of the control family; may need a STIG-version refresh. |
 | 🛣️ Roadmap | Not yet built. Scoped below with the intended collection/approach. |
 
@@ -40,12 +41,12 @@ production-ready" Ansible playbooks against what exists in this repository.
 | 18 | **Cloud Computing SRG** | ✅ Delivered | `cloud_policy/roles/cloud_computing_srg_assessment` — CC SRG/FedRAMP families mapped to `aws_*`/`azure_*`/`gcp_*` roles + IL2–IL6 + evidence. |
 | 19 | **SaaS** | ✅ Delivered | `cloud_policy/roles/cloud_computing_srg_assessment` — SaaS shared-responsibility checklist (FedRAMP auth, CRM, SSO/MFA, SIEM, encryption, DLP). |
 | 20 | **IBM DB2 V10.5 STIG (V2R1)** | ✅ Delivered | `databases/db2/roles/db2_stig` — `DB2X-00-*` via DB2 CLP, `db2audit`, SQL (drift-aware, assessment-safe). |
-| 21 | **IBM z/OS STIG (RACF / ACF2 / TSS products)** | 🛣️ Roadmap | R11 — z/OS family; see note below. |
-| 22 | **z/OS RACF Products** | 🛣️ Roadmap | R11 |
-| 23 | **IBM z/OS — NetView for TSS V7R2** | 🛣️ Roadmap | R11 |
-| 24 | **IBM z/OS — TDMF for TSS V7R2** | 🛣️ Roadmap | R11 |
-| 25 | **IBM z/OS — CICS Transaction Server (TSS) V7R2** | 🛣️ Roadmap | R11 |
-| 26 | **IBM zSecure Suite STIG (V1R3)** | 🛣️ Roadmap | R11 |
+| 21 | **IBM z/OS STIG (RACF / TSS)** | ✅ Delivered (skeleton) | `ibm_zos/roles/zos_racf_stig`, `ibm_zos/roles/zos_tss_stig` — assessment + command reference (read-only live mode; no blind enforcement). |
+| 22 | **z/OS RACF Products** | ✅ Delivered (skeleton) | `ibm_zos/roles/zos_racf_stig`. |
+| 23 | **IBM z/OS — NetView for TSS V7R2** | ✅ Delivered (skeleton) | `ibm_zos/roles/zos_netview_tss_stig`. |
+| 24 | **IBM z/OS — TDMF for TSS V7R2** | ✅ Delivered (skeleton) | `ibm_zos/roles/zos_tdmf_tss_stig`. |
+| 25 | **IBM z/OS — CICS Transaction Server (TSS) V7R2** | ✅ Delivered (skeleton) | `ibm_zos/roles/zos_cics_tss_stig`. |
+| 26 | **IBM zSecure Suite STIG (V1R3)** | ✅ Delivered (skeleton) | `ibm_zos/roles/zos_zsecure_stig`. |
 
 ---
 
@@ -63,7 +64,7 @@ production-ready" Ansible playbooks against what exists in this repository.
 | R8 | ✅ Done — Application Security & Development STIG (V6R4) | Delivered as `policy_as_code/roles/app_sec_dev_stig` (`APSC-DV-*` CI/CD gate). |
 | R9 | ✅ Done — Cloud Computing SRG / SaaS | Delivered as `cloud_policy/roles/cloud_computing_srg_assessment`. |
 | R10 | ✅ Done — IBM DB2 V10.5 STIG (V2R1) | Delivered as `databases/db2/roles/db2_stig`. |
-| R11 | IBM z/OS family (RACF, ACF2/TSS, CICS, NetView, TDMF, zSecure) | z/OS automation requires `ibm.ibm_zos_core` (Ansible for z/OS) running against a USS-enabled LPAR with SSH; controls applied via TSO/RACF commands and JCL. This is **environment-specific** and not "grab-and-go" without a z/OS managed node — delivered as documented role skeletons with the command sets, not blind enforcement. |
+| R11 | ✅ Done — IBM z/OS family (RACF, TSS, CICS, NetView, TDMF, zSecure) | Delivered as six assessment skeletons under `ibm_zos/roles/` (`zos_racf_stig`, `zos_tss_stig`, `zos_cics_tss_stig`, `zos_netview_tss_stig`, `zos_tdmf_tss_stig`, `zos_zsecure_stig`). Each generates a STIG checklist + command reference anywhere, and runs read-only verify commands via `ibm.ibm_zos_core` against a real LPAR when `zos_live_assessment=true`. No blind enforcement — remediation documented for the sysprog. |
 
 ---
 

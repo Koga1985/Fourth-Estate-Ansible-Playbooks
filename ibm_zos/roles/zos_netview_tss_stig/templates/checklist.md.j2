@@ -1,0 +1,33 @@
+{{ ansible_managed | comment }}
+# {{ stig_benchmark }} — Assessment Checklist
+
+- **ESM:** {{ zos_esm | default('n/a') }}
+- **Version:** {{ stig_version }}
+- **Generated:** {{ zos_checklist.meta.generated }}
+- **Mode:** {{ zos_checklist.meta.mode }}
+- **Controls:** {{ zos_checklist.meta.control_count }}
+- **Frameworks:** {{ compliance_frameworks | join(', ') }}
+
+> This is a **documented assessment skeleton**. The commands below are
+> READ-ONLY verification commands. Remediation is performed by the z/OS systems
+> programmer / ESM administrator after review — this role never issues changes.
+> Reconcile the control-area IDs with the exact V-/rule-IDs in your STIG release.
+
+| ID | Severity | Control | Verify command | Remediation |
+|----|----------|---------|----------------|-------------|
+{% for c in zos_checklist.controls %}
+| {{ c.id }} | {{ c.severity | default('-') }} | {{ c.title }} | `{{ c.command }}`{% if c.note is defined %} — {{ c.note }}{% endif %} | {{ c.remediation | default('') }} |
+{% endfor %}
+
+## Live read-only assessment
+
+```bash
+ansible-playbook playbooks/run.yml -i playbooks/inventory \
+  -e zos_live_assessment=true -e zos_target=<zos-lpar-host>
+```
+
+Live mode runs the verify commands via `ibm.ibm_zos_core` (`zos_operator` for
+`D ...` displays, `zos_tso_command` for TSO/RACF commands) and writes the raw
+output to `{{ zos_slug | default('zos') }}_live_evidence.json` for the ATO package.
+It requires z/OS Python + ZOAU + SSH on the target LPAR and an automation user
+with the authority to issue the (read-only) commands.
