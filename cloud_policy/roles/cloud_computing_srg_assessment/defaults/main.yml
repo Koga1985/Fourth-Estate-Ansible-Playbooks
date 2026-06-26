@@ -1,0 +1,113 @@
+---
+# defaults file for cloud_computing_srg_assessment
+# DoD Cloud Computing SRG (CC SRG) + SaaS assessment / control-mapping.
+#
+# The CC SRG is a policy SRG built on the FedRAMP+ / NIST 800-53 control
+# baselines and DoD Impact Levels (IL2/IL4/IL5/IL6). It is verified, not
+# "configured". This role maps each CC SRG / FedRAMP control family to the
+# provider roles in this repo (aws/azure/gcp) that implement it, aggregates any
+# per-provider assessment artifacts present, and emits a consolidated evidence
+# package plus a SaaS shared-responsibility checklist.
+#
+# Read-only: runs on the control node, changes nothing.
+
+ansible_connection: local
+artifacts_dir: "/tmp/cloud-srg-artifacts"
+
+# Cloud providers in scope for this assessment.
+cloud_providers_in_scope:
+  - aws
+  - azure
+  - gcp
+
+# DoD Impact Level the system is being assessed against (IL2/IL4/IL5/IL6).
+cloud_impact_level: IL4
+
+# Directories scanned for per-provider assessment artifacts (*.json).
+cc_evidence_input_dirs:
+  - /tmp/aws-artifacts
+  - /tmp/azure-artifacts
+  - /tmp/gcp-artifacts
+  - /tmp/gcp_iam_artifacts
+  - /tmp/policy-artifacts
+
+# ============================================================
+# CC SRG / FedRAMP control families mapped to implementing provider roles.
+# status: auto = covered by provider roles in this repo; manual = procedural.
+# ============================================================
+cc_srg_catalog:
+  - id: "AC"
+    title: "Access Control / least privilege / MFA"
+    status: auto
+    roles: { aws: [aws_iam_users, aws_iam_roles, aws_iam_policies, aws_iam_mfa, aws_iam_access_analyzer], azure: [azure_policy, azure_security_center], gcp: [gcp_iam, gcp_iam_foundations] }
+  - id: "AU"
+    title: "Audit & Accountability (centralized logging)"
+    status: auto
+    roles: { aws: [aws_cloudtrail_trails, aws_cloudwatch_logs], azure: [azure_log_analytics, azure_monitor, azure_sentinel], gcp: [gcp_logging_routing_tiers] }
+  - id: "CA"
+    title: "Security Assessment & Authorization (continuous monitoring)"
+    status: auto
+    roles: { aws: [aws_config_rules, aws_fedramp_compliance], azure: [azure_compliance, azure_fedramp_compliance, azure_nist_compliance], gcp: [] }
+  - id: "CM"
+    title: "Configuration Management / baseline"
+    status: auto
+    roles: { aws: [aws_config_rules], azure: [azure_policy], gcp: [gcp_gke_runtime_policy] }
+  - id: "CP"
+    title: "Contingency Planning / backup & recovery"
+    status: auto
+    roles: { aws: [aws_ec2_snapshots, aws_rds, aws_s3_lifecycle], azure: [], gcp: [] }
+  - id: "IA"
+    title: "Identification & Authentication (MFA, federation)"
+    status: auto
+    roles: { aws: [aws_iam_mfa, aws_iam_users], azure: [azure_security_center], gcp: [gcp_iam] }
+  - id: "IR"
+    title: "Incident Response (CNDSP/CSSP integration)"
+    status: auto
+    roles: { aws: [aws_guardduty_detector], azure: [azure_sentinel, azure_security_center], gcp: [] }
+  - id: "RA"
+    title: "Risk Assessment / vulnerability management"
+    status: auto
+    roles: { aws: [aws_guardduty_detector, aws_config_rules], azure: [azure_security_center], gcp: [gcp_gke_secure_supplychain] }
+  - id: "SC"
+    title: "System & Communications Protection (encryption, network isolation)"
+    status: auto
+    roles: { aws: [aws_kms, aws_vpc, aws_security_groups, aws_nacls, aws_vpn, aws_s3_buckets], azure: [azure_key_vault], gcp: [] }
+  - id: "SI"
+    title: "System & Information Integrity (threat detection)"
+    status: auto
+    roles: { aws: [aws_guardduty_detector, aws_cloudwatch_alarms], azure: [azure_security_center, azure_sentinel], gcp: [gcp_gke_runtime_policy] }
+  - id: "SA"
+    title: "System & Services Acquisition (supply chain)"
+    status: auto
+    roles: { aws: [], azure: [], gcp: [gcp_gke_secure_supplychain] }
+
+# ============================================================
+# DoD CC SRG-specific requirements (procedural / authorization - manual).
+# ============================================================
+cc_srg_dod_specific:
+  - { id: "CC-SRG-IL", title: "Information Impact Level correctly determined and documented", status: manual }
+  - { id: "CC-SRG-AUTH", title: "CSP/CSO holds a current FedRAMP (or DoD PA) authorization at the required Impact Level", status: manual }
+  - { id: "CC-SRG-LOC", title: "Data and CSO located within US/US territories per IL requirements", status: manual }
+  - { id: "CC-SRG-CND", title: "Boundary CND/CSSP coverage and reporting established", status: manual }
+  - { id: "CC-SRG-CAP", title: "Connectivity via approved CAP/BCAP/Cloud Access Point where required (IL4+)", status: manual }
+  - { id: "CC-SRG-CONMON", title: "Continuous monitoring feeds reported to DoD/authorizing official", status: manual }
+
+# ============================================================
+# SaaS shared-responsibility checklist (manual / contractual).
+# ============================================================
+saas_catalog:
+  - { id: "SAAS-001", title: "SaaS offering FedRAMP authorized at required baseline (Low/Mod/High)", status: manual }
+  - { id: "SAAS-002", title: "Customer-responsibility controls (CRM) identified and implemented", status: manual }
+  - { id: "SAAS-003", title: "SSO/federation with org IdP + MFA enforced", status: manual }
+  - { id: "SAAS-004", title: "Audit logs exported to org SIEM (e.g., Sentinel/Splunk)", status: manual }
+  - { id: "SAAS-005", title: "Data encryption (in transit + at rest) and key ownership defined", status: manual }
+  - { id: "SAAS-006", title: "Data location, retention, and portability/exit terms documented", status: manual }
+  - { id: "SAAS-007", title: "DLP / external sharing controls configured", status: manual }
+
+compliance_frameworks:
+  - dod_stig
+  - dod_cc_srg
+  - fedramp
+  - nist_800_53
+stig_benchmark: "DoD Cloud Computing SRG + SaaS"
+stig_version: "CC SRG v1r4"

@@ -1,0 +1,47 @@
+{{ ansible_managed | comment }}
+# DoD Cloud Computing SRG + SaaS — Compliance Evidence
+
+- **Benchmark:** {{ stig_benchmark }} ({{ stig_version }})
+- **Impact Level:** {{ cc_assessment.meta.impact_level }}
+- **Providers in scope:** {{ cloud_providers_in_scope | join(', ') }}
+- **Generated:** {{ cc_assessment.meta.timestamp }}
+- **Provider artifacts aggregated:** {{ cc_assessment.meta.provider_artifacts_found }}
+- **Frameworks:** {{ compliance_frameworks | join(', ') }}
+
+## Control families (FedRAMP / NIST 800-53 baseline)
+
+| Family | Control area | Coverage | Implementing roles (in-scope providers) |
+|--------|--------------|----------|------------------------------------------|
+{% for c in (cc_srg_evaluated | default([])) %}
+| {{ c.id }} | {{ c.title }} | {{ '✅ ' + c.coverage if c.coverage == 'covered' else '⚠️ ' + c.coverage }} | {{ c.implementing_roles | join(', ') if c.implementing_roles | length > 0 else '—' }} |
+{% endfor %}
+
+> "Covered" means this repo has provider role(s) implementing the family for the
+> in-scope providers. Run those roles to produce live per-control evidence
+> (artifacts are aggregated from {{ cc_evidence_input_dirs | join(', ') }}).
+
+## DoD CC SRG-specific requirements (procedural)
+
+| ID | Requirement | Type |
+|----|-------------|------|
+{% for c in cc_srg_dod_specific %}
+| {{ c.id }} | {{ c.title }} | {{ c.status }} |
+{% endfor %}
+
+## SaaS shared-responsibility checklist
+
+| ID | Control | Type |
+|----|---------|------|
+{% for c in saas_catalog %}
+| {{ c.id }} | {{ c.title }} | {{ c.status }} |
+{% endfor %}
+
+## How to refresh provider evidence
+
+```bash
+# Run the provider compliance roles (they emit JSON to /tmp/<provider>-artifacts)
+ansible-playbook aws/site.yml -i aws/inventory --tags fedramp
+ansible-playbook azure/... --tags compliance
+# Then regenerate this consolidated package:
+ansible-playbook cloud_policy/roles/cloud_computing_srg_assessment/playbooks/run.yml
+```

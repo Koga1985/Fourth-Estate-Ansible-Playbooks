@@ -37,8 +37,8 @@ production-ready" Ansible playbooks against what exists in this repository.
 | 15 | **Web Server SRG** | ✅ Delivered | `app_web_server/roles/apache_web_server_srg` — `SRG-APP-*-WSR-*` (Apache; IIS via `windows/roles/win_iis`). |
 | 16 | **Application Security & Development STIG (V6R4)** | ✅ Delivered | `policy_as_code/roles/app_sec_dev_stig` — `APSC-DV-*` CI/CD gate (secret/SAST/SCA/IaC scanners → evidence, optional build-fail). |
 | 17 | **Network Infrastructure Policy STIG (V10R7)** | ✅ Delivered | `network_policy/roles/ndm_srg_assessment` — `NET-*` architecture controls + evidence rollup. |
-| 18 | **Cloud Computing SRG** | 🛣️ Roadmap | R9 — policy SRG; maps to existing AWS/Azure/GCP FedRAMP roles. |
-| 19 | **SaaS** | 🛣️ Roadmap | R9 — covered under Cloud Computing SRG / DoD Cloud guidance. |
+| 18 | **Cloud Computing SRG** | ✅ Delivered | `cloud_policy/roles/cloud_computing_srg_assessment` — CC SRG/FedRAMP families mapped to `aws_*`/`azure_*`/`gcp_*` roles + IL2–IL6 + evidence. |
+| 19 | **SaaS** | ✅ Delivered | `cloud_policy/roles/cloud_computing_srg_assessment` — SaaS shared-responsibility checklist (FedRAMP auth, CRM, SSO/MFA, SIEM, encryption, DLP). |
 | 20 | **IBM DB2 V10.5 STIG (V2R1)** | ✅ Delivered | `databases/db2/roles/db2_stig` — `DB2X-00-*` via DB2 CLP, `db2audit`, SQL (drift-aware, assessment-safe). |
 | 21 | **IBM z/OS STIG (RACF / ACF2 / TSS products)** | 🛣️ Roadmap | R11 — z/OS family; see note below. |
 | 22 | **z/OS RACF Products** | 🛣️ Roadmap | R11 |
@@ -61,7 +61,7 @@ production-ready" Ansible playbooks against what exists in this repository.
 | R6 | ✅ Done — AD Domain STIG + Windows DNS STIG | Delivered in `windows/roles/win_server2022_stig` (DC/DNS toggles, `AD.*` / `WDNS-*`). |
 | R7 | ✅ Done — Application Server SRG (V4R4) + Web Server SRG | Delivered as `app_web_server/roles/{tomcat_app_server_srg,apache_web_server_srg}`. |
 | R8 | ✅ Done — Application Security & Development STIG (V6R4) | Delivered as `policy_as_code/roles/app_sec_dev_stig` (`APSC-DV-*` CI/CD gate). |
-| R9 | Cloud Computing SRG / SaaS | Control-mapping doc + assessment tying existing `aws/`, `azure/`, `google_cloud_platform/` FedRAMP roles to the SRG. |
+| R9 | ✅ Done — Cloud Computing SRG / SaaS | Delivered as `cloud_policy/roles/cloud_computing_srg_assessment`. |
 | R10 | ✅ Done — IBM DB2 V10.5 STIG (V2R1) | Delivered as `databases/db2/roles/db2_stig`. |
 | R11 | IBM z/OS family (RACF, ACF2/TSS, CICS, NetView, TDMF, zSecure) | z/OS automation requires `ibm.ibm_zos_core` (Ansible for z/OS) running against a USS-enabled LPAR with SSH; controls applied via TSO/RACF commands and JCL. This is **environment-specific** and not "grab-and-go" without a z/OS managed node — delivered as documented role skeletons with the command sets, not blind enforcement. |
 
