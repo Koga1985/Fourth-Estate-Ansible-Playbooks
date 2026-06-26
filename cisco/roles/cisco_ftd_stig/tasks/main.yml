@@ -1,0 +1,40 @@
+---
+# tasks file for cisco_ftd_stig
+
+- name: Ensure local artifacts directory exists
+  ansible.builtin.file:
+    path: "{{ artifacts_dir }}"
+    state: directory
+    mode: "0750"
+  run_once: true
+  changed_when: false
+  tags: [always]
+
+- name: Show run mode
+  ansible.builtin.debug:
+    msg: >-
+      cisco_ftd_stig against FMC {{ fmc_host }} -
+      {{ 'ENFORCING' if apply_changes | bool else 'DRY-RUN / assessment only' }}
+  tags: [always]
+
+- name: Authenticate to FMC and resolve domain UUID
+  ansible.builtin.import_tasks: fmc_auth.yml
+  tags: [always, auth]
+
+- name: Assess STIG posture (read-only)
+  ansible.builtin.import_tasks: assess.yml
+  when: stig_assess | bool
+  tags: [stig, assess]
+
+- name: Apply STIG enforcement operations
+  ansible.builtin.import_tasks: apply_operations.yml
+  when:
+    - stig_apply_operations | bool
+    - apply_changes | bool
+    - ftd_stig_operations | length > 0
+  tags: [stig, apply]
+
+- name: Generate compliance report
+  ansible.builtin.import_tasks: compliance_report.yml
+  when: stig_compliance_report | bool
+  tags: [stig, report]

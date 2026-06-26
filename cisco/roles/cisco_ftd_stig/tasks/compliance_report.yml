@@ -1,0 +1,33 @@
+---
+# FTD/FMC STIG assessment + remediation artifact (JSON).
+
+- name: Assemble result map
+  ansible.builtin.set_fact:
+    ftd_stig_results:
+      meta:
+        fmc_host: "{{ fmc_host }}"
+        domain_uuid: "{{ fmc_domain_uuid }}"
+        timestamp: "{{ ansible_date_time.iso8601 | default(lookup('pipe', 'date -u +%Y-%m-%dT%H:%M:%SZ')) }}"
+        benchmark: "{{ stig_benchmark }}"
+        version: "{{ stig_version }}"
+        mode: "{{ 'enforce' if apply_changes | bool else 'assessment' }}"
+        compliance_frameworks: "{{ compliance_frameworks }}"
+      assessment: "{{ ftd_assessment | default({}) }}"
+      controls:
+        - { id: "CISC-ND-mgmt", title: "Platform settings policy present (banner/timeout/SSH/SNMP/NTP)", finding: "{{ ftd_assessment.finding_no_platform_settings | default('unknown') }}" }
+        - { id: "CISC-ND-000090", title: "Off-box syslog audit configured", finding: "{{ ftd_assessment.finding_no_syslog_alert | default('unknown') }}" }
+        - { id: "CISC-FW-policy", title: "Access control policy present", finding: "{{ ftd_assessment.finding_no_access_policy | default('unknown') }}" }
+      operations_applied: "{{ (ftd_apply_results.results | default([]) | map(attribute='item') | map(attribute='id') | list) if apply_changes | bool else [] }}"
+  tags: [report]
+
+- name: Write JSON compliance artifact
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/{{ fmc_host }}_ftd_stig.json"
+    mode: "0640"
+    content: "{{ ftd_stig_results | to_nice_json }}"
+  tags: [report]
+
+- name: Summarize
+  ansible.builtin.debug:
+    msg: "FTD STIG artifact written to {{ artifacts_dir }}/{{ fmc_host }}_ftd_stig.json"
+  tags: [report]

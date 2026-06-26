@@ -1,0 +1,35 @@
+---
+# FMC token authentication (stable since FMC 6.1)
+# POST /api/fmc_platform/v1/auth/generatetoken returns the access token and
+# global DOMAIN_UUID in the response headers.
+
+- name: Generate FMC authentication token
+  ansible.builtin.uri:
+    url: "https://{{ fmc_host }}/api/fmc_platform/v1/auth/generatetoken"
+    method: POST
+    user: "{{ fmc_username }}"
+    password: "{{ fmc_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ fmc_validate_certs }}"
+    status_code: [204, 200]
+    timeout: 30
+  no_log: true
+  register: fmc_auth
+  tags: [auth]
+
+- name: Set FMC API context facts
+  ansible.builtin.set_fact:
+    fmc_token: "{{ fmc_auth.x_auth_access_token }}"
+    fmc_domain_uuid: "{{ fmc_auth.domain_uuid }}"
+    fmc_config_base: "https://{{ fmc_host }}/api/fmc_config/{{ fmc_api_version }}/domain/{{ fmc_auth.domain_uuid }}"
+  no_log: true
+  tags: [auth]
+
+- name: Confirm authentication succeeded
+  ansible.builtin.assert:
+    that:
+      - fmc_token | length > 0
+      - fmc_domain_uuid | length > 0
+    fail_msg: "FMC authentication failed - check fmc_host/credentials and API access."
+    success_msg: "Authenticated to FMC {{ fmc_host }} (domain {{ fmc_domain_uuid }})."
+  tags: [auth]

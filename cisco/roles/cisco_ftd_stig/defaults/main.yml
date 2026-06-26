@@ -1,0 +1,80 @@
+---
+# defaults file for cisco_ftd_stig
+# Cisco Firepower Threat Defense (FTD) STIG automation, driven through the
+# Firepower Management Center (FMC) REST API.
+#
+# FTD devices managed by FMC are configured through FMC *Platform Settings*,
+# *Access Control*, and *Intrusion* policies - not an on-box config CLI. This
+# role therefore:
+#   1. Authenticates to FMC (token flow).
+#   2. ASSESSES the STIG-relevant posture via read-only GET calls (works in
+#      dry-run with zero risk) - managed devices, platform settings policy
+#      assignment, syslog alerts, access policies.
+#   3. ENFORCES a data-driven list of STIG operations (ftd_stig_operations)
+#      only when apply_changes=true.
+#
+# Covers the DISA Cisco FTD NDM STIG (CISC-ND-XXXXXX) and FTD Firewall STIG
+# (control families). Uses ansible.builtin.uri only - no extra collection.
+
+# ============================================================
+# Run on the control node (API automation)
+# ============================================================
+ansible_connection: local
+
+# ============================================================
+# FMC connection (set in inventory / group_vars, use Ansible Vault)
+# ============================================================
+fmc_host: "{{ vault_fmc_host | default('fmc.example.mil') }}"
+fmc_username: "{{ vault_fmc_username | default('apiuser') }}"
+fmc_password: "{{ vault_fmc_password | default('CHANGE_ME') }}"
+fmc_validate_certs: true
+fmc_api_version: v1
+
+# ============================================================
+# Deployment control
+# ============================================================
+apply_changes: false
+artifacts_dir: "/tmp/cisco-ftd-artifacts"
+
+# ============================================================
+# Control toggles
+# ============================================================
+stig_assess: true
+stig_apply_operations: true
+stig_compliance_report: true
+
+# ============================================================
+# Expected STIG posture (used by the assessment to flag findings)
+# ============================================================
+# Every managed FTD device must have a Platform Settings policy assigned that
+# implements banner, session timeout, syslog, NTP, SNMPv3 and SSH access list.
+ftd_required_platform_settings_assigned: true
+# At least one external syslog alert must exist (CISC-ND-000090 off-box audit).
+ftd_required_syslog_alert: true
+
+# ============================================================
+# CISC-ND-XXXXXX - Enforcement operations (data-driven)
+# Each item: { id, title, severity, method, endpoint, body }
+# `endpoint` is appended to the domain base
+#   https://{{fmc_host}}/api/fmc_config/{{fmc_api_version}}/domain/{{domain}}/
+# Defaults ship empty; populate per your FMC version (see vars.example.yml).
+# This keeps writes explicit and version-safe - nothing is pushed unless you
+# define it and pass apply_changes=true.
+# ============================================================
+ftd_stig_operations: []
+
+# DoD login banner text (referenced from vars.example.yml operations)
+ftd_login_banner: >-
+  You are accessing a U.S. Government (USG) Information System (IS) that is
+  provided for USG-authorized use only. By using this IS you consent to the
+  conditions in the full DoD Notice and Consent Banner.
+
+# ============================================================
+# Reporting metadata
+# ============================================================
+compliance_frameworks:
+  - dod_stig
+  - nist_800_53
+  - nist_800_171
+stig_benchmark: "Cisco Firepower Threat Defense (FTD) NDM + Firewall STIG"
+stig_version: "V1R3"
