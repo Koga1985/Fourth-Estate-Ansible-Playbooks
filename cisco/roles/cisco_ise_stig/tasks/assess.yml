@@ -1,0 +1,72 @@
+---
+# Read-only ISE NDM posture assessment via stable ERS endpoints.
+# Safe in dry-run - GET requests only. Requires ERS to be enabled in ISE.
+
+- name: Retrieve ISE deployment nodes
+  ansible.builtin.uri:
+    url: "https://{{ ise_host }}:{{ ise_ers_port }}/ers/config/node"
+    method: GET
+    user: "{{ ise_username }}"
+    password: "{{ ise_password }}"
+    force_basic_auth: true
+    headers:
+      Accept: application/json
+    validate_certs: "{{ ise_validate_certs }}"
+    status_code: 200
+    timeout: 30
+  no_log: true
+  register: ise_nodes
+  tags: [assess]
+
+- name: Retrieve administrator accounts
+  ansible.builtin.uri:
+    url: "https://{{ ise_host }}:{{ ise_ers_port }}/ers/config/adminuser"
+    method: GET
+    user: "{{ ise_username }}"
+    password: "{{ ise_password }}"
+    force_basic_auth: true
+    headers:
+      Accept: application/json
+    validate_certs: "{{ ise_validate_certs }}"
+    status_code: [200, 401, 404]
+    timeout: 30
+  no_log: true
+  register: ise_admins
+  tags: [assess]
+
+- name: Retrieve registered network devices (NADs)
+  ansible.builtin.uri:
+    url: "https://{{ ise_host }}:{{ ise_ers_port }}/ers/config/networkdevice"
+    method: GET
+    user: "{{ ise_username }}"
+    password: "{{ ise_password }}"
+    force_basic_auth: true
+    headers:
+      Accept: application/json
+    validate_certs: "{{ ise_validate_certs }}"
+    status_code: 200
+    timeout: 30
+  no_log: true
+  register: ise_nads
+  tags: [assess]
+
+- name: Derive assessment findings
+  ansible.builtin.set_fact:
+    ise_assessment:
+      node_count: "{{ ise_nodes.json.SearchResult.total | default(0) }}"
+      admin_count: "{{ ise_admins.json.SearchResult.total | default('n/a (adminuser ERS not exposed)') }}"
+      network_device_count: "{{ ise_nads.json.SearchResult.total | default(0) }}"
+      ers_reachable: true
+  tags: [assess]
+
+- name: Display assessment summary
+  ansible.builtin.debug:
+    msg:
+      - "ISE NDM STIG assessment ({{ ise_host }}):"
+      - "Deployment nodes:    {{ ise_assessment.node_count }}"
+      - "Admin accounts:      {{ ise_assessment.admin_count }}"
+      - "Network devices:     {{ ise_assessment.network_device_count }}"
+      - "NOTE: banner, session timeout, syslog, NTP, SNMPv3 and external admin"
+      - "auth (CISC-ND-000010/000090/000160/000280) are System Settings - verify"
+      - "in the ISE admin UI or enforce via ise_stig_operations (OpenAPI)."
+  tags: [assess]
