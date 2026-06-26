@@ -1,0 +1,35 @@
+---
+# Tomcat Application Server SRG compliance artifact (JSON).
+
+- name: Assemble result map
+  ansible.builtin.set_fact:
+    tomcat_srg_results:
+      meta:
+        host: "{{ inventory_hostname }}"
+        timestamp: "{{ ansible_date_time.iso8601 | default('') }}"
+        benchmark: "{{ stig_benchmark }}"
+        version: "{{ stig_version }}"
+        mode: "{{ 'enforce' if apply_changes | bool else 'dry-run' }}"
+        compliance_frameworks: "{{ compliance_frameworks }}"
+      controls:
+        - { id: "SRG-APP-000142-AS-000014", title: "Shutdown port disabled", would_change: "{{ tomcat_shutdown.changed | default(false) }}" }
+        - { id: "SRG-APP-000439-AS-000155", title: "TLS protocols on connectors", would_change: "{{ tomcat_tls.changed | default(false) }}" }
+        - { id: "SRG-APP-000295-AS-000263", title: "Session timeout {{ tomcat_session_timeout }}m", would_change: "{{ tomcat_session.changed | default(false) }}" }
+        - { id: "SRG-APP-000211-AS-000146", title: "Default webapps removed", present: "{{ tomcat_webapps_assess.results | default([]) | selectattr('stat.exists') | map(attribute='item') | list }}" }
+  tags: [report]
+
+- name: Write JSON compliance artifact
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/{{ inventory_hostname }}_tomcat_app_srg.json"
+    mode: "0640"
+    content: "{{ tomcat_srg_results | to_nice_json }}"
+  delegate_to: localhost
+  tags: [report]
+
+- name: Summarize
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }}: default webapps still present =
+      {{ tomcat_webapps_assess.results | default([]) | selectattr('stat.exists') | list | length }}
+      ({{ 'assessment only' if not (apply_changes | bool) else 'enforced' }}).
+  tags: [report]

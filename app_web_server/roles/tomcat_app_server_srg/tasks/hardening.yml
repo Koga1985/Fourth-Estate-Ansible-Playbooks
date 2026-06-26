@@ -1,0 +1,79 @@
+---
+# Apache Tomcat Application Server SRG hardening
+# NIST AC-12, CM-6, CM-7, SC-8, SC-23, AU-3
+
+- name: SRG-APP-* - Confirm Tomcat server.xml exists
+  ansible.builtin.stat:
+    path: "{{ tomcat_server_xml }}"
+  register: tomcat_server_stat
+  tags: [tomcat]
+
+- name: Fail early if Tomcat is not at the expected path
+  ansible.builtin.assert:
+    that: tomcat_server_stat.stat.exists
+    fail_msg: "server.xml not found at {{ tomcat_server_xml }} - set tomcat_home for this install."
+  tags: [tomcat]
+
+- name: SRG-APP-000142-AS-000014 - Disable the Tomcat shutdown port
+  community.general.xml:
+    path: "{{ tomcat_server_xml }}"
+    xpath: /Server
+    attribute: port
+    value: "-1"
+  check_mode: "{{ not (apply_changes | bool) }}"
+  when: tomcat_disable_shutdown_port | bool
+  register: tomcat_shutdown
+  notify: restart tomcat
+  tags: [stig_cat2, "SRG-APP-000142-AS-000014"]
+
+- name: SRG-APP-000439-AS-000155 - Enforce TLS protocols on SSL connectors
+  community.general.xml:
+    path: "{{ tomcat_server_xml }}"
+    xpath: "/Server/Service/Connector[@SSLEnabled='true']"
+    attribute: sslEnabledProtocols
+    value: "{{ tomcat_ssl_enabled_protocols }}"
+  check_mode: "{{ not (apply_changes | bool) }}"
+  failed_when: false
+  register: tomcat_tls
+  notify: restart tomcat
+  tags: [stig_cat2, "SRG-APP-000439-AS-000155"]
+
+- name: SRG-APP-000295-AS-000263 - Set default session timeout in web.xml
+  community.general.xml:
+    path: "{{ tomcat_web_xml }}"
+    xpath: "/*[local-name()='web-app']/*[local-name()='session-config']/*[local-name()='session-timeout']"
+    value: "{{ tomcat_session_timeout | string }}"
+  check_mode: "{{ not (apply_changes | bool) }}"
+  failed_when: false
+  register: tomcat_session
+  notify: restart tomcat
+  tags: [stig_cat2, "SRG-APP-000295-AS-000263"]
+
+- name: SRG-APP-000211-AS-000146 - Remove default/example web applications
+  ansible.builtin.file:
+    path: "{{ tomcat_webapps_dir }}/{{ item }}"
+    state: absent
+  loop: "{{ tomcat_remove_default_webapps }}"
+  loop_control:
+    label: "{{ item }}"
+  check_mode: "{{ not (apply_changes | bool) }}"
+  when: apply_changes | bool
+  register: tomcat_webapps
+  tags: [stig_cat2, "SRG-APP-000211-AS-000146"]
+
+- name: SRG-APP-000211-AS-000146 - Assess presence of default web applications (dry-run)
+  ansible.builtin.stat:
+    path: "{{ tomcat_webapps_dir }}/{{ item }}"
+  loop: "{{ tomcat_remove_default_webapps }}"
+  loop_control:
+    label: "{{ item }}"
+  register: tomcat_webapps_assess
+  changed_when: false
+  tags: [tomcat]
+
+- name: SRG-APP-000141 - Verify Tomcat is not running as root
+  ansible.builtin.assert:
+    that: tomcat_run_user != 'root'
+    fail_msg: "Tomcat must run as a dedicated non-root account (tomcat_run_user is 'root')."
+    success_msg: "Tomcat configured to run as '{{ tomcat_run_user }}'."
+  tags: [tomcat, "SRG-APP-000141-AS-000095"]

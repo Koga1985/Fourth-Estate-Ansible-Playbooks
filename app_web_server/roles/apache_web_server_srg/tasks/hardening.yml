@@ -1,0 +1,61 @@
+---
+# Apache Web Server SRG hardening
+# NIST AC-10, AU-3, CM-6, CM-7, SC-8, SC-23
+
+- name: SRG-APP-000516 - Verify Apache main configuration exists
+  ansible.builtin.stat:
+    path: "{{ apache_main_conf }}"
+  register: apache_conf_stat
+  tags: [apache]
+
+- name: Fail early if Apache is not installed at the expected path
+  ansible.builtin.assert:
+    that: apache_conf_stat.stat.exists
+    fail_msg: "Apache main config not found at {{ apache_main_conf }} - set apache_main_conf/apache_conf_dir for this distro."
+  tags: [apache]
+
+- name: SRG-APP-* - Deploy SRG hardening drop-in
+  ansible.builtin.template:
+    src: srg_hardening.conf.j2
+    dest: "{{ apache_hardening_conf }}"
+    owner: root
+    group: root
+    mode: "0644"
+    validate: "apachectl -t -f %s 2>/dev/null || /usr/sbin/httpd -t -f %s"
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: apache_dropin
+  notify: reload apache
+  tags:
+    - stig_cat2
+    - "SRG-APP-000516-WSR-000174"
+    - "SRG-APP-000439-WSR-000156"
+
+- name: SRG-APP-000211-WSR-000031 - Disable directory listing modules
+  ansible.builtin.lineinfile:
+    path: "{{ apache_conf_dir }}/00-srg-disable-modules.conf"
+    line: "# {{ item }} disabled by Web Server SRG (load line commented in module conf)"
+    create: true
+    owner: root
+    group: root
+    mode: "0644"
+  loop: "{{ apache_disable_modules }}"
+  loop_control:
+    label: "{{ item }}"
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: apache_modules_marker
+  tags: [stig_cat2, "SRG-APP-000211-WSR-000031"]
+
+- name: SRG-APP-000211-WSR-000031 - Comment out disabled LoadModule lines
+  ansible.builtin.replace:
+    path: "{{ apache_conf_dir }}/{{ item }}"
+    regexp: '^(LoadModule\s+(?:{{ apache_disable_modules | join("|") }})\s+.*)$'
+    replace: '#\1'
+  loop:
+    - autoindex.conf
+  loop_control:
+    label: "{{ item }}"
+  check_mode: "{{ not (apply_changes | bool) }}"
+  failed_when: false
+  register: apache_loadmodule
+  notify: reload apache
+  tags: [stig_cat2, "SRG-APP-000211-WSR-000031"]
