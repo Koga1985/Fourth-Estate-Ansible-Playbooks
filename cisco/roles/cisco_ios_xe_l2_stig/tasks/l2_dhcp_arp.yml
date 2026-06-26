@@ -1,0 +1,71 @@
+---
+# Layer-2 data-plane integrity controls
+# CISC-L2-000050 DHCP Snooping | CISC-L2-000070 Dynamic ARP Inspection
+# CISC-L2-000060 IP Source Guard
+# NIST SC-5, SC-7
+
+- name: CISC-L2-000050 - Enable DHCP snooping globally
+  cisco.ios.ios_config:
+    lines:
+      - ip dhcp snooping
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: dhcp_snoop_global
+  notify: save running-config
+  tags: [stig_cat2, "CISC-L2-000050"]
+
+- name: CISC-L2-000050 - Enable DHCP snooping on user VLANs
+  cisco.ios.ios_config:
+    lines:
+      - "ip dhcp snooping vlan {{ l2_user_vlans | join(',') }}"
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: dhcp_snoop_vlans
+  notify: save running-config
+  tags: [stig_cat2, "CISC-L2-000050"]
+
+- name: CISC-L2-000050 - Mark upstream/server-facing interfaces as DHCP trusted
+  cisco.ios.ios_config:
+    parents: "interface {{ item }}"
+    lines:
+      - ip dhcp snooping trust
+  loop: "{{ l2_dhcp_trusted_interfaces }}"
+  loop_control:
+    label: "{{ item }}"
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: dhcp_trust
+  notify: save running-config
+  tags: [stig_cat2, "CISC-L2-000050"]
+
+- name: CISC-L2-000070 - Enable Dynamic ARP Inspection on user VLANs
+  cisco.ios.ios_config:
+    lines:
+      - "ip arp inspection vlan {{ l2_user_vlans | join(',') }}"
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: dai_vlans
+  notify: save running-config
+  tags: [stig_cat2, "CISC-L2-000070"]
+
+- name: CISC-L2-000070 - Trust ARP inspection on upstream interfaces
+  cisco.ios.ios_config:
+    parents: "interface {{ item }}"
+    lines:
+      - ip arp inspection trust
+  loop: "{{ l2_dhcp_trusted_interfaces }}"
+  loop_control:
+    label: "{{ item }}"
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: dai_trust
+  notify: save running-config
+  tags: [stig_cat2, "CISC-L2-000070"]
+
+- name: CISC-L2-000060 - Enable IP Source Guard on access interfaces
+  cisco.ios.ios_config:
+    parents: "interface {{ item }}"
+    lines:
+      - ip verify source
+  loop: "{{ l2_access_interfaces }}"
+  loop_control:
+    label: "{{ item }}"
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: ip_source_guard
+  notify: save running-config
+  tags: [stig_cat2, "CISC-L2-000060"]

@@ -1,0 +1,35 @@
+---
+# Apache Web Server SRG compliance artifact (JSON).
+
+- name: Assemble result map
+  ansible.builtin.set_fact:
+    apache_srg_results:
+      meta:
+        host: "{{ inventory_hostname }}"
+        timestamp: "{{ ansible_date_time.iso8601 | default('') }}"
+        benchmark: "{{ stig_benchmark }}"
+        version: "{{ stig_version }}"
+        mode: "{{ 'enforce' if apply_changes | bool else 'dry-run' }}"
+        compliance_frameworks: "{{ compliance_frameworks }}"
+      controls:
+        - { id: "SRG-APP-000516-WSR-000174", title: "Suppress version disclosure", would_change: "{{ apache_dropin.changed | default(false) }}" }
+        - { id: "SRG-APP-000439-WSR-000156", title: "TLS protocol/cipher hardening", would_change: "{{ apache_dropin.changed | default(false) }}" }
+        - { id: "SRG-APP-000211-WSR-000031", title: "Directory browsing disabled", would_change: "{{ (apache_loadmodule.changed | default(false)) or (apache_modules_marker.changed | default(false)) }}" }
+        - { id: "SRG-APP-000141-WSR-000081", title: "HTTP TRACE disabled", would_change: "{{ apache_dropin.changed | default(false) }}" }
+  tags: [report]
+
+- name: Write JSON compliance artifact
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/{{ inventory_hostname }}_apache_web_srg.json"
+    mode: "0640"
+    content: "{{ apache_srg_results | to_nice_json }}"
+  delegate_to: localhost
+  tags: [report]
+
+- name: Summarize
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }}: {{ apache_srg_results.controls | selectattr('would_change') | list | length }}
+      of {{ apache_srg_results.controls | length }} controls
+      {{ 'pending (dry-run)' if not (apply_changes | bool) else 'remediated' }}.
+  tags: [report]

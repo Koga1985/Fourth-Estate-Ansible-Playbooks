@@ -1,0 +1,36 @@
+---
+# tasks file for cisco_ise_stig
+
+- name: Ensure artifacts directory exists
+  ansible.builtin.file:
+    path: "{{ artifacts_dir }}"
+    state: directory
+    mode: "0750"
+  run_once: true
+  changed_when: false
+  tags: [always]
+
+- name: Show run mode
+  ansible.builtin.debug:
+    msg: >-
+      cisco_ise_stig against ISE {{ ise_host }} -
+      {{ 'ENFORCING' if apply_changes | bool else 'DRY-RUN / assessment only' }}
+  tags: [always]
+
+- name: Assess ISE NDM posture (read-only)
+  ansible.builtin.import_tasks: assess.yml
+  when: stig_assess | bool
+  tags: [stig, assess]
+
+- name: Apply ISE STIG enforcement operations
+  ansible.builtin.import_tasks: apply_operations.yml
+  when:
+    - stig_apply_operations | bool
+    - apply_changes | bool
+    - ise_stig_operations | length > 0
+  tags: [stig, apply]
+
+- name: Compliance report
+  ansible.builtin.import_tasks: compliance_report.yml
+  when: stig_compliance_report | bool
+  tags: [stig, report]

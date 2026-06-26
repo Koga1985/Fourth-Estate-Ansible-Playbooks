@@ -1,0 +1,136 @@
+---
+# defaults file for cisco_asa_stig
+# Cisco ASA hardening to the DISA Cisco ASA STIGs (NDM + Firewall).
+#
+# Implements CASA-ND-XXXXXX (device management) and CASA-FW-XXXXXX (firewall)
+# control families using the certified cisco.asa collection over network_cli.
+#
+# Safe by default: when apply_changes is false every task runs in check mode
+# and reports only. Use -e apply_changes=true to enforce (write memory handler).
+
+# ============================================================
+# Connection (network_cli via cisco.asa)
+# ============================================================
+ansible_network_os: cisco.asa.asa
+ansible_connection: ansible.netcommon.network_cli
+
+# ============================================================
+# Deployment control
+# ============================================================
+apply_changes: false
+save_config_when_changed: true
+artifacts_dir: "/tmp/cisco-asa-artifacts"
+
+# ============================================================
+# Control toggles
+# ============================================================
+stig_ndm_auth: true
+stig_ndm_mgmt_access: true
+stig_ndm_logging_ntp: true
+stig_ndm_snmp: true
+stig_fw_policy: true
+stig_compliance_report: true
+
+# ============================================================
+# Management interface (ASA SSH/logging/SNMP bind)
+# ============================================================
+asa_mgmt_interface: management
+
+# ============================================================
+# CASA-ND-000190 - AAA / TACACS+
+# ============================================================
+asa_aaa_server_group: STIG-TACACS
+asa_aaa_protocol: tacacs+
+asa_tacacs_servers:
+  - host: "{{ vault_asa_tacacs_host_1 | default('10.0.0.10') }}"
+    key: "{{ vault_asa_tacacs_key | default('CHANGE_ME') }}"
+asa_local_fallback_user: "{{ vault_asa_local_user | default('breakglass') }}"
+
+# ============================================================
+# CASA-ND-000160 - Idle timeout (minutes) and session limits
+# ============================================================
+asa_console_timeout_minutes: 10
+asa_ssh_timeout_minutes: 10
+asa_max_concurrent_mgmt_sessions: 2
+
+# ============================================================
+# CASA-ND-001130/001150 - SSH hardening / management ACL
+# ============================================================
+asa_ssh_version: 2
+asa_ssh_key_modulus: 2048
+asa_ssh_kex_group: dh-group14-sha256
+asa_management_subnets:
+  - "10.0.0.0 255.255.255.0"
+
+# ============================================================
+# CASA-ND-001440 - Password policy
+# ============================================================
+asa_password_min_length: 15
+asa_password_lifetime_days: 60
+asa_password_min_changes: 4
+
+# ============================================================
+# CASA-ND-000610/000620 - Logging
+# ============================================================
+asa_logging_hosts:
+  - "{{ vault_syslog_server_primary | default('10.0.0.20') }}"
+asa_logging_trap_level: informational
+asa_logging_buffer_level: informational
+asa_logging_buffer_size: 1048576
+
+# ============================================================
+# CASA-ND-001200 - NTP (authenticated)
+# ============================================================
+asa_ntp_authenticate: true
+asa_ntp_key_id: 1
+asa_ntp_key: "{{ vault_asa_ntp_key | default('CHANGE_ME') }}"
+asa_ntp_servers:
+  - "{{ vault_ntp_server_primary | default('10.0.0.30') }}"
+
+# ============================================================
+# CASA-ND-001210 - SNMPv3 only
+# ============================================================
+asa_snmp_v3_group: STIG-RO
+asa_snmp_v3_user: "{{ vault_asa_snmp_user | default('snmpv3mon') }}"
+asa_snmp_v3_auth: "{{ vault_asa_snmp_auth | default('CHANGE_ME_AUTH') }}"
+asa_snmp_v3_priv: "{{ vault_asa_snmp_priv | default('CHANGE_ME_PRIV') }}"
+asa_snmp_host: "{{ vault_asa_snmp_host | default('10.0.0.20') }}"
+asa_snmp_remove_communities:
+  - public
+  - private
+
+# ============================================================
+# CASA-FW-XXXXXX - Firewall policy
+# ============================================================
+asa_enable_threat_detection: true
+asa_enable_acl_logging: true
+# Explicit deny-any-any with logging appended to user ACLs (named below).
+asa_logged_acls: []
+# Example:
+# asa_logged_acls:
+#   - OUTSIDE_IN
+#   - INSIDE_OUT
+
+# ============================================================
+# CASA-ND-000100 (AC-8) - DoD banner (list of lines)
+# ============================================================
+asa_login_banner_lines:
+  - "You are accessing a U.S. Government (USG) Information System (IS) that is"
+  - "provided for USG-authorized use only. By using this IS you consent to the"
+  - "following conditions: the USG routinely intercepts and monitors"
+  - "communications on this IS; at any time the USG may inspect and seize data"
+  - "stored on this IS; communications using or data stored on this IS are not"
+  - "private; this IS includes security measures to protect USG interests; using"
+  - "this IS does not constitute consent to PM, LE or CI investigative searching"
+  - "or monitoring of the content of privileged communications. See User"
+  - "Agreement for details."
+
+# ============================================================
+# Reporting metadata
+# ============================================================
+compliance_frameworks:
+  - dod_stig
+  - nist_800_53
+  - nist_800_171
+stig_benchmark: "Cisco ASA NDM + Firewall STIG"
+stig_version: "V2R1"

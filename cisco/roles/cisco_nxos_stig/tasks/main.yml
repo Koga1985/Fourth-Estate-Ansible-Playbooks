@@ -1,0 +1,49 @@
+---
+# tasks file for cisco_nxos_stig
+
+- name: Ensure local artifacts directory exists
+  ansible.builtin.file:
+    path: "{{ artifacts_dir }}"
+    state: directory
+    mode: "0750"
+  delegate_to: localhost
+  run_once: true
+  changed_when: false
+  tags: [always]
+
+- name: Show run mode
+  ansible.builtin.debug:
+    msg: >-
+      cisco_nxos_stig on {{ inventory_hostname }} -
+      {{ 'ENFORCING' if apply_changes | bool else 'DRY-RUN / check mode only' }}
+  tags: [always]
+
+- name: Feature hygiene (CISC-ND-001310/001440)
+  ansible.builtin.import_tasks: ndm_features.yml
+  when: stig_ndm_features | bool
+  tags: [stig, ndm, features]
+
+- name: AAA, SSH, banner, VTY (CISC-ND-000010/000160/000280/000490/001000)
+  ansible.builtin.import_tasks: ndm_aaa.yml
+  when: stig_ndm_aaa | bool
+  tags: [stig, ndm, aaa]
+
+- name: Logging and authenticated NTP (CISC-ND-000090/000470)
+  ansible.builtin.import_tasks: ndm_logging_ntp.yml
+  when: stig_ndm_logging_ntp | bool
+  tags: [stig, ndm, logging, ntp]
+
+- name: SNMPv3 only (CISC-ND-000150/000160)
+  ansible.builtin.import_tasks: ndm_snmp.yml
+  when: stig_ndm_snmp | bool
+  tags: [stig, ndm, snmp]
+
+- name: Layer-2 hardening and CoPP (CISC-L2-XXXXXX, CISC-ND-001220)
+  ansible.builtin.import_tasks: l2_hardening.yml
+  when: stig_l2_hardening | bool
+  tags: [stig, l2]
+
+- name: Compliance report
+  ansible.builtin.import_tasks: compliance_report.yml
+  when: stig_compliance_report | bool
+  tags: [stig, report]

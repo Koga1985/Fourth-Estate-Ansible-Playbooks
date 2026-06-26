@@ -1,0 +1,66 @@
+---
+# Audit subsystem configuration
+# RHEL-09-653010 (auditd present/enabled) | RHEL-09-653025/653080/653085
+# NIST AU-2, AU-4, AU-5, AU-9
+
+- name: RHEL-09-653010 - Ensure auditd is enabled and running
+  ansible.builtin.systemd:
+    name: auditd
+    enabled: true
+    state: started
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: r_auditd_service
+  when: apply_changes | bool
+  tags: [stig_cat2, "RHEL-09-653010"]
+
+- name: RHEL-09-653025/653080/653085 - Configure auditd.conf disk-handling actions
+  ansible.builtin.lineinfile:
+    path: /etc/audit/auditd.conf
+    regexp: '^#?\s*{{ item.key }}\s*='
+    line: "{{ item.key }} = {{ item.value }}"
+    owner: root
+    group: root
+    mode: "0640"
+  loop:
+    - { key: "space_left_action", value: "{{ rhel9_auditd_space_left_action }}" }
+    - { key: "disk_full_action", value: "{{ rhel9_auditd_disk_full_action }}" }
+    - { key: "max_log_file_action", value: "{{ rhel9_auditd_max_log_file_action }}" }
+  loop_control:
+    label: "{{ item.key }} = {{ item.value }}"
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: r_auditd_conf
+  notify: restart auditd
+  tags: [stig_cat2, "RHEL-09-653025", "RHEL-09-653080", "RHEL-09-653085"]
+
+- name: RHEL-09-654xxx - Deploy STIG audit rules
+  ansible.builtin.copy:
+    dest: /etc/audit/rules.d/stig.rules
+    owner: root
+    group: root
+    mode: "0640"
+    content: |
+      ## Managed by rhel9_stig - DoD RHEL 9 STIG {{ stig_version }} audit rules
+      ## Privilege escalation / identity (RHEL-09-654xxx)
+      -w /etc/sudoers -p wa -k identity
+      -w /etc/sudoers.d/ -p wa -k identity
+      -w /etc/passwd -p wa -k identity
+      -w /etc/group -p wa -k identity
+      -w /etc/shadow -p wa -k identity
+      -w /etc/gshadow -p wa -k identity
+      ## Login/logout and session
+      -w /var/log/lastlog -p wa -k logins
+      -w /var/run/faillock -p wa -k logins
+      ## Privileged command execution
+      -a always,exit -F arch=b64 -S execve -C uid!=euid -F euid=0 -k execpriv
+      -a always,exit -F arch=b64 -S execve -C gid!=egid -F egid=0 -k execpriv
+      ## Discretionary access control changes
+      -a always,exit -F arch=b64 -S chmod,fchmod,fchmodat -F auid>=1000 -F auid!=unset -k perm_mod
+      -a always,exit -F arch=b64 -S setxattr,lsetxattr,fsetxattr,removexattr -F auid>=1000 -F auid!=unset -k perm_mod
+      ## Module loading
+      -a always,exit -F arch=b64 -S init_module,finit_module,delete_module -F auid>=1000 -F auid!=unset -k modules
+      ## Make the configuration immutable (must be last)
+      -e 2
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: r_audit_rules
+  notify: restart auditd
+  tags: [stig_cat2, "RHEL-09-654010"]

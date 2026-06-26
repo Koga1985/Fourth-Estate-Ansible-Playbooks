@@ -1,20 +1,29 @@
 # Fourth Estate Ansible Playbooks
 
-An enterprise-grade collection of **556 roles** and **3,474 YAML files** for infrastructure automation across **37 technology platforms** with emphasis on **DoD STIG, NIST 800-53, NIST 800-171, FedRAMP, and FISMA compliance**.
+An enterprise-grade collection of **577 roles** and **3,684 YAML files** for infrastructure automation across **41 technology platforms** with emphasis on **DoD STIG, NIST 800-53, NIST 800-171, FedRAMP, and FISMA compliance**.
+
+> **New:** 21 dedicated DoD STIG / SRG roles were added covering Cisco network
+> devices (IOS XE L2, NX-OS, ASA, FTD, ACI Router, ISE), RHEL 9, Windows Server
+> 2022 (+ AD + DNS), OpenShift 4.x, IBM DB2 V10.5, the Application & Web Server
+> SRGs, the Application Security & Development STIG, the NDM / Network
+> Infrastructure Policy and Cloud Computing SRG assessments, and the IBM z/OS
+> family (RACF, TSS, CICS, NetView, TDMF, zSecure). See the full
+> **[STIG / SRG Coverage Matrix](./STIG_COVERAGE_MATRIX.md)**.
 
 This repository provides production-ready Ansible automation for network infrastructure, cloud platforms, container orchestration, storage systems, backup solutions, security scanning, secrets management, ITSM integration, and operational technology (OT/ICS) security with a special focus on **Fourth Estate** (free press/media) organizations.
 
 ## 📊 Repository Statistics
 
-- **Total Roles:** 556
-- **Total YAML Files:** 3,474
-- **README Documentation Files:** 627
-- **Technology Platforms:** 37
-- **Compliance Frameworks:** DoD STIG, NIST 800-53 Rev 5, NIST 800-171, FedRAMP, FISMA, CIS Benchmarks
+- **Total Roles:** 577
+- **Total YAML Files:** 3,684
+- **README Documentation Files:** 651
+- **Technology Platforms:** 41
+- **Dedicated DoD STIG / SRG roles:** 21 (see [STIG_COVERAGE_MATRIX.md](./STIG_COVERAGE_MATRIX.md))
+- **Compliance Frameworks:** DoD STIG, DoD Cloud Computing SRG, NIST 800-53 Rev 5, NIST 800-171, FedRAMP, FISMA, CIS Benchmarks
 - **Cloud Platforms:** 4 (AWS, Azure, GCP, VMware vSphere)
-- **Database Platforms:** 4 (PostgreSQL, MySQL, Oracle, Cloud Databases)
-- **Jinja2 Templates:** 209
-- **Inventory Examples:** 43
+- **Database Platforms:** 5 (PostgreSQL, MySQL, Oracle, IBM DB2, Cloud Databases)
+- **Jinja2 Templates:** 320
+- **Inventory Examples:** 76
 
 > Repository statistics are verified in CI (`yamllint` + a YAML parse check over all
 > files). See [`PRODUCTION_READINESS_ASSESSMENT.md`](./PRODUCTION_READINESS_ASSESSMENT.md)
@@ -40,6 +49,7 @@ This repository provides production-ready Ansible automation for network infrast
 - [**Troubleshooting**](./TROUBLESHOOTING.md)
 - [**Changelog**](./CHANGELOG.md)
 - [**DISA STIG & NIST 800-53 Compliance Mapping**](./COMPLIANCE_MAPPING.md)
+- [**STIG / SRG Coverage Matrix**](./STIG_COVERAGE_MATRIX.md)
 
 ## Repository Purpose
 
@@ -119,6 +129,18 @@ Each top-level directory focuses on a specific technology platform and contains 
 ### 🏭 Operational Technology (1 platform)
 - **OT/ICS** - Firewall, IDPS, logging, firmware, compliance (24 roles)
 
+### 🛡️ Dedicated DoD STIG / SRG Roles (21 roles, 5 new areas)
+- **Cisco network devices** - IOS XE Catalyst Layer-2 (`CISC-L2-*`), NX-OS, ASA (`CASA-*`), FTD (FMC API), ACI Router (`CISC-RT-*`), ISE NDM (in `cisco/roles/`)
+- **RHEL 9 STIG** - `rhel/roles/rhel9_stig` (`RHEL-09-*`, V2R6)
+- **Windows Server 2022 STIG** - `windows/roles/win_server2022_stig` (`WN22-*`, + AD Domain & Windows DNS)
+- **OpenShift 4.x STIG** - `openshift/roles/ocp_stig_profile` (`CNTR-OS-*`, V2R4)
+- **IBM DB2 V10.5 STIG** - `databases/db2/roles/db2_stig` (`DB2X-00-*`, V2R1)
+- **Application & Web Server SRG** - `app_web_server/` (Tomcat `SRG-APP-*-AS-*`, Apache `SRG-APP-*-WSR-*`)
+- **Application Security & Development STIG** - `policy_as_code/roles/app_sec_dev_stig` (`APSC-DV-*` CI/CD gate)
+- **Network Device Mgmt / Network Infrastructure Policy** - `network_policy/roles/ndm_srg_assessment`
+- **Cloud Computing SRG + SaaS** - `cloud_policy/roles/cloud_computing_srg_assessment`
+- **IBM z/OS family** - `ibm_zos/` RACF, TSS, CICS, NetView, TDMF, zSecure (read-only assessment skeletons)
+
 ### 📋 Special Frameworks (1 framework)
 - **Policy as Code** - NIST 800-53 and DoD STIG compliance automation
 
@@ -138,6 +160,10 @@ Fourth-Estate-Ansible-Playbooks/
 ├── ansible_tower/                 # Ansible Tower / AAP (8 roles)
 │   ├── README.md
 │   └── roles/
+│
+├── app_web_server/                # Application Server & Web Server SRG (2 roles)
+│   ├── README.md
+│   └── roles/                     # tomcat_app_server_srg, apache_web_server_srg
 │
 ├── arista/                        # Arista EOS networking (6 roles)
 │   ├── README.md
@@ -172,7 +198,13 @@ Fourth-Estate-Ansible-Playbooks/
 │   │   ├── aci_network_config/        # ACI Phase 3: L3Out/L2Out connectivity
 │   │   ├── aci_security_hardening/    # ACI Phase 4: DoD STIG/NIST hardening
 │   │   ├── aci_monitoring/            # ACI Phase 5: SNMP, syslog, health
-│   │   ├── ise_policy__*/             # ISE policy, conditions, authz (6 roles)
+│   │   │   ├── cisco_ios_xe_l2_stig/      # IOS XE Catalyst Layer-2 STIG (CISC-L2-*)
+│   │   ├── cisco_nxos_stig/           # Nexus NX-OS Switch STIG
+│   │   ├── cisco_asa_stig/            # ASA NDM + Firewall STIG (CASA-*)
+│   │   ├── cisco_ftd_stig/            # Firepower Threat Defense STIG (via FMC API)
+│   │   ├── cisco_aci_router_stig/     # ACI L3Out Router STIG (CISC-RT-*)
+│   │   ├── cisco_ise_stig/            # ISE NDM STIG (CISC-ND-*)
+│   ├── ise_policy__*/             # ISE policy, conditions, authz (6 roles)
 │   │   ├── ise_profiling__*/          # ISE profiling probes & policies (2 roles)
 │   │   ├── ise_endpoints__*/          # ISE endpoint registration (2 roles)
 │   │   ├── ise_posture__*/            # ISE posture assessment (3 roles)
@@ -197,6 +229,10 @@ Fourth-Estate-Ansible-Playbooks/
 │   ├── README.md
 │   └── roles/
 │
+├── cloud_policy/                  # DoD Cloud Computing SRG + SaaS assessment (1 role)
+│   ├── README.md
+│   └── roles/                     # cloud_computing_srg_assessment
+│
 ├── cohesity/                      # Cohesity backup (7 roles)
 │   ├── README.md
 │   └── roles/
@@ -209,7 +245,8 @@ Fourth-Estate-Ansible-Playbooks/
 │   ├── README.md
 │   ├── postgresql/                # PostgreSQL (8 roles)
 │   ├── mysql/                     # MySQL/MariaDB (8 roles)
-│   └── oracle/                    # Oracle Database (8 roles)
+│   ├── oracle/                    # Oracle Database (8 roles)
+│   └── db2/                       # IBM DB2 V10.5 STIG (1 role: db2_stig)
 │
 ├── dragos/                        # Dragos OT monitoring (12 roles)
 │   ├── README.md
@@ -236,6 +273,11 @@ Fourth-Estate-Ansible-Playbooks/
 │   ├── README.md
 │   └── roles/
 │
+├── ibm_zos/                       # IBM z/OS mainframe STIG assessment (6 roles)
+│   ├── README.md
+│   ├── requirements.yml
+│   └── roles/                     # RACF, TSS, CICS, NetView, TDMF, zSecure (skeletons)
+│
 ├── illumio/                       # Illumio micro-segmentation (5 roles)
 │   ├── README.md
 │   ├── roles/
@@ -258,6 +300,10 @@ Fourth-Estate-Ansible-Playbooks/
 ├── netapp/                        # NetApp ONTAP (10 roles)
 │   ├── README.md
 │   └── roles/
+│
+├── network_policy/                # NDM SRG + Network Infrastructure Policy assessment (1 role)
+│   ├── README.md
+│   └── roles/                     # ndm_srg_assessment
 │
 ├── openshift/                     # Red Hat OpenShift (45 roles)
 │   ├── README.md
@@ -626,6 +672,32 @@ Implemented STIG controls for:
 | **RHEL 8** | V1R14 | 22 | 98 | 45 | 165 |
 | **OT Systems** | Custom | 10 | 25 | 8 | 43 |
 
+#### Dedicated STIG / SRG roles (2026 expansion)
+
+These 21 roles each target a specific DISA benchmark, are safe-by-default
+(dry-run / assessment first), and emit a per-host JSON evidence artifact. Full
+rule-family detail and run instructions are in
+[STIG_COVERAGE_MATRIX.md](./STIG_COVERAGE_MATRIX.md).
+
+| Benchmark | Rule family | Role |
+|-----------|-------------|------|
+| Cisco IOS XE Switch L2S/NDM | `CISC-L2-*`, `CISC-ND-*` | `cisco/roles/cisco_ios_xe_l2_stig` |
+| Cisco NX-OS Switch | `CISC-ND-*`, `CISC-L2-*` | `cisco/roles/cisco_nxos_stig` |
+| Cisco ASA (NDM + Firewall) | `CASA-ND-*`, `CASA-FW-*` | `cisco/roles/cisco_asa_stig` |
+| Cisco FTD (via FMC) | NDM/Firewall | `cisco/roles/cisco_ftd_stig` |
+| Cisco ACI Router | `CISC-RT-*` | `cisco/roles/cisco_aci_router_stig` |
+| Cisco ISE (NDM) | `CISC-ND-*` | `cisco/roles/cisco_ise_stig` |
+| RHEL 9 (V2R6) | `RHEL-09-*` | `rhel/roles/rhel9_stig` |
+| Windows Server 2022 + AD + DNS (V2R6) | `WN22-*`, `AD.*`, `WDNS-*` | `windows/roles/win_server2022_stig` |
+| OpenShift 4.x (V2R4) | `CNTR-OS-*` | `openshift/roles/ocp_stig_profile` |
+| IBM DB2 V10.5 (V2R1) | `DB2X-00-*` | `databases/db2/roles/db2_stig` |
+| Application Server SRG (V4R4) | `SRG-APP-*-AS-*` | `app_web_server/roles/tomcat_app_server_srg` |
+| Web Server SRG | `SRG-APP-*-WSR-*` | `app_web_server/roles/apache_web_server_srg` |
+| Application Security & Development (V6R4) | `APSC-DV-*` | `policy_as_code/roles/app_sec_dev_stig` |
+| Network Device Mgmt SRG / Network Infra Policy | `SRG-APP-*-NDM-*`, `NET-*` | `network_policy/roles/ndm_srg_assessment` |
+| DoD Cloud Computing SRG + SaaS | FedRAMP/NIST families | `cloud_policy/roles/cloud_computing_srg_assessment` |
+| IBM z/OS RACF / TSS / CICS / NetView / TDMF / zSecure | ESM control sets | `ibm_zos/roles/*` (6 read-only assessment skeletons) |
+
 ### NIST 800-53 Rev 5 Control Families
 
 Implemented controls across:
@@ -770,6 +842,7 @@ This repository was built in four content phases and subsequently hardened for p
 - **Phase 2** - Added Azure (30+ roles), database platforms (PostgreSQL, MySQL, Oracle), NetApp ONTAP, Fortinet FortiGate, Prometheus/Grafana, ELK Stack, and expanded Policy as Code to 8 NIST control families
 - **Phase 3** - Added F5 BIG-IP, Tenable Security Center, ServiceNow CMDB, HashiCorp Vault, and Ansible Tower/AAP to complete the enterprise automation suite
 - **Security hardening (March 2026)** - Added `no_log: true` to 954 credential-handling tasks, `changed_when` correctness to all query tasks, `any_errors_fatal: true` to all plays, and comprehensive customer documentation (CUSTOMER_QUICK_START, KNOWN_LIMITATIONS, TROUBLESHOOTING, CHANGELOG)
+- **STIG/SRG expansion (June 2026)** - Added 21 dedicated DoD STIG / SRG roles across 5 new platform areas (`app_web_server/`, `network_policy/`, `cloud_policy/`, `ibm_zos/`, `databases/db2/`): Cisco network devices, RHEL 9, Windows Server 2022/AD/DNS, OpenShift 4.x, IBM DB2, App/Web Server SRGs, Application Security & Development STIG, NDM & Cloud Computing SRG assessments, and the IBM z/OS family. All safe-by-default with per-host evidence artifacts. See [STIG_COVERAGE_MATRIX.md](./STIG_COVERAGE_MATRIX.md) and [CHANGELOG.md](./CHANGELOG.md).
 
 ---
 
@@ -847,5 +920,5 @@ ansible-playbook vmware/playbooks/esxi_stig_hardening.yml -i inventory/vmware.ym
 
 **Repository Maintained By:** Fourth Estate Infrastructure Team
 **Classification:** UNCLASSIFIED
-**Last Updated:** 2026-03-16
+**Last Updated:** 2026-06-26
 **License:** See LICENSE file

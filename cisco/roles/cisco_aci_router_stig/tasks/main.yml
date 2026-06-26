@@ -1,0 +1,39 @@
+---
+# tasks file for cisco_aci_router_stig
+
+- name: Ensure artifacts directory exists
+  ansible.builtin.file:
+    path: "{{ artifacts_dir }}"
+    state: directory
+    mode: "0750"
+  delegate_to: localhost
+  run_once: true
+  changed_when: false
+  tags: [always]
+
+- name: Show run mode
+  ansible.builtin.debug:
+    msg: >-
+      cisco_aci_router_stig on APIC {{ aci_host }} -
+      {{ 'ENFORCING' if apply_changes | bool else 'DRY-RUN / read-only' }}
+  tags: [always]
+
+- name: BGP neighbor authentication + GTSM (CISC-RT-000010/000490)
+  ansible.builtin.import_tasks: bgp_security.yml
+  when: stig_bgp_security | bool
+  tags: [stig, bgp]
+
+- name: OSPF interface authentication (CISC-RT-000020)
+  ansible.builtin.import_tasks: ospf_security.yml
+  when: stig_ospf_security | bool
+  tags: [stig, ospf]
+
+- name: Route control enforcement (CISC-RT-000520)
+  ansible.builtin.import_tasks: route_control.yml
+  when: stig_route_control | bool
+  tags: [stig, route_control]
+
+- name: Compliance report
+  ansible.builtin.import_tasks: compliance_report.yml
+  when: stig_compliance_report | bool
+  tags: [stig, report]

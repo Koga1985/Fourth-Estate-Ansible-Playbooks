@@ -1,0 +1,28 @@
+---
+# Privilege hygiene - revoke excessive privileges from PUBLIC
+# DB2X-00 access-control family | NIST AC-3, AC-6
+
+- name: Revoke excessive privileges from PUBLIC
+  ansible.builtin.shell:
+    cmd: >-
+      {{ db2_clp }}
+      db2 connect to {{ db2_database }} user {{ db2_connect_user }} using "{{ db2_connect_password }}" &&
+      {{ db2_revoke_public_statements | map('regex_replace', '^(.*)$', 'db2 -v "\1"') | join(' ; ') }} ;
+      db2 connect reset
+    executable: /bin/bash
+  become: true
+  become_user: "{{ db2_instance_owner }}"
+  no_log: true
+  when:
+    - apply_changes | bool
+    - db2_connect_password | length > 0
+  register: db2_revoke
+  changed_when: db2_revoke.rc == 0
+  tags: [privileges]
+
+- name: Note when PUBLIC revokes are skipped (dry-run or no credentials)
+  ansible.builtin.debug:
+    msg: >-
+      PUBLIC privilege revokes are {{ 'pending (run with apply_changes=true and db2_connect_password set)' }}.
+  when: not (apply_changes | bool) or (db2_connect_password | length == 0)
+  tags: [privileges]

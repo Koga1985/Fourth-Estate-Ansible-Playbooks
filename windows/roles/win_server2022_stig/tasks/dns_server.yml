@@ -1,0 +1,60 @@
+---
+# Windows DNS STIG controls (WDNS-*) - DNS servers only
+# NIST AU-12, SC-8, SC-20, SC-21
+
+- name: WDNS - Enforce secure-only dynamic updates on primary zones
+  ansible.windows.win_powershell:
+    script: |
+      param([bool]$Apply, [bool]$SecureOnly)
+      $ErrorActionPreference = 'Stop'
+      Import-Module DnsServer
+      $changed = $false
+      $zones = Get-DnsServerZone | Where-Object { $_.ZoneType -eq 'Primary' -and -not $_.IsAutoCreated -and $_.IsDsIntegrated }
+      foreach ($z in $zones) {
+        $desired = if ($SecureOnly) { 'Secure' } else { $z.DynamicUpdate }
+        if ($z.DynamicUpdate -ne $desired) {
+          $changed = $true
+          if ($Apply) { Set-DnsServerPrimaryZone -Name $z.ZoneName -DynamicUpdate $desired }
+        }
+      }
+      $Ansible.Result = @{ zones_checked = $zones.Count }
+      $Ansible.Changed = $changed
+    parameters:
+      Apply: "{{ apply_changes | bool }}"
+      SecureOnly: "{{ win_dns_secure_dynamic_updates | bool }}"
+  register: win_dns_updates
+  tags: ["WDNS-22-000033", dns]
+
+- name: WDNS - Enable DNS server event logging
+  ansible.windows.win_powershell:
+    script: |
+      param([bool]$Apply)
+      $ErrorActionPreference = 'Stop'
+      Import-Module DnsServer
+      $diag = Get-DnsServerDiagnostics
+      $changed = (-not $diag.EnableLogFileRollover) -or (-not $diag.Queries)
+      if ($changed -and $Apply) {
+        Set-DnsServerDiagnostics -EnableLogFileRollover $true -Queries $true -Answers $true
+      }
+      $Ansible.Changed = $changed
+    parameters:
+      Apply: "{{ apply_changes | bool }}"
+  when: win_dns_log_level_events | bool
+  register: win_dns_logging
+  tags: ["WDNS-22-000001", dns]
+
+- name: WDNS - Disable recursion on authoritative-only servers
+  ansible.windows.win_powershell:
+    script: |
+      param([bool]$Apply)
+      $ErrorActionPreference = 'Stop'
+      Import-Module DnsServer
+      $rec = (Get-DnsServerRecursion).Enable
+      $changed = $rec -eq $true
+      if ($changed -and $Apply) { Set-DnsServerRecursion -Enable $false }
+      $Ansible.Changed = $changed
+    parameters:
+      Apply: "{{ apply_changes | bool }}"
+  when: win_dns_disable_recursion | bool
+  register: win_dns_recursion
+  tags: ["WDNS-22-000038", dns]

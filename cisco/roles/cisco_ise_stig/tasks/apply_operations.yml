@@ -1,0 +1,33 @@
+---
+# Apply data-driven ISE STIG operations via the ISE OpenAPI.
+# Runs only when apply_changes=true. Each operation defines its own
+# method/path/body so it stays correct across ISE versions.
+
+- name: Apply ISE STIG enforcement operation
+  ansible.builtin.uri:
+    url: "https://{{ ise_host }}/api/{{ item.path }}"
+    method: "{{ item.method | default('PUT') }}"
+    user: "{{ ise_username }}"
+    password: "{{ ise_password }}"
+    force_basic_auth: true
+    headers:
+      Accept: application/json
+      Content-Type: application/json
+    body_format: json
+    body: "{{ item.body | default(omit) }}"
+    validate_certs: "{{ ise_validate_certs }}"
+    status_code: "{{ item.status_code | default([200, 201, 202, 204]) }}"
+    timeout: 60
+  no_log: true
+  loop: "{{ ise_stig_operations }}"
+  loop_control:
+    label: "{{ item.id }} - {{ item.title }}"
+  register: ise_apply_results
+  tags: [apply]
+
+- name: Summarize applied operations
+  ansible.builtin.debug:
+    msg: >-
+      Applied {{ ise_apply_results.results | selectattr('status', 'defined') | list | length }}
+      ISE STIG enforcement operation(s) against {{ ise_host }}.
+  tags: [apply]

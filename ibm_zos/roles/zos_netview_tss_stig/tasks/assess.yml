@@ -1,0 +1,68 @@
+---
+# Generic z/OS STIG checklist generator + optional live read-only assessment.
+# Reusable across all ibm_zos/* roles via zos_catalog / zos_slug.
+
+- name: Ensure artifacts directory exists
+  ansible.builtin.file:
+    path: "{{ artifacts_dir }}"
+    state: directory
+    mode: "0750"
+  delegate_to: localhost
+  run_once: true
+  changed_when: false
+  tags: [always]
+
+- name: Show run mode
+  ansible.builtin.debug:
+    msg: >-
+      {{ zos_slug }} ({{ stig_benchmark }}, ESM={{ zos_esm | default('n/a') }}) -
+      {{ ('LIVE read-only assessment against ' + zos_target) if (zos_live_assessment | bool and zos_target | length > 0) else 'CHECKLIST only (no mainframe contacted)' }}
+  tags: [always]
+
+- name: Build checklist data
+  ansible.builtin.set_fact:
+    zos_checklist:
+      meta:
+        benchmark: "{{ stig_benchmark }}"
+        version: "{{ stig_version }}"
+        esm: "{{ zos_esm | default('n/a') }}"
+        generated: "{{ ansible_date_time.iso8601 | default(lookup('pipe', 'date -u +%Y-%m-%dT%H:%M:%SZ')) }}"
+        mode: "{{ 'live-assessment' if (zos_live_assessment | bool and zos_target | length > 0) else 'checklist-only' }}"
+        compliance_frameworks: "{{ compliance_frameworks }}"
+        control_count: "{{ zos_catalog | length }}"
+      controls: "{{ zos_catalog }}"
+  tags: [always]
+
+- name: Write checklist JSON artifact
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/{{ zos_slug }}_checklist.json"
+    mode: "0640"
+    content: "{{ zos_checklist | to_nice_json }}"
+  delegate_to: localhost
+  tags: [report]
+
+- name: Render checklist Markdown
+  ansible.builtin.template:
+    src: checklist.md.j2
+    dest: "{{ artifacts_dir }}/{{ zos_slug }}_checklist.md"
+    mode: "0640"
+  delegate_to: localhost
+  tags: [report]
+
+# Live read-only assessment is dynamically included so this role's checklist
+# mode runs without the ibm.ibm_zos_core collection installed. The include is
+# only loaded (and the collection only required) when live mode is requested.
+- name: Live read-only assessment (gated; requires ibm.ibm_zos_core)
+  ansible.builtin.include_tasks: assess_live.yml
+  when:
+    - zos_live_assessment | bool
+    - zos_target | length > 0
+  tags: [live]
+
+- name: Summarize
+  ansible.builtin.debug:
+    msg: >-
+      {{ zos_slug }}: {{ zos_catalog | length }} controls documented.
+      Checklist: {{ artifacts_dir }}/{{ zos_slug }}_checklist.md
+      {{ '| live evidence: ' + artifacts_dir + '/' + zos_slug + '_live_evidence.json' if (zos_live_assessment | bool and zos_target | length > 0) else '' }}
+  tags: [always]

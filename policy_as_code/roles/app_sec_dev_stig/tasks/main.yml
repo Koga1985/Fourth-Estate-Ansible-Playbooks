@@ -1,0 +1,61 @@
+---
+# tasks file for app_sec_dev_stig
+
+- name: Ensure artifacts directory exists
+  ansible.builtin.file:
+    path: "{{ artifacts_dir }}"
+    state: directory
+    mode: "0750"
+  changed_when: false
+  tags: [always]
+
+- name: Show run mode
+  ansible.builtin.debug:
+    msg: >-
+      app_sec_dev_stig ({{ stig_benchmark }} {{ stig_version }}) on {{ app_name }}
+      ({{ app_src_dir }}) - gate {{ 'ENFORCED (build fails on violation)' if enforce_gate | bool else 'report-only' }}
+  tags: [always]
+
+- name: Detect available security scanners
+  ansible.builtin.shell: "command -v {{ item.value.bin }}"
+  args:
+    executable: /bin/bash
+  loop: "{{ appsec_tools | dict2items }}"
+  loop_control:
+    label: "{{ item.value.bin }}"
+  register: appsec_detect
+  changed_when: false
+  failed_when: false
+  tags: [scan]
+
+- name: Build scanner availability map
+  ansible.builtin.set_fact:
+    appsec_available: "{{ appsec_available | default({}) | combine({item.item.key: (item.rc == 0)}) }}"
+  loop: "{{ appsec_detect.results }}"
+  loop_control:
+    label: "{{ item.item.value.bin }} ({{ 'found' if item.rc == 0 else 'missing' }})"
+  tags: [scan]
+
+- name: Run secret detection (APSC-DV-001740)
+  ansible.builtin.import_tasks: scan_secrets.yml
+  when: scan_secrets | bool and appsec_available.secrets | default(false)
+  tags: [scan, secrets]
+
+- name: Run SAST (APSC-DV-002400/002560/003215)
+  ansible.builtin.import_tasks: scan_sast.yml
+  when: scan_sast | bool and appsec_available.sast | default(false)
+  tags: [scan, sast]
+
+- name: Run dependency / SCA scan (APSC-DV-003235/002950)
+  ansible.builtin.import_tasks: scan_dependencies.yml
+  when: scan_dependencies | bool and appsec_available.dependencies | default(false)
+  tags: [scan, sca]
+
+- name: Run IaC scan (APSC-DV-003180)
+  ansible.builtin.import_tasks: scan_iac.yml
+  when: scan_iac | bool and appsec_available.iac | default(false)
+  tags: [scan, iac]
+
+- name: Generate compliance evidence and apply gate
+  ansible.builtin.import_tasks: evidence_and_gate.yml
+  tags: [always, report, gate]

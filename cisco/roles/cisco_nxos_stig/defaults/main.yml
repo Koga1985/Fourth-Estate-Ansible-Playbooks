@@ -1,0 +1,126 @@
+---
+# defaults file for cisco_nxos_stig
+# Cisco Nexus (NX-OS) switch hardening to the DISA Cisco NX-OS Switch STIG.
+#
+# Implements the management-plane (NDM, CISC-ND-XXXXXX) and Layer-2
+# (CISC-L2-XXXXXX) control families.
+#
+# Safe by default: when `apply_changes` is false every task runs in check mode
+# and only reports the changes it WOULD make. Use `-e apply_changes=true` to
+# enforce; configuration is saved to startup-config via the handler.
+
+# ============================================================
+# Connection (network_cli via cisco.nxos)
+# ============================================================
+ansible_network_os: cisco.nxos.nxos
+ansible_connection: ansible.netcommon.network_cli
+
+# ============================================================
+# Deployment control
+# ============================================================
+apply_changes: false
+save_config_when_changed: true
+artifacts_dir: "/tmp/cisco-nxos-artifacts"
+
+# ============================================================
+# Control toggles
+# ============================================================
+stig_ndm_features: true
+stig_ndm_aaa: true
+stig_ndm_logging_ntp: true
+stig_ndm_snmp: true
+stig_l2_hardening: true
+stig_compliance_report: true
+
+# ============================================================
+# CISC-ND-001310/001440 - Feature hygiene (disable insecure, enable required)
+# ============================================================
+nxos_disable_telnet: true
+nxos_enable_ssh: true
+nxos_enable_scp: true
+
+# ============================================================
+# CISC-ND-000160/000140 - AAA / TACACS+
+# ============================================================
+nxos_tacacs_servers:
+  - host: "{{ vault_nxos_tacacs_host_1 | default('10.0.0.10') }}"
+    key: "{{ vault_nxos_tacacs_key | default('CHANGE_ME') }}"
+nxos_tacacs_group: STIG-TACACS
+nxos_local_fallback_user: "{{ vault_nxos_local_user | default('breakglass') }}"
+
+# CISC-ND-000280 - Idle timeout (minutes) for VTY/console
+nxos_exec_timeout_minutes: 10
+
+# CISC-ND-000490 - Management ACL
+nxos_mgmt_acl_name: MGMT-IN
+nxos_management_subnets:
+  - "10.0.0.0/24"
+
+# CISC-ND-001000/001210 - SSH key strength
+nxos_ssh_key_type: rsa
+nxos_ssh_key_size: 2048
+
+# ============================================================
+# CISC-ND-000090/000100/000110 - Logging
+# ============================================================
+nxos_logging_servers:
+  - host: "{{ vault_syslog_server_primary | default('10.0.0.20') }}"
+    severity: 6
+nxos_logging_level_console: 2
+
+# ============================================================
+# CISC-ND-000470/000490 - NTP (authenticated)
+# ============================================================
+nxos_ntp_authenticate: true
+nxos_ntp_key_id: 1
+nxos_ntp_key: "{{ vault_nxos_ntp_key | default('CHANGE_ME') }}"
+nxos_ntp_servers:
+  - "{{ vault_ntp_server_primary | default('10.0.0.30') }}"
+
+# ============================================================
+# CISC-ND-000150/000160 - SNMPv3 only
+# ============================================================
+nxos_snmp_v3_user: "{{ vault_nxos_snmp_user | default('snmpv3mon') }}"
+nxos_snmp_v3_auth: "{{ vault_nxos_snmp_auth | default('CHANGE_ME_AUTH') }}"
+nxos_snmp_v3_priv: "{{ vault_nxos_snmp_priv | default('CHANGE_ME_PRIV') }}"
+nxos_snmp_v3_role: network-operator
+nxos_snmp_remove_communities:
+  - public
+  - private
+
+# ============================================================
+# CISC-ND-000010 (AC-8) - DoD banner
+# ============================================================
+nxos_login_banner: |
+  You are accessing a U.S. Government (USG) Information System (IS) that is
+  provided for USG-authorized use only. By using this IS (which includes any
+  device attached to this IS), you consent to the following conditions:
+  -The USG routinely intercepts and monitors communications on this IS.
+  -At any time, the USG may inspect and seize data stored on this IS.
+  -Communications using, or data stored on, this IS are not private.
+  -This IS includes security measures to protect USG interests.
+  -Notwithstanding the above, using this IS does not constitute consent to PM,
+  LE or CI investigative searching or monitoring of the content of privileged
+  communications. See User Agreement for details.
+
+# ============================================================
+# CISC-L2-XXXXXX - Layer-2 hardening
+# ============================================================
+nxos_user_vlans: [10, 20, 30]
+nxos_native_vlan: 999
+nxos_enable_dhcp_snooping: true
+nxos_enable_arp_inspection: true
+nxos_enable_bpduguard_default: true
+nxos_enable_loopguard_default: true
+# CISC-ND-001220 - Control Plane Policing
+nxos_copp_profile: strict   # strict | moderate | lenient | dense
+
+# ============================================================
+# Reporting metadata
+# ============================================================
+compliance_frameworks:
+  - dod_stig
+  - nist_800_53
+  - nist_800_171
+stig_benchmark: "Cisco NX-OS Switch STIG"
+stig_version: "V3R2"

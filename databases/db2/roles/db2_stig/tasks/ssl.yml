@@ -1,0 +1,39 @@
+---
+# SSL/TLS for client communication
+# DB2X-00-0014xx - transmission confidentiality/integrity | NIST SC-8, SC-23
+
+- name: Configure DB2 SSL dbm cfg parameters
+  ansible.builtin.shell: "{{ db2_clp }} db2 update dbm cfg using {{ item.key }} {{ item.value }}"
+  args:
+    executable: /bin/bash
+  become: true
+  become_user: "{{ db2_instance_owner }}"
+  loop:
+    - { key: "SSL_SVR_LABEL", value: "{{ db2_ssl_svr_label }}" }
+    - { key: "SSL_SVR_KEYDB", value: "{{ db2_ssl_svr_keydb }}" }
+    - { key: "SSL_SVR_STASH", value: "{{ db2_ssl_svr_stash }}" }
+    - { key: "SSL_VERSIONS", value: "{{ db2_ssl_versions }}" }
+    - { key: "SSL_SVCENAME", value: "{{ db2_ssl_svcename }}" }
+  loop_control:
+    label: "{{ item.key }}"
+  when:
+    - db2_ssl_enable | bool
+    - apply_changes | bool
+  register: db2_ssl_cfg
+  changed_when: db2_ssl_cfg.rc == 0
+  notify: restart db2 instance
+  tags: [ssl]
+
+- name: Enable SSL in DB2COMM
+  ansible.builtin.shell: "{{ db2_clp }} db2set DB2COMM=TCPIP,SSL"
+  args:
+    executable: /bin/bash
+  become: true
+  become_user: "{{ db2_instance_owner }}"
+  when:
+    - db2_ssl_enable | bool
+    - apply_changes | bool
+  register: db2_ssl_comm
+  changed_when: db2_ssl_comm.rc == 0
+  notify: restart db2 instance
+  tags: [ssl]

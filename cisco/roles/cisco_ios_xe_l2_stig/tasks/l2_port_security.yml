@@ -1,0 +1,36 @@
+---
+# Port security and broadcast/storm controls
+# CISC-L2-000020 Port security on access ports | CISC-L2-000080 Storm control
+# NIST SC-5, AC-4
+
+- name: CISC-L2-000020 - Enable port security on access interfaces
+  cisco.ios.ios_config:
+    parents: "interface {{ item }}"
+    lines:
+      - switchport port-security
+      - "switchport port-security maximum {{ l2_port_security_max_mac }}"
+      - "switchport port-security violation {{ l2_port_security_violation }}"
+      - switchport port-security aging time 5
+      - switchport port-security aging type inactivity
+  loop: "{{ l2_access_interfaces }}"
+  loop_control:
+    label: "{{ item }}"
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: port_security
+  notify: save running-config
+  tags: [stig_cat2, "CISC-L2-000020"]
+
+- name: CISC-L2-000080 - Apply storm control on access interfaces
+  cisco.ios.ios_config:
+    parents: "interface {{ item }}"
+    lines:
+      - "storm-control broadcast level {{ l2_storm_control_broadcast_level }}"
+      - "storm-control multicast level {{ l2_storm_control_multicast_level }}"
+      - storm-control action shutdown
+  loop: "{{ l2_access_interfaces }}"
+  loop_control:
+    label: "{{ item }}"
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: storm_control
+  notify: save running-config
+  tags: [stig_cat2, "CISC-L2-000080"]

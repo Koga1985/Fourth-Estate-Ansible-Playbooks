@@ -1,0 +1,80 @@
+---
+# Read-only STIG posture assessment via stable FMC config endpoints.
+# Safe in dry-run - performs only GET requests.
+
+- name: Retrieve managed FTD devices
+  ansible.builtin.uri:
+    url: "{{ fmc_config_base }}/devices/devicerecords?expanded=true&limit=1000"
+    method: GET
+    headers:
+      X-auth-access-token: "{{ fmc_token }}"
+    validate_certs: "{{ fmc_validate_certs }}"
+    status_code: 200
+    timeout: 30
+  no_log: true
+  register: ftd_devices
+  tags: [assess]
+
+- name: Retrieve platform settings policies
+  ansible.builtin.uri:
+    url: "{{ fmc_config_base }}/policy/ftdplatformsettings?expanded=true&limit=1000"
+    method: GET
+    headers:
+      X-auth-access-token: "{{ fmc_token }}"
+    validate_certs: "{{ fmc_validate_certs }}"
+    status_code: 200
+    timeout: 30
+  no_log: true
+  register: ftd_platform_settings
+  tags: [assess]
+
+- name: Retrieve syslog alert objects (off-box audit - CISC-ND-000090)
+  ansible.builtin.uri:
+    url: "{{ fmc_config_base }}/policy/syslogalerts?expanded=true&limit=1000"
+    method: GET
+    headers:
+      X-auth-access-token: "{{ fmc_token }}"
+    validate_certs: "{{ fmc_validate_certs }}"
+    status_code: [200, 404]
+    timeout: 30
+  no_log: true
+  register: ftd_syslog_alerts
+  tags: [assess]
+
+- name: Retrieve access control policies
+  ansible.builtin.uri:
+    url: "{{ fmc_config_base }}/policy/accesspolicies?expanded=true&limit=1000"
+    method: GET
+    headers:
+      X-auth-access-token: "{{ fmc_token }}"
+    validate_certs: "{{ fmc_validate_certs }}"
+    status_code: 200
+    timeout: 30
+  no_log: true
+  register: ftd_access_policies
+  tags: [assess]
+
+- name: Derive assessment findings
+  ansible.builtin.set_fact:
+    ftd_assessment:
+      device_count: "{{ ftd_devices.json.paging.count | default(0) }}"
+      platform_settings_count: "{{ ftd_platform_settings.json.paging.count | default(0) }}"
+      syslog_alert_count: "{{ (ftd_syslog_alerts.json.paging.count | default(0)) if (ftd_syslog_alerts.status == 200) else 0 }}"
+      access_policy_count: "{{ ftd_access_policies.json.paging.count | default(0) }}"
+      finding_no_platform_settings: "{{ (ftd_platform_settings.json.paging.count | default(0) | int) == 0 }}"
+      finding_no_syslog_alert: "{{ ftd_required_syslog_alert | bool and (((ftd_syslog_alerts.json.paging.count | default(0) | int) == 0) if (ftd_syslog_alerts.status == 200) else true) }}"
+      finding_no_access_policy: "{{ (ftd_access_policies.json.paging.count | default(0) | int) == 0 }}"
+  tags: [assess]
+
+- name: Display assessment summary
+  ansible.builtin.debug:
+    msg:
+      - "FTD/FMC STIG assessment ({{ fmc_host }}):"
+      - "Managed FTD devices:        {{ ftd_assessment.device_count }}"
+      - "Platform settings policies: {{ ftd_assessment.platform_settings_count }}"
+      - "Syslog alert objects:       {{ ftd_assessment.syslog_alert_count }}"
+      - "Access control policies:    {{ ftd_assessment.access_policy_count }}"
+      - "FINDING no platform settings policy (CISC-ND mgmt plane): {{ ftd_assessment.finding_no_platform_settings }}"
+      - "FINDING no off-box syslog (CISC-ND-000090):              {{ ftd_assessment.finding_no_syslog_alert }}"
+      - "FINDING no access control policy (CISC-FW):              {{ ftd_assessment.finding_no_access_policy }}"
+  tags: [assess]

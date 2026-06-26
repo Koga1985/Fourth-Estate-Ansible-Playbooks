@@ -1,0 +1,98 @@
+---
+# defaults file for zos_racf_stig
+# DISA IBM z/OS RACF STIG - documented assessment skeleton.
+#
+# IMPORTANT: z/OS ESM hardening cannot be safely applied blind. This role is an
+# ASSESSMENT + COMMAND-REFERENCE skeleton:
+#   * It always generates a STIG checklist (JSON + Markdown) with the exact RACF
+#     /TSO commands to verify each control and the documented remediation. This
+#     runs anywhere (no mainframe needed).
+#   * When zos_live_assessment=true and a z/OS managed node is supplied, it runs
+#     the READ-ONLY verification commands via ibm.ibm_zos_core and captures the
+#     output as evidence. It NEVER issues a change.
+#
+# Remediation is performed by the z/OS systems programmer / ESM administrator
+# using the documented commands after review.
+
+# Runs on the control node; live checks delegate to the z/OS host.
+ansible_connection: local
+artifacts_dir: "/tmp/zos-racf-stig-artifacts"
+
+# Live assessment (read-only) controls
+zos_live_assessment: false
+zos_target: ""              # inventory hostname of the z/OS LPAR (USS+ZOAU+SSH)
+
+# Control-area identifiers are aligned to the DISA z/OS RACF STIG control set.
+# Confirm exact V-IDs/rule-IDs against your STIG release at audit time.
+zos_racf_catalog:
+  - id: "ACP00-PASSWORD"
+    title: "RACF SETROPTS password policy (length, history, interval, complexity, revoke)"
+    severity: CAT II
+    command: "SETROPTS LIST"
+    remediation: "SETROPTS PASSWORD(HISTORY(10) INTERVAL(60) MINCHANGE(1) RULE1(LENGTH(8:8) ...) REVOKE(3))"
+  - id: "ACP00-PROTECTALL"
+    title: "RACF PROTECTALL(FAILURES) and ERASE-ON-SCRATCH enabled"
+    severity: CAT II
+    command: "SETROPTS LIST"
+    remediation: "SETROPTS PROTECTALL(FAILURES) ERASE(ALL)"
+  - id: "ACP00-LOGGING"
+    title: "RACF SAUDIT, CMDVIOL, OPERAUDIT and INITSTATS active"
+    severity: CAT II
+    command: "SETROPTS LIST"
+    remediation: "SETROPTS SAUDIT CMDVIOL OPERAUDIT INITSTATS"
+  - id: "AAMV-APF"
+    title: "APF-authorized libraries are defined and RACF-protected (no public UPDATE)"
+    severity: CAT I
+    command: "D PROG,APF"
+    remediation: "Protect each APF dataset with a DATASET profile UACC(NONE) and explicit access; remove WRITE/ALTER from non-sysprog IDs."
+  - id: "AAMV-PARMLIB"
+    title: "SYS1.PARMLIB / SYS1.PROCLIB / SYS1.LINKLIB protected (UACC NONE)"
+    severity: CAT I
+    command: "LISTDSD DATASET('SYS1.PARMLIB') ALL"
+    remediation: "ADDSD / ALTDSD with UACC(NONE) and audit ALL; grant only sysprog group."
+  - id: "AAMV-SMF"
+    title: "SMF data collection active for security records (types 30, 80, 81, 83)"
+    severity: CAT II
+    command: "D SMF,O"
+    remediation: "Set SYS(TYPE(...)) in SMFPRMxx to record RACF (80/81/83) and job (30) records; restart SMF."
+  - id: "ACP00-STC"
+    title: "Started tasks defined in the STARTED class (no reliance on ICHRIN03)"
+    severity: CAT II
+    command: "RLIST STARTED * ALL"
+    remediation: "Define STARTED profiles with protected userids (NOPASSWORD NOOIDCARD); RDEFINE/RALTER as required."
+  - id: "ACP00-SPECIAL"
+    title: "SPECIAL / OPERATIONS / AUDITOR attributes limited to authorized IDs"
+    severity: CAT II
+    command: "SEARCH CLASS(USER)"
+    note: "Review each returned ID with LISTUSER for SPECIAL/OPERATIONS/AUDITOR."
+    remediation: "ALTUSER <id> NOSPECIAL/NOOPERATIONS for unauthorized IDs; document authorized holders."
+  - id: "ZUSS-SUPERUSER"
+    title: "z/OS UNIX superuser (UID(0)) and BPX.SUPERUSER tightly controlled"
+    severity: CAT I
+    command: "RLIST FACILITY BPX.SUPERUSER ALL"
+    remediation: "Limit UID(0) assignments; protect BPX.SUPERUSER in FACILITY UACC(NONE); use UNIXPRIV granular profiles."
+  - id: "ACP00-UACC"
+    title: "Default UACC for general resources is NONE (no PUBLIC access)"
+    severity: CAT II
+    command: "SETROPTS LIST"
+    note: "Review GENERICOWNER and per-class default access for PUBLIC/ID(*) entries."
+    remediation: "Set profile UACC(NONE); remove ID(*) ACCESS(READ) entries on sensitive resources."
+  - id: "ACP00-TAPE"
+    title: "TAPEVOL/TAPEDSN protection active for tape datasets"
+    severity: CAT II
+    command: "SETROPTS LIST"
+    note: "Confirm TAPEVOL/TAPEDSN appear under ACTIVE CLASSES."
+    remediation: "SETROPTS CLASSACT(TAPEVOL) TAPEDSN; define profiles."
+  - id: "ACP00-RACLIST"
+    title: "Required classes RACLISTed and active (FACILITY, OPERCMDS, SURROGAT, etc.)"
+    severity: CAT II
+    command: "SETROPTS LIST"
+    note: "Confirm required classes appear under ACTIVE/RACLISTed CLASSES."
+    remediation: "SETROPTS CLASSACT(...) RACLIST(...) for required classes; SETROPTS RACLIST(class) REFRESH."
+
+compliance_frameworks:
+  - dod_stig
+  - nist_800_53
+stig_benchmark: "IBM z/OS RACF STIG"
+stig_version: "confirm-at-audit"
+zos_esm: RACF

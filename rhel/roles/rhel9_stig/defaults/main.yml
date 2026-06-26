@@ -1,0 +1,155 @@
+---
+# defaults file for rhel9_stig
+# Red Hat Enterprise Linux 9 STIG (DISA, Ver 2 Rel 6) - rule IDs RHEL-09-XXXXXX.
+# NIST SP 800-53 Rev 5 aligned.
+#
+# Safe by default: when `apply_changes` is false every task runs in check mode
+# (reports findings, changes nothing). Pass -e apply_changes=true to remediate.
+# Some controls (crypto policy, sysctl) require a reboot to take full effect.
+
+# ============================================================
+# Deployment control
+# ============================================================
+apply_changes: false
+artifacts_dir: "/tmp/rhel9-stig-artifacts"
+
+# ============================================================
+# Control-area toggles
+# ============================================================
+stig_banner_login: true
+stig_packages_services: true
+stig_sshd: true
+stig_crypto_policy: true
+stig_accounts_pam: true
+stig_auditd: true
+stig_kernel_sysctl: true
+stig_compliance_report: true
+
+# ============================================================
+# RHEL-09-255xxx - SSH daemon (written to a STIG drop-in)
+# ============================================================
+rhel9_sshd_dropin: /etc/ssh/sshd_config.d/00-stig.conf
+rhel9_ssh_permit_root_login: "no"            # RHEL-09-255035
+rhel9_ssh_client_alive_interval: 600         # RHEL-09-255040
+rhel9_ssh_client_alive_count_max: 1          # RHEL-09-255045
+rhel9_ssh_x11_forwarding: "no"               # RHEL-09-255065
+rhel9_ssh_permit_empty_passwords: "no"       # RHEL-09-255090
+rhel9_ssh_print_last_log: "yes"              # RHEL-09-255100
+rhel9_ssh_ignore_rhosts: "yes"               # RHEL-09-255105
+rhel9_ssh_gss_api_auth: "no"                 # RHEL-09-255110
+rhel9_ssh_banner: /etc/issue                 # RHEL-09-255030
+
+# ============================================================
+# RHEL-09-211xxx - Banner / interactive
+# ============================================================
+rhel9_dod_banner: |
+  You are accessing a U.S. Government (USG) Information System (IS) that is
+  provided for USG-authorized use only. By using this IS (which includes any
+  device attached to this IS), you consent to the following conditions:
+  -The USG routinely intercepts and monitors communications on this IS for
+  purposes including, but not limited to, penetration testing, COMSEC monitoring,
+  network operations and defense, personnel misconduct (PM), law enforcement (LE),
+  and counterintelligence (CI) investigations.
+  -At any time, the USG may inspect and seize data stored on this IS.
+  -Communications using, or data stored on, this IS are not private, are subject
+  to routine monitoring, interception, and search, and may be disclosed or used
+  for any USG-authorized purpose.
+  -This IS includes security measures (e.g., authentication and access controls)
+  to protect USG interests--not for your personal benefit or privacy.
+  -Notwithstanding the above, using this IS does not constitute consent to PM, LE
+  or CI investigative searching or monitoring of the content of privileged
+  communications, or work product, related to personal representation or services
+  by attorneys, psychotherapists, or clergy, and their assistants. Such
+  communications and work product are private and confidential. See User Agreement
+  for details.
+
+# ============================================================
+# RHEL-09-215xxx - Packages that must NOT be installed
+# ============================================================
+rhel9_packages_absent:
+  - telnet-server      # RHEL-09-215025
+  - tftp-server        # RHEL-09-215075
+  - rsh-server         # RHEL-09-215020
+  - sendmail           # RHEL-09-215080
+  - gssproxy           # RHEL-09-215035
+  - iprutils           # RHEL-09-215040
+  - tuned              # RHEL-09-215045 (remove on hardened baselines)
+
+# RHEL-09-214xxx - Packages that MUST be installed
+rhel9_packages_present:
+  - aide               # RHEL-09-651010
+  - audit              # RHEL-09-653010
+  - chrony             # RHEL-09-252010
+  - firewalld          # RHEL-09-251010
+  - openssl-pkcs11     # RHEL-09-672015
+  - opensc             # RHEL-09-672020
+
+# ============================================================
+# RHEL-09-672xxx - System-wide crypto policy
+# ============================================================
+rhel9_crypto_policy: "FIPS"   # FIPS | DEFAULT:NO-SHA1 | etc.
+
+# ============================================================
+# RHEL-09-611xxx - PAM password quality / faillock
+# ============================================================
+rhel9_pwquality:
+  difok: 8             # RHEL-09-611010
+  minlen: 15           # RHEL-09-611055
+  ucredit: -1          # RHEL-09-611115
+  lcredit: -1          # RHEL-09-611120
+  dcredit: -1          # RHEL-09-611125
+  ocredit: -1          # RHEL-09-611130
+  maxrepeat: 3         # RHEL-09-611135
+  maxclassrepeat: 4    # RHEL-09-611140
+  dictcheck: 1         # RHEL-09-611160
+  enforcing: 1
+rhel9_pwhistory_remember: 5    # RHEL-09-611150
+
+rhel9_faillock:
+  deny: 3              # RHEL-09-611045
+  fail_interval: 900   # RHEL-09-611080
+  unlock_time: 0       # RHEL-09-611085
+
+# ============================================================
+# RHEL-09-411xxx / 412xxx - login.defs / account policy
+# ============================================================
+rhel9_pass_max_days: 60        # RHEL-09-411010
+rhel9_pass_min_days: 1         # RHEL-09-411015
+rhel9_pass_warn_age: 7
+rhel9_account_inactive_days: 35  # RHEL-09-412025
+rhel9_session_tmout: 900       # RHEL-09-412035
+rhel9_umask: "077"             # RHEL-09-411035
+
+# ============================================================
+# RHEL-09-653xxx - auditd
+# ============================================================
+rhel9_auditd_space_left_action: email      # RHEL-09-653080
+rhel9_auditd_disk_full_action: halt        # RHEL-09-653085
+rhel9_auditd_max_log_file_action: syslog   # RHEL-09-653025
+
+# ============================================================
+# RHEL-09-2xxxxx - Kernel sysctl hardening
+# ============================================================
+rhel9_sysctl:
+  net.ipv4.conf.all.accept_redirects: 0      # RHEL-09-253020
+  net.ipv4.conf.all.accept_source_route: 0   # RHEL-09-253010
+  net.ipv4.conf.all.send_redirects: 0        # RHEL-09-253030
+  net.ipv4.conf.all.rp_filter: 1             # RHEL-09-253080
+  net.ipv4.icmp_echo_ignore_broadcasts: 1    # RHEL-09-253040
+  net.ipv6.conf.all.accept_source_route: 0   # RHEL-09-254010
+  net.ipv6.conf.all.accept_redirects: 0      # RHEL-09-254015
+  kernel.randomize_va_space: 2               # RHEL-09-213095
+  kernel.dmesg_restrict: 1                   # RHEL-09-213010
+  kernel.kptr_restrict: 1                    # RHEL-09-213015
+  fs.protected_symlinks: 1
+  fs.protected_hardlinks: 1
+
+# ============================================================
+# Reporting metadata
+# ============================================================
+compliance_frameworks:
+  - dod_stig
+  - nist_800_53
+  - nist_800_171
+stig_benchmark: "Red Hat Enterprise Linux 9 STIG"
+stig_version: "V2R6"

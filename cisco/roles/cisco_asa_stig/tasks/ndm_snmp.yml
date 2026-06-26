@@ -1,0 +1,27 @@
+---
+# SNMPv3 only - remove v1/v2c communities
+# CASA-ND-001210 | NIST SC-8, IA-2
+
+- name: CASA-ND-001210 - Remove insecure SNMP communities
+  cisco.asa.asa_config:
+    lines:
+      - "no snmp-server community {{ item }}"
+  loop: "{{ asa_snmp_remove_communities }}"
+  loop_control:
+    label: "{{ item }}"
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: asa_snmp_communities
+  notify: write memory
+  tags: [stig_cat2, "CASA-ND-001210"]
+
+- name: CASA-ND-001210 - Configure SNMPv3 group, user and host (auth SHA + priv AES)
+  cisco.asa.asa_config:
+    lines:
+      - "snmp-server group {{ asa_snmp_v3_group }} v3 priv"
+      - "snmp-server user {{ asa_snmp_v3_user }} {{ asa_snmp_v3_group }} v3 auth sha {{ asa_snmp_v3_auth }} priv aes 128 {{ asa_snmp_v3_priv }}"
+      - "snmp-server host {{ asa_mgmt_interface }} {{ asa_snmp_host }} version 3 {{ asa_snmp_v3_user }}"
+  no_log: true
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: asa_snmp_user
+  notify: write memory
+  tags: [stig_cat2, "CASA-ND-001210"]

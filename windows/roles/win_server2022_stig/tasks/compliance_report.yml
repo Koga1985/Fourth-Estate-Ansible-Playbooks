@@ -1,0 +1,39 @@
+---
+# Windows Server 2022 STIG compliance/remediation artifact (JSON).
+# In dry-run, changed: true means the control is NOT yet compliant.
+
+- name: Assemble result map
+  ansible.builtin.set_fact:
+    win_stig_results:
+      meta:
+        host: "{{ inventory_hostname }}"
+        timestamp: "{{ ansible_date_time.iso8601 | default('') }}"
+        os: "{{ ansible_facts['os_name'] | default('Windows Server 2022') }}"
+        benchmark: "{{ stig_benchmark }}"
+        version: "{{ stig_version }}"
+        mode: "{{ 'enforce' if apply_changes | bool else 'dry-run' }}"
+        roles: { domain_controller: "{{ win_is_domain_controller }}", dns_server: "{{ win_is_dns_server }}" }
+        compliance_frameworks: "{{ compliance_frameworks }}"
+      controls:
+        - { id: "WN22-AC-*", title: "Account/password/lockout policy", would_change: "{{ win_acct.changed | default(false) }}" }
+        - { id: "WN22-AU-*", title: "Advanced audit policy", would_change: "{{ win_audit.changed | default(false) }}" }
+        - { id: "WN22-SO-*/CC-*", title: "Security options (registry)", would_change: "{{ (win_reg.changed | default(false)) or (win_legal.changed | default(false)) }}" }
+        - { id: "AD.*", title: "AD Domain controls", would_change: "{{ win_ad_recyclebin.changed | default(false) }}", applicable: "{{ win_is_domain_controller }}" }
+        - { id: "WDNS-*", title: "Windows DNS controls", would_change: "{{ (win_dns_updates.changed | default(false)) or (win_dns_logging.changed | default(false)) }}", applicable: "{{ win_is_dns_server }}" }
+  tags: [report]
+
+- name: Write JSON compliance artifact to control node
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/{{ inventory_hostname }}_win2022_stig.json"
+    mode: "0640"
+    content: "{{ win_stig_results | to_nice_json }}"
+  delegate_to: localhost
+  tags: [report]
+
+- name: Summarize compliance state
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }}: {{ win_stig_results.controls | selectattr('would_change') | list | length }}
+      of {{ win_stig_results.controls | length }} control groups
+      {{ 'still need remediation (dry-run)' if not (apply_changes | bool) else 'were remediated' }}.
+  tags: [report]

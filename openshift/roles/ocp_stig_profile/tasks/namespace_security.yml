@@ -1,0 +1,49 @@
+---
+# Namespace-scoped STIG controls
+# CNTR-OS-001xxx - Pod Security Admission restricted enforcement
+# CNTR-OS-000180 - default-deny network policy
+# NIST AC-3, AC-4, AC-6, SC-7
+
+- name: CNTR-OS-001xxx - Enforce Pod Security Admission ({{ ocp_psa_level }})
+  kubernetes.core.k8s:
+    kubeconfig: "{{ kubeconfig }}"
+    state: patched
+    api_version: v1
+    kind: Namespace
+    name: "{{ item }}"
+    definition:
+      metadata:
+        labels:
+          pod-security.kubernetes.io/enforce: "{{ ocp_psa_level }}"
+          pod-security.kubernetes.io/enforce-version: latest
+          pod-security.kubernetes.io/audit: "{{ ocp_psa_level }}"
+          pod-security.kubernetes.io/warn: "{{ ocp_psa_level }}"
+  loop: "{{ ocp_target_namespaces }}"
+  loop_control:
+    label: "{{ item }}"
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: ocp_psa
+  tags: [stig_cat2, "CNTR-OS-001050"]
+
+- name: CNTR-OS-000180 - Apply default-deny ingress/egress NetworkPolicy
+  kubernetes.core.k8s:
+    kubeconfig: "{{ kubeconfig }}"
+    state: present
+    definition:
+      apiVersion: networking.k8s.io/v1
+      kind: NetworkPolicy
+      metadata:
+        name: stig-default-deny-all
+        namespace: "{{ item }}"
+      spec:
+        podSelector: {}
+        policyTypes:
+          - Ingress
+          - Egress
+  loop: "{{ ocp_target_namespaces }}"
+  loop_control:
+    label: "{{ item }}"
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: ocp_netpol
+  when: ocp_apply_default_deny_netpol | bool
+  tags: [stig_cat2, "CNTR-OS-000180"]

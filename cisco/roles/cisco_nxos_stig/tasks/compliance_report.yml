@@ -1,0 +1,47 @@
+---
+# Per-host STIG compliance/remediation artifact (JSON).
+
+- name: Assemble per-control result map
+  ansible.builtin.set_fact:
+    nxos_stig_results:
+      meta:
+        host: "{{ inventory_hostname }}"
+        timestamp: "{{ ansible_date_time.iso8601 | default(lookup('pipe', 'date -u +%Y-%m-%dT%H:%M:%SZ')) }}"
+        benchmark: "{{ stig_benchmark }}"
+        version: "{{ stig_version }}"
+        mode: "{{ 'enforce' if apply_changes | bool else 'dry-run' }}"
+        compliance_frameworks: "{{ compliance_frameworks }}"
+      controls:
+        - { id: "CISC-ND-000010", title: "DoD login banner", would_change: "{{ nxos_banner.changed | default(false) }}" }
+        - { id: "CISC-ND-000090", title: "Remote syslog", would_change: "{{ nxos_logging_servers_result.changed | default(false) }}" }
+        - { id: "CISC-ND-000150", title: "SNMPv3 only / communities removed", would_change: "{{ (nxos_snmp_communities.changed | default(false)) or (nxos_snmp_user.changed | default(false)) }}" }
+        - { id: "CISC-ND-000160", title: "AAA / TACACS+", would_change: "{{ (nxos_tacacs_hosts.changed | default(false)) or (nxos_aaa_methods.changed | default(false)) }}" }
+        - { id: "CISC-ND-000280", title: "Idle timeout console/VTY", would_change: "{{ (nxos_vty.changed | default(false)) or (nxos_con.changed | default(false)) }}" }
+        - { id: "CISC-ND-000380", title: "Password strength-check", would_change: "{{ nxos_pwd_strength.changed | default(false) }}" }
+        - { id: "CISC-ND-000470", title: "Authenticated NTP", would_change: "{{ nxos_ntp.changed | default(false) }}" }
+        - { id: "CISC-ND-000490", title: "Management ACL", would_change: "{{ nxos_mgmt_acl.changed | default(false) }}" }
+        - { id: "CISC-ND-001000", title: "SSH enabled / key strength", would_change: "{{ (nxos_ssh_feature.changed | default(false)) or (nxos_ssh_key.changed | default(false)) }}" }
+        - { id: "CISC-ND-001220", title: "Control Plane Policing", would_change: "{{ nxos_copp.changed | default(false) }}" }
+        - { id: "CISC-ND-001310", title: "Telnet disabled", would_change: "{{ nxos_telnet.changed | default(false) }}" }
+        - { id: "CISC-ND-001440", title: "Unused services disabled", would_change: "{{ nxos_unused.changed | default(false) }}" }
+        - { id: "CISC-L2-000020", title: "BPDU Guard default", would_change: "{{ nxos_bpduguard.changed | default(false) }}" }
+        - { id: "CISC-L2-000030", title: "Loop Guard default", would_change: "{{ nxos_loopguard.changed | default(false) }}" }
+        - { id: "CISC-L2-000050", title: "DHCP snooping", would_change: "{{ nxos_dhcp_snoop.changed | default(false) }}" }
+        - { id: "CISC-L2-000070", title: "Dynamic ARP Inspection", would_change: "{{ nxos_dai.changed | default(false) }}" }
+  tags: [report]
+
+- name: Write JSON compliance artifact
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/{{ inventory_hostname }}_nxos_stig.json"
+    mode: "0640"
+    content: "{{ nxos_stig_results | to_nice_json }}"
+  delegate_to: localhost
+  tags: [report]
+
+- name: Summarize compliance state
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }}: {{ nxos_stig_results.controls | selectattr('would_change') | list | length }}
+      of {{ nxos_stig_results.controls | length }} controls
+      {{ 'still need remediation (dry-run)' if not (apply_changes | bool) else 'were remediated' }}.
+  tags: [report]

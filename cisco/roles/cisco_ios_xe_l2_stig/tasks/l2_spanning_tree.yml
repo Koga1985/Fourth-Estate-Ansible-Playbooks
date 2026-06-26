@@ -1,0 +1,68 @@
+---
+# Spanning-tree integrity controls
+# CISC-L2-000010 Root Guard | CISC-L2-000020 BPDU Guard | CISC-L2-000030 Loop Guard
+# CISC-L2-000220 Rapid-PVST | CISC-L2-000230 UDLD
+# NIST SC-5, CM-6
+
+- name: CISC-L2-000220 - Use Rapid-PVST spanning-tree mode
+  cisco.ios.ios_config:
+    lines:
+      - spanning-tree mode rapid-pvst
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: stp_mode
+  notify: save running-config
+  tags: [stig_cat2, "CISC-L2-000220"]
+
+- name: CISC-L2-000030 - Enable STP Loop Guard by default
+  cisco.ios.ios_config:
+    lines:
+      - spanning-tree loopguard default
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: stp_loopguard
+  notify: save running-config
+  tags: [stig_cat2, "CISC-L2-000030"]
+
+- name: CISC-L2-000020 - Enable BPDU Guard globally on PortFast edge ports
+  cisco.ios.ios_config:
+    lines:
+      - spanning-tree portfast edge bpduguard default
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: stp_bpduguard
+  notify: save running-config
+  tags: [stig_cat2, "CISC-L2-000020"]
+
+- name: CISC-L2-000230 - Enable UDLD aggressive globally
+  cisco.ios.ios_config:
+    lines:
+      - udld enable
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: stp_udld
+  notify: save running-config
+  tags: [stig_cat2, "CISC-L2-000230"]
+
+- name: CISC-L2-000020 - Configure access ports as PortFast edge with BPDU Guard
+  cisco.ios.ios_config:
+    parents: "interface {{ item }}"
+    lines:
+      - spanning-tree portfast edge
+      - spanning-tree bpduguard enable
+  loop: "{{ l2_access_interfaces }}"
+  loop_control:
+    label: "{{ item }}"
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: stp_access
+  notify: save running-config
+  tags: [stig_cat2, "CISC-L2-000020"]
+
+- name: CISC-L2-000010 - Enable Root Guard on access (edge) ports
+  cisco.ios.ios_config:
+    parents: "interface {{ item }}"
+    lines:
+      - spanning-tree guard root
+  loop: "{{ l2_access_interfaces }}"
+  loop_control:
+    label: "{{ item }}"
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: stp_rootguard
+  notify: save running-config
+  tags: [stig_cat2, "CISC-L2-000010"]

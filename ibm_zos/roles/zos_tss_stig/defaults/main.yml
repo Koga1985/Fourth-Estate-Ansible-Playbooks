@@ -1,0 +1,86 @@
+---
+# defaults file for zos_tss_stig
+# DISA IBM z/OS STIG with CA Top Secret (TSS) as the ESM - assessment skeleton.
+# Read-only verify commands + documented remediation. No blind enforcement.
+
+ansible_connection: local
+artifacts_dir: "/tmp/zos-tss-stig-artifacts"
+zos_live_assessment: false
+zos_target: ""
+
+# TSS control options are displayed with: TSS MODIFY(STATUS)
+# Confirm exact V-IDs/rule-IDs against your z/OS TSS STIG release at audit time.
+zos_tss_catalog:
+  - id: "TSS-MODE"
+    title: "Top Secret operating in MODE(FAIL) (not WARN/IMPL/DORMANT)"
+    severity: CAT I
+    command: "TSS MODIFY(STATUS)"
+    note: "Confirm MODE = FAIL."
+    remediation: "TSS MODIFY(MODE(FAIL)) after all resources are protected."
+  - id: "TSS-PASSWORD"
+    title: "Password content rules (length/complexity/expiration) enforced"
+    severity: CAT II
+    command: "TSS MODIFY(STATUS)"
+    note: "Review NEWPW / PASSWORD control options."
+    remediation: "TSS MODIFY(NEWPW(MIN=8,...,SC,NR,...)) per password policy."
+  - id: "TSS-PWHIST"
+    title: "Password history / reuse prevention configured"
+    severity: CAT II
+    command: "TSS MODIFY(STATUS)"
+    note: "Review PWHIST."
+    remediation: "TSS MODIFY(PWHIST(10))."
+  - id: "TSS-PTHRESH"
+    title: "Violation threshold suspends ACIDs after repeated failures"
+    severity: CAT II
+    command: "TSS MODIFY(STATUS)"
+    note: "Review PTHRESH / VTHRESH."
+    remediation: "TSS MODIFY(PTHRESH(3))."
+  - id: "TSS-INACTIVE"
+    title: "Inactive ACIDs automatically suspended"
+    severity: CAT II
+    command: "TSS MODIFY(STATUS)"
+    note: "Review INACTIVE."
+    remediation: "TSS MODIFY(INACTIVE(35))."
+  - id: "TSS-AUDIT"
+    title: "Security event auditing/recording enabled and written to SMF"
+    severity: CAT II
+    command: "TSS MODIFY(STATUS)"
+    note: "Review AUDIT/RECORD options; confirm SMF active with D SMF,O."
+    remediation: "TSS MODIFY(AUDIT(...)) and SMFPRMxx to record security records."
+  - id: "TSS-MASTER"
+    title: "MSCA / master & administrative authorities limited to authorized ACIDs"
+    severity: CAT I
+    command: "TSS LIST(ACIDS) DATA(ADMIN)"
+    note: "Review ACIDs holding MSCA/SCA/ZCA/VCA/LSCA and ADMIN authorities."
+    remediation: "TSS REMOVE/REPLACE administrative authorities from unauthorized ACIDs."
+  - id: "TSS-STC"
+    title: "Started tasks defined to the STC record with proper ACIDs (no shared)"
+    severity: CAT II
+    command: "TSS LIST(STC)"
+    note: "Each STC mapped to a unique, password-less, least-privilege ACID."
+    remediation: "TSS ADDTO(STC) PROCNAME(...) ACID(...); define FACILITY(STC)."
+  - id: "TSS-APF"
+    title: "APF / system datasets owned and protected by Top Secret"
+    severity: CAT I
+    command: "TSS WHOHAS DSNAME(SYS1.PARMLIB)"
+    note: "Repeat for APF libs (D PROG,APF), SYS1.PROCLIB, SYS1.LINKLIB."
+    remediation: "TSS ADDTO(dept) DSNAME(...); PERMIT only sysprog; default deny."
+  - id: "TSS-BYPASS"
+    title: "NORESCHK / bypass / trace attributes not assigned to general users"
+    severity: CAT II
+    command: "TSS LIST(ACIDS) DATA(ALL)"
+    note: "Review for NORESCHK, BYPASS, and excessive facility access."
+    remediation: "TSS REMOVE(acid) NORESCHK etc. for unauthorized ACIDs."
+  - id: "TSS-FACILITY"
+    title: "Facility matrix (CICS/IMS/TSO/etc.) and RDT resource classes secured"
+    severity: CAT II
+    command: "TSS LIST(RDT)"
+    note: "Confirm required resource classes are defined and protected."
+    remediation: "TSS ADDTO(RDT) RESCLASS(...) as required; protect facilities."
+
+compliance_frameworks:
+  - dod_stig
+  - nist_800_53
+stig_benchmark: "IBM z/OS TSS (CA Top Secret) STIG"
+stig_version: "confirm-at-audit"
+zos_esm: TSS

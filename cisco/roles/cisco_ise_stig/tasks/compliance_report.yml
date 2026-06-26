@@ -1,0 +1,36 @@
+---
+# ISE NDM STIG assessment + remediation artifact (JSON).
+
+- name: Assemble result map
+  ansible.builtin.set_fact:
+    ise_stig_results:
+      meta:
+        ise_host: "{{ ise_host }}"
+        timestamp: "{{ ansible_date_time.iso8601 | default(lookup('pipe', 'date -u +%Y-%m-%dT%H:%M:%SZ')) }}"
+        benchmark: "{{ stig_benchmark }}"
+        version: "{{ stig_version }}"
+        mode: "{{ 'enforce' if apply_changes | bool else 'assessment' }}"
+        compliance_frameworks: "{{ compliance_frameworks }}"
+      assessment: "{{ ise_assessment | default({}) }}"
+      manual_review_controls:
+        - { id: "CISC-ND-000010", title: "DoD admin login banner" }
+        - { id: "CISC-ND-000090", title: "Remote syslog / logging targets" }
+        - { id: "CISC-ND-000160", title: "External admin authentication (AAA)" }
+        - { id: "CISC-ND-000280", title: "Admin session/idle timeout" }
+        - { id: "CISC-ND-000380", title: "Admin password policy" }
+        - { id: "CISC-ND-000470", title: "Authenticated NTP" }
+        - { id: "CISC-ND-000150", title: "SNMPv3 only" }
+      operations_applied: "{{ (ise_apply_results.results | default([]) | map(attribute='item') | map(attribute='id') | list) if apply_changes | bool else [] }}"
+  tags: [report]
+
+- name: Write JSON compliance artifact
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/{{ ise_host }}_ise_stig.json"
+    mode: "0640"
+    content: "{{ ise_stig_results | to_nice_json }}"
+  tags: [report]
+
+- name: Summarize
+  ansible.builtin.debug:
+    msg: "ISE STIG artifact written to {{ artifacts_dir }}/{{ ise_host }}_ise_stig.json"
+  tags: [report]

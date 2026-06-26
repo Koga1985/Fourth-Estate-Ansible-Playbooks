@@ -1,0 +1,74 @@
+---
+# defaults file for cisco_ise_stig
+# Cisco Identity Services Engine (ISE) STIG - management-plane (NDM, CISC-ND-*)
+# control mapping, driven through the ISE ERS and OpenAPI REST interfaces.
+#
+# Most ISE NDM controls (admin banner, session timeout, password policy, remote
+# syslog, NTP, SNMPv3, external admin auth) are configured in System Settings.
+# A subset is exposed through the ISE OpenAPI; the rest are verified through ERS
+# read-only objects. This role:
+#   1. Verifies ERS/OpenAPI reachability.
+#   2. ASSESSES posture via read-only GETs (safe in dry-run).
+#   3. ENFORCES a data-driven list of OpenAPI operations (apply_changes=true).
+#
+# Uses ansible.builtin.uri only - no extra collection.
+
+# ============================================================
+# Run on the control node
+# ============================================================
+ansible_connection: local
+
+# ============================================================
+# ISE connection (vault these)
+# ============================================================
+ise_host: "{{ vault_ise_host | default('ise.example.mil') }}"
+ise_ers_port: 9060
+ise_username: "{{ vault_ise_ers_user | default('ersadmin') }}"
+ise_password: "{{ vault_ise_ers_password | default('CHANGE_ME') }}"
+ise_validate_certs: true
+
+# ============================================================
+# Deployment control
+# ============================================================
+apply_changes: false
+artifacts_dir: "/tmp/cisco-ise-artifacts"
+
+# ============================================================
+# Control toggles
+# ============================================================
+stig_assess: true
+stig_apply_operations: true
+stig_compliance_report: true
+
+# ============================================================
+# Expected NDM posture (used by assessment to flag findings)
+# ============================================================
+# CISC-ND-000160 - external admin authentication should be configured; ISE
+# should have remote AAA / identity sources beyond just internal admins.
+ise_expected_external_admin_auth: true
+# CISC-ND-000090 - at least one remote logging target must exist.
+ise_expected_remote_logging: true
+
+# ============================================================
+# CISC-ND-* enforcement operations (data-driven OpenAPI calls)
+# Each item: { id, title, method, path, body, status_code }
+# `path` is appended to https://{{ise_host}}/api/ (OpenAPI base).
+# Defaults empty; populate per ISE version (see vars.example.yml).
+# ============================================================
+ise_stig_operations: []
+
+# DoD banner text (referenced from operations)
+ise_login_banner: >-
+  You are accessing a U.S. Government (USG) Information System (IS) that is
+  provided for USG-authorized use only. By using this IS you consent to the
+  conditions in the full DoD Notice and Consent Banner.
+
+# ============================================================
+# Reporting metadata
+# ============================================================
+compliance_frameworks:
+  - dod_stig
+  - nist_800_53
+  - nist_800_171
+stig_benchmark: "Cisco ISE NDM STIG"
+stig_version: "V1R1"

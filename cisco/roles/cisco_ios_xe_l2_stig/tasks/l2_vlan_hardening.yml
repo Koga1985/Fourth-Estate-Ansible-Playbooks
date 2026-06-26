@@ -1,0 +1,81 @@
+---
+# VLAN / trunk hardening
+# CISC-L2-000090 Disable DTP | CISC-L2-000110 Static trunks
+# CISC-L2-000120 Disabled ports in unused VLAN | CISC-L2-000130 Default VLAN off host ports
+# CISC-L2-000140 Prune default VLAN | CISC-L2-000160 Native VLAN != default
+# CISC-L2-000170 No host ports on native VLAN
+# NIST CM-7, SC-7
+
+- name: CISC-L2-000160 - Pre-create native and unused VLANs
+  cisco.ios.ios_config:
+    lines:
+      - "name {{ item.name }}"
+    parents: "vlan {{ item.id }}"
+  loop:
+    - { id: "{{ l2_native_vlan }}", name: "NATIVE-DROP" }
+    - { id: "{{ l2_unused_vlan }}", name: "UNUSED-PARKING" }
+  loop_control:
+    label: "vlan {{ item.id }} ({{ item.name }})"
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: vlan_create
+  notify: save running-config
+  tags: [stig_cat2, "CISC-L2-000160"]
+
+- name: CISC-L2-000170 - Park unused/parking VLAN SVI shutdown (no host traffic on native)
+  cisco.ios.ios_config:
+    parents: "interface Vlan{{ l2_unused_vlan }}"
+    lines:
+      - shutdown
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: unused_svi
+  notify: save running-config
+  tags: [stig_cat2, "CISC-L2-000170"]
+
+- name: CISC-L2-000090/000110/000140/000160 - Harden trunk interfaces
+  cisco.ios.ios_config:
+    parents: "interface {{ item }}"
+    lines:
+      - switchport mode trunk
+      - switchport trunk encapsulation dot1q
+      - switchport nonegotiate
+      - "switchport trunk native vlan {{ l2_native_vlan }}"
+      - "switchport trunk allowed vlan {{ l2_user_vlans | join(',') }},{{ l2_management_vlan }}"
+  loop: "{{ l2_trunk_interfaces }}"
+  loop_control:
+    label: "{{ item }}"
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: trunk_harden
+  notify: save running-config
+  tags: [stig_cat2, "CISC-L2-000090", "CISC-L2-000110", "CISC-L2-000140", "CISC-L2-000160"]
+
+- name: CISC-L2-000130 - Set access ports to a user VLAN and disable trunk negotiation
+  cisco.ios.ios_config:
+    parents: "interface {{ item }}"
+    lines:
+      - switchport mode access
+      - "switchport access vlan {{ l2_user_vlans[0] }}"
+      - switchport nonegotiate
+    # NOTE: edit per-port access VLAN to match your design before enforcing.
+  loop: "{{ l2_access_interfaces }}"
+  loop_control:
+    label: "{{ item }}"
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: access_vlan
+  notify: save running-config
+  tags: [stig_cat2, "CISC-L2-000090", "CISC-L2-000130"]
+
+- name: CISC-L2-000120 - Shut disabled ports and park them in the unused VLAN
+  cisco.ios.ios_config:
+    parents: "interface {{ item }}"
+    lines:
+      - switchport mode access
+      - "switchport access vlan {{ l2_unused_vlan }}"
+      - switchport nonegotiate
+      - shutdown
+  loop: "{{ l2_unused_interfaces }}"
+  loop_control:
+    label: "{{ item }}"
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: unused_ports
+  notify: save running-config
+  tags: [stig_cat2, "CISC-L2-000120"]

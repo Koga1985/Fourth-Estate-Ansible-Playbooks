@@ -1,0 +1,31 @@
+---
+# Firewall policy controls
+# CASA-FW-000010 (threat detection / deny-by-default posture)
+# CASA-FW-000070 (ACL logging) | NIST AC-4, AU-2, SC-7
+
+- name: CASA-FW-000010 - Enable threat detection
+  cisco.asa.asa_config:
+    lines:
+      - threat-detection basic-threat
+      - threat-detection statistics access-list
+      - threat-detection statistics tcp-intercept
+  when: asa_enable_threat_detection | bool
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: asa_threat
+  notify: write memory
+  tags: [stig_cat2, "CASA-FW-000010"]
+
+- name: CASA-FW-000070 - Append explicit deny-any-any with logging to managed ACLs
+  cisco.asa.asa_config:
+    lines:
+      - "access-list {{ item }} extended deny ip any any log"
+  loop: "{{ asa_logged_acls }}"
+  loop_control:
+    label: "{{ item }}"
+  when:
+    - asa_enable_acl_logging | bool
+    - asa_logged_acls | length > 0
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: asa_acl_deny
+  notify: write memory
+  tags: [stig_cat2, "CASA-FW-000070"]

@@ -1,0 +1,55 @@
+---
+# tasks file for db2_stig
+
+- name: Ensure local artifacts directory exists
+  ansible.builtin.file:
+    path: "{{ artifacts_dir }}"
+    state: directory
+    mode: "0750"
+  delegate_to: localhost
+  run_once: true
+  changed_when: false
+  tags: [always]
+
+- name: Set DB2 CLP command prefix (source db2profile)
+  ansible.builtin.set_fact:
+    db2_clp: ". {{ db2_profile_path }} >/dev/null 2>&1 &&"
+  tags: [always]
+
+- name: Show run mode
+  ansible.builtin.debug:
+    msg: >-
+      db2_stig on {{ inventory_hostname }} (instance {{ db2_instance_owner }},
+      db {{ db2_database }}) -
+      {{ 'ENFORCING' if apply_changes | bool else 'DRY-RUN / assessment only' }}
+  tags: [always]
+
+- name: Instance (dbm cfg) hardening (DB2X-00-000xxx)
+  ansible.builtin.import_tasks: dbm_cfg.yml
+  when: stig_dbm_cfg | bool
+  tags: [stig, dbm_cfg]
+
+- name: Database (db cfg) hardening (DB2X-00-001xxx)
+  ansible.builtin.import_tasks: db_cfg.yml
+  when: stig_db_cfg | bool
+  tags: [stig, db_cfg]
+
+- name: Audit policy (DB2X-00-0007xx)
+  ansible.builtin.import_tasks: audit.yml
+  when: stig_audit | bool
+  tags: [stig, audit]
+
+- name: Privilege hygiene - revoke from PUBLIC (DB2X-00-00xxxx)
+  ansible.builtin.import_tasks: privileges.yml
+  when: stig_privileges | bool
+  tags: [stig, privileges]
+
+- name: SSL/TLS for client communication (DB2X-00-0014xx)
+  ansible.builtin.import_tasks: ssl.yml
+  when: stig_ssl | bool
+  tags: [stig, ssl]
+
+- name: Compliance report
+  ansible.builtin.import_tasks: compliance_report.yml
+  when: stig_compliance_report | bool
+  tags: [stig, report]

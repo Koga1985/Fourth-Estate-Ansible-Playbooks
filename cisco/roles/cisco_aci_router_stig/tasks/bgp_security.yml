@@ -1,0 +1,33 @@
+---
+# BGP neighbor authentication and GTSM (TTL security)
+# CISC-RT-000010 (neighbor auth) | CISC-RT-000490 (GTSM) | NIST AC-4, SC-5
+
+- name: CISC-RT-000010/000490 - Configure BGP peer MD5 authentication and TTL security
+  cisco.aci.aci_rest:
+    host: "{{ aci_host }}"
+    username: "{{ aci_username }}"
+    password: "{{ aci_password }}"
+    validate_certs: "{{ aci_verify_ssl }}"
+    use_proxy: "{{ aci_use_proxy }}"
+    path: "/api/mo/{{ item.dn }}.json"
+    method: "{{ 'post' if apply_changes | bool else 'get' }}"
+    content:
+      bgpPeerP:
+        attributes:
+          dn: "{{ item.dn }}"
+          addr: "{{ item.addr }}"
+          password: "{{ item.password }}"
+          ttl: "{{ item.ttl | default(1) | string }}"
+          allowedSelfAsCnt: "{{ item.allowed_self_as_cnt | default(1) | string }}"
+  no_log: true
+  loop: "{{ aci_bgp_peers }}"
+  loop_control:
+    label: "BGP peer {{ item.addr }}"
+  register: aci_bgp_result
+  tags: [stig_cat2, "CISC-RT-000010", "CISC-RT-000490"]
+
+- name: Note when no BGP peers are defined
+  ansible.builtin.debug:
+    msg: "No aci_bgp_peers defined - skipping BGP neighbor authentication (define peer DNs to enforce CISC-RT-000010)."
+  when: aci_bgp_peers | length == 0
+  tags: [bgp]

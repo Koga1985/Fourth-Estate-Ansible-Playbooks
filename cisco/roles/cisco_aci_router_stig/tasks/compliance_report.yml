@@ -1,0 +1,36 @@
+---
+# ACI Router STIG compliance artifact (JSON).
+
+- name: Assemble result map
+  ansible.builtin.set_fact:
+    aci_rt_results:
+      meta:
+        apic_host: "{{ aci_host }}"
+        timestamp: "{{ ansible_date_time.iso8601 | default(lookup('pipe', 'date -u +%Y-%m-%dT%H:%M:%SZ')) }}"
+        benchmark: "{{ stig_benchmark }}"
+        version: "{{ stig_version }}"
+        mode: "{{ 'enforce' if apply_changes | bool else 'dry-run' }}"
+        compliance_frameworks: "{{ compliance_frameworks }}"
+      controls:
+        - { id: "CISC-RT-000010", title: "BGP neighbor authentication", targets: "{{ aci_bgp_peers | length }}", changed: "{{ aci_bgp_result.changed | default(false) }}" }
+        - { id: "CISC-RT-000490", title: "BGP GTSM / TTL security", targets: "{{ aci_bgp_peers | length }}", changed: "{{ aci_bgp_result.changed | default(false) }}" }
+        - { id: "CISC-RT-000020", title: "OSPF interface authentication", targets: "{{ aci_ospf_auth_interfaces | length }}", changed: "{{ aci_ospf_result.changed | default(false) }}" }
+        - { id: "CISC-RT-000520", title: "L3Out route control enforced", targets: "{{ aci_l3outs_enforce_route_control | length }}", changed: "{{ aci_rtctrl_result.changed | default(false) }}" }
+  tags: [report]
+
+- name: Write JSON compliance artifact
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/aci_router_stig.json"
+    mode: "0640"
+    content: "{{ aci_rt_results | to_nice_json }}"
+  delegate_to: localhost
+  tags: [report]
+
+- name: Summarize
+  ansible.builtin.debug:
+    msg: >-
+      ACI Router STIG ({{ aci_host }}): BGP peers={{ aci_bgp_peers | length }},
+      OSPF ifs={{ aci_ospf_auth_interfaces | length }},
+      L3Outs={{ aci_l3outs_enforce_route_control | length }}
+      ({{ 'enforced' if apply_changes | bool else 'assessment only' }}).
+  tags: [report]

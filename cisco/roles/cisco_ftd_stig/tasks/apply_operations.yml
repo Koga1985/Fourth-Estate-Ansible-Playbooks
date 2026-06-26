@@ -1,0 +1,32 @@
+---
+# Apply data-driven STIG enforcement operations against the FMC config API.
+# Each operation in ftd_stig_operations defines its own method/endpoint/body so
+# it stays correct across FMC versions. Runs only when apply_changes=true.
+
+- name: Apply FTD STIG enforcement operation
+  ansible.builtin.uri:
+    url: "{{ fmc_config_base }}/{{ item.endpoint }}"
+    method: "{{ item.method | default('POST') }}"
+    headers:
+      X-auth-access-token: "{{ fmc_token }}"
+      Content-Type: application/json
+    body_format: json
+    body: "{{ item.body | default(omit) }}"
+    validate_certs: "{{ fmc_validate_certs }}"
+    status_code: "{{ item.status_code | default([200, 201, 202]) }}"
+    timeout: 60
+  no_log: true
+  loop: "{{ ftd_stig_operations }}"
+  loop_control:
+    label: "{{ item.id }} - {{ item.title }}"
+  register: ftd_apply_results
+  tags: [apply]
+
+- name: Summarize applied operations
+  ansible.builtin.debug:
+    msg: >-
+      Applied {{ ftd_apply_results.results | selectattr('status', 'defined') | list | length }}
+      STIG enforcement operation(s) against FMC {{ fmc_host }}.
+      Deploy the modified policies to the FTD devices from FMC (or via the
+      deployment API) to make them effective.
+  tags: [apply]

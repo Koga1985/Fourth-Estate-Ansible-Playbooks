@@ -1,0 +1,92 @@
+---
+# tasks file for cloud_computing_srg_assessment
+# Maps CC SRG / FedRAMP control families to provider roles and aggregates any
+# provider assessment artifacts. Read-only.
+
+- name: Ensure artifacts directory exists
+  ansible.builtin.file:
+    path: "{{ artifacts_dir }}"
+    state: directory
+    mode: "0750"
+  changed_when: false
+  tags: [always]
+
+- name: Show run mode
+  ansible.builtin.debug:
+    msg: >-
+      cloud_computing_srg_assessment ({{ stig_version }}, {{ cloud_impact_level }}) -
+      providers in scope: {{ cloud_providers_in_scope | join(', ') }}
+  tags: [always]
+
+- name: Discover per-provider assessment artifacts
+  ansible.builtin.find:
+    paths: "{{ cc_evidence_input_dirs }}"
+    patterns: "*.json"
+    file_type: file
+  register: cc_found
+  changed_when: false
+  tags: [assess]
+
+- name: Evaluate CC SRG / FedRAMP control families against implementing roles
+  ansible.builtin.set_fact:
+    cc_srg_evaluated: >-
+      {{ cc_srg_evaluated | default([]) + [
+           item | combine({
+             'implementing_roles': in_scope_roles,
+             'coverage': ('covered' if (in_scope_roles | length > 0) else 'gap - no role for in-scope providers')
+           })
+         ] }}
+  vars:
+    in_scope_roles: >-
+      {{ cloud_providers_in_scope
+         | map('extract', item.roles)
+         | select('defined')
+         | map('default', [])
+         | flatten
+         | select('string') | list }}
+  loop: "{{ cc_srg_catalog }}"
+  loop_control:
+    label: "{{ item.id }}"
+  changed_when: false
+  tags: [assess]
+
+- name: Assemble evidence package
+  ansible.builtin.set_fact:
+    cc_assessment:
+      meta:
+        timestamp: "{{ ansible_date_time.iso8601 | default(lookup('pipe', 'date -u +%Y-%m-%dT%H:%M:%SZ')) }}"
+        benchmark: "{{ stig_benchmark }}"
+        version: "{{ stig_version }}"
+        impact_level: "{{ cloud_impact_level }}"
+        providers_in_scope: "{{ cloud_providers_in_scope }}"
+        provider_artifacts_found: "{{ cc_found.files | length }}"
+        compliance_frameworks: "{{ compliance_frameworks }}"
+      control_families: "{{ cc_srg_evaluated | default([]) }}"
+      dod_specific: "{{ cc_srg_dod_specific }}"
+      saas: "{{ saas_catalog }}"
+  changed_when: false
+  tags: [assess]
+
+- name: Write JSON evidence artifact
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/cloud_computing_srg_assessment.json"
+    mode: "0640"
+    content: "{{ cc_assessment | to_nice_json }}"
+  tags: [report]
+
+- name: Render Markdown evidence report
+  ansible.builtin.template:
+    src: cc_srg_report.md.j2
+    dest: "{{ artifacts_dir }}/cloud_computing_srg_assessment.md"
+    mode: "0640"
+  tags: [report]
+
+- name: Summarize
+  ansible.builtin.debug:
+    msg: >-
+      Cloud Computing SRG ({{ cloud_impact_level }}):
+      {{ cc_srg_evaluated | default([]) | selectattr('coverage', 'equalto', 'covered') | list | length }}
+      of {{ cc_srg_catalog | length }} control families covered by in-scope provider roles;
+      {{ cc_found.files | length }} provider artifact(s) found.
+      Report: {{ artifacts_dir }}/cloud_computing_srg_assessment.md
+  tags: [report]

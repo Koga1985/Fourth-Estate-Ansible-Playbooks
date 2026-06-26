@@ -1,0 +1,88 @@
+---
+# defaults file for app_sec_dev_stig
+# DISA Application Security and Development STIG (Ver 6, Rel 4) - APSC-DV-XXXXXX.
+# NIST SP 800-53 Rev 5 (SA, SI, RA, CM families).
+#
+# This is an SDLC / CI-CD POLICY GATE, not host hardening. It runs the security
+# scanners present on the runner (secret detection, SAST, dependency/SCA, IaC)
+# against an application source tree, maps the results to APSC-DV control
+# families, writes a compliance-evidence package, and (optionally) fails the
+# build when policy thresholds are exceeded.
+#
+# Safe by default: enforce_gate=false produces evidence and never fails the
+# build. Set enforce_gate=true in CI to block non-compliant builds.
+
+# ============================================================
+# Run context (CI runner / control node)
+# ============================================================
+ansible_connection: local
+
+# Application source tree to assess (the repo/workspace root).
+app_src_dir: "{{ playbook_dir }}"
+app_name: "{{ app_src_dir | basename }}"
+
+artifacts_dir: "/tmp/appsec-stig-artifacts"
+
+# ============================================================
+# Gate control
+# ============================================================
+enforce_gate: false          # true = fail the build when thresholds exceeded
+# Per-severity ceilings for the gate (only used when enforce_gate=true)
+gate_max_critical: 0
+gate_max_high: 0
+gate_fail_on_secrets: true
+
+# ============================================================
+# Scanner selection - each runs only if its binary is on PATH.
+# Override the command if you wrap them differently.
+# ============================================================
+scan_secrets: true
+scan_sast: true
+scan_dependencies: true
+scan_iac: true
+
+appsec_tools:
+  secrets:
+    bin: gitleaks
+    cmd: "gitleaks detect --source {{ app_src_dir }} --no-banner --report-format json --report-path {{ artifacts_dir }}/gitleaks.json"
+    report: "{{ artifacts_dir }}/gitleaks.json"
+  sast:
+    bin: semgrep
+    cmd: "semgrep scan --config auto --json --output {{ artifacts_dir }}/semgrep.json {{ app_src_dir }}"
+    report: "{{ artifacts_dir }}/semgrep.json"
+  dependencies:
+    bin: grype
+    cmd: "grype dir:{{ app_src_dir }} -o json --file {{ artifacts_dir }}/grype.json"
+    report: "{{ artifacts_dir }}/grype.json"
+  iac:
+    bin: checkov
+    cmd: "checkov -d {{ app_src_dir }} -o json --output-file-path {{ artifacts_dir }}/checkov.json --quiet"
+    report: "{{ artifacts_dir }}/checkov"
+
+# ============================================================
+# APSC-DV control catalog - auto controls are evidenced by a scanner;
+# manual controls require documented procedural verification.
+# ============================================================
+app_sec_dev_catalog:
+  - { id: "APSC-DV-001740", title: "No hardcoded/embedded credentials in source", evidence: secrets, status: auto }
+  - { id: "APSC-DV-002400", title: "Input validation / injection defenses", evidence: sast, status: auto }
+  - { id: "APSC-DV-002560", title: "Output encoding to prevent XSS", evidence: sast, status: auto }
+  - { id: "APSC-DV-003215", title: "Application scanned for vulnerabilities before release", evidence: sast, status: auto }
+  - { id: "APSC-DV-003235", title: "Known-vulnerable components remediated", evidence: dependencies, status: auto }
+  - { id: "APSC-DV-002950", title: "Third-party/open-source components inventoried (SBOM)", evidence: dependencies, status: auto }
+  - { id: "APSC-DV-001995", title: "Error handling does not reveal sensitive information", evidence: sast, status: auto }
+  - { id: "APSC-DV-003285", title: "Test/debug code removed before release", evidence: sast, status: auto }
+  - { id: "APSC-DV-003180", title: "Application uses FIPS-validated cryptography", evidence: iac, status: manual }
+  - { id: "APSC-DV-000160", title: "Authentication / session management implemented correctly", evidence: null, status: manual }
+  - { id: "APSC-DV-003170", title: "Application code peer-reviewed", evidence: null, status: manual }
+  - { id: "APSC-DV-003200", title: "Threat model / design review performed", evidence: null, status: manual }
+
+# ============================================================
+# Reporting metadata
+# ============================================================
+compliance_frameworks:
+  - dod_stig
+  - nist_800_53
+  - nist_800_171
+stig_benchmark: "Application Security and Development STIG"
+stig_version: "V6R4"

@@ -1,0 +1,94 @@
+---
+# tasks file for ndm_srg_assessment
+# Aggregates device STIG artifacts into a consolidated NDM SRG / Network
+# Infrastructure Policy evidence package. Read-only.
+
+- name: Ensure artifacts directory exists
+  ansible.builtin.file:
+    path: "{{ artifacts_dir }}"
+    state: directory
+    mode: "0750"
+  changed_when: false
+  tags: [always]
+
+- name: Discover per-device STIG artifacts
+  ansible.builtin.find:
+    paths: "{{ ndm_evidence_input_dirs }}"
+    patterns: "*.json"
+    file_type: file
+  register: ndm_found
+  changed_when: false
+  tags: [assess]
+
+- name: Load device artifacts
+  ansible.builtin.set_fact:
+    ndm_device_evidence: "{{ ndm_device_evidence | default([]) + [(lookup('file', item.path) | from_json)] }}"
+  loop: "{{ ndm_found.files }}"
+  loop_control:
+    label: "{{ item.path | basename }}"
+  changed_when: false
+  tags: [assess]
+
+- name: Build flat set of device control IDs that were assessed/remediated
+  ansible.builtin.set_fact:
+    ndm_seen_controls: >-
+      {{ ndm_device_evidence | default([])
+         | map(attribute='controls', default=[])
+         | flatten
+         | map(attribute='id', default='')
+         | select('string')
+         | reject('equalto', '')
+         | list | unique }}
+  changed_when: false
+  tags: [assess]
+
+- name: Assemble consolidated evidence map
+  ansible.builtin.set_fact:
+    ndm_assessment:
+      meta:
+        timestamp: "{{ ansible_date_time.iso8601 | default(lookup('pipe', 'date -u +%Y-%m-%dT%H:%M:%SZ')) }}"
+        benchmark: "{{ stig_benchmark }}"
+        version: "{{ stig_version }}"
+        compliance_frameworks: "{{ compliance_frameworks }}"
+        device_artifacts_found: "{{ ndm_found.files | length }}"
+      ndm_srg: >-
+        {{ ndm_srg_catalog | map('combine', {'evidence_present': false}) | list }}
+      network_infrastructure_policy: "{{ network_infra_policy_catalog }}"
+  changed_when: false
+  tags: [assess]
+
+- name: Mark NDM SRG controls with collected device evidence
+  ansible.builtin.set_fact:
+    ndm_srg_evaluated: >-
+      {{ ndm_srg_evaluated | default([]) + [
+           item | combine({'evidence_present':
+             (item.maps | default([]) | select('in', ndm_seen_controls) | list | length > 0)})
+         ] }}
+  loop: "{{ ndm_srg_catalog }}"
+  loop_control:
+    label: "{{ item.id }}"
+  changed_when: false
+  tags: [assess]
+
+- name: Write consolidated JSON evidence artifact
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/ndm_srg_assessment.json"
+    mode: "0640"
+    content: "{{ (ndm_assessment | combine({'ndm_srg': ndm_srg_evaluated | default([])})) | to_nice_json }}"
+  tags: [report]
+
+- name: Render Markdown evidence report
+  ansible.builtin.template:
+    src: evidence_report.md.j2
+    dest: "{{ artifacts_dir }}/ndm_srg_assessment.md"
+    mode: "0640"
+  tags: [report]
+
+- name: Summarize
+  ansible.builtin.debug:
+    msg: >-
+      NDM SRG assessment: {{ ndm_found.files | length }} device artifact(s);
+      {{ ndm_srg_evaluated | default([]) | selectattr('evidence_present') | list | length }}
+      of {{ ndm_srg_catalog | length }} NDM SRG families have collected evidence.
+      Report: {{ artifacts_dir }}/ndm_srg_assessment.md
+  tags: [report]
