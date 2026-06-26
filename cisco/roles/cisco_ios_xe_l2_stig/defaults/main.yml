@@ -1,0 +1,158 @@
+---
+# defaults file for cisco_ios_xe_l2_stig
+# Cisco IOS XE Catalyst Switch hardening - operated as a Layer-2 device.
+#
+# Implements:
+#   * Cisco IOS XE Switch L2S STIG  (CISC-L2-XXXXXX)
+#   * Cisco IOS XE Switch NDM STIG  (CISC-ND-XXXXXX) - management-plane subset
+#
+# All configuration tasks honor `apply_changes`. When apply_changes is false
+# (the default) every task runs in check/dry-run mode and only reports the
+# changes it WOULD make - nothing is written to the running-config. Run with
+# `-e apply_changes=true` to enforce, and always `copy run start` afterwards
+# via the provided handler.
+
+# ============================================================
+# Connection (network_cli via cisco.ios)
+# Set these in inventory/group_vars; values shown reference Ansible Vault.
+# ============================================================
+ansible_network_os: cisco.ios.ios
+ansible_connection: ansible.netcommon.network_cli
+# ansible_user / ansible_password / ansible_become_password come from inventory.
+
+# ============================================================
+# Deployment control
+# ============================================================
+apply_changes: false                 # false = dry-run (check mode), true = enforce
+save_config_when_changed: true       # run `write memory` on change (handler)
+artifacts_dir: "/tmp/cisco-ios-xe-l2-artifacts"
+
+# ============================================================
+# STIG control toggles - disable any block that does not apply
+# ============================================================
+stig_l2_spanning_tree: true
+stig_l2_dhcp_arp: true
+stig_l2_vlan_hardening: true
+stig_l2_port_security: true
+stig_ndm_management: true
+stig_compliance_report: true
+
+# ============================================================
+# Layer-2 topology data (customer-provided)
+# ============================================================
+# VLANs that carry user/host traffic - DHCP snooping, DAI and IP Source Guard
+# are applied to these. Do NOT include the management VLAN here.
+l2_user_vlans: [10, 20, 30]
+
+# Access (host-facing/edge) interfaces - PortFast + BPDU Guard + port security.
+l2_access_interfaces:
+  - GigabitEthernet1/0/1
+  - GigabitEthernet1/0/2
+
+# Trunk (uplink) interfaces - static trunk, DTP off, native VLAN moved.
+l2_trunk_interfaces:
+  - GigabitEthernet1/0/47
+  - GigabitEthernet1/0/48
+
+# Interfaces that face DHCP servers / are upstream - trusted for DHCP snooping.
+l2_dhcp_trusted_interfaces:
+  - GigabitEthernet1/0/48
+
+# Currently unused/disabled interfaces - shut and parked in the unused VLAN.
+l2_unused_interfaces:
+  - GigabitEthernet1/0/3
+  - GigabitEthernet1/0/4
+
+# ============================================================
+# CISC-L2-000160/000170 - Native/unused/management VLAN IDs
+# Must NOT be VLAN 1 (the default VLAN).
+# ============================================================
+l2_native_vlan: 999          # native VLAN for trunks (not VLAN1, no host ports)
+l2_unused_vlan: 998          # parking VLAN for disabled ports (no SVI, shut)
+l2_management_vlan: 99        # dedicated OOB/management VLAN (not VLAN1)
+
+# ============================================================
+# CISC-L2-000080 - Storm control thresholds (percent of bandwidth)
+# ============================================================
+l2_storm_control_broadcast_level: "5.00"
+l2_storm_control_multicast_level: "5.00"
+
+# ============================================================
+# CISC-L2-000020 - Port security (max MACs on access ports)
+# ============================================================
+l2_port_security_max_mac: 2
+l2_port_security_violation: restrict   # restrict | shutdown | protect
+
+# ============================================================
+# NDM management-plane subset
+# ============================================================
+# CISC-ND-000010/000160 - AAA / authentication source
+ndm_aaa_new_model: true
+ndm_tacacs_servers:
+  - name: TACACS-1
+    address: "{{ vault_ios_tacacs_host_1 | default('10.0.0.10') }}"
+    key: "{{ vault_ios_tacacs_key | default('CHANGE_ME') }}"
+ndm_local_fallback_user: "{{ vault_ios_local_user | default('breakglass') }}"
+
+# CISC-ND-000280/000570 - Idle timeout (seconds) and session limits
+ndm_exec_timeout_minutes: 10
+ndm_vty_access_class: "MGMT-ACL"
+ndm_management_subnets:
+  - "10.0.0.0 0.0.0.255"
+
+# CISC-ND-001000/001210 - SSH hardening
+ndm_ssh_version: 2
+ndm_ssh_timeout_seconds: 60
+ndm_ssh_auth_retries: 2
+ndm_disable_telnet: true
+
+# CISC-ND-000090/000100/000110 - Logging
+ndm_logging_hosts:
+  - "{{ vault_syslog_server_primary | default('10.0.0.20') }}"
+ndm_logging_buffer_size: 1000000
+ndm_logging_trap_level: informational
+
+# CISC-ND-000470/000490 - NTP (authenticated)
+ndm_ntp_authenticate: true
+ndm_ntp_key_id: 1
+ndm_ntp_key: "{{ vault_ios_ntp_key | default('CHANGE_ME') }}"
+ndm_ntp_servers:
+  - "{{ vault_ntp_server_primary | default('10.0.0.30') }}"
+
+# CISC-ND-000150/000160 - SNMP (v3 only)
+ndm_snmp_v3_group: STIG-RO
+ndm_snmp_v3_user: "{{ vault_ios_snmp_user | default('snmpv3mon') }}"
+ndm_snmp_v3_auth: "{{ vault_ios_snmp_auth | default('CHANGE_ME_AUTH') }}"
+ndm_snmp_v3_priv: "{{ vault_ios_snmp_priv | default('CHANGE_ME_PRIV') }}"
+
+# CISC-ND-000010 (AC-8) - DoD login banner
+ndm_login_banner: |
+  You are accessing a U.S. Government (USG) Information System (IS) that is
+  provided for USG-authorized use only. By using this IS (which includes any
+  device attached to this IS), you consent to the following conditions:
+  -The USG routinely intercepts and monitors communications on this IS for
+  purposes including, but not limited to, penetration testing, COMSEC monitoring,
+  network operations and defense, personnel misconduct (PM), law enforcement (LE),
+  and counterintelligence (CI) investigations.
+  -At any time, the USG may inspect and seize data stored on this IS.
+  -Communications using, or data stored on, this IS are not private, are subject
+  to routine monitoring, interception, and search, and may be disclosed or used
+  for any USG-authorized purpose.
+  -This IS includes security measures (e.g., authentication and access controls)
+  to protect USG interests--not for your personal benefit or privacy.
+  -Notwithstanding the above, using this IS does not constitute consent to PM, LE
+  or CI investigative searching or monitoring of the content of privileged
+  communications, or work product, related to personal representation or services
+  by attorneys, psychotherapists, or clergy, and their assistants. Such
+  communications and work product are private and confidential. See User Agreement
+  for details.
+
+# ============================================================
+# Compliance frameworks (reporting metadata)
+# ============================================================
+compliance_frameworks:
+  - dod_stig
+  - nist_800_53
+  - nist_800_171
+stig_benchmark: "Cisco IOS XE Switch L2S/NDM STIG"
+stig_version: "V3R1"

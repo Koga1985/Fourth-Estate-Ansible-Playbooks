@@ -1,0 +1,55 @@
+---
+# Generate a per-host STIG compliance/remediation artifact (JSON).
+# In dry-run mode `changed: true` means the control is NOT yet compliant
+# (the playbook would have changed it). In enforce mode it means remediated.
+
+- name: Assemble per-control result map
+  ansible.builtin.set_fact:
+    l2_stig_results:
+      meta:
+        host: "{{ inventory_hostname }}"
+        timestamp: "{{ ansible_date_time.iso8601 | default(lookup('pipe', 'date -u +%Y-%m-%dT%H:%M:%SZ')) }}"
+        benchmark: "{{ stig_benchmark }}"
+        version: "{{ stig_version }}"
+        mode: "{{ 'enforce' if apply_changes | bool else 'dry-run' }}"
+        compliance_frameworks: "{{ compliance_frameworks }}"
+      controls:
+        - { id: "CISC-L2-000010", title: "Root Guard on edge ports", would_change: "{{ stp_rootguard.changed | default(false) }}" }
+        - { id: "CISC-L2-000020", title: "BPDU Guard / port security on edge ports", would_change: "{{ (stp_bpduguard.changed | default(false)) or (port_security.changed | default(false)) }}" }
+        - { id: "CISC-L2-000030", title: "STP Loop Guard default", would_change: "{{ stp_loopguard.changed | default(false) }}" }
+        - { id: "CISC-L2-000050", title: "DHCP snooping on user VLANs", would_change: "{{ dhcp_snoop_vlans.changed | default(false) }}" }
+        - { id: "CISC-L2-000060", title: "IP Source Guard on access ports", would_change: "{{ ip_source_guard.changed | default(false) }}" }
+        - { id: "CISC-L2-000070", title: "Dynamic ARP Inspection on user VLANs", would_change: "{{ dai_vlans.changed | default(false) }}" }
+        - { id: "CISC-L2-000080", title: "Storm control on access ports", would_change: "{{ storm_control.changed | default(false) }}" }
+        - { id: "CISC-L2-000090", title: "DTP disabled (nonegotiate)", would_change: "{{ trunk_harden.changed | default(false) }}" }
+        - { id: "CISC-L2-000120", title: "Disabled ports parked in unused VLAN", would_change: "{{ unused_ports.changed | default(false) }}" }
+        - { id: "CISC-L2-000160", title: "Native VLAN moved off default", would_change: "{{ trunk_harden.changed | default(false) }}" }
+        - { id: "CISC-L2-000220", title: "Rapid-PVST spanning-tree mode", would_change: "{{ stp_mode.changed | default(false) }}" }
+        - { id: "CISC-L2-000230", title: "UDLD enabled", would_change: "{{ stp_udld.changed | default(false) }}" }
+        - { id: "CISC-ND-000010", title: "DoD login banner", would_change: "{{ ndm_banner.changed | default(false) }}" }
+        - { id: "CISC-ND-000160", title: "AAA / TACACS+ authentication", would_change: "{{ (ndm_aaa.changed | default(false)) or (ndm_aaa_methods.changed | default(false)) }}" }
+        - { id: "CISC-ND-000280", title: "EXEC idle timeout on console/VTY", would_change: "{{ (ndm_vty.changed | default(false)) or (ndm_con.changed | default(false)) }}" }
+        - { id: "CISC-ND-000470", title: "Authenticated NTP", would_change: "{{ ndm_ntp.changed | default(false) }}" }
+        - { id: "CISC-ND-000090", title: "Syslog logging configured", would_change: "{{ ndm_logging.changed | default(false) }}" }
+        - { id: "CISC-ND-000150", title: "SNMPv3 only", would_change: "{{ ndm_snmp.changed | default(false) }}" }
+        - { id: "CISC-ND-001000", title: "SSH hardened", would_change: "{{ ndm_ssh.changed | default(false) }}" }
+        - { id: "CISC-ND-001310", title: "Telnet disabled (SSH only)", would_change: "{{ ndm_vty.changed | default(false) }}" }
+        - { id: "CISC-ND-001440", title: "Unused management services disabled", would_change: "{{ ndm_services.changed | default(false) }}" }
+  tags: [report]
+
+- name: Write JSON compliance artifact
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/{{ inventory_hostname }}_ios_xe_l2_stig.json"
+    mode: "0640"
+    content: "{{ l2_stig_results | to_nice_json }}"
+  delegate_to: localhost
+  tags: [report]
+
+- name: Summarize compliance state
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }}: {{ l2_stig_results.controls | selectattr('would_change') | list | length }}
+      of {{ l2_stig_results.controls | length }} controls
+      {{ 'still need remediation (dry-run)' if not (apply_changes | bool) else 'were remediated' }}.
+      Artifact: {{ artifacts_dir }}/{{ inventory_hostname }}_ios_xe_l2_stig.json
+  tags: [report]

@@ -1,0 +1,51 @@
+---
+# tasks file for cisco_ios_xe_l2_stig
+# Orchestrates the Cisco IOS XE Layer-2 (L2S) + management-plane (NDM) STIG.
+
+- name: Ensure local artifacts directory exists
+  ansible.builtin.file:
+    path: "{{ artifacts_dir }}"
+    state: directory
+    mode: "0750"
+  delegate_to: localhost
+  run_once: true
+  changed_when: false
+  tags: [always]
+
+- name: Show run mode
+  ansible.builtin.debug:
+    msg: >-
+      cisco_ios_xe_l2_stig running against {{ inventory_hostname }} -
+      apply_changes={{ apply_changes | bool }}
+      ({{ 'ENFORCING' if apply_changes | bool else 'DRY-RUN / check mode only' }})
+  tags: [always]
+
+- name: Spanning-tree edge protection (CISC-L2-000010/000020/000030/000230)
+  ansible.builtin.import_tasks: l2_spanning_tree.yml
+  when: stig_l2_spanning_tree | bool
+  tags: [stig, l2, spanning_tree]
+
+- name: DHCP snooping, Dynamic ARP Inspection, IP Source Guard (CISC-L2-000050/000060/000070)
+  ansible.builtin.import_tasks: l2_dhcp_arp.yml
+  when: stig_l2_dhcp_arp | bool
+  tags: [stig, l2, dhcp_arp]
+
+- name: VLAN hardening - DTP, native/unused VLAN, trunk pruning (CISC-L2-000090..000170)
+  ansible.builtin.import_tasks: l2_vlan_hardening.yml
+  when: stig_l2_vlan_hardening | bool
+  tags: [stig, l2, vlan]
+
+- name: Port security and storm control (CISC-L2-000020/000080)
+  ansible.builtin.import_tasks: l2_port_security.yml
+  when: stig_l2_port_security | bool
+  tags: [stig, l2, port_security]
+
+- name: Management-plane NDM hardening (CISC-ND-XXXXXX)
+  ansible.builtin.import_tasks: ndm_management.yml
+  when: stig_ndm_management | bool
+  tags: [stig, ndm, management]
+
+- name: Generate compliance report artifact
+  ansible.builtin.import_tasks: compliance_report.yml
+  when: stig_compliance_report | bool
+  tags: [stig, report]

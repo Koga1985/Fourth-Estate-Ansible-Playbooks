@@ -1,0 +1,142 @@
+---
+# Management-plane (NDM) hardening for the Catalyst switch
+# CISC-ND-000010 Banner | CISC-ND-000160 AAA | CISC-ND-000280 Idle timeout
+# CISC-ND-000470/000490 NTP auth | CISC-ND-000090/000100 Logging
+# CISC-ND-000150/000160 SNMPv3 | CISC-ND-001000/001210 SSH | CISC-ND-001310 Telnet off
+# NIST AC-8, IA-2, AU-3, AU-8, SC-8, SC-23
+
+- name: CISC-ND-000160 - Enable AAA new-model
+  cisco.ios.ios_config:
+    lines:
+      - aaa new-model
+  check_mode: "{{ not (apply_changes | bool) }}"
+  when: ndm_aaa_new_model | bool
+  register: ndm_aaa
+  notify: save running-config
+  tags: [stig_cat2, "CISC-ND-000160"]
+
+- name: CISC-ND-000160 - Configure TACACS+ servers
+  cisco.ios.ios_config:
+    parents: "tacacs server {{ item.name }}"
+    lines:
+      - "address ipv4 {{ item.address }}"
+      - "key {{ item.key }}"
+  loop: "{{ ndm_tacacs_servers }}"
+  loop_control:
+    label: "{{ item.name }}"
+  no_log: true
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: ndm_tacacs
+  notify: save running-config
+  tags: [stig_cat2, "CISC-ND-000160"]
+
+- name: CISC-ND-000160 - AAA authentication/authorization with local fallback
+  cisco.ios.ios_config:
+    lines:
+      - aaa authentication login default group tacacs+ local
+      - aaa authorization exec default group tacacs+ local
+      - aaa accounting exec default start-stop group tacacs+
+      - aaa accounting commands 15 default start-stop group tacacs+
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: ndm_aaa_methods
+  notify: save running-config
+  tags: [stig_cat2, "CISC-ND-000160", "CISC-ND-000550"]
+
+- name: CISC-ND-000010 - Configure DoD login banner
+  cisco.ios.ios_config:
+    lines:
+      - "banner login ^C{{ ndm_login_banner }}^C"
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: ndm_banner
+  notify: save running-config
+  tags: [stig_cat3, "CISC-ND-000010"]
+
+- name: CISC-ND-001000/001210 - Harden SSH and disable Telnet on VTY lines
+  cisco.ios.ios_config:
+    lines:
+      - "ip ssh version {{ ndm_ssh_version }}"
+      - "ip ssh time-out {{ ndm_ssh_timeout_seconds }}"
+      - "ip ssh authentication-retries {{ ndm_ssh_auth_retries }}"
+      - ip ssh dh min size 2048
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: ndm_ssh
+  notify: save running-config
+  tags: [stig_cat2, "CISC-ND-001000", "CISC-ND-001210"]
+
+- name: CISC-ND-000490 - Restrict management access (VTY ACL)
+  cisco.ios.ios_config:
+    parents: "ip access-list standard {{ ndm_vty_access_class }}"
+    lines: "{{ ndm_management_subnets | map('regex_replace', '^(.*)$', 'permit \\1') | list }}"
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: ndm_vty_acl
+  notify: save running-config
+  tags: [stig_cat2, "CISC-ND-000490"]
+
+- name: CISC-ND-000280/001310 - Harden VTY lines (timeout, SSH only, ACL)
+  cisco.ios.ios_config:
+    parents: "line vty 0 15"
+    lines:
+      - "exec-timeout {{ ndm_exec_timeout_minutes }} 0"
+      - "transport input ssh"
+      - "access-class {{ ndm_vty_access_class }} in"
+      - logging synchronous
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: ndm_vty
+  notify: save running-config
+  tags: [stig_cat2, "CISC-ND-000280", "CISC-ND-001310"]
+
+- name: CISC-ND-000280 - Harden console line idle timeout
+  cisco.ios.ios_config:
+    parents: "line con 0"
+    lines:
+      - "exec-timeout {{ ndm_exec_timeout_minutes }} 0"
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: ndm_con
+  notify: save running-config
+  tags: [stig_cat2, "CISC-ND-000280"]
+
+- name: CISC-ND-000090/000100 - Configure syslog logging
+  cisco.ios.ios_config:
+    lines: "{{ ['logging buffered ' + (ndm_logging_buffer_size | string), 'logging trap ' + ndm_logging_trap_level, 'service timestamps log datetime localtime show-timezone', 'service timestamps debug datetime localtime show-timezone'] + (ndm_logging_hosts | map('regex_replace', '^(.*)$', 'logging host \\1') | list) }}"
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: ndm_logging
+  notify: save running-config
+  tags: [stig_cat2, "CISC-ND-000090", "CISC-ND-000100"]
+
+- name: CISC-ND-000470/000490 - Configure authenticated NTP
+  cisco.ios.ios_config:
+    lines: "{{ ['ntp authenticate', 'ntp authentication-key ' + (ndm_ntp_key_id | string) + ' md5 ' + ndm_ntp_key, 'ntp trusted-key ' + (ndm_ntp_key_id | string)] + (ndm_ntp_servers | map('regex_replace', '^(.*)$', 'ntp server \\1 key ' + (ndm_ntp_key_id | string)) | list) }}"
+  no_log: true
+  when: ndm_ntp_authenticate | bool
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: ndm_ntp
+  notify: save running-config
+  tags: [stig_cat2, "CISC-ND-000470"]
+
+- name: CISC-ND-000150/000160 - Configure SNMPv3 (auth+priv), disable v1/v2c
+  cisco.ios.ios_config:
+    lines:
+      - "snmp-server group {{ ndm_snmp_v3_group }} v3 priv"
+      - "snmp-server user {{ ndm_snmp_v3_user }} {{ ndm_snmp_v3_group }} v3 auth sha {{ ndm_snmp_v3_auth }} priv aes 128 {{ ndm_snmp_v3_priv }}"
+  no_log: true
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: ndm_snmp
+  notify: save running-config
+  tags: [stig_cat2, "CISC-ND-000150", "CISC-ND-000160"]
+
+- name: CISC-ND-001440 - Disable unused/insecure management services
+  cisco.ios.ios_config:
+    lines:
+      - no ip http server
+      - ip http secure-server
+      - no ip finger
+      - no service config
+      - no ip bootp server
+      - no cdp run
+      - service password-encryption
+      - login on-failure log
+      - login on-success log
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: ndm_services
+  notify: save running-config
+  tags: [stig_cat2, "CISC-ND-001440"]
