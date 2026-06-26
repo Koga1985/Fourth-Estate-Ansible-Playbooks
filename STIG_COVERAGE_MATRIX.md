@@ -24,19 +24,19 @@ production-ready" Ansible playbooks against what exists in this repository.
 | 2 | **Cisco NX-OS Switch STIG** | ✅ Delivered | `cisco/roles/cisco_nxos_stig` — NDM + L2 via `cisco.nxos`. |
 | 3 | **Cisco ASA STIG** | ✅ Delivered | `cisco/roles/cisco_asa_stig` — NDM (`CASA-ND-*`) + Firewall (`CASA-FW-*`) via `cisco.asa`. |
 | 4 | **Cisco FTD STIG** | ✅ Delivered | `cisco/roles/cisco_ftd_stig` — FMC REST API assess + enforce. |
-| 5 | **Cisco ACI / ACI Router STIG** | 🟡 Existing | `cisco/roles/aci_security_hardening` (+ `aci_*`) implement APIC/NDM hardening (`CISC-ND-*`). ACI **Router**-specific `CISC-RT-*` controls tracked in roadmap row R1. |
-| 6 | **Cisco ISE STIG** | 🟡 Existing | `cisco/roles/ise_*` (28 roles) implement ISE policy/admin hardening. Dedicated ISE-NDM STIG mapping tracked in roadmap row R2. |
+| 5 | **Cisco ACI / ACI Router STIG** | ✅ Delivered | ACI fabric/NDM: `cisco/roles/aci_security_hardening`. ACI **Router** `CISC-RT-*` (BGP/OSPF auth, GTSM, route control): `cisco/roles/cisco_aci_router_stig`. |
+| 6 | **Cisco ISE STIG** | ✅ Delivered | `cisco/roles/cisco_ise_stig` — ISE NDM (`CISC-ND-*`) assess + OpenAPI enforce, plus the 28 functional `ise_*` roles. |
 | 7 | **Cisco UCS** | 🟡 Existing | `cisco/roles/ucs_security_hardening` — DoD STIG CAT I/II/III. |
-| 8 | **Network Device Management SRG (V5R3)** | 🟡 Existing | Implemented transitively by every `CISC-ND-*` / `CASA-ND-*` control in the four delivered Cisco roles (the SRG is the parent of those STIGs). Cross-reference doc tracked in R3. |
+| 8 | **Network Device Management SRG (V5R3)** | ✅ Delivered | `network_policy/roles/ndm_srg_assessment` — consolidated evidence/checklist mapping `SRG-APP-*-NDM-*` to the device STIG artifacts. |
 | 9 | **Red Hat Enterprise Linux 9 STIG (V2R6)** | ✅ Delivered | `rhel/roles/rhel9_stig` — `RHEL-09-*` CAT I/II/III via `ansible.builtin`/`ansible.posix`. (Existing `rhel-hardening` targets RHEL 8.) |
 | 10 | **Red Hat OpenShift Container Platform 4.x STIG (V2R4)** | ✅ Delivered | `openshift/roles/ocp_stig_profile` — consolidated `CNTR-OS-*` profile (audit, encryption-at-rest, TLS profile, OAuth tokens, self-provisioner, PSA restricted, default-deny netpol). Complemented by existing `ocp_audit_config`, `ocp_psa_enforce`, `ocp_rbac_baseline`, `ocp_scc_legacy_mgmt`, `ocp_network_policies_baseline`. |
-| 11 | **Microsoft Windows Server 2022 STIG (V2R6)** | 🟡 Existing | `windows/roles/win_stig_hardening` + `win_group_policy`. Version refresh to V2R6 tracked in R5. |
-| 12 | **Active Directory Domain STIG** | 🟡 Existing | `windows/roles/win_active_directory`. AD-Domain-STIG control mapping tracked in R6. |
-| 13 | **Microsoft Windows Server DNS STIG** | 🟡 Existing | `windows/roles/win_dhcp_dns`. DNS-STIG control mapping tracked in R6. |
-| 14 | **Application Server SRG (V4R4)** | 🛣️ Roadmap | R7 — generic Jakarta EE/Tomcat/JBoss app-server hardening. |
-| 15 | **Web Server SRG** | 🛣️ Roadmap | R7 — generic web-server controls; partially covered by existing `windows/roles/win_iis`. |
+| 11 | **Microsoft Windows Server 2022 STIG (V2R6)** | ✅ Delivered | `windows/roles/win_server2022_stig` — `WN22-*` account/audit/registry via `ansible.windows`. (Legacy `win_stig_hardening` retained.) |
+| 12 | **Active Directory Domain STIG** | ✅ Delivered | `windows/roles/win_server2022_stig` (AD controls, `win_is_domain_controller=true`) + existing `win_active_directory`. |
+| 13 | **Microsoft Windows Server DNS STIG** | ✅ Delivered | `windows/roles/win_server2022_stig` (DNS controls, `win_is_dns_server=true`, `WDNS-*`) + existing `win_dhcp_dns`. |
+| 14 | **Application Server SRG (V4R4)** | ✅ Delivered | `app_web_server/roles/tomcat_app_server_srg` — `SRG-APP-*-AS-*` (Tomcat; fork for JBoss/WebLogic). |
+| 15 | **Web Server SRG** | ✅ Delivered | `app_web_server/roles/apache_web_server_srg` — `SRG-APP-*-WSR-*` (Apache; IIS via `windows/roles/win_iis`). |
 | 16 | **Application Security & Development STIG (V6R4)** | 🛣️ Roadmap | R8 — pipeline/policy-as-code checks (not a host config STIG). |
-| 17 | **Network Infrastructure Policy STIG (V10R7)** | 🛣️ Roadmap | R3 — policy/architecture STIG; assessment-checklist role. |
+| 17 | **Network Infrastructure Policy STIG (V10R7)** | ✅ Delivered | `network_policy/roles/ndm_srg_assessment` — `NET-*` architecture controls + evidence rollup. |
 | 18 | **Cloud Computing SRG** | 🛣️ Roadmap | R9 — policy SRG; maps to existing AWS/Azure/GCP FedRAMP roles. |
 | 19 | **SaaS** | 🛣️ Roadmap | R9 — covered under Cloud Computing SRG / DoD Cloud guidance. |
 | 20 | **IBM DB2 V10.5 STIG (V2R1)** | ✅ Delivered | `databases/db2/roles/db2_stig` — `DB2X-00-*` via DB2 CLP, `db2audit`, SQL (drift-aware, assessment-safe). |
@@ -53,16 +53,16 @@ production-ready" Ansible playbooks against what exists in this repository.
 
 | ID | Scope | Intended approach |
 |----|-------|-------------------|
-| R1 | Cisco ACI **Router** STIG (`CISC-RT-*`) | Extend `cisco/roles/aci_security_hardening` with an `aci_router_stig` task set via `cisco.aci`/`aci_rest` (BGP/OSPF auth, uRPF, control-plane). |
-| R2 | Cisco ISE NDM STIG mapping | Add `CISC-ND-*` cross-map to existing `ise_admin__*` roles (banner, AAA, syslog, NTP, SNMPv3, session timeout). |
-| R3 | Network Device Management SRG / Network Infrastructure Policy STIG | Assessment-checklist role producing a control-by-control evidence artifact across managed network devices. |
+| R1 | ✅ Done — Cisco ACI **Router** STIG (`CISC-RT-*`) | Delivered as `cisco/roles/cisco_aci_router_stig`. |
+| R2 | ✅ Done — Cisco ISE NDM STIG mapping | Delivered as `cisco/roles/cisco_ise_stig`. |
+| R3 | ✅ Done — Network Device Management SRG / Network Infrastructure Policy STIG | Delivered as `network_policy/roles/ndm_srg_assessment`. |
 | R4 | ✅ Done — OpenShift 4.x STIG consolidated profile | Delivered as `openshift/roles/ocp_stig_profile` (`CNTR-OS-*`). |
-| R5 | Windows Server 2022 STIG V2R6 refresh | Refresh `win_stig_hardening` rule IDs (`WN22-*`) and add a registry/secpol audit report. |
-| R6 | AD Domain STIG + Windows DNS STIG | Map `win_active_directory` / `win_dhcp_dns` tasks to `AD.*` and `WDNS-*` rule IDs; add assessment. |
-| R7 | Application Server SRG (V4R4) + Web Server SRG | `app_server/` roles for Tomcat/JBoss + generic web-server controls (TLS, logging, account mgmt). |
+| R5 | ✅ Done — Windows Server 2022 STIG V2R6 | Delivered as `windows/roles/win_server2022_stig` (`WN22-*`). |
+| R6 | ✅ Done — AD Domain STIG + Windows DNS STIG | Delivered in `windows/roles/win_server2022_stig` (DC/DNS toggles, `AD.*` / `WDNS-*`). |
+| R7 | ✅ Done — Application Server SRG (V4R4) + Web Server SRG | Delivered as `app_web_server/roles/{tomcat_app_server_srg,apache_web_server_srg}`. |
 | R8 | Application Security & Development STIG (V6R4) | Policy-as-code gate (SAST/DAST/dependency/secret scanning evidence) under `policy_as_code/`. |
 | R9 | Cloud Computing SRG / SaaS | Control-mapping doc + assessment tying existing `aws/`, `azure/`, `google_cloud_platform/` FedRAMP roles to the SRG. |
-| R10 | IBM DB2 V10.5 STIG (V2R1) | `databases/db2/` role applying `DB2*-*` SQL/parameter controls via authenticated SQL. |
+| R10 | ✅ Done — IBM DB2 V10.5 STIG (V2R1) | Delivered as `databases/db2/roles/db2_stig`. |
 | R11 | IBM z/OS family (RACF, ACF2/TSS, CICS, NetView, TDMF, zSecure) | z/OS automation requires `ibm.ibm_zos_core` (Ansible for z/OS) running against a USS-enabled LPAR with SSH; controls applied via TSO/RACF commands and JCL. This is **environment-specific** and not "grab-and-go" without a z/OS managed node — delivered as documented role skeletons with the command sets, not blind enforcement. |
 
 ---

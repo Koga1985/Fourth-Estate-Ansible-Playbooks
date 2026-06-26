@@ -1,0 +1,63 @@
+---
+# defaults file for ndm_srg_assessment
+# Network Device Management SRG (Ver 5, Rel 3) and Network Infrastructure Policy
+# STIG (Ver 10, Rel 7) assessment + evidence generator.
+#
+# These are policy/architecture benchmarks - most requirements are verified, not
+# "configured". This role builds a consolidated compliance-evidence package by
+# aggregating the per-device JSON artifacts produced by the device STIG roles
+# (cisco_ios_xe_l2_stig, cisco_nxos_stig, cisco_asa_stig, cisco_ftd_stig, etc.)
+# and mapping their controls up to the parent NDM SRG control families.
+#
+# Read-only: this role never changes a device. It runs on the control node.
+
+ansible_connection: local
+artifacts_dir: "/tmp/ndm-srg-artifacts"
+
+# Directories to scan for per-device STIG artifacts (glob of *.json).
+ndm_evidence_input_dirs:
+  - /tmp/cisco-ios-xe-l2-artifacts
+  - /tmp/cisco-nxos-artifacts
+  - /tmp/cisco-asa-artifacts
+  - /tmp/cisco-ftd-artifacts
+  - /tmp/cisco-ise-artifacts
+  - /tmp/aci-router-stig-artifacts
+
+# ============================================================
+# NDM SRG control families (SRG-APP-*-NDM-*) mapped to the device rule IDs
+# implemented by the device roles. status: auto = evidence collected from
+# device artifacts; manual = requires documented procedural verification.
+# ============================================================
+ndm_srg_catalog:
+  - { id: "SRG-APP-000001-NDM-000200", title: "Limit concurrent management sessions", maps: ["CISC-ND-000360", "CASA-ND-000140"], status: auto }
+  - { id: "SRG-APP-000516-NDM-000334", title: "DoD login banner", maps: ["CISC-ND-000010", "CASA-ND-000100"], status: auto }
+  - { id: "SRG-APP-000148-NDM-000346", title: "AAA for device management", maps: ["CISC-ND-000160", "CASA-ND-000190"], status: auto }
+  - { id: "SRG-APP-000190-NDM-000267", title: "Idle session timeout", maps: ["CISC-ND-000280", "CASA-ND-000160"], status: auto }
+  - { id: "SRG-APP-000516-NDM-000351", title: "Authenticated NTP", maps: ["CISC-ND-000470", "CASA-ND-001200"], status: auto }
+  - { id: "SRG-APP-000358-NDM-000292", title: "Off-box audit log (syslog)", maps: ["CISC-ND-000090", "CASA-ND-000610"], status: auto }
+  - { id: "SRG-APP-000412-NDM-000331", title: "Encrypted management (SSHv2)", maps: ["CISC-ND-001000", "CASA-ND-001130"], status: auto }
+  - { id: "SRG-APP-000395-NDM-000310", title: "SNMPv3 only", maps: ["CISC-ND-000150", "CASA-ND-001210"], status: auto }
+  - { id: "SRG-APP-000516-NDM-000317", title: "Disable unused services", maps: ["CISC-ND-001440"], status: auto }
+  - { id: "SRG-APP-000142-NDM-000245", title: "Disable Telnet", maps: ["CISC-ND-001310"], status: auto }
+  - { id: "SRG-APP-000516-NDM-000350", title: "Control plane protection (CoPP)", maps: ["CISC-ND-001220"], status: auto }
+  - { id: "SRG-APP-000038-NDM-000213", title: "Management network ACL", maps: ["CISC-ND-000490"], status: auto }
+
+# ============================================================
+# Network Infrastructure Policy STIG (NET-*) - architectural controls.
+# These are procedural/architecture verifications (manual evidence).
+# ============================================================
+network_infra_policy_catalog:
+  - { id: "NET-NAC-009", title: "802.1X / NAC on access ports", status: manual, guidance: "Verify 802.1X or MAB on user-facing ports; see cisco_ios_xe_l2_stig." }
+  - { id: "NET0405", title: "Management plane separated (OOB)", status: manual, guidance: "Confirm out-of-band or dedicated management VLAN/network." }
+  - { id: "NET0445", title: "Two-factor for privileged access", status: manual, guidance: "Confirm CAC/PIV or token auth to TACACS+/RADIUS." }
+  - { id: "NET0813", title: "Redundant NTP sources", status: manual, guidance: "Confirm >=2 authenticated NTP servers per device." }
+  - { id: "NET0890", title: "Routing protocol authentication", status: auto, maps: ["CISC-RT-000010", "CISC-RT-000020"] }
+  - { id: "NET0965", title: "Default-deny route/traffic filtering at boundary", status: auto, maps: ["CISC-RT-000520", "CASA-FW-000070"] }
+  - { id: "NET-TUNL-019", title: "Encrypted transport for WAN/segment crossing", status: manual, guidance: "Confirm IPsec/MACsec where required by enclave boundary." }
+
+compliance_frameworks:
+  - dod_stig
+  - nist_800_53
+  - nist_800_171
+stig_benchmark: "Network Device Management SRG + Network Infrastructure Policy STIG"
+stig_version: "NDM SRG V5R3 / NET Policy V10R7"

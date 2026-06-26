@@ -1,0 +1,40 @@
+{{ ansible_managed | comment }}
+# Network Device Management SRG / Network Infrastructure Policy — Compliance Evidence
+
+- **Benchmark:** {{ stig_benchmark }}
+- **Version:** {{ stig_version }}
+- **Generated:** {{ ndm_assessment.meta.timestamp }}
+- **Device artifacts aggregated:** {{ ndm_assessment.meta.device_artifacts_found }}
+- **Frameworks:** {{ compliance_frameworks | join(', ') }}
+
+## Network Device Management SRG (SRG-APP-*-NDM-*)
+
+| NDM SRG ID | Control | Mapped device rules | Evidence collected |
+|------------|---------|---------------------|--------------------|
+{% for c in (ndm_srg_evaluated | default([])) %}
+| {{ c.id }} | {{ c.title }} | {{ c.maps | default([]) | join(', ') }} | {{ '✅ yes' if c.evidence_present else '⚠️ none found' }} |
+{% endfor %}
+
+> "Evidence collected" means a mapped device control was found in the aggregated
+> per-device STIG artifacts under {{ ndm_evidence_input_dirs | join(', ') }}.
+> Run the device STIG roles first so their JSON artifacts are present.
+
+## Network Infrastructure Policy STIG (NET-*)
+
+| ID | Control | Type | Notes |
+|----|---------|------|-------|
+{% for c in network_infra_policy_catalog %}
+| {{ c.id }} | {{ c.title }} | {{ c.status }} | {{ c.guidance | default((c.maps | default([])) | join(', ')) }} |
+{% endfor %}
+
+## How to refresh this evidence
+
+```bash
+# 1. Run the device STIG roles (dry-run is enough to produce artifacts)
+ansible-playbook cisco/roles/cisco_nxos_stig/playbooks/run.yml -i inventory
+ansible-playbook cisco/roles/cisco_asa_stig/playbooks/run.yml -i inventory
+# ...etc for each device class
+
+# 2. Regenerate this consolidated package
+ansible-playbook network_policy/roles/ndm_srg_assessment/playbooks/run.yml
+```
