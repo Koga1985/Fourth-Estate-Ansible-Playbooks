@@ -1,0 +1,102 @@
+---
+# defaults file for db2_stig
+# IBM DB2 V10.5 (LUW) STIG (DISA, Ver 2 Rel 1) - rule family DB2X-00-XXXXXX.
+# NIST SP 800-53 Rev 5 aligned.
+#
+# The role runs on the DB2 server host, becomes the instance owner, sources
+# db2profile, and applies controls via the DB2 CLP (dbm cfg / db cfg / SQL /
+# db2audit). Safe by default: apply_changes=false assesses only (db2 get cfg).
+
+# ============================================================
+# Connection / instance context (set in inventory, vault secrets)
+# ============================================================
+db2_instance_owner: db2inst1
+db2_database: SAMPLE
+# db2_connect_user/password used for SQL GRANT/REVOKE/audit operations.
+db2_connect_user: "{{ vault_db2_admin_user | default(db2_instance_owner) }}"
+db2_connect_password: "{{ vault_db2_admin_password | default('') }}"
+db2_profile_path: "~{{ db2_instance_owner }}/sqllib/db2profile"
+
+# ============================================================
+# Deployment control
+# ============================================================
+apply_changes: false
+artifacts_dir: "/tmp/db2-stig-artifacts"
+
+# ============================================================
+# Control-area toggles
+# ============================================================
+stig_dbm_cfg: true
+stig_db_cfg: true
+stig_audit: true
+stig_privileges: true
+stig_ssl: true
+stig_compliance_report: true
+
+# ============================================================
+# DB2X-00-000xxx - Instance (dbm cfg) hardening
+# ============================================================
+# Key/value pairs applied with: db2 update dbm cfg using <key> <value>
+db2_dbm_cfg:
+  AUTHENTICATION: SERVER_ENCRYPT   # DB2X-00-000700 - encrypt auth, no SERVER/CLIENT
+  CATALOG_NOAUTH: "NO"             # DB2X-00-001100 - require auth to catalog
+  DFTDBPATH_KEEP: ""               # placeholder, ignored if empty
+  DIAGLEVEL: "3"                   # DB2X-00-001700 - diagnostic logging level
+  TRUST_ALLCLNTS: "NO"             # DB2X-00-000800 - do not trust all clients
+  TRUST_CLNTAUTH: SERVER           # DB2X-00-000800 - server validates client auth
+  FED_NOAUTH: "NO"                 # federation requires auth
+
+# ============================================================
+# DB2X-00-001xxx - Database (db cfg) hardening
+# ============================================================
+db2_db_cfg:
+  AUTO_REVAL: DEFERRED
+  LOGARCHMETH1: "LOGRETAIN"        # DB2X-00-001300 - archival logging for recovery
+  TRACKMOD: "ON"                   # incremental backup tracking
+  ENCRLIB: "libdb2encr.so"         # DB2X-00-001600 - native encryption library (DAR)
+  ENCROPTS: "CIPHER=AES:MODE=CBC:KEYLEN=256"
+
+# ============================================================
+# DB2X-00-0007xx - Audit (db2audit) policy
+# ============================================================
+db2_audit_categories:
+  - "AUDIT BOTH"
+  - "CHECKING STATUS BOTH"
+  - "CONTEXT STATUS BOTH"
+  - "EXECUTE STATUS BOTH"
+  - "OBJMAINT STATUS BOTH"
+  - "SECMAINT STATUS BOTH"
+  - "SYSADMIN STATUS BOTH"
+  - "VALIDATE STATUS BOTH"
+db2_audit_error_type: AUDIT        # AUDIT = fail closed on audit error (STIG)
+
+# ============================================================
+# DB2X-00-00xxxx - Privilege hygiene (revoke from PUBLIC)
+# ============================================================
+db2_revoke_public_statements:
+  - "REVOKE BINDADD ON DATABASE FROM PUBLIC"
+  - "REVOKE CONNECT ON DATABASE FROM PUBLIC"
+  - "REVOKE CREATETAB ON DATABASE FROM PUBLIC"
+  - "REVOKE IMPLICIT_SCHEMA ON DATABASE FROM PUBLIC"
+  - "REVOKE DBADM ON DATABASE FROM PUBLIC"
+  - "REVOKE USE OF TABLESPACE USERSPACE1 FROM PUBLIC"
+
+# ============================================================
+# DB2X-00-0014xx - SSL/TLS for client communication
+# ============================================================
+db2_ssl_enable: true
+db2_ssl_svr_label: "{{ vault_db2_ssl_label | default('db2_server_cert') }}"
+db2_ssl_svr_keydb: "/home/{{ db2_instance_owner }}/sqllib/security/keystore/db2.p12"
+db2_ssl_svr_stash: "/home/{{ db2_instance_owner }}/sqllib/security/keystore/db2.sth"
+db2_ssl_versions: "TLSv12"
+db2_ssl_svcename: 50001
+
+# ============================================================
+# Reporting metadata
+# ============================================================
+compliance_frameworks:
+  - dod_stig
+  - nist_800_53
+  - nist_800_171
+stig_benchmark: "IBM DB2 V10.5 LUW STIG"
+stig_version: "V2R1"

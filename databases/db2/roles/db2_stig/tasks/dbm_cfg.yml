@@ -1,0 +1,41 @@
+---
+# Instance-level (dbm cfg) hardening
+# DB2X-00-000700 (AUTHENTICATION), 000800 (TRUST_*), 001100 (CATALOG_NOAUTH),
+# DB2X-00-001700 (DIAGLEVEL) | NIST IA-2, IA-5, AU-3, AC-3
+
+- name: Capture current dbm cfg
+  ansible.builtin.shell: "{{ db2_clp }} db2 get dbm cfg"
+  args:
+    executable: /bin/bash
+  become: true
+  become_user: "{{ db2_instance_owner }}"
+  register: db2_dbm_current
+  changed_when: false
+  check_mode: false
+  tags: [dbm_cfg]
+
+- name: Compute dbm cfg drift
+  ansible.builtin.set_fact:
+    db2_dbm_drift: "{{ db2_dbm_drift | default([]) + [item.key] }}"
+  loop: "{{ db2_dbm_cfg | dict2items | selectattr('value', 'ne', '') | list }}"
+  loop_control:
+    label: "{{ item.key }}"
+  when: ('(' + item.key + ') = ' + (item.value | string)) not in db2_dbm_current.stdout
+  tags: [dbm_cfg]
+
+- name: Apply compliant dbm cfg parameters
+  ansible.builtin.shell: "{{ db2_clp }} db2 update dbm cfg using {{ item.key }} {{ item.value }}"
+  args:
+    executable: /bin/bash
+  become: true
+  become_user: "{{ db2_instance_owner }}"
+  loop: "{{ db2_dbm_cfg | dict2items | selectattr('value', 'ne', '') | list }}"
+  loop_control:
+    label: "{{ item.key }} = {{ item.value }}"
+  when:
+    - apply_changes | bool
+    - ('(' + item.key + ') = ' + (item.value | string)) not in db2_dbm_current.stdout
+  register: db2_dbm_apply
+  changed_when: db2_dbm_apply.rc == 0
+  notify: restart db2 instance
+  tags: [dbm_cfg]

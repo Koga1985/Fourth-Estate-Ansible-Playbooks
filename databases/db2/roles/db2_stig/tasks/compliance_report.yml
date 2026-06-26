@@ -1,0 +1,47 @@
+---
+# Per-host DB2 STIG compliance artifact (JSON).
+# Drift lists populated during assessment indicate non-compliant parameters.
+
+- name: Assemble result map
+  ansible.builtin.set_fact:
+    db2_stig_results:
+      meta:
+        host: "{{ inventory_hostname }}"
+        instance: "{{ db2_instance_owner }}"
+        database: "{{ db2_database }}"
+        timestamp: "{{ ansible_date_time.iso8601 | default(lookup('pipe', 'date -u +%Y-%m-%dT%H:%M:%SZ')) }}"
+        benchmark: "{{ stig_benchmark }}"
+        version: "{{ stig_version }}"
+        mode: "{{ 'enforce' if apply_changes | bool else 'dry-run' }}"
+        compliance_frameworks: "{{ compliance_frameworks }}"
+      findings:
+        dbm_cfg_noncompliant: "{{ db2_dbm_drift | default([]) }}"
+        db_cfg_noncompliant: "{{ db2_db_drift | default([]) }}"
+        audit_categories_target: "{{ db2_audit_categories }}"
+        public_revokes_target: "{{ db2_revoke_public_statements | length }}"
+        ssl_enabled_target: "{{ db2_ssl_enable }}"
+      controls:
+        - { id: "DB2X-00-000700", title: "AUTHENTICATION SERVER_ENCRYPT", compliant: "{{ 'AUTHENTICATION' not in (db2_dbm_drift | default([])) }}" }
+        - { id: "DB2X-00-000800", title: "Do not trust all clients", compliant: "{{ 'TRUST_ALLCLNTS' not in (db2_dbm_drift | default([])) }}" }
+        - { id: "DB2X-00-001100", title: "CATALOG_NOAUTH = NO", compliant: "{{ 'CATALOG_NOAUTH' not in (db2_dbm_drift | default([])) }}" }
+        - { id: "DB2X-00-001300", title: "Archival logging (LOGARCHMETH1)", compliant: "{{ 'LOGARCHMETH1' not in (db2_db_drift | default([])) }}" }
+        - { id: "DB2X-00-001600", title: "Data-at-rest encryption (ENCRLIB)", compliant: "{{ 'ENCRLIB' not in (db2_db_drift | default([])) }}" }
+        - { id: "DB2X-00-001700", title: "DIAGLEVEL diagnostic logging", compliant: "{{ 'DIAGLEVEL' not in (db2_dbm_drift | default([])) }}" }
+  tags: [report]
+
+- name: Write JSON compliance artifact
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/{{ inventory_hostname }}_db2_stig.json"
+    mode: "0640"
+    content: "{{ db2_stig_results | to_nice_json }}"
+  delegate_to: localhost
+  tags: [report]
+
+- name: Summarize compliance state
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }} ({{ db2_database }}):
+      dbm cfg drift={{ db2_dbm_drift | default([]) | length }},
+      db cfg drift={{ db2_db_drift | default([]) | length }}
+      ({{ 'assessment only' if not (apply_changes | bool) else 'enforced' }}).
+  tags: [report]

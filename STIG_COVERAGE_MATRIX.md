@@ -39,7 +39,7 @@ production-ready" Ansible playbooks against what exists in this repository.
 | 17 | **Network Infrastructure Policy STIG (V10R7)** | 🛣️ Roadmap | R3 — policy/architecture STIG; assessment-checklist role. |
 | 18 | **Cloud Computing SRG** | 🛣️ Roadmap | R9 — policy SRG; maps to existing AWS/Azure/GCP FedRAMP roles. |
 | 19 | **SaaS** | 🛣️ Roadmap | R9 — covered under Cloud Computing SRG / DoD Cloud guidance. |
-| 20 | **IBM DB2 V10.5 STIG (V2R1)** | 🛣️ Roadmap | R10 — `ibm.db2`/`community.general` + SQL via `uri`/`shell`. |
+| 20 | **IBM DB2 V10.5 STIG (V2R1)** | ✅ Delivered | `databases/db2/roles/db2_stig` — `DB2X-00-*` via DB2 CLP, `db2audit`, SQL (drift-aware, assessment-safe). |
 | 21 | **IBM z/OS STIG (RACF / ACF2 / TSS products)** | 🛣️ Roadmap | R11 — z/OS family; see note below. |
 | 22 | **z/OS RACF Products** | 🛣️ Roadmap | R11 |
 | 23 | **IBM z/OS — NetView for TSS V7R2** | 🛣️ Roadmap | R11 |

@@ -1,0 +1,40 @@
+---
+# Database-level (db cfg) hardening
+# DB2X-00-001300 (LOGARCHMETH1), 001600 (native encryption / data-at-rest)
+# NIST AU-9, CP-9, SC-28
+
+- name: Capture current db cfg
+  ansible.builtin.shell: "{{ db2_clp }} db2 get db cfg for {{ db2_database }}"
+  args:
+    executable: /bin/bash
+  become: true
+  become_user: "{{ db2_instance_owner }}"
+  register: db2_db_current
+  changed_when: false
+  check_mode: false
+  tags: [db_cfg]
+
+- name: Compute db cfg drift
+  ansible.builtin.set_fact:
+    db2_db_drift: "{{ db2_db_drift | default([]) + [item.key] }}"
+  loop: "{{ db2_db_cfg | dict2items | selectattr('value', 'ne', '') | list }}"
+  loop_control:
+    label: "{{ item.key }}"
+  when: ('(' + item.key + ') = ' + (item.value | string)) not in db2_db_current.stdout
+  tags: [db_cfg]
+
+- name: Apply compliant db cfg parameters
+  ansible.builtin.shell: "{{ db2_clp }} db2 update db cfg for {{ db2_database }} using {{ item.key }} {{ item.value }}"
+  args:
+    executable: /bin/bash
+  become: true
+  become_user: "{{ db2_instance_owner }}"
+  loop: "{{ db2_db_cfg | dict2items | selectattr('value', 'ne', '') | list }}"
+  loop_control:
+    label: "{{ item.key }} = {{ item.value }}"
+  when:
+    - apply_changes | bool
+    - ('(' + item.key + ') = ' + (item.value | string)) not in db2_db_current.stdout
+  register: db2_db_apply
+  changed_when: db2_db_apply.rc == 0
+  tags: [db_cfg]
