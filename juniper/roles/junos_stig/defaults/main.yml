@@ -1,0 +1,89 @@
+---
+# defaults file for junos_stig
+# Juniper Junos STIG - management-plane (JUNI-ND-*) and router (JUNI-RT-*)
+# hardening via the certified junipernetworks.junos collection (NETCONF/CLI).
+# NIST SP 800-53 Rev 5 aligned.
+#
+# Safe by default: apply_changes=false runs junos_config in check mode, which
+# loads the candidate and shows the diff but does NOT commit. With
+# apply_changes=true the configuration is committed.
+
+# ============================================================
+# Connection (network_cli/netconf via junipernetworks.junos)
+# ============================================================
+ansible_network_os: junipernetworks.junos.junos
+ansible_connection: ansible.netcommon.network_cli
+
+# ============================================================
+# Deployment control
+# ============================================================
+apply_changes: false
+artifacts_dir: "/tmp/junos-stig-artifacts"
+
+# ============================================================
+# Control-area toggles
+# ============================================================
+stig_ndm: true
+stig_rtr: true
+stig_compliance_report: true
+
+# ============================================================
+# JUNI-ND-* - management plane
+# ============================================================
+junos_idle_timeout_minutes: 10          # JUNI-ND-000140
+junos_login_retries: 3                  # JUNI-ND-000150
+junos_lockout_period_minutes: 15        # JUNI-ND-000150
+junos_password_min_length: 15           # JUNI-ND-000380
+junos_password_change_type: "set-transitions"
+
+# JUNI-ND-000160 - AAA (TACACS+)
+junos_tacacs_servers:
+  - host: "{{ vault_junos_tacacs_host_1 | default('10.0.0.10') }}"
+    secret: "{{ vault_junos_tacacs_key | default('CHANGE_ME') }}"
+junos_auth_order: "tacplus password"
+
+# JUNI-ND-000610 - syslog
+junos_syslog_host: "{{ vault_syslog_server_primary | default('10.0.0.20') }}"
+
+# JUNI-ND-000720 - authenticated NTP
+junos_ntp_server: "{{ vault_ntp_server_primary | default('10.0.0.30') }}"
+junos_ntp_key_id: 1
+junos_ntp_key: "{{ vault_junos_ntp_key | default('CHANGE_ME') }}"
+
+# JUNI-ND-000550/001150 - SSHv2 only, Telnet off
+junos_disable_telnet: true
+
+# JUNI-ND-000010 - DoD banner
+junos_login_banner: >-
+  You are accessing a U.S. Government (USG) Information System (IS) that is
+  provided for USG-authorized use only. By using this IS you consent to the
+  conditions in the full DoD Notice and Consent Banner.
+
+# JUNI-ND-* - management access prefix list / firewall filter name
+junos_mgmt_subnets:
+  - "10.0.0.0/24"
+
+# ============================================================
+# JUNI-RT-* - routing plane
+# ============================================================
+junos_bgp_peers: []
+# Example:
+# junos_bgp_peers:
+#   - group: "EXTERNAL"
+#     neighbor: "10.1.1.2"
+#     auth_key: "{{ vault_junos_bgp_key }}"
+#     max_prefixes: 1000
+junos_ospf_auth_interfaces: []
+# Example:
+# junos_ospf_auth_interfaces:
+#   - interface: "ge-0/0/1.0"
+#     area: "0.0.0.0"
+#     md5_key_id: 1
+#     md5_key: "{{ vault_junos_ospf_key }}"
+
+compliance_frameworks:
+  - dod_stig
+  - nist_800_53
+  - nist_800_171
+stig_benchmark: "Juniper Junos STIG (NDM + Router)"
+stig_version: "V2R2"

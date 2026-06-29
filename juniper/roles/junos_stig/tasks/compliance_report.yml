@@ -1,0 +1,38 @@
+---
+# Junos STIG compliance/remediation artifact (JSON).
+
+- name: Assemble result map
+  ansible.builtin.set_fact:
+    junos_stig_results:
+      meta:
+        host: "{{ inventory_hostname }}"
+        timestamp: "{{ ansible_date_time.iso8601 | default(lookup('pipe', 'date -u +%Y-%m-%dT%H:%M:%SZ')) }}"
+        benchmark: "{{ stig_benchmark }}"
+        version: "{{ stig_version }}"
+        mode: "{{ 'enforce' if apply_changes | bool else 'dry-run' }}"
+        compliance_frameworks: "{{ compliance_frameworks }}"
+      controls:
+        - { id: "JUNI-ND-000010", title: "DoD login banner", changed: "{{ junos_banner.changed | default(false) }}" }
+        - { id: "JUNI-ND-000140", title: "Idle timeout / retry / password policy", changed: "{{ junos_login.changed | default(false) }}" }
+        - { id: "JUNI-ND-000160", title: "AAA via TACACS+", changed: "{{ junos_aaa.changed | default(false) }}" }
+        - { id: "JUNI-ND-000550", title: "SSHv2 only / Telnet off", changed: "{{ junos_ssh.changed | default(false) }}" }
+        - { id: "JUNI-ND-000610", title: "Remote syslog", changed: "{{ junos_syslog.changed | default(false) }}" }
+        - { id: "JUNI-ND-000720", title: "Authenticated NTP", changed: "{{ junos_ntp.changed | default(false) }}" }
+        - { id: "JUNI-RT-000010", title: "BGP neighbor authentication", changed: "{{ junos_bgp.changed | default(false) }}" }
+        - { id: "JUNI-RT-000470", title: "OSPF interface authentication", changed: "{{ junos_ospf.changed | default(false) }}" }
+  tags: [report]
+
+- name: Write JSON compliance artifact
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/{{ inventory_hostname }}_junos_stig.json"
+    mode: "0640"
+    content: "{{ junos_stig_results | to_nice_json }}"
+  delegate_to: localhost
+  tags: [report]
+
+- name: Summarize
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }}: Junos STIG {{ 'committed' if apply_changes | bool else 'dry-run (candidate diff only)' }}.
+      Artifact: {{ artifacts_dir }}/{{ inventory_hostname }}_junos_stig.json
+  tags: [report]

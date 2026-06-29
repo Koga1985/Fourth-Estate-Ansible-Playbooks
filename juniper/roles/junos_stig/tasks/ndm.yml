@@ -1,0 +1,67 @@
+---
+# Junos management-plane hardening (set-format config lines)
+# JUNI-ND-000010 banner | 000140 idle timeout | 000150 retry/lockout
+# JUNI-ND-000160 AAA | 000380 password | 000550/001150 SSH/Telnet
+# JUNI-ND-000610 syslog | 000720 NTP
+# NIST AC-7, AC-8, AC-11, IA-2, IA-5, AU-3, AU-8, SC-23
+
+- name: JUNI-ND-000010 - Configure DoD login banner
+  junipernetworks.junos.junos_config:
+    lines:
+      - "set system login message \"{{ junos_login_banner }}\""
+    check_commit: "{{ not (apply_changes | bool) }}"
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: junos_banner
+  tags: [stig_cat3, "JUNI-ND-000010"]
+
+- name: JUNI-ND-000140/000150/000380 - Login retry, lockout, idle timeout, password policy
+  junipernetworks.junos.junos_config:
+    lines:
+      - "set system login retry-options tries-before-disconnect {{ junos_login_retries }}"
+      - "set system login retry-options lockout-period {{ junos_lockout_period_minutes }}"
+      - "set cli idle-timeout {{ junos_idle_timeout_minutes }}"
+      - "set system login password minimum-length {{ junos_password_min_length }}"
+      - "set system login password change-type {{ junos_password_change_type }}"
+      - "set system login password minimum-changes 4"
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: junos_login
+  tags: [stig_cat2, "JUNI-ND-000140", "JUNI-ND-000150", "JUNI-ND-000380"]
+
+- name: JUNI-ND-000160 - AAA via TACACS+ with order
+  junipernetworks.junos.junos_config:
+    lines: "{{ ['set system authentication-order [ ' + junos_auth_order + ' ]'] + (junos_tacacs_servers | map(attribute='host') | map('regex_replace', '^(.*)$', 'set system tacplus-server \\1') | list) }}"
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: junos_aaa
+  tags: [stig_cat2, "JUNI-ND-000160"]
+
+- name: JUNI-ND-000550/001150 - SSHv2 only, disable Telnet
+  junipernetworks.junos.junos_config:
+    lines:
+      - "set system services ssh protocol-version v2"
+      - "set system services ssh ciphers [ aes256-ctr aes192-ctr aes128-ctr ]"
+      - "set system services ssh macs [ hmac-sha2-256 hmac-sha2-512 ]"
+      - "delete system services telnet"
+  check_mode: "{{ not (apply_changes | bool) }}"
+  failed_when: false
+  register: junos_ssh
+  tags: [stig_cat2, "JUNI-ND-000550", "JUNI-ND-001150"]
+
+- name: JUNI-ND-000610 - Remote syslog
+  junipernetworks.junos.junos_config:
+    lines:
+      - "set system syslog host {{ junos_syslog_host }} any info"
+      - "set system syslog host {{ junos_syslog_host }} authorization info"
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: junos_syslog
+  tags: [stig_cat2, "JUNI-ND-000610"]
+
+- name: JUNI-ND-000720 - Authenticated NTP
+  junipernetworks.junos.junos_config:
+    lines:
+      - "set system ntp authentication-key {{ junos_ntp_key_id }} type md5 value {{ junos_ntp_key }}"
+      - "set system ntp trusted-key {{ junos_ntp_key_id }}"
+      - "set system ntp server {{ junos_ntp_server }} key {{ junos_ntp_key_id }}"
+  no_log: true
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: junos_ntp
+  tags: [stig_cat2, "JUNI-ND-000720"]

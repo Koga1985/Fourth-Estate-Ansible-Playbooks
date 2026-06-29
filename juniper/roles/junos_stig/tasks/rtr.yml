@@ -1,0 +1,38 @@
+---
+# Junos routing-plane hardening
+# JUNI-RT-000010 BGP neighbor auth | JUNI-RT-000070 BGP max-prefix
+# JUNI-RT-000470 OSPF interface authentication
+# NIST AC-4, SC-5
+
+- name: JUNI-RT-000010/000070 - BGP neighbor authentication + max prefixes
+  junipernetworks.junos.junos_config:
+    lines:
+      - "set protocols bgp group {{ item.group }} neighbor {{ item.neighbor }} authentication-key \"{{ item.auth_key }}\""
+      - "set protocols bgp group {{ item.group }} neighbor {{ item.neighbor }} family inet unicast prefix-limit maximum {{ item.max_prefixes | default(1000) }}"
+  loop: "{{ junos_bgp_peers }}"
+  loop_control:
+    label: "BGP {{ item.neighbor }}"
+  no_log: true
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: junos_bgp
+  tags: [stig_cat2, "JUNI-RT-000010", "JUNI-RT-000070"]
+
+- name: JUNI-RT-000470 - OSPF interface MD5 authentication
+  junipernetworks.junos.junos_config:
+    lines:
+      - "set protocols ospf area {{ item.area }} interface {{ item.interface }} authentication md5 {{ item.md5_key_id }} key \"{{ item.md5_key }}\""
+  loop: "{{ junos_ospf_auth_interfaces }}"
+  loop_control:
+    label: "OSPF {{ item.interface }}"
+  no_log: true
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: junos_ospf
+  tags: [stig_cat2, "JUNI-RT-000470"]
+
+- name: Note when no routing peers/interfaces are defined
+  ansible.builtin.debug:
+    msg: "No junos_bgp_peers / junos_ospf_auth_interfaces defined - skipping routing-plane authentication (define them to enforce JUNI-RT-*)."
+  when:
+    - junos_bgp_peers | length == 0
+    - junos_ospf_auth_interfaces | length == 0
+  tags: [rtr]

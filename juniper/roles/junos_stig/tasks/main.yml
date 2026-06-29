@@ -1,0 +1,34 @@
+---
+# tasks file for junos_stig
+
+- name: Ensure artifacts directory exists
+  ansible.builtin.file:
+    path: "{{ artifacts_dir }}"
+    state: directory
+    mode: "0750"
+  delegate_to: localhost
+  run_once: true
+  changed_when: false
+  tags: [always]
+
+- name: Show run mode
+  ansible.builtin.debug:
+    msg: >-
+      junos_stig on {{ inventory_hostname }} -
+      {{ 'ENFORCING (commit)' if apply_changes | bool else 'DRY-RUN (candidate diff only, no commit)' }}
+  tags: [always]
+
+- name: Management-plane hardening (JUNI-ND-*)
+  ansible.builtin.import_tasks: ndm.yml
+  when: stig_ndm | bool
+  tags: [stig, ndm]
+
+- name: Routing-plane hardening (JUNI-RT-*)
+  ansible.builtin.import_tasks: rtr.yml
+  when: stig_rtr | bool
+  tags: [stig, rtr]
+
+- name: Compliance report
+  ansible.builtin.import_tasks: compliance_report.yml
+  when: stig_compliance_report | bool
+  tags: [stig, report]
