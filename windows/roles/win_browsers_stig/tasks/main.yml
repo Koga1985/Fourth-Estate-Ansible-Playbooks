@@ -1,0 +1,93 @@
+---
+# tasks file for win_browsers_stig
+
+- name: Ensure artifacts directory exists on control node
+  ansible.builtin.file:
+    path: "{{ artifacts_dir }}"
+    state: directory
+    mode: "0750"
+  delegate_to: localhost
+  run_once: true
+  changed_when: false
+  tags: [always]
+
+- name: Show run mode
+  ansible.builtin.debug:
+    msg: "win_browsers_stig on {{ inventory_hostname }} - {{ 'ENFORCING' if apply_changes | bool else 'DRY-RUN / check mode only' }}"
+  tags: [always]
+
+- name: EDGE-00-* - Apply Microsoft Edge policy settings
+  ansible.windows.win_regedit:
+    path: "{{ edge_policy_path }}"
+    name: "{{ item.name }}"
+    data: "{{ item.data }}"
+    type: "{{ item.type }}"
+  loop: "{{ edge_settings }}"
+  loop_control:
+    label: "{{ item.id }} {{ item.name }}"
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: edge_reg
+  when: stig_edge | bool
+  tags: [stig_cat2, edge]
+
+- name: DTBC-* - Apply Google Chrome policy settings
+  ansible.windows.win_regedit:
+    path: "{{ chrome_policy_path }}"
+    name: "{{ item.name }}"
+    data: "{{ item.data }}"
+    type: "{{ item.type }}"
+  loop: "{{ chrome_settings }}"
+  loop_control:
+    label: "{{ item.id }} {{ item.name }}"
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: chrome_reg
+  when: stig_chrome | bool
+  tags: [stig_cat2, chrome]
+
+- name: DTBF-* - Apply Mozilla Firefox policy settings
+  ansible.windows.win_regedit:
+    path: "{{ firefox_policy_path }}"
+    name: "{{ item.name }}"
+    data: "{{ item.data }}"
+    type: "{{ item.type }}"
+  loop: "{{ firefox_settings }}"
+  loop_control:
+    label: "{{ item.id }} {{ item.name }}"
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: firefox_reg
+  when: stig_firefox | bool
+  tags: [stig_cat2, firefox]
+
+- name: Assemble compliance result map
+  ansible.builtin.set_fact:
+    browsers_stig_results:
+      meta:
+        host: "{{ inventory_hostname }}"
+        timestamp: "{{ ansible_date_time.iso8601 | default('') }}"
+        benchmark: "{{ stig_benchmark }}"
+        version: "{{ stig_version }}"
+        mode: "{{ 'enforce' if apply_changes | bool else 'dry-run' }}"
+        compliance_frameworks: "{{ compliance_frameworks }}"
+      controls:
+        - { id: "EDGE-00-*", title: "Microsoft Edge policy ({{ edge_settings | length }} settings)", would_change: "{{ edge_reg.changed | default(false) }}", applied: "{{ stig_edge }}" }
+        - { id: "DTBC-*", title: "Google Chrome policy ({{ chrome_settings | length }} settings)", would_change: "{{ chrome_reg.changed | default(false) }}", applied: "{{ stig_chrome }}" }
+        - { id: "DTBF-*", title: "Mozilla Firefox policy ({{ firefox_settings | length }} settings)", would_change: "{{ firefox_reg.changed | default(false) }}", applied: "{{ stig_firefox }}" }
+      notes:
+        - "Firefox also supports policies.json; the registry policies here require the Firefox ADMX/policy support enabled."
+  when: stig_compliance_report | bool
+  tags: [report]
+
+- name: Write JSON compliance artifact to control node
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/{{ inventory_hostname }}_win_browsers_stig.json"
+    mode: "0640"
+    content: "{{ browsers_stig_results | to_nice_json }}"
+  delegate_to: localhost
+  when: stig_compliance_report | bool
+  tags: [report]
+
+- name: Summarize
+  ansible.builtin.debug:
+    msg: "{{ inventory_hostname }}: Browser STIGs {{ 'enforced' if apply_changes | bool else 'dry-run' }} (Edge={{ stig_edge }}, Chrome={{ stig_chrome }}, Firefox={{ stig_firefox }})."
+  when: stig_compliance_report | bool
+  tags: [report]

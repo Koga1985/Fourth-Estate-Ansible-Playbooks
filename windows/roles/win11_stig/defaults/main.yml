@@ -1,0 +1,87 @@
+---
+# defaults file for win11_stig
+# Microsoft Windows 11 STIG (DISA, Ver 2 Rel 3) - rule family WN11-*.
+# NIST SP 800-53 Rev 5 aligned.
+#
+# Safe by default: apply_changes=false runs every task in check mode (reports,
+# no changes) and writes a JSON findings artifact. -e apply_changes=true enforces.
+
+# ============================================================
+# Deployment control
+# ============================================================
+apply_changes: false
+artifacts_dir: "/tmp/win11-stig-artifacts"   # on the Ansible control node
+
+# ============================================================
+# Control-area toggles
+# ============================================================
+stig_account_policy: true
+stig_audit_policy: true
+stig_security_options: true
+stig_compliance_report: true
+
+# ============================================================
+# WN11-AC-* - Account / password / lockout policy (secedit)
+# ============================================================
+win_account_policy:
+  MinimumPasswordLength: 14          # WN11-AC-000080
+  PasswordComplexity: 1              # WN11-AC-000090
+  PasswordHistorySize: 24            # WN11-AC-000060
+  MaximumPasswordAge: 60             # WN11-AC-000050
+  MinimumPasswordAge: 1              # WN11-AC-000040
+  ClearTextPassword: 0              # WN11-AC-000100 (reversible encryption off)
+  LockoutBadCount: 3                 # WN11-AC-000020
+  LockoutDuration: 15                # WN11-AC-000010 (minutes)
+  ResetLockoutCount: 15              # WN11-AC-000030 (minutes)
+
+# ============================================================
+# WN11-AU-* - Advanced audit policy subcategories (auditpol)
+# Each becomes: AuditPol /set /subcategory:"<name>" /success:enable /failure:enable
+# ============================================================
+win_audit_subcategories:
+  - { name: "Credential Validation", success: true, failure: true }          # WN11-AU-000050
+  - { name: "Security Group Management", success: true, failure: true }       # WN11-AU-000100
+  - { name: "User Account Management", success: true, failure: true }         # WN11-AU-000110
+  - { name: "Process Creation", success: true, failure: false }               # WN11-AU-000240
+  - { name: "Logon", success: true, failure: true }                           # WN11-AU-000280
+  - { name: "Logoff", success: true, failure: false }                         # WN11-AU-000290
+  - { name: "Special Logon", success: true, failure: false }                  # WN11-AU-000300
+  - { name: "Audit Policy Change", success: true, failure: true }             # WN11-AU-000310
+  - { name: "Authentication Policy Change", success: true, failure: false }   # WN11-AU-000320
+  - { name: "Sensitive Privilege Use", success: true, failure: true }         # WN11-AU-000350
+  - { name: "IPsec Driver", success: true, failure: true }                    # WN11-AU-000370
+  - { name: "Security State Change", success: true, failure: false }          # WN11-AU-000380
+  - { name: "Other System Events", success: true, failure: true }             # WN11-AU-000440
+
+# ============================================================
+# WN11-SO-* / WN11-CC-* - Security options / computer config (registry)
+# ============================================================
+win_registry_settings:
+  - { id: "WN11-SO-000150", path: 'HKLM:\System\CurrentControlSet\Control\Lsa', name: "NoLMHash", data: 1, type: dword }
+  - { id: "WN11-SO-000250", path: 'HKLM:\System\CurrentControlSet\Control\Lsa', name: "RestrictAnonymous", data: 1, type: dword }
+  - { id: "WN11-SO-000240", path: 'HKLM:\System\CurrentControlSet\Control\Lsa', name: "RestrictAnonymousSAM", data: 1, type: dword }
+  - { id: "WN11-SO-000300", path: 'HKLM:\System\CurrentControlSet\Control\Lsa\MSV1_0', name: "NTLMMinClientSec", data: 537395200, type: dword }
+  - { id: "WN11-SO-000310", path: 'HKLM:\System\CurrentControlSet\Control\Lsa\MSV1_0', name: "NTLMMinServerSec", data: 537395200, type: dword }
+  - { id: "WN11-CC-000350", path: 'HKLM:\Software\Policies\Microsoft\Windows\WinRM\Client', name: "AllowBasic", data: 0, type: dword }
+  - { id: "WN11-CC-000360", path: 'HKLM:\Software\Policies\Microsoft\Windows\WinRM\Client', name: "AllowUnencryptedTraffic", data: 0, type: dword }
+  - { id: "WN11-CC-000380", path: 'HKLM:\Software\Policies\Microsoft\Windows\WinRM\Service', name: "AllowUnencryptedTraffic", data: 0, type: dword }
+  - { id: "WN11-CC-000270", path: 'HKLM:\Software\Policies\Microsoft\Windows\System', name: "EnableSmartScreen", data: 1, type: dword }
+  - { id: "WN11-SO-000050", path: 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Policies\System', name: "LegalNoticeCaption", data: "DoD Notice and Consent Banner", type: string }
+  - { id: "WN11-SO-000060", path: 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Policies\System', name: "InactivityTimeoutSecs", data: 900, type: dword }
+
+# DoD logon legal notice text (WN11-SO-000050)
+win_legal_notice_text: >-
+  You are accessing a U.S. Government (USG) Information System (IS) that is
+  provided for USG-authorized use only. By using this IS (which includes any
+  device attached to this IS), you consent to the conditions in the full DoD
+  Notice and Consent Banner.
+
+# ============================================================
+# Reporting metadata
+# ============================================================
+compliance_frameworks:
+  - dod_stig
+  - nist_800_53
+  - nist_800_171
+stig_benchmark: "Microsoft Windows 11 STIG"
+stig_version: "V2R3"
