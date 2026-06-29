@@ -1,0 +1,30 @@
+---
+# Control-plane / global service hardening
+# CISC-RT-000130 (source routing) | CISC-RT-000150 (CoPP) | NIST SC-5, CM-7
+
+- name: CISC-RT-000130 - Disable insecure global IP services
+  cisco.ios.ios_config:
+    lines: "{{ svc_lines }}"
+  vars:
+    svc_lines: >-
+      {{
+        (['no ip source-route'] if rtr_disable_source_route else []) +
+        (['no service pad'] if rtr_disable_pad else []) +
+        (['no ip bootp server'] if rtr_disable_bootp else []) +
+        (['no ip gratuitous-arps'] if rtr_disable_gratuitous_arp else [])
+      }}
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: rtr_services
+  notify: save running-config
+  tags: [stig_cat2, "CISC-RT-000130"]
+
+- name: CISC-RT-000150 - Apply Control Plane Policing (CoPP) service-policy
+  cisco.ios.ios_config:
+    parents: "control-plane"
+    lines:
+      - "service-policy input {{ rtr_copp_policy_name }}"
+  when: rtr_copp_policy_name | length > 0
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: rtr_copp
+  notify: save running-config
+  tags: [stig_cat2, "CISC-RT-000150"]

@@ -1,0 +1,38 @@
+---
+# Per-interface hardening
+# CISC-RT-000160 (proxy-arp/redirects/directed-broadcast) | CISC-RT-000390 (uRPF)
+# NIST SC-5, SC-7
+
+- name: CISC-RT-000160/000390 - Harden internal interfaces (uRPF, no proxy-arp/redirects)
+  cisco.ios.ios_config:
+    parents: "interface {{ item }}"
+    lines: "{{ iface_lines }}"
+  vars:
+    iface_lines: >-
+      {{
+        ['no ip proxy-arp', 'no ip redirects', 'no ip directed-broadcast'] +
+        (['ip verify unicast source reachable-via rx'] if rtr_enable_urpf else [])
+      }}
+  loop: "{{ rtr_internal_interfaces }}"
+  loop_control:
+    label: "{{ item }}"
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: rtr_internal
+  notify: save running-config
+  tags: [stig_cat2, "CISC-RT-000160", "CISC-RT-000390"]
+
+- name: CISC-RT-000160 - Harden external interfaces (also disable unreachables)
+  cisco.ios.ios_config:
+    parents: "interface {{ item }}"
+    lines:
+      - no ip proxy-arp
+      - no ip redirects
+      - no ip directed-broadcast
+      - no ip unreachables
+  loop: "{{ rtr_external_interfaces }}"
+  loop_control:
+    label: "{{ item }}"
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: rtr_external
+  notify: save running-config
+  tags: [stig_cat2, "CISC-RT-000160"]

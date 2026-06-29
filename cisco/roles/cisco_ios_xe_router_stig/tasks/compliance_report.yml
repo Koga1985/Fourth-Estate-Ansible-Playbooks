@@ -1,0 +1,37 @@
+---
+# Cisco IOS XE Router STIG compliance/remediation artifact (JSON).
+
+- name: Assemble result map
+  ansible.builtin.set_fact:
+    rtr_stig_results:
+      meta:
+        host: "{{ inventory_hostname }}"
+        timestamp: "{{ ansible_date_time.iso8601 | default(lookup('pipe', 'date -u +%Y-%m-%dT%H:%M:%SZ')) }}"
+        benchmark: "{{ stig_benchmark }}"
+        version: "{{ stig_version }}"
+        mode: "{{ 'enforce' if apply_changes | bool else 'dry-run' }}"
+        compliance_frameworks: "{{ compliance_frameworks }}"
+      controls:
+        - { id: "CISC-RT-000130", title: "Insecure global IP services disabled", changed: "{{ rtr_services.changed | default(false) }}" }
+        - { id: "CISC-RT-000150", title: "Control Plane Policing applied", changed: "{{ rtr_copp.changed | default(false) }}" }
+        - { id: "CISC-RT-000160", title: "Interface proxy-arp/redirects/directed-bcast off", changed: "{{ (rtr_internal.changed | default(false)) or (rtr_external.changed | default(false)) }}" }
+        - { id: "CISC-RT-000390", title: "uRPF on internal interfaces", changed: "{{ rtr_internal.changed | default(false) }}" }
+        - { id: "CISC-RT-000010", title: "BGP neighbor authentication", changed: "{{ rtr_bgp.changed | default(false) }}" }
+        - { id: "CISC-RT-000490", title: "BGP GTSM / TTL security", changed: "{{ rtr_bgp.changed | default(false) }}" }
+        - { id: "CISC-RT-000020", title: "OSPF interface authentication", changed: "{{ rtr_ospf.changed | default(false) }}" }
+  tags: [report]
+
+- name: Write JSON compliance artifact
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/{{ inventory_hostname }}_ios_xe_router_stig.json"
+    mode: "0640"
+    content: "{{ rtr_stig_results | to_nice_json }}"
+  delegate_to: localhost
+  tags: [report]
+
+- name: Summarize
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }}: IOS XE Router STIG {{ 'enforced' if apply_changes | bool else 'dry-run' }}.
+      Artifact: {{ artifacts_dir }}/{{ inventory_hostname }}_ios_xe_router_stig.json
+  tags: [report]

@@ -1,0 +1,39 @@
+---
+# tasks file for cisco_ios_xe_router_stig
+
+- name: Ensure artifacts directory exists
+  ansible.builtin.file:
+    path: "{{ artifacts_dir }}"
+    state: directory
+    mode: "0750"
+  delegate_to: localhost
+  run_once: true
+  changed_when: false
+  tags: [always]
+
+- name: Show run mode
+  ansible.builtin.debug:
+    msg: >-
+      cisco_ios_xe_router_stig on {{ inventory_hostname }} -
+      {{ 'ENFORCING' if apply_changes | bool else 'DRY-RUN / check mode only' }}
+  tags: [always]
+
+- name: Control-plane / global service hardening (CISC-RT-000130/000150)
+  ansible.builtin.import_tasks: control_plane.yml
+  when: stig_control_plane | bool
+  tags: [stig, control_plane]
+
+- name: Per-interface hardening - uRPF, proxy-arp, redirects (CISC-RT-000150/000160/000390)
+  ansible.builtin.import_tasks: interface_hardening.yml
+  when: stig_interface_hardening | bool
+  tags: [stig, interfaces]
+
+- name: Routing protocol authentication - BGP/OSPF (CISC-RT-000010/000020/000235/000490)
+  ansible.builtin.import_tasks: routing_auth.yml
+  when: stig_routing_auth | bool
+  tags: [stig, routing]
+
+- name: Compliance report
+  ansible.builtin.import_tasks: compliance_report.yml
+  when: stig_compliance_report | bool
+  tags: [stig, report]

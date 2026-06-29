@@ -1,0 +1,79 @@
+---
+# defaults file for cisco_ios_xe_router_stig
+# Cisco IOS XE Router STIG (CISC-RT-XXXXXX) - routing/control-plane hardening on
+# IOS XE routers, via the certified cisco.ios collection. Complements the
+# cisco_ios_xe_l2_stig (switch) and shares the NDM management plane.
+# NIST SP 800-53 Rev 5 aligned.
+#
+# Safe by default: apply_changes=false runs every task in check mode (reports
+# the changes it WOULD make). Use -e apply_changes=true to enforce; config is
+# saved to startup-config via the handler.
+
+# ============================================================
+# Connection (network_cli via cisco.ios)
+# ============================================================
+ansible_network_os: cisco.ios.ios
+ansible_connection: ansible.netcommon.network_cli
+
+# ============================================================
+# Deployment control
+# ============================================================
+apply_changes: false
+save_config_when_changed: true
+artifacts_dir: "/tmp/cisco-ios-xe-router-artifacts"
+
+# ============================================================
+# Control-area toggles
+# ============================================================
+stig_control_plane: true
+stig_interface_hardening: true
+stig_routing_auth: true
+stig_compliance_report: true
+
+# ============================================================
+# CISC-RT-000xxx - Control plane / global service hardening
+# ============================================================
+rtr_disable_source_route: true            # CISC-RT-000130 - no ip source-route
+rtr_disable_pad: true                     # no service pad
+rtr_disable_bootp: true                   # no ip bootp server
+rtr_disable_gratuitous_arp: true          # no ip gratuitous-arps
+# CISC-RT-000150 - CoPP policy name (must already define class-maps/policy-map)
+rtr_copp_policy_name: ""                   # e.g. "CONTROL-PLANE-POLICY" (applied if set)
+
+# ============================================================
+# CISC-RT-000150/000160/000390 - Per-interface hardening
+# ============================================================
+rtr_internal_interfaces:                  # uRPF + no proxy-arp/redirects
+  - GigabitEthernet0/0/1
+rtr_external_interfaces:                   # also disable unreachables
+  - GigabitEthernet0/0/0
+rtr_enable_urpf: true                      # CISC-RT-000390 - ip verify unicast source reachable-via rx
+
+# ============================================================
+# CISC-RT-000010/000235/000490 - BGP neighbor security
+# ============================================================
+rtr_bgp_as: ""                             # e.g. "65001" (required for BGP tasks)
+rtr_bgp_peers: []
+# Example:
+# rtr_bgp_peers:
+#   - neighbor: "10.1.1.2"
+#     password: "{{ vault_rtr_bgp_key }}"
+#     ttl_security_hops: 2
+#     max_prefixes: 1000
+
+# ============================================================
+# CISC-RT-000020 - OSPF interface authentication
+# ============================================================
+rtr_ospf_auth_interfaces: []
+# Example:
+# rtr_ospf_auth_interfaces:
+#   - interface: "GigabitEthernet0/0/1"
+#     md5_key_id: 1
+#     md5_key: "{{ vault_rtr_ospf_key }}"
+
+compliance_frameworks:
+  - dod_stig
+  - nist_800_53
+  - nist_800_171
+stig_benchmark: "Cisco IOS XE Router RTR STIG"
+stig_version: "V3R2"
