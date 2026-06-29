@@ -1,0 +1,40 @@
+---
+# FortiGate STIG compliance/remediation artifact (JSON).
+
+- name: Assemble result map
+  ansible.builtin.set_fact:
+    fgt_stig_results:
+      meta:
+        host: "{{ inventory_hostname }}"
+        vdom: "{{ fortios_vdom }}"
+        timestamp: "{{ ansible_date_time.iso8601 | default(lookup('pipe', 'date -u +%Y-%m-%dT%H:%M:%SZ')) }}"
+        benchmark: "{{ stig_benchmark }}"
+        version: "{{ stig_version }}"
+        mode: "{{ 'enforce' if apply_changes | bool else 'dry-run' }}"
+        compliance_frameworks: "{{ compliance_frameworks }}"
+      controls:
+        - { id: "FGFW-ND-000026", title: "Pre/post login banner", changed: "{{ fgt_global_admin.changed | default(false) }}" }
+        - { id: "FGFW-ND-000136", title: "Admin idle timeout", changed: "{{ fgt_global_admin.changed | default(false) }}" }
+        - { id: "FGFW-ND-000330", title: "Admin lockout threshold/duration", changed: "{{ fgt_global_admin.changed | default(false) }}" }
+        - { id: "FGFW-ND-000139", title: "Admin password policy", changed: "{{ fgt_pwd.changed | default(false) }}" }
+        - { id: "FGFW-ND-000125", title: "Admin trusted hosts", changed: "{{ fgt_trusthost.changed | default(false) }}" }
+        - { id: "FGFW-ND-000150", title: "Strong crypto + TLS 1.2 floor", changed: "{{ fgt_crypto.changed | default(false) }}" }
+        - { id: "FGFW-ND-000350", title: "NTP configured", changed: "{{ fgt_ntp.changed | default(false) }}" }
+        - { id: "FGFW-ND-000098", title: "Remote syslog", changed: "{{ fgt_syslog.changed | default(false) }}" }
+        - { id: "FGFW-ND-000200", title: "SNMPv3 only", changed: "{{ (fgt_snmp_sysinfo.changed | default(false)) or (fgt_snmp_user.changed | default(false)) }}" }
+  tags: [report]
+
+- name: Write JSON compliance artifact
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/{{ inventory_hostname }}_fortigate_stig.json"
+    mode: "0640"
+    content: "{{ fgt_stig_results | to_nice_json }}"
+  delegate_to: localhost
+  tags: [report]
+
+- name: Summarize
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }}: FortiGate STIG {{ 'enforced' if apply_changes | bool else 'dry-run' }}.
+      Artifact: {{ artifacts_dir }}/{{ inventory_hostname }}_fortigate_stig.json
+  tags: [report]

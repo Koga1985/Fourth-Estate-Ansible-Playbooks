@@ -1,0 +1,48 @@
+---
+# Admin authentication, lockout, timeout, password policy, DoD banner
+# FGFW-ND-000026 (banner) | FGFW-ND-000136 (timeout) | FGFW-ND-000330 (lockout)
+# FGFW-ND-000139 (password policy) | FGFW-ND-000125 (trusted hosts)
+# NIST AC-7, AC-8, AC-11, IA-5, AC-17
+
+- name: FGFW-ND-000136/000330/000026 - Global admin timeout, lockout and banner
+  fortinet.fortios.fortios_system_global:
+    vdom: "{{ fortios_vdom }}"
+    system_global:
+      admintimeout: "{{ fgt_admin_timeout_minutes }}"
+      admin_lockout_threshold: "{{ fgt_admin_lockout_threshold }}"
+      admin_lockout_duration: "{{ fgt_admin_lockout_duration_seconds }}"
+      pre_login_banner: "enable"
+      post_login_banner: "enable"
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: fgt_global_admin
+  tags: [stig_cat2, "FGFW-ND-000136", "FGFW-ND-000330", "FGFW-ND-000026"]
+
+- name: FGFW-ND-000139 - Administrator password policy
+  fortinet.fortios.fortios_system_password_policy:
+    vdom: "{{ fortios_vdom }}"
+    system_password_policy:
+      status: "enable"
+      apply_to: "admin-password"
+      minimum_length: "{{ fgt_password_min_length }}"
+      min_lower_case_letter: "{{ fgt_password_min_lower }}"
+      min_upper_case_letter: "{{ fgt_password_min_upper }}"
+      min_number: "{{ fgt_password_min_number }}"
+      min_non_alphanumeric: "{{ fgt_password_min_nonalpha }}"
+      change_4_characters: "enable"
+      expire_status: "enable"
+      expire_day: "{{ fgt_password_expire_days }}"
+      reuse_password: "{{ 'disable' if fgt_password_reuse_disabled else 'enable' }}"
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: fgt_pwd
+  tags: [stig_cat2, "FGFW-ND-000139"]
+
+- name: FGFW-ND-000125 - Restrict admin access with trusted hosts
+  fortinet.fortios.fortios_system_admin:
+    vdom: "{{ fortios_vdom }}"
+    state: present
+    system_admin:
+      name: "{{ fgt_admin_account }}"
+      trusthost1: "{{ fgt_admin_trusthosts[0] | default('10.0.0.0 255.255.255.0') }}"
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: fgt_trusthost
+  tags: [stig_cat2, "FGFW-ND-000125"]
