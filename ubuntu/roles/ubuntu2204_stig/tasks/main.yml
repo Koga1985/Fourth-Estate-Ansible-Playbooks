@@ -1,0 +1,275 @@
+---
+# tasks file for ubuntu2204_stig (consolidated)
+
+- name: Verify target is Ubuntu 22.04
+  ansible.builtin.assert:
+    that:
+      - ansible_facts['distribution'] == "Ubuntu"
+      - ansible_facts['distribution_version'] is version('22.04', '>=')
+    fail_msg: "ubuntu2204_stig targets Ubuntu 22.04+ (found {{ ansible_facts['distribution'] }} {{ ansible_facts['distribution_version'] }})."
+  tags: [always]
+
+- name: Ensure local artifacts directory exists
+  ansible.builtin.file:
+    path: "{{ artifacts_dir }}"
+    state: directory
+    mode: "0750"
+  delegate_to: localhost
+  run_once: true
+  changed_when: false
+  tags: [always]
+
+- name: Show run mode
+  ansible.builtin.debug:
+    msg: "ubuntu2204_stig on {{ inventory_hostname }} - {{ 'ENFORCING' if apply_changes | bool else 'DRY-RUN / check mode only' }}"
+  tags: [always]
+
+# --- Banner (UBTU-22-255010) ---
+- name: UBTU-22-255010 - Configure DoD banner (/etc/issue and /etc/issue.net)
+  ansible.builtin.copy:
+    dest: "{{ item }}"
+    content: "{{ ubuntu_dod_banner }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - /etc/issue
+    - /etc/issue.net
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: u_banner
+  when: stig_banner | bool
+  tags: [stig_cat2, banner, "UBTU-22-255010"]
+
+# --- Packages (UBTU-22-215xxx / 651xxx) ---
+- name: UBTU-22-215010 - Remove prohibited packages
+  ansible.builtin.apt:
+    name: "{{ ubuntu_packages_absent }}"
+    state: absent
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: u_pkgs_absent
+  when: stig_packages_services | bool
+  tags: [stig_cat1, packages, "UBTU-22-215010"]
+
+- name: UBTU-22-651010 - Install required security packages
+  ansible.builtin.apt:
+    name: "{{ ubuntu_packages_present }}"
+    state: present
+    update_cache: true
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: u_pkgs_present
+  when: stig_packages_services | bool
+  tags: [stig_cat2, packages, "UBTU-22-651010"]
+
+- name: UBTU-22-251010 - Enable the UFW firewall
+  community.general.ufw:
+    state: enabled
+    policy: deny
+    direction: incoming
+  check_mode: "{{ not (apply_changes | bool) }}"
+  when:
+    - stig_packages_services | bool
+    - apply_changes | bool
+  register: u_ufw
+  tags: [stig_cat2, packages, "UBTU-22-251010"]
+
+- name: UBTU-22-232010 - Ensure AppArmor is enabled and running
+  ansible.builtin.systemd:
+    name: apparmor
+    enabled: true
+    state: started
+  check_mode: "{{ not (apply_changes | bool) }}"
+  when:
+    - stig_packages_services | bool
+    - apply_changes | bool
+  register: u_apparmor
+  tags: [stig_cat2, packages, "UBTU-22-232010"]
+
+# --- SSH (UBTU-22-2552xx) ---
+- name: UBTU-22-2552xx - Write SSH STIG drop-in
+  ansible.builtin.copy:
+    dest: "{{ ubuntu_sshd_dropin }}"
+    owner: root
+    group: root
+    mode: "0600"
+    content: |
+      # Managed by ubuntu2204_stig - {{ stig_benchmark }} {{ stig_version }}
+      Banner {{ ubuntu_ssh_banner }}
+      PermitRootLogin {{ ubuntu_ssh_permit_root_login }}
+      ClientAliveInterval {{ ubuntu_ssh_client_alive_interval }}
+      ClientAliveCountMax {{ ubuntu_ssh_client_alive_count_max }}
+      X11Forwarding {{ ubuntu_ssh_x11_forwarding }}
+      PermitEmptyPasswords {{ ubuntu_ssh_permit_empty_passwords }}
+      IgnoreRhosts {{ ubuntu_ssh_ignore_rhosts }}
+      MACs hmac-sha2-512,hmac-sha2-256
+      Ciphers aes256-ctr,aes192-ctr,aes128-ctr
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: u_sshd
+  when: stig_sshd | bool
+  notify: restart ssh
+  tags: [stig_cat2, ssh, "UBTU-22-255045"]
+
+# --- PAM / accounts (UBTU-22-611xxx / 411xxx) ---
+- name: UBTU-22-611xxx - Configure password quality (pwquality.conf)
+  ansible.builtin.lineinfile:
+    path: /etc/security/pwquality.conf
+    regexp: '^#?\s*{{ item.key }}\s*='
+    line: "{{ item.key }} = {{ item.value }}"
+    create: true
+    owner: root
+    group: root
+    mode: "0644"
+  loop: "{{ ubuntu_pwquality | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: u_pwquality
+  when: stig_accounts_pam | bool
+  tags: [stig_cat2, pam, "UBTU-22-611015"]
+
+- name: UBTU-22-411045 - Configure account lockout (faillock.conf)
+  ansible.builtin.lineinfile:
+    path: /etc/security/faillock.conf
+    regexp: '^#?\s*{{ item.key }}\s*='
+    line: "{{ item.key }} = {{ item.value }}"
+    create: true
+    owner: root
+    group: root
+    mode: "0644"
+  loop: "{{ ubuntu_faillock | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: u_faillock
+  when: stig_accounts_pam | bool
+  tags: [stig_cat2, pam, "UBTU-22-411045"]
+
+- name: UBTU-22-411xxx - Configure login.defs (aging, hashing, umask)
+  ansible.builtin.lineinfile:
+    path: /etc/login.defs
+    regexp: '^#?\s*{{ item.key }}\s'
+    line: "{{ item.key }}\t{{ item.value }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - { key: "PASS_MAX_DAYS", value: "{{ ubuntu_pass_max_days }}" }
+    - { key: "PASS_MIN_DAYS", value: "{{ ubuntu_pass_min_days }}" }
+    - { key: "ENCRYPT_METHOD", value: "{{ ubuntu_encrypt_method }}" }
+    - { key: "UMASK", value: "{{ ubuntu_umask }}" }
+  loop_control:
+    label: "{{ item.key }}"
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: u_login_defs
+  when: stig_accounts_pam | bool
+  tags: [stig_cat2, accounts, "UBTU-22-411010", "UBTU-22-611010"]
+
+- name: UBTU-22-411030 - Set default account inactivity lock (useradd)
+  ansible.builtin.lineinfile:
+    path: /etc/default/useradd
+    regexp: '^#?INACTIVE='
+    line: "INACTIVE={{ ubuntu_account_inactive_days }}"
+    create: true
+    owner: root
+    group: root
+    mode: "0644"
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: u_inactive
+  when: stig_accounts_pam | bool
+  tags: [stig_cat2, accounts, "UBTU-22-411030"]
+
+- name: UBTU-22-412010 - Enforce interactive session timeout (TMOUT)
+  ansible.builtin.copy:
+    dest: /etc/profile.d/99-stig-tmout.sh
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by ubuntu2204_stig - UBTU-22-412010 session timeout
+      TMOUT={{ ubuntu_session_tmout }}
+      readonly TMOUT
+      export TMOUT
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: u_tmout
+  when: stig_accounts_pam | bool
+  tags: [stig_cat2, accounts, "UBTU-22-412010"]
+
+# --- auditd (UBTU-22-653xxx) ---
+- name: UBTU-22-653xxx - Configure auditd.conf disk-handling actions
+  ansible.builtin.lineinfile:
+    path: /etc/audit/auditd.conf
+    regexp: '^#?\s*{{ item.key }}\s*='
+    line: "{{ item.key }} = {{ item.value }}"
+    owner: root
+    group: root
+    mode: "0640"
+  loop:
+    - { key: "space_left_action", value: "{{ ubuntu_auditd_space_left_action }}" }
+    - { key: "disk_full_action", value: "{{ ubuntu_auditd_disk_full_action }}" }
+    - { key: "max_log_file_action", value: "{{ ubuntu_auditd_max_log_file_action }}" }
+  loop_control:
+    label: "{{ item.key }}"
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: u_auditd
+  when: stig_auditd | bool
+  notify: restart auditd
+  tags: [stig_cat2, audit, "UBTU-22-653010"]
+
+# --- kernel sysctl ---
+- name: UBTU-22-2nnxxx - Apply kernel sysctl hardening
+  ansible.posix.sysctl:
+    name: "{{ item.key }}"
+    value: "{{ item.value }}"
+    sysctl_file: /etc/sysctl.d/99-stig.conf
+    sysctl_set: "{{ apply_changes | bool }}"
+    state: present
+    reload: "{{ apply_changes | bool }}"
+  loop: "{{ ubuntu_sysctl | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: u_sysctl
+  when: stig_kernel_sysctl | bool
+  tags: [stig_cat2, kernel]
+
+# --- report ---
+- name: Assemble compliance result map
+  ansible.builtin.set_fact:
+    ubuntu_stig_results:
+      meta:
+        host: "{{ inventory_hostname }}"
+        os: "{{ ansible_facts['distribution'] }} {{ ansible_facts['distribution_version'] }}"
+        timestamp: "{{ ansible_date_time.iso8601 }}"
+        benchmark: "{{ stig_benchmark }}"
+        version: "{{ stig_version }}"
+        mode: "{{ 'enforce' if apply_changes | bool else 'dry-run' }}"
+        compliance_frameworks: "{{ compliance_frameworks }}"
+      controls:
+        - { id: "UBTU-22-255010", title: "DoD banner", would_change: "{{ u_banner.changed | default(false) }}" }
+        - { id: "UBTU-22-215010", title: "Prohibited packages removed", would_change: "{{ u_pkgs_absent.changed | default(false) }}" }
+        - { id: "UBTU-22-651010", title: "Required packages installed", would_change: "{{ u_pkgs_present.changed | default(false) }}" }
+        - { id: "UBTU-22-251010", title: "UFW firewall enabled", would_change: "{{ u_ufw.changed | default(false) }}" }
+        - { id: "UBTU-22-232010", title: "AppArmor enabled", would_change: "{{ u_apparmor.changed | default(false) }}" }
+        - { id: "UBTU-22-255045", title: "SSH daemon hardened", would_change: "{{ u_sshd.changed | default(false) }}" }
+        - { id: "UBTU-22-611015", title: "Password quality", would_change: "{{ u_pwquality.changed | default(false) }}" }
+        - { id: "UBTU-22-411045", title: "Account lockout (faillock)", would_change: "{{ u_faillock.changed | default(false) }}" }
+        - { id: "UBTU-22-411010", title: "Account aging / hashing", would_change: "{{ u_login_defs.changed | default(false) }}" }
+        - { id: "UBTU-22-412010", title: "Session timeout", would_change: "{{ u_tmout.changed | default(false) }}" }
+        - { id: "UBTU-22-653010", title: "auditd disk actions", would_change: "{{ u_auditd.changed | default(false) }}" }
+        - { id: "UBTU-22-kernel", title: "Kernel sysctl", would_change: "{{ u_sysctl.changed | default(false) }}" }
+  when: stig_compliance_report | bool
+  tags: [report]
+
+- name: Write JSON compliance artifact
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/{{ inventory_hostname }}_ubuntu2204_stig.json"
+    mode: "0640"
+    content: "{{ ubuntu_stig_results | to_nice_json }}"
+  delegate_to: localhost
+  when: stig_compliance_report | bool
+  tags: [report]
+
+- name: Summarize
+  ansible.builtin.debug:
+    msg: "{{ inventory_hostname }}: {{ ubuntu_stig_results.controls | selectattr('would_change') | list | length }} of {{ ubuntu_stig_results.controls | length }} controls {{ 'need remediation (dry-run)' if not (apply_changes | bool) else 'remediated' }}."
+  when: stig_compliance_report | bool
+  tags: [report]
