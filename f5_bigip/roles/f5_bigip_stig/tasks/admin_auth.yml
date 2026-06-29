@@ -1,0 +1,30 @@
+---
+# Banner, idle timeout, account lockout, password policy
+# F5BI-DM-000019 (banner) | F5BI-DM-000091 (idle timeout)
+# F5BI-DM-000033 (lockout) | F5BI-DM-000131 (password policy)
+# NIST AC-7, AC-8, AC-11, IA-5
+# Singleton system settings are applied with tmsh via bigip_command (enforce
+# mode only); SSH daemon settings use the dedicated module with check-mode.
+
+- name: F5BI-DM-000019 - Configure SSH login banner
+  f5networks.f5_modules.bigip_device_sshd:
+    banner: "enabled"
+    banner_text: "{{ f5_login_banner }}"
+    inactivity_timeout: "{{ f5_sshd_inactivity_timeout }}"
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: f5_sshd
+  notify: save bigip config
+  tags: [stig_cat2, "F5BI-DM-000019", "F5BI-DM-000091"]
+
+- name: F5BI-DM-000019/000091/000033/000131 - Apply GUI banner, timeout, lockout, password policy (tmsh)
+  f5networks.f5_modules.bigip_command:
+    commands:
+      - "modify sys global-settings gui-security-banner enabled gui-security-banner-text \"{{ f5_login_banner }}\""
+      - "modify sys httpd auth-pam-idle-timeout {{ f5_idle_timeout_seconds }}"
+      - "modify cli global-settings idle-timeout {{ (f5_idle_timeout_seconds / 60) | int }}"
+      - "modify auth password-policy policy-enforcement enabled minimum-length {{ f5_password_min_length }} required-uppercase {{ f5_password_required_uppercase }} required-lowercase {{ f5_password_required_lowercase }} required-numeric {{ f5_password_required_numeric }} required-special {{ f5_password_required_special }} max-duration {{ f5_password_max_duration }} expiration-warning {{ f5_password_expiration_warning }} max-login-failures {{ f5_lockout_max_failures }}"
+  when: apply_changes | bool
+  register: f5_global_auth
+  changed_when: f5_global_auth is not skipped
+  notify: save bigip config
+  tags: [stig_cat2, "F5BI-DM-000019", "F5BI-DM-000033", "F5BI-DM-000131"]

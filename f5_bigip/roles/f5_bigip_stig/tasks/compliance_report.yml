@@ -1,0 +1,38 @@
+---
+# F5 BIG-IP STIG compliance/remediation artifact (JSON).
+
+- name: Assemble result map
+  ansible.builtin.set_fact:
+    f5_stig_results:
+      meta:
+        host: "{{ inventory_hostname }}"
+        timestamp: "{{ ansible_date_time.iso8601 | default(lookup('pipe', 'date -u +%Y-%m-%dT%H:%M:%SZ')) }}"
+        benchmark: "{{ stig_benchmark }}"
+        version: "{{ stig_version }}"
+        mode: "{{ 'enforce' if apply_changes | bool else 'dry-run' }}"
+        compliance_frameworks: "{{ compliance_frameworks }}"
+      controls:
+        - { id: "F5BI-DM-000019", title: "SSH/GUI DoD banner", changed: "{{ (f5_sshd.changed | default(false)) or (f5_global_auth.changed | default(false)) }}" }
+        - { id: "F5BI-DM-000091", title: "Idle timeout (GUI/CLI/SSH)", changed: "{{ (f5_sshd.changed | default(false)) or (f5_global_auth.changed | default(false)) }}" }
+        - { id: "F5BI-DM-000033", title: "Account lockout", changed: "{{ f5_global_auth.changed | default(false) }}" }
+        - { id: "F5BI-DM-000131", title: "Password policy", changed: "{{ f5_global_auth.changed | default(false) }}" }
+        - { id: "F5BI-DM-000107", title: "Mgmt httpd TLS 1.2 + ciphers", changed: "{{ f5_httpd.changed | default(false) }}" }
+        - { id: "F5BI-DM-000350", title: "NTP servers", changed: "{{ f5_ntp.changed | default(false) }}" }
+        - { id: "F5BI-DM-000098", title: "Remote syslog", changed: "{{ f5_syslog.changed | default(false) }}" }
+        - { id: "F5BI-DM-000200", title: "SNMPv3 only", changed: "{{ (f5_snmp_acl.changed | default(false)) or (f5_snmp_v3.changed | default(false)) }}" }
+  tags: [report]
+
+- name: Write JSON compliance artifact
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/{{ inventory_hostname }}_f5_bigip_stig.json"
+    mode: "0640"
+    content: "{{ f5_stig_results | to_nice_json }}"
+  delegate_to: localhost
+  tags: [report]
+
+- name: Summarize
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }}: F5 BIG-IP STIG {{ 'enforced' if apply_changes | bool else 'dry-run' }}.
+      Artifact: {{ artifacts_dir }}/{{ inventory_hostname }}_f5_bigip_stig.json
+  tags: [report]

@@ -1,0 +1,86 @@
+---
+# defaults file for f5_bigip_stig
+# F5 BIG-IP Device Management STIG (F5BI-DM-*) management-plane hardening via the
+# certified f5networks.f5_modules collection (iControl REST over httpapi).
+# NIST SP 800-53 Rev 5 aligned.
+#
+# Safe by default: apply_changes=false runs module tasks in check mode (reports,
+# no change) and skips tmsh command tasks. With apply_changes=true changes are
+# applied and persisted (save sys config handler).
+
+# ============================================================
+# Connection (httpapi - set in inventory)
+# ============================================================
+# ansible_network_os=f5networks.f5_modules.bigip, ansible_connection=httpapi
+
+# ============================================================
+# Deployment control
+# ============================================================
+apply_changes: false
+save_config_when_changed: true
+artifacts_dir: "/tmp/f5-bigip-stig-artifacts"
+
+# ============================================================
+# Control-area toggles
+# ============================================================
+stig_admin_auth: true
+stig_mgmt_services: true
+stig_logging_ntp: true
+stig_snmp: true
+stig_compliance_report: true
+
+# ============================================================
+# F5BI-DM-0000xx - Banner, idle timeout, lockout, password policy
+# ============================================================
+f5_idle_timeout_seconds: 600           # GUI/httpd + tmsh idle timeout
+f5_sshd_inactivity_timeout: 600
+f5_lockout_max_failures: 3
+f5_password_min_length: 15
+f5_password_required_uppercase: 1
+f5_password_required_lowercase: 1
+f5_password_required_numeric: 1
+f5_password_required_special: 1
+f5_password_max_duration: 60
+f5_password_expiration_warning: 7
+f5_login_banner: >-
+  You are accessing a U.S. Government (USG) Information System (IS) that is
+  provided for USG-authorized use only. By using this IS you consent to the
+  conditions in the full DoD Notice and Consent Banner.
+
+# ============================================================
+# F5BI-DM-0001xx - Secure management services (httpd/sshd)
+# ============================================================
+f5_httpd_ssl_protocols: "TLSv1_2"
+f5_httpd_ssl_ciphersuite: "ECDHE+AES-GCM:ECDHE+AES"
+f5_redirect_http_to_https: true
+f5_sshd_banner: true
+
+# ============================================================
+# F5BI-DM-0003xx - Logging and NTP
+# ============================================================
+f5_ntp_servers:
+  - "{{ vault_ntp_server_primary | default('10.0.0.30') }}"
+  - "{{ vault_ntp_server_secondary | default('10.0.0.31') }}"
+f5_timezone: "UTC"
+f5_remote_syslog_servers:
+  - host: "{{ vault_syslog_server_primary | default('10.0.0.20') }}"
+    remote_port: 514
+
+# ============================================================
+# F5BI-DM-000200 - SNMPv3 only
+# ============================================================
+f5_snmp_allowed_subnets:
+  - "10.0.0.0/24"
+f5_snmp_v3_user: "{{ vault_f5_snmp_user | default('snmpv3mon') }}"
+f5_snmp_v3_auth: "{{ vault_f5_snmp_auth | default('CHANGE_ME_AUTH') }}"
+f5_snmp_v3_priv: "{{ vault_f5_snmp_priv | default('CHANGE_ME_PRIV') }}"
+
+# ============================================================
+# Reporting metadata
+# ============================================================
+compliance_frameworks:
+  - dod_stig
+  - nist_800_53
+  - nist_800_171
+stig_benchmark: "F5 BIG-IP Device Management STIG"
+stig_version: "V2R5"

@@ -1,0 +1,23 @@
+---
+# SNMPv3 only - restrict allowed managers, remove v1/v2c communities
+# F5BI-DM-000200 | NIST SC-8, IA-2
+
+- name: F5BI-DM-000200 - Restrict SNMP access to authorized subnets
+  f5networks.f5_modules.bigip_snmp:
+    allowed_addresses: "{{ f5_snmp_allowed_subnets }}"
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: f5_snmp_acl
+  notify: save bigip config
+  tags: [stig_cat2, "F5BI-DM-000200"]
+
+- name: F5BI-DM-000200 - Configure SNMPv3 user and remove v1/v2c communities (tmsh)
+  f5networks.f5_modules.bigip_command:
+    commands:
+      - "modify sys snmp users add { {{ f5_snmp_v3_user }} { username {{ f5_snmp_v3_user }} auth-protocol sha auth-password {{ f5_snmp_v3_auth }} privacy-protocol aes privacy-password {{ f5_snmp_v3_priv }} security-level auth-privacy access ro } }"
+      - "modify sys snmp communities none"
+  no_log: true
+  when: apply_changes | bool
+  register: f5_snmp_v3
+  changed_when: f5_snmp_v3 is not skipped
+  notify: save bigip config
+  tags: [stig_cat2, "F5BI-DM-000200"]

@@ -1,0 +1,44 @@
+---
+# tasks file for f5_bigip_stig
+
+- name: Ensure artifacts directory exists
+  ansible.builtin.file:
+    path: "{{ artifacts_dir }}"
+    state: directory
+    mode: "0750"
+  delegate_to: localhost
+  run_once: true
+  changed_when: false
+  tags: [always]
+
+- name: Show run mode
+  ansible.builtin.debug:
+    msg: >-
+      f5_bigip_stig on {{ inventory_hostname }} -
+      {{ 'ENFORCING' if apply_changes | bool else 'DRY-RUN / check mode only' }}
+  tags: [always]
+
+- name: Banner, idle timeout, lockout, password policy (F5BI-DM-0000xx)
+  ansible.builtin.import_tasks: admin_auth.yml
+  when: stig_admin_auth | bool
+  tags: [stig, admin]
+
+- name: Secure management services - httpd/sshd (F5BI-DM-0001xx)
+  ansible.builtin.import_tasks: mgmt_services.yml
+  when: stig_mgmt_services | bool
+  tags: [stig, services]
+
+- name: Logging and NTP (F5BI-DM-0003xx)
+  ansible.builtin.import_tasks: logging_ntp.yml
+  when: stig_logging_ntp | bool
+  tags: [stig, logging, ntp]
+
+- name: SNMPv3 only (F5BI-DM-000200)
+  ansible.builtin.import_tasks: snmp.yml
+  when: stig_snmp | bool
+  tags: [stig, snmp]
+
+- name: Compliance report
+  ansible.builtin.import_tasks: compliance_report.yml
+  when: stig_compliance_report | bool
+  tags: [stig, report]
