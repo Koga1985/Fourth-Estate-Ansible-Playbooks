@@ -1,0 +1,78 @@
+---
+# tasks file for mongodb_stig
+
+- name: Ensure artifacts directory exists
+  ansible.builtin.file:
+    path: "{{ artifacts_dir }}"
+    state: directory
+    mode: "0750"
+  delegate_to: localhost
+  run_once: true
+  changed_when: false
+  tags: [always]
+
+- name: Show run mode
+  ansible.builtin.debug:
+    msg: "mongodb_stig on {{ inventory_hostname }} - {{ 'ENFORCING (+restart)' if apply_changes | bool else 'DRY-RUN / check mode only' }}"
+  tags: [always]
+
+- name: Assess current mongod.conf for key STIG settings
+  ansible.builtin.slurp:
+    src: "{{ mongod_conf_path }}"
+  register: mongod_current_raw
+  failed_when: false
+  changed_when: false
+  tags: [assess]
+
+- name: Render managed STIG mongod.conf
+  ansible.builtin.template:
+    src: mongod.conf.j2
+    dest: "{{ mongod_conf_path }}"
+    owner: root
+    group: root
+    mode: "0644"
+    backup: true
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: mongod_conf
+  notify: restart mongod
+  tags: [stig_cat2, config]
+
+- name: Assemble compliance result map
+  ansible.builtin.set_fact:
+    mongodb_stig_results:
+      meta:
+        host: "{{ inventory_hostname }}"
+        config: "{{ mongod_conf_path }}"
+        timestamp: "{{ ansible_date_time.iso8601 | default(lookup('pipe', 'date -u +%Y-%m-%dT%H:%M:%SZ')) }}"
+        benchmark: "{{ stig_benchmark }}"
+        version: "{{ stig_version }}"
+        mode: "{{ 'enforce' if apply_changes | bool else 'dry-run' }}"
+        compliance_frameworks: "{{ compliance_frameworks }}"
+      assessment:
+        authorization_currently_enabled: "{{ 'authorization: enabled' in (mongod_current_raw.content | default('') | b64decode) }}"
+        tls_currently_required: "{{ 'requireTLS' in (mongod_current_raw.content | default('') | b64decode) }}"
+        audit_currently_configured: "{{ 'auditLog' in (mongod_current_raw.content | default('') | b64decode) }}"
+      managed_config_changed: "{{ mongod_conf.changed | default(false) }}"
+      controls:
+        - { id: "authorization", title: "RBAC enabled (security.authorization)", target: "{{ mongodb_authorization }}" }
+        - { id: "tls", title: "TLS required (net.tls.mode)", target: "{{ mongodb_tls_mode }}" }
+        - { id: "javascript", title: "Server-side JavaScript disabled", target: "{{ mongodb_javascript_enabled }}" }
+        - { id: "audit", title: "Audit logging enabled", target: "{{ mongodb_audit_destination }}" }
+        - { id: "bindIp", title: "bindIp not 0.0.0.0", target: "{{ mongodb_bind_ip }}" }
+      notes:
+        - "Create administrative users and least-privilege roles after enabling authorization (mongosh)."
+        - "Provide valid certificate/CA files for requireTLS before enforcing."
+  tags: [report]
+
+- name: Write JSON compliance artifact
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/{{ inventory_hostname }}_mongodb_stig.json"
+    mode: "0640"
+    content: "{{ mongodb_stig_results | to_nice_json }}"
+  delegate_to: localhost
+  tags: [report]
+
+- name: Summarize
+  ansible.builtin.debug:
+    msg: "{{ inventory_hostname }}: MongoDB STIG {{ 'enforced (restart triggered)' if apply_changes | bool else 'assessed (dry-run; review the template diff)' }}."
+  tags: [report]
