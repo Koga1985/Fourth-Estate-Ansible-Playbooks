@@ -1,6 +1,6 @@
 # Fourth Estate Ansible Playbooks
 
-An enterprise-grade collection of **589 roles** and **3,785 YAML files** for infrastructure automation across **42 technology platforms** with emphasis on **DoD STIG, NIST 800-53, NIST 800-171, FedRAMP, and FISMA compliance**.
+An enterprise-grade collection of **595 roles** and **3,830 YAML files** for infrastructure automation across **43 technology platforms** with emphasis on **DoD STIG, NIST 800-53, NIST 800-171, FedRAMP, and FISMA compliance**.
 
 > **New:** 26 dedicated DoD STIG / SRG roles were added covering Cisco network
 > devices (IOS XE L2, NX-OS, ASA, FTD, ACI Router, ISE), Palo Alto PAN-OS,
@@ -15,11 +15,11 @@ This repository provides production-ready Ansible automation for network infrast
 
 ## 📊 Repository Statistics
 
-- **Total Roles:** 589
-- **Total YAML Files:** 3,785
-- **README Documentation Files:** 660
-- **Technology Platforms:** 42
-- **Dedicated DoD STIG / SRG roles:** 33 (see [STIG_COVERAGE_MATRIX.md](./STIG_COVERAGE_MATRIX.md))
+- **Total Roles:** 595
+- **Total YAML Files:** 3,830
+- **README Documentation Files:** 673
+- **Technology Platforms:** 43
+- **Dedicated DoD STIG / SRG roles:** 39 (see [STIG_COVERAGE_MATRIX.md](./STIG_COVERAGE_MATRIX.md))
 - **Compliance Frameworks:** DoD STIG, DoD Cloud Computing SRG, NIST 800-53 Rev 5, NIST 800-171, FedRAMP, FISMA, CIS Benchmarks
 - **Cloud Platforms:** 4 (AWS, Azure, GCP, VMware vSphere)
 - **Database Platforms:** 5 (PostgreSQL, MySQL, Oracle, IBM DB2, Cloud Databases)
@@ -248,7 +248,8 @@ Fourth-Estate-Ansible-Playbooks/
 │   ├── mysql/                     # MySQL/MariaDB (8 roles)
 │   ├── oracle/                    # Oracle Database (8 roles + oracle_db_stig)
 │   ├── db2/                       # IBM DB2 V10.5 STIG (1 role: db2_stig)
-│   └── mssql/                     # Microsoft SQL Server STIG (1 role: mssql_stig)
+│   ├── mssql/                     # Microsoft SQL Server STIG (1 role: mssql_stig)
+│   └── mongodb/                   # MongoDB Enterprise STIG (1 role: mongodb_stig)
 │
 ├── dragos/                        # Dragos OT monitoring (12 roles)
 │   ├── README.md
@@ -285,6 +286,11 @@ Fourth-Estate-Ansible-Playbooks/
 │   ├── roles/
 │   ├── playbooks/
 │   └── tasks/
+│
+├── juniper/                       # Juniper Junos STIG (1 role: junos_stig)
+│   ├── README.md
+│   ├── requirements.yml
+│   └── roles/
 │
 ├── infoblox/                      # Infoblox DNS/DHCP (12 roles)
 │   ├── README.md
@@ -707,6 +713,12 @@ rule-family detail and run instructions are in
 | MySQL 8.0 | MySQL STIG | `databases/mysql/roles/mysql80_stig` |
 | Oracle Database (12c/19c) | `O121-*` | `databases/oracle/roles/oracle_db_stig` |
 | Microsoft SQL Server | `SQL6-D0-*` | `databases/mssql/roles/mssql_stig` |
+| Juniper Junos (NDM + Router) | `JUNI-ND-*`, `JUNI-RT-*` | `juniper/roles/junos_stig` |
+| Cisco IOS XE Router (RTR) | `CISC-RT-*` | `cisco/roles/cisco_ios_xe_router_stig` |
+| Splunk Enterprise | `SPLK-CL-*` | `splunk/roles/splunk_enterprise_stig` |
+| Windows 11 | `WN11-*` | `windows/roles/win11_stig` |
+| Web Browsers (Edge/Chrome/Firefox) | `EDGE-00-*`, `DTBC-*`, `DTBF-*` | `windows/roles/win_browsers_stig` |
+| MongoDB Enterprise | `mongod.conf` | `databases/mongodb/roles/mongodb_stig` |
 | OpenShift 4.x (V2R4) | `CNTR-OS-*` | `openshift/roles/ocp_stig_profile` |
 | IBM DB2 V10.5 (V2R1) | `DB2X-00-*` | `databases/db2/roles/db2_stig` |
 | Application Server SRG (V4R4) | `SRG-APP-*-AS-*` | `app_web_server/roles/tomcat_app_server_srg` |

@@ -76,9 +76,20 @@ README + runnable playbook + inventory/vars examples + JSON artifact.
 | 37 | **Oracle Database STIG (12c/19c)** | ✅ Delivered | `databases/oracle/roles/oracle_db_stig` (`O121-*`, sqlplus) |
 | 38 | **Microsoft SQL Server STIG** | ✅ Delivered | `databases/mssql/roles/mssql_stig` (`SQL6-D0-*`, `community.general.mssql_script`) |
 
-> Remaining candidate STIGs (Juniper Junos, Cisco IOS-XE Router RTR, Windows 11,
-> MongoDB, Apache/Tomcat-specific, Splunk Enterprise, browsers, and additional
-> SRG assessment roles) are catalogued for future tiers.
+### Tier 3 — additional network / endpoint / database
+
+| # | STIG | Status | Location |
+|---|------|--------|----------|
+| 39 | **Juniper Junos STIG (NDM + Router)** | ✅ Delivered | `juniper/roles/junos_stig` (`JUNI-ND-*`, `JUNI-RT-*`, `junipernetworks.junos`) |
+| 40 | **Cisco IOS XE Router (RTR) STIG** | ✅ Delivered | `cisco/roles/cisco_ios_xe_router_stig` (`CISC-RT-*`, `cisco.ios`) |
+| 41 | **Splunk Enterprise STIG** | ✅ Delivered | `splunk/roles/splunk_enterprise_stig` (`SPLK-CL-*`, `community.general.ini_file`) |
+| 42 | **Microsoft Windows 11 STIG** | ✅ Delivered | `windows/roles/win11_stig` (`WN11-*`, `ansible.windows`) |
+| 43 | **Web Browser STIGs (Edge/Chrome/Firefox)** | ✅ Delivered | `windows/roles/win_browsers_stig` (`EDGE-00-*`, `DTBC-*`, `DTBF-*`) |
+| 44 | **MongoDB Enterprise STIG** | ✅ Delivered | `databases/mongodb/roles/mongodb_stig` (`mongod.conf`) |
+
+> Remaining candidate STIGs (Apache 2.4 / Tomcat 9 version-specific, SUSE SLES 15,
+> Oracle Linux, macOS, Exchange/SharePoint, additional SRG assessment roles) are
+> catalogued for future tiers.
 
 ---
 

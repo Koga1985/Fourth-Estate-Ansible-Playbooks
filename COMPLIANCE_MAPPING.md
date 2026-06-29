@@ -834,6 +834,12 @@ authoritative request-to-role traceability and run instructions, see
 | `databases/mysql/roles/mysql80_stig` | Oracle MySQL 8.0 | MySQL STIG | AC, AU, IA, SC |
 | `databases/oracle/roles/oracle_db_stig` | Oracle Database 12c/19c | `O121-*` | AC, AU, IA, SC |
 | `databases/mssql/roles/mssql_stig` | Microsoft SQL Server 2016 | `SQL6-D0-*` | AC, AU, CM, SC |
+| `juniper/roles/junos_stig` | Juniper Junos (NDM + Router) | `JUNI-ND-*`, `JUNI-RT-*` | AC, AU, IA, SC, CM |
+| `cisco/roles/cisco_ios_xe_router_stig` | Cisco IOS XE Router | `CISC-RT-*` | AC, SC, CM |
+| `splunk/roles/splunk_enterprise_stig` | Splunk Enterprise | `SPLK-CL-*` | AC, AU, IA, SC |
+| `windows/roles/win11_stig` | Microsoft Windows 11 | `WN11-*` | AC, AU, IA, CM, SC |
+| `windows/roles/win_browsers_stig` | Edge / Chrome / Firefox | `EDGE-00-*`, `DTBC-*`, `DTBF-*` | CM, SC, SI |
+| `databases/mongodb/roles/mongodb_stig` | MongoDB Enterprise | `mongod.conf` | AC, AU, IA, SC |
 | `rhel/roles/rhel9_stig` | RHEL 9 (V2R6) | `RHEL-09-*` | AC, AU, IA, CM, SC, SI |
 | `windows/roles/win_server2022_stig` | Windows Server 2022 (V2R6) + AD + DNS | `WN22-*`, `AD.*`, `WDNS-*` | AC, AU, IA, CM, SC |
 | `openshift/roles/ocp_stig_profile` | OpenShift 4.x (V2R4) | `CNTR-OS-*` | AC, AU, CM, SC |

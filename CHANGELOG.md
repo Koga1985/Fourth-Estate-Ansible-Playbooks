@@ -3,6 +3,19 @@
 All notable changes to the Fourth Estate Ansible Playbooks are documented here.
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [2026-06-29] — Tier 3 STIG expansion (network / endpoint / database)
+
+Added 6 more dedicated STIG roles (1 new platform: `juniper/`, plus `databases/mongodb/`):
+
+- `juniper/roles/junos_stig` — Juniper Junos STIG (NDM `JUNI-ND-*` + Router `JUNI-RT-*`) via `junipernetworks.junos`.
+- `cisco/roles/cisco_ios_xe_router_stig` — Cisco IOS XE Router STIG (`CISC-RT-*`) via `cisco.ios`.
+- `splunk/roles/splunk_enterprise_stig` — Splunk Enterprise STIG (`SPLK-CL-*`) via `community.general.ini_file`.
+- `windows/roles/win11_stig` — Windows 11 STIG (`WN11-*`) via `ansible.windows`.
+- `windows/roles/win_browsers_stig` — Edge/Chrome/Firefox STIGs (`EDGE-00-*`, `DTBC-*`, `DTBF-*`) via `win_regedit`.
+- `databases/mongodb/roles/mongodb_stig` — MongoDB Enterprise STIG (`mongod.conf`).
+
+Repository totals updated: **595 roles**, **3,830 YAML files**, **43 platforms**, **39 dedicated STIG/SRG roles**.
+
 ## [2026-06-28] — Tier 2 STIG expansion (operating systems & databases)
 
 Added 7 more dedicated STIG roles (1 new platform: `ubuntu/`, plus `databases/mssql/`):
