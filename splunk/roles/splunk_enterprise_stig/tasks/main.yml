@@ -1,0 +1,111 @@
+---
+# tasks file for splunk_enterprise_stig
+
+- name: Ensure artifacts directory exists
+  ansible.builtin.file:
+    path: "{{ artifacts_dir }}"
+    state: directory
+    mode: "0750"
+  delegate_to: localhost
+  run_once: true
+  changed_when: false
+  tags: [always]
+
+- name: Show run mode
+  ansible.builtin.debug:
+    msg: "splunk_enterprise_stig on {{ inventory_hostname }} - {{ 'ENFORCING (+restart)' if apply_changes | bool else 'DRY-RUN / check mode only' }}"
+  tags: [always]
+
+- name: SPLK-CL-000070 - Harden Splunk Web (web.conf)
+  community.general.ini_file:
+    path: "{{ splunk_home }}/etc/system/local/web.conf"
+    section: settings
+    option: "{{ item.option }}"
+    value: "{{ item.value }}"
+    owner: "{{ splunk_os_user }}"
+    group: "{{ splunk_os_user }}"
+    mode: "0600"
+    create: true
+  loop:
+    - { option: "enableSplunkWebSSL", value: "{{ 'true' if splunk_web_ssl else 'false' }}" }
+    - { option: "tools.sessions.timeout", value: "{{ splunk_web_session_timeout }}" }
+    - { option: "ui_inactivity_timeout", value: "{{ splunk_web_inactivity_timeout }}" }
+    - { option: "login_content", value: "{{ splunk_web_login_banner }}" }
+  loop_control:
+    label: "web.conf {{ item.option }}"
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: splunk_web
+  notify: restart splunk
+  tags: [stig_cat2, web, "SPLK-CL-000070"]
+
+- name: SPLK-CL-000090 - Enforce splunkd TLS version + ciphers (server.conf [sslConfig])
+  community.general.ini_file:
+    path: "{{ splunk_home }}/etc/system/local/server.conf"
+    section: sslConfig
+    option: "{{ item.option }}"
+    value: "{{ item.value }}"
+    owner: "{{ splunk_os_user }}"
+    group: "{{ splunk_os_user }}"
+    mode: "0600"
+    create: true
+  loop:
+    - { option: "sslVersions", value: "{{ splunk_ssl_versions }}" }
+    - { option: "cipherSuite", value: "{{ splunk_cipher_suite }}" }
+  loop_control:
+    label: "server.conf {{ item.option }}"
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: splunk_ssl
+  notify: restart splunk
+  tags: [stig_cat2, ssl, "SPLK-CL-000090"]
+
+- name: SPLK-CL-000400 - Password and lockout policy (server.conf [general])
+  community.general.ini_file:
+    path: "{{ splunk_home }}/etc/system/local/server.conf"
+    section: general
+    option: "{{ item.option }}"
+    value: "{{ item.value }}"
+    owner: "{{ splunk_os_user }}"
+    group: "{{ splunk_os_user }}"
+    mode: "0600"
+    create: true
+  loop:
+    - { option: "minPasswordLength", value: "{{ splunk_min_password_length }}" }
+  loop_control:
+    label: "server.conf {{ item.option }}"
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: splunk_policy
+  notify: restart splunk
+  tags: [stig_cat2, policy, "SPLK-CL-000400"]
+
+- name: Assemble compliance result map
+  ansible.builtin.set_fact:
+    splunk_stig_results:
+      meta:
+        host: "{{ inventory_hostname }}"
+        splunk_home: "{{ splunk_home }}"
+        timestamp: "{{ ansible_date_time.iso8601 | default(lookup('pipe', 'date -u +%Y-%m-%dT%H:%M:%SZ')) }}"
+        benchmark: "{{ stig_benchmark }}"
+        version: "{{ stig_version }}"
+        mode: "{{ 'enforce' if apply_changes | bool else 'dry-run' }}"
+        compliance_frameworks: "{{ compliance_frameworks }}"
+      controls:
+        - { id: "SPLK-CL-000070", title: "Splunk Web TLS + session timeout + banner", would_change: "{{ splunk_web.changed | default(false) }}" }
+        - { id: "SPLK-CL-000090", title: "splunkd TLS 1.2 + ciphers", would_change: "{{ splunk_ssl.changed | default(false) }}" }
+        - { id: "SPLK-CL-000400", title: "Password/lockout policy", would_change: "{{ splunk_policy.changed | default(false) }}" }
+      notes:
+        - "Configure external authentication (LDAP/SAML) and RBAC roles per SPLK-CL requirements (authentication.conf / authorize.conf)."
+        - "Audit logging (_audit index) is enabled by default; forward to a remote indexer/SIEM per the STIG."
+  tags: [report]
+
+- name: Write JSON compliance artifact
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/{{ inventory_hostname }}_splunk_stig.json"
+    mode: "0640"
+    content: "{{ splunk_stig_results | to_nice_json }}"
+  delegate_to: localhost
+  tags: [report]
+
+- name: Summarize
+  ansible.builtin.debug:
+    msg: "{{ inventory_hostname }}: Splunk STIG {{ 'enforced (restart triggered)' if apply_changes | bool else 'dry-run' }}."
+  tags: [report]
