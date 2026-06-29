@@ -1,0 +1,50 @@
+---
+# Server MIME types, WebDAV, and Schannel TLS hardening
+# IISW-SV-000130 (MIME) | IISW-SV-000159 (TLS) | NIST CM-7, SC-8, SC-23
+
+- name: IISW-SV-000130 - Remove executable MIME type mappings
+  ansible.windows.win_powershell:
+    script: |
+      param([bool]$Apply, [string[]]$Exts)
+      $ErrorActionPreference = 'Stop'
+      Import-Module WebAdministration
+      $changed = $false
+      foreach ($e in $Exts) {
+        $existing = Get-WebConfigurationProperty -Filter "system.webServer/staticContent/mimeMap[@fileExtension='$e']" -Name '.' -ErrorAction SilentlyContinue
+        if ($existing) {
+          $changed = $true
+          if ($Apply) { Remove-WebConfigurationProperty -Filter 'system.webServer/staticContent' -Name '.' -AtElement @{fileExtension=$e} }
+        }
+      }
+      $Ansible.Changed = $changed
+    parameters:
+      Apply: "{{ apply_changes | bool }}"
+      Exts: "{{ iis_remove_mime_extensions }}"
+  register: iis_mime
+  tags: [stig_cat2, "IISW-SV-000130"]
+
+- name: IISW-SV-000159 - Disable legacy TLS/SSL protocols (Schannel)
+  ansible.windows.win_regedit:
+    path: 'HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\{{ item }}\Server'
+    name: Enabled
+    data: 0
+    type: dword
+  loop: "{{ iis_disable_protocols }}"
+  loop_control:
+    label: "disable {{ item }}"
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: iis_tls_disable
+  tags: [stig_cat2, "IISW-SV-000159"]
+
+- name: IISW-SV-000159 - Enable TLS 1.2 (Schannel)
+  ansible.windows.win_regedit:
+    path: 'HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\{{ item }}\Server'
+    name: Enabled
+    data: 1
+    type: dword
+  loop: "{{ iis_enable_protocols }}"
+  loop_control:
+    label: "enable {{ item }}"
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: iis_tls_enable
+  tags: [stig_cat2, "IISW-SV-000159"]

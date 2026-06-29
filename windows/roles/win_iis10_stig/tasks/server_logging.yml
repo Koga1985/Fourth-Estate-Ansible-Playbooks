@@ -1,0 +1,23 @@
+---
+# Server logging (IISW-SV-000110/000115) | NIST AU-3, AU-12
+
+- name: IISW-SV-000110 - Configure W3C logging fields at server level
+  ansible.windows.win_powershell:
+    script: |
+      param([bool]$Apply, [string[]]$Fields)
+      $ErrorActionPreference = 'Stop'
+      Import-Module WebAdministration
+      $desired = ($Fields -join ',')
+      $current = (Get-WebConfigurationProperty -Filter 'system.applicationHost/sites/siteDefaults/logFile' -Name 'logExtFileFlags' -ErrorAction SilentlyContinue).Value
+      $changed = ($current -ne $desired)
+      if ($changed -and $Apply) {
+        Set-WebConfigurationProperty -Filter 'system.applicationHost/sites/siteDefaults/logFile' -Name 'logExtFileFlags' -Value $desired
+        Set-WebConfigurationProperty -Filter 'system.applicationHost/sites/siteDefaults/logFile' -Name 'logFormat' -Value 'W3C'
+      }
+      $Ansible.Result = @{ current = "$current"; desired = $desired }
+      $Ansible.Changed = $changed
+    parameters:
+      Apply: "{{ apply_changes | bool }}"
+      Fields: "{{ iis_log_fields }}"
+  register: iis_logging
+  tags: [stig_cat2, "IISW-SV-000110"]

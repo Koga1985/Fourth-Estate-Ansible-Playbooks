@@ -1,0 +1,39 @@
+---
+# tasks file for win_iis10_stig
+
+- name: Ensure artifacts directory exists on control node
+  ansible.builtin.file:
+    path: "{{ artifacts_dir }}"
+    state: directory
+    mode: "0750"
+  delegate_to: localhost
+  run_once: true
+  changed_when: false
+  tags: [always]
+
+- name: Show run mode
+  ansible.builtin.debug:
+    msg: >-
+      win_iis10_stig on {{ inventory_hostname }} (site '{{ iis_site_name }}') -
+      {{ 'ENFORCING' if apply_changes | bool else 'DRY-RUN / report only' }}
+  tags: [always]
+
+- name: Server logging and request limits (IISW-SV-*)
+  ansible.builtin.import_tasks: server_logging.yml
+  when: stig_server_logging | bool
+  tags: [stig, server, logging]
+
+- name: Server modules, MIME, and TLS (IISW-SV-*)
+  ansible.builtin.import_tasks: server_modules_tls.yml
+  when: stig_server_modules_tls | bool
+  tags: [stig, server, tls]
+
+- name: Site security - browsing, SSL, session, app pool (IISW-SI-*)
+  ansible.builtin.import_tasks: site_security.yml
+  when: stig_site_security | bool
+  tags: [stig, site]
+
+- name: Compliance report
+  ansible.builtin.import_tasks: compliance_report.yml
+  when: stig_compliance_report | bool
+  tags: [stig, report]

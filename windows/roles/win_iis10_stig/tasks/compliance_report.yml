@@ -1,0 +1,36 @@
+---
+# IIS 10.0 STIG compliance/remediation artifact (JSON).
+
+- name: Assemble result map
+  ansible.builtin.set_fact:
+    iis_stig_results:
+      meta:
+        host: "{{ inventory_hostname }}"
+        site: "{{ iis_site_name }}"
+        timestamp: "{{ ansible_date_time.iso8601 | default('') }}"
+        benchmark: "{{ stig_benchmark }}"
+        version: "{{ stig_version }}"
+        mode: "{{ 'enforce' if apply_changes | bool else 'dry-run' }}"
+        compliance_frameworks: "{{ compliance_frameworks }}"
+      controls:
+        - { id: "IISW-SV-000110", title: "W3C logging fields", would_change: "{{ iis_logging.changed | default(false) }}" }
+        - { id: "IISW-SV-000130", title: "Executable MIME types removed", would_change: "{{ iis_mime.changed | default(false) }}" }
+        - { id: "IISW-SV-000159", title: "Legacy TLS disabled / TLS 1.2 enabled", would_change: "{{ (iis_tls_disable.changed | default(false)) or (iis_tls_enable.changed | default(false)) }}" }
+        - { id: "IISW-SI-000206/210/228", title: "Directory browsing off, session timeout, require SSL", would_change: "{{ iis_site.changed | default(false) }}" }
+        - { id: "IISW-SI-000234", title: "App pool identity not LocalSystem", finding: "{{ (iis_pool.output.identityType | default('unknown')) if iis_pool.output is defined else (iis_pool.result.identityType | default('unknown')) }}" }
+  tags: [report]
+
+- name: Write JSON compliance artifact to control node
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/{{ inventory_hostname }}_iis10_stig.json"
+    mode: "0640"
+    content: "{{ iis_stig_results | to_nice_json }}"
+  delegate_to: localhost
+  tags: [report]
+
+- name: Summarize
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }}: IIS 10.0 STIG {{ 'enforced' if apply_changes | bool else 'dry-run' }}.
+      Artifact: {{ artifacts_dir }}/{{ inventory_hostname }}_iis10_stig.json
+  tags: [report]

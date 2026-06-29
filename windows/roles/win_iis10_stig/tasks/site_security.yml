@@ -1,0 +1,55 @@
+---
+# Site-level hardening
+# IISW-SI-000206 (directory browsing) | IISW-SI-000210 (session timeout)
+# IISW-SI-000228 (require SSL) | IISW-SI-000234 (app pool identity)
+# NIST AC-6, CM-7, SC-8, AC-12
+
+- name: IISW-SI-000206/000210/000228 - Harden site configuration
+  ansible.windows.win_powershell:
+    script: |
+      param([bool]$Apply, [string]$Site, [int]$TimeoutMin)
+      $ErrorActionPreference = 'Stop'
+      Import-Module WebAdministration
+      $report = @{}
+      $changed = $false
+
+      # Directory browsing disabled (IISW-SI-000206)
+      $db = (Get-WebConfigurationProperty -PSPath "IIS:\Sites\$Site" -Filter 'system.webServer/directoryBrowse' -Name 'enabled').Value
+      $report.directoryBrowse = "$db"
+      if ($db -ne $false) { $changed = $true; if ($Apply) { Set-WebConfigurationProperty -PSPath "IIS:\Sites\$Site" -Filter 'system.webServer/directoryBrowse' -Name 'enabled' -Value $false } }
+
+      # Session timeout <= TimeoutMin (IISW-SI-000210)
+      $ts = New-TimeSpan -Minutes $TimeoutMin
+      $cur = (Get-WebConfigurationProperty -PSPath "IIS:\Sites\$Site" -Filter 'system.web/sessionState' -Name 'timeout' -ErrorAction SilentlyContinue).Value
+      $report.sessionTimeout = "$cur"
+      if (-not $cur -or $cur.TotalMinutes -gt $TimeoutMin) { $changed = $true; if ($Apply) { Set-WebConfigurationProperty -PSPath "IIS:\Sites\$Site" -Filter 'system.web/sessionState' -Name 'timeout' -Value $ts } }
+
+      # Require SSL (IISW-SI-000228)
+      $ssl = (Get-WebConfigurationProperty -PSPath "IIS:\Sites\$Site" -Filter 'system.webServer/security/access' -Name 'sslFlags' -ErrorAction SilentlyContinue).Value
+      $report.sslFlags = "$ssl"
+      if ("$ssl" -notmatch 'Ssl') { $changed = $true; if ($Apply) { Set-WebConfigurationProperty -PSPath "IIS:\Sites\$Site" -Filter 'system.webServer/security/access' -Name 'sslFlags' -Value 'Ssl' } }
+
+      $Ansible.Result = $report
+      $Ansible.Changed = $changed
+    parameters:
+      Apply: "{{ apply_changes | bool }}"
+      Site: "{{ iis_site_name }}"
+      TimeoutMin: "{{ iis_session_timeout_minutes }}"
+  register: iis_site
+  tags: [stig_cat2, "IISW-SI-000206", "IISW-SI-000210", "IISW-SI-000228"]
+
+- name: IISW-SI-000234 - Verify application pool identity is not LocalSystem
+  ansible.windows.win_powershell:
+    script: |
+      param([string]$Pool)
+      $ErrorActionPreference = 'Stop'
+      Import-Module WebAdministration
+      $id = (Get-ItemProperty "IIS:\AppPools\$Pool" -Name processModel.identityType -ErrorAction SilentlyContinue).Value
+      $Ansible.Result = @{ identityType = "$id" }
+      $Ansible.Changed = $false
+      if ("$id" -eq 'LocalSystem') { $Ansible.Failed = $true }
+    parameters:
+      Pool: "{{ iis_app_pool_name }}"
+  register: iis_pool
+  failed_when: false
+  tags: [stig_cat1, "IISW-SI-000234"]
