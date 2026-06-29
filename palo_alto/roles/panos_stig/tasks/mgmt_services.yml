@@ -1,0 +1,29 @@
+---
+# Management services - disable insecure protocols, restrict mgmt access
+# PANW-NM-000113 (Telnet) | PANW-NM-000114 (HTTP) | PANW-NM-000125 (permitted IPs)
+# NIST AC-17, CM-7, SC-8
+
+- name: PANW-NM-000113/000114 - Disable Telnet and HTTP management
+  paloaltonetworks.panos.panos_config_element:
+    provider: "{{ panos_provider }}"
+    xpath: "{{ panos_dev_xpath }}/deviceconfig/system/service"
+    element: >-
+      <disable-telnet>{{ 'yes' if panos_disable_telnet else 'no' }}</disable-telnet>
+      <disable-http>{{ 'yes' if panos_disable_http else 'no' }}</disable-http>
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: panos_services
+  notify: commit panos
+  tags: [stig_cat1, "PANW-NM-000113", "PANW-NM-000114"]
+
+- name: PANW-NM-000125 - Restrict management access to authorized subnets
+  paloaltonetworks.panos.panos_config_element:
+    provider: "{{ panos_provider }}"
+    xpath: "{{ panos_dev_xpath }}/deviceconfig/system/permitted-ip"
+    element: "<entry name='{{ item }}'/>"
+  loop: "{{ panos_permitted_mgmt_subnets }}"
+  loop_control:
+    label: "{{ item }}"
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: panos_permitted_ip
+  notify: commit panos
+  tags: [stig_cat2, "PANW-NM-000125"]

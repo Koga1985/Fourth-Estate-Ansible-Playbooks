@@ -1,0 +1,96 @@
+---
+# defaults file for panos_stig
+# Palo Alto Networks PAN-OS STIG - NDM (PANW-NM-*) management-plane hardening,
+# applied via the certified paloaltonetworks.panos collection (PAN-OS XML API).
+# NIST SP 800-53 Rev 5 aligned.
+#
+# Safe by default: apply_changes=false runs every task in check mode (reports,
+# no candidate-config change). With apply_changes=true the candidate config is
+# edited and committed (commit handler). Always review the dry-run first.
+
+# ============================================================
+# Connection (PAN-OS XML API)
+# ============================================================
+panos_provider:
+  ip_address: "{{ ansible_host | default(panos_hostname) }}"
+  username: "{{ panos_username | default('admin') }}"
+  password: "{{ panos_password | default(omit) }}"
+  api_key: "{{ panos_api_key | default(omit) }}"
+panos_vsys: "vsys1"
+panos_device_name: "localhost.localdomain"
+
+# ============================================================
+# Deployment control
+# ============================================================
+apply_changes: false
+commit_when_changed: true
+artifacts_dir: "/tmp/panos-stig-artifacts"
+
+# ============================================================
+# Control-area toggles
+# ============================================================
+stig_admin_auth: true
+stig_mgmt_services: true
+stig_logging_ntp: true
+stig_snmp: true
+stig_compliance_report: true
+
+# ============================================================
+# PANW-NM-000xxx - Admin authentication / password / lockout / banner
+# ============================================================
+# PANW-NM-000330 - account lockout
+panos_lockout_failed_attempts: 3
+panos_lockout_time_minutes: 0          # 0 = locked until admin unlock
+# PANW-NM-000136 - idle timeout (minutes)
+panos_idle_timeout_minutes: 10
+# PANW-NM-000139 - minimum password complexity
+panos_password_min_length: 15
+panos_password_min_uppercase: 1
+panos_password_min_lowercase: 1
+panos_password_min_numeric: 1
+panos_password_min_special: 1
+panos_password_history_count: 5
+panos_password_expiration_days: 60
+# PANW-NM-000020 - external AAA (TACACS+/RADIUS) authentication profile name
+panos_auth_profile: "STIG-AAA"
+# PANW-NM-000026 - DoD login banner
+panos_login_banner: >-
+  You are accessing a U.S. Government (USG) Information System (IS) that is
+  provided for USG-authorized use only. By using this IS you consent to the
+  conditions in the full DoD Notice and Consent Banner.
+
+# ============================================================
+# PANW-NM-0001xx - Management services (secure only)
+# ============================================================
+panos_disable_http: true               # PANW-NM-000114 - no plaintext HTTP mgmt
+panos_disable_telnet: true             # PANW-NM-000113 - no Telnet
+panos_disable_https_no_tls12: true     # enforce TLS 1.2+ for mgmt
+panos_permitted_mgmt_subnets:          # PANW-NM-000125 - restrict mgmt access
+  - "10.0.0.0/24"
+
+# ============================================================
+# PANW-NM-0003xx - Logging and authenticated NTP
+# ============================================================
+panos_syslog_server: "{{ vault_syslog_server_primary | default('10.0.0.20') }}"
+panos_syslog_port: 514
+panos_syslog_transport: "UDP"
+panos_ntp_primary: "{{ vault_ntp_server_primary | default('10.0.0.30') }}"
+panos_ntp_secondary: "{{ vault_ntp_server_secondary | default('10.0.0.31') }}"
+panos_ntp_auth_type: "autokey"         # autokey | symmetric-key
+
+# ============================================================
+# PANW-NM-000200 - SNMPv3 only
+# ============================================================
+panos_snmp_v3_user: "{{ vault_panos_snmp_user | default('snmpv3mon') }}"
+panos_snmp_v3_auth: "{{ vault_panos_snmp_auth | default('CHANGE_ME_AUTH') }}"
+panos_snmp_v3_priv: "{{ vault_panos_snmp_priv | default('CHANGE_ME_PRIV') }}"
+
+# ============================================================
+# Reporting metadata
+# ============================================================
+compliance_frameworks:
+  - dod_stig
+  - nist_800_53
+  - nist_800_171
+stig_benchmark: "Palo Alto Networks PAN-OS NDM STIG"
+stig_version: "V3R1"

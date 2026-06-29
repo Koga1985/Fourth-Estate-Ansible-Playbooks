@@ -1,0 +1,38 @@
+---
+# PAN-OS STIG compliance/remediation artifact (JSON).
+
+- name: Assemble result map
+  ansible.builtin.set_fact:
+    panos_stig_results:
+      meta:
+        host: "{{ inventory_hostname }}"
+        timestamp: "{{ ansible_date_time.iso8601 | default(lookup('pipe', 'date -u +%Y-%m-%dT%H:%M:%SZ')) }}"
+        benchmark: "{{ stig_benchmark }}"
+        version: "{{ stig_version }}"
+        mode: "{{ 'enforce' if apply_changes | bool else 'dry-run' }}"
+        compliance_frameworks: "{{ compliance_frameworks }}"
+      controls:
+        - { id: "PANW-NM-000026", title: "DoD login banner", changed: "{{ panos_banner.changed | default(false) }}" }
+        - { id: "PANW-NM-000136", title: "Idle timeout / admin lockout", changed: "{{ panos_lockout.changed | default(false) }}" }
+        - { id: "PANW-NM-000139", title: "Password complexity", changed: "{{ panos_pwd.changed | default(false) }}" }
+        - { id: "PANW-NM-000113", title: "Telnet/HTTP mgmt disabled", changed: "{{ panos_services.changed | default(false) }}" }
+        - { id: "PANW-NM-000125", title: "Mgmt access restricted (permitted-ip)", changed: "{{ panos_permitted_ip.changed | default(false) }}" }
+        - { id: "PANW-NM-000350", title: "NTP servers", changed: "{{ panos_ntp.changed | default(false) }}" }
+        - { id: "PANW-NM-000098", title: "Remote syslog profile", changed: "{{ (panos_syslog.changed | default(false)) or (panos_log_fwd.changed | default(false)) }}" }
+        - { id: "PANW-NM-000200", title: "SNMPv3 only", changed: "{{ panos_snmp.changed | default(false) }}" }
+  tags: [report]
+
+- name: Write JSON compliance artifact
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/{{ inventory_hostname }}_panos_stig.json"
+    mode: "0640"
+    content: "{{ panos_stig_results | to_nice_json }}"
+  delegate_to: localhost
+  tags: [report]
+
+- name: Summarize
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }}: PAN-OS STIG {{ 'enforced' if apply_changes | bool else 'dry-run (apply with -e apply_changes=true)' }}.
+      Artifact: {{ artifacts_dir }}/{{ inventory_hostname }}_panos_stig.json
+  tags: [report]

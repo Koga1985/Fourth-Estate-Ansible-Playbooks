@@ -1,0 +1,49 @@
+---
+# tasks file for panos_stig
+
+- name: Ensure artifacts directory exists
+  ansible.builtin.file:
+    path: "{{ artifacts_dir }}"
+    state: directory
+    mode: "0750"
+  delegate_to: localhost
+  run_once: true
+  changed_when: false
+  tags: [always]
+
+- name: Set device config xpath base
+  ansible.builtin.set_fact:
+    panos_dev_xpath: "/config/devices/entry[@name='{{ panos_device_name }}']"
+  tags: [always]
+
+- name: Show run mode
+  ansible.builtin.debug:
+    msg: >-
+      panos_stig on {{ inventory_hostname }} -
+      {{ 'ENFORCING (edit + commit)' if apply_changes | bool else 'DRY-RUN (check mode; no candidate change)' }}
+  tags: [always]
+
+- name: Admin authentication, lockout, password policy, banner (PANW-NM-0000xx)
+  ansible.builtin.import_tasks: admin_auth.yml
+  when: stig_admin_auth | bool
+  tags: [stig, admin]
+
+- name: Management services - disable insecure, restrict access (PANW-NM-0001xx)
+  ansible.builtin.import_tasks: mgmt_services.yml
+  when: stig_mgmt_services | bool
+  tags: [stig, services]
+
+- name: Logging and authenticated NTP (PANW-NM-0003xx)
+  ansible.builtin.import_tasks: logging_ntp.yml
+  when: stig_logging_ntp | bool
+  tags: [stig, logging, ntp]
+
+- name: SNMPv3 only (PANW-NM-000200)
+  ansible.builtin.import_tasks: snmp.yml
+  when: stig_snmp | bool
+  tags: [stig, snmp]
+
+- name: Compliance report
+  ansible.builtin.import_tasks: compliance_report.yml
+  when: stig_compliance_report | bool
+  tags: [stig, report]

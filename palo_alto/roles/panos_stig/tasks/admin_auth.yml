@@ -1,0 +1,46 @@
+---
+# Admin authentication, lockout, password policy, DoD banner
+# PANW-NM-000026 (banner) | PANW-NM-000136 (idle timeout)
+# PANW-NM-000330 (lockout) | PANW-NM-000139 (password complexity)
+# NIST AC-8, AC-11, AC-7, IA-5
+
+- name: PANW-NM-000026 - Configure DoD login banner
+  paloaltonetworks.panos.panos_config_element:
+    provider: "{{ panos_provider }}"
+    xpath: "{{ panos_dev_xpath }}/deviceconfig/system"
+    element: "<login-banner>{{ panos_login_banner }}</login-banner>"
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: panos_banner
+  notify: commit panos
+  tags: [stig_cat3, "PANW-NM-000026"]
+
+- name: PANW-NM-000136/000330 - Configure idle timeout and admin lockout
+  paloaltonetworks.panos.panos_config_element:
+    provider: "{{ panos_provider }}"
+    xpath: "{{ panos_dev_xpath }}/deviceconfig/setting/management"
+    element: >-
+      <idle-timeout>{{ panos_idle_timeout_minutes }}</idle-timeout>
+      <admin-lockout><failed-attempts>{{ panos_lockout_failed_attempts }}</failed-attempts>
+      <lockout-time>{{ panos_lockout_time_minutes }}</lockout-time></admin-lockout>
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: panos_lockout
+  notify: commit panos
+  tags: [stig_cat2, "PANW-NM-000136", "PANW-NM-000330"]
+
+- name: PANW-NM-000139 - Enforce administrator password complexity
+  paloaltonetworks.panos.panos_config_element:
+    provider: "{{ panos_provider }}"
+    xpath: "/config/mgt-config"
+    element: >-
+      <password-complexity><enabled>yes</enabled>
+      <minimum-length>{{ panos_password_min_length }}</minimum-length>
+      <minimum-uppercase-letters>{{ panos_password_min_uppercase }}</minimum-uppercase-letters>
+      <minimum-lowercase-letters>{{ panos_password_min_lowercase }}</minimum-lowercase-letters>
+      <minimum-numeric-letters>{{ panos_password_min_numeric }}</minimum-numeric-letters>
+      <minimum-special-characters>{{ panos_password_min_special }}</minimum-special-characters>
+      <password-history-count>{{ panos_password_history_count }}</password-history-count>
+      <expiration-period>{{ panos_password_expiration_days }}</expiration-period></password-complexity>
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: panos_pwd
+  notify: commit panos
+  tags: [stig_cat2, "PANW-NM-000139"]

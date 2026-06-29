@@ -1,0 +1,46 @@
+---
+# Logging and authenticated NTP
+# PANW-NM-000098/000099 (off-box syslog) | PANW-NM-000350/000351 (NTP)
+# NIST AU-4, AU-8, AU-9
+
+- name: PANW-NM-000350 - Configure NTP servers
+  paloaltonetworks.panos.panos_config_element:
+    provider: "{{ panos_provider }}"
+    xpath: "{{ panos_dev_xpath }}/deviceconfig/system/ntp-servers"
+    element: >-
+      <primary-ntp-server><ntp-server-address>{{ panos_ntp_primary }}</ntp-server-address></primary-ntp-server>
+      <secondary-ntp-server><ntp-server-address>{{ panos_ntp_secondary }}</ntp-server-address></secondary-ntp-server>
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: panos_ntp
+  notify: commit panos
+  tags: [stig_cat2, "PANW-NM-000350"]
+
+- name: PANW-NM-000098 - Configure remote syslog server profile
+  paloaltonetworks.panos.panos_config_element:
+    provider: "{{ panos_provider }}"
+    xpath: "/config/shared/log-settings/syslog"
+    element: >-
+      <entry name='STIG-Syslog'><server><entry name='primary'>
+      <server>{{ panos_syslog_server }}</server>
+      <port>{{ panos_syslog_port }}</port>
+      <transport>{{ panos_syslog_transport }}</transport>
+      <format>BSD</format><facility>LOG_USER</facility>
+      </entry></server></entry>
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: panos_syslog
+  notify: commit panos
+  tags: [stig_cat2, "PANW-NM-000098"]
+
+- name: PANW-NM-000099 - Forward config and system logs to syslog
+  paloaltonetworks.panos.panos_config_element:
+    provider: "{{ panos_provider }}"
+    xpath: "{{ panos_dev_xpath }}/log-settings"
+    element: >-
+      <config><match-list><entry name='stig-config'>
+      <send-syslog><member>STIG-Syslog</member></send-syslog></entry></match-list></config>
+      <system><match-list><entry name='stig-system'>
+      <send-syslog><member>STIG-Syslog</member></send-syslog></entry></match-list></system>
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: panos_log_fwd
+  notify: commit panos
+  tags: [stig_cat2, "PANW-NM-000099"]
