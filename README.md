@@ -1,6 +1,6 @@
 # Fourth Estate Ansible Playbooks
 
-An enterprise-grade collection of **582 roles** and **3,734 YAML files** for infrastructure automation across **41 technology platforms** with emphasis on **DoD STIG, NIST 800-53, NIST 800-171, FedRAMP, and FISMA compliance**.
+An enterprise-grade collection of **589 roles** and **3,785 YAML files** for infrastructure automation across **42 technology platforms** with emphasis on **DoD STIG, NIST 800-53, NIST 800-171, FedRAMP, and FISMA compliance**.
 
 > **New:** 26 dedicated DoD STIG / SRG roles were added covering Cisco network
 > devices (IOS XE L2, NX-OS, ASA, FTD, ACI Router, ISE), Palo Alto PAN-OS,
@@ -15,11 +15,11 @@ This repository provides production-ready Ansible automation for network infrast
 
 ## 📊 Repository Statistics
 
-- **Total Roles:** 582
-- **Total YAML Files:** 3,734
-- **README Documentation Files:** 657
-- **Technology Platforms:** 41
-- **Dedicated DoD STIG / SRG roles:** 26 (see [STIG_COVERAGE_MATRIX.md](./STIG_COVERAGE_MATRIX.md))
+- **Total Roles:** 589
+- **Total YAML Files:** 3,785
+- **README Documentation Files:** 660
+- **Technology Platforms:** 42
+- **Dedicated DoD STIG / SRG roles:** 33 (see [STIG_COVERAGE_MATRIX.md](./STIG_COVERAGE_MATRIX.md))
 - **Compliance Frameworks:** DoD STIG, DoD Cloud Computing SRG, NIST 800-53 Rev 5, NIST 800-171, FedRAMP, FISMA, CIS Benchmarks
 - **Cloud Platforms:** 4 (AWS, Azure, GCP, VMware vSphere)
 - **Database Platforms:** 5 (PostgreSQL, MySQL, Oracle, IBM DB2, Cloud Databases)
@@ -246,8 +246,9 @@ Fourth-Estate-Ansible-Playbooks/
 │   ├── README.md
 │   ├── postgresql/                # PostgreSQL (8 roles)
 │   ├── mysql/                     # MySQL/MariaDB (8 roles)
-│   ├── oracle/                    # Oracle Database (8 roles)
-│   └── db2/                       # IBM DB2 V10.5 STIG (1 role: db2_stig)
+│   ├── oracle/                    # Oracle Database (8 roles + oracle_db_stig)
+│   ├── db2/                       # IBM DB2 V10.5 STIG (1 role: db2_stig)
+│   └── mssql/                     # Microsoft SQL Server STIG (1 role: mssql_stig)
 │
 ├── dragos/                        # Dragos OT monitoring (12 roles)
 │   ├── README.md
@@ -362,6 +363,10 @@ Fourth-Estate-Ansible-Playbooks/
 │   ├── README.md
 │   ├── roles/
 │   └── playbooks/
+│
+├── ubuntu/                        # Canonical Ubuntu 22.04 LTS STIG (1 role)
+│   ├── README.md
+│   └── roles/                     # ubuntu2204_stig
 │
 ├── tenable/                       # Tenable Security Center (8 roles)
 │   ├── README.md
@@ -694,7 +699,14 @@ rule-family detail and run instructions are in
 | Microsoft IIS 10.0 (Server + Site) | `IISW-SV-*`, `IISW-SI-*` | `windows/roles/win_iis10_stig` |
 | VMware vSphere 8 (ESXi + vCenter) | `ESXI-80-*`, `VCSA-80-*` | `vmware/roles/vsphere8_stig` |
 | RHEL 9 (V2R6) | `RHEL-09-*` | `rhel/roles/rhel9_stig` |
+| RHEL 8 | `RHEL-08-*` | `rhel/roles/rhel8_stig` |
+| Ubuntu 22.04 LTS | `UBTU-22-*` | `ubuntu/roles/ubuntu2204_stig` |
 | Windows Server 2022 + AD + DNS (V2R6) | `WN22-*`, `AD.*`, `WDNS-*` | `windows/roles/win_server2022_stig` |
+| Windows Server 2019 | `WN19-*` | `windows/roles/win_server2019_stig` |
+| PostgreSQL | `PGS9-00-*` | `databases/postgresql/roles/postgresql_stig` |
+| MySQL 8.0 | MySQL STIG | `databases/mysql/roles/mysql80_stig` |
+| Oracle Database (12c/19c) | `O121-*` | `databases/oracle/roles/oracle_db_stig` |
+| Microsoft SQL Server | `SQL6-D0-*` | `databases/mssql/roles/mssql_stig` |
 | OpenShift 4.x (V2R4) | `CNTR-OS-*` | `openshift/roles/ocp_stig_profile` |
 | IBM DB2 V10.5 (V2R1) | `DB2X-00-*` | `databases/db2/roles/db2_stig` |
 | Application Server SRG (V4R4) | `SRG-APP-*-AS-*` | `app_web_server/roles/tomcat_app_server_srg` |

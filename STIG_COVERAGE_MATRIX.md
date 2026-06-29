@@ -64,9 +64,21 @@ README + runnable playbook + inventory/vars examples + JSON artifact.
 | 30 | **Microsoft IIS 10.0 STIG** | ✅ Delivered | `windows/roles/win_iis10_stig` (`IISW-SV-*`, `IISW-SI-*`, `ansible.windows`) |
 | 31 | **VMware vSphere 8 STIG (ESXi 8 + vCenter 8)** | ✅ Delivered | `vmware/roles/vsphere8_stig` (`ESXI-80-*`, `VCSA-80-*`, `community.vmware`) |
 
-> More candidate STIGs (Juniper Junos, SQL Server 2022, Ubuntu 22.04, RHEL 8,
-> Windows Server 2019/11, Oracle 19c, Apache/Tomcat-specific, Splunk, browsers,
-> and additional SRG assessment roles) are catalogued for future tiers.
+### Tier 2 — operating systems & databases
+
+| # | STIG | Status | Location |
+|---|------|--------|----------|
+| 32 | **RHEL 8 STIG** | ✅ Delivered | `rhel/roles/rhel8_stig` (`RHEL-08-*`, `ansible.builtin`/`ansible.posix`) |
+| 33 | **Canonical Ubuntu 22.04 LTS STIG** | ✅ Delivered | `ubuntu/roles/ubuntu2204_stig` (`UBTU-22-*`, apt/ufw/apparmor) |
+| 34 | **Windows Server 2019 STIG** | ✅ Delivered | `windows/roles/win_server2019_stig` (`WN19-*`, `ansible.windows`) |
+| 35 | **PostgreSQL STIG** | ✅ Delivered | `databases/postgresql/roles/postgresql_stig` (`PGS9-00-*`, `community.postgresql`) |
+| 36 | **Oracle MySQL 8.0 STIG** | ✅ Delivered | `databases/mysql/roles/mysql80_stig` (`community.mysql`) |
+| 37 | **Oracle Database STIG (12c/19c)** | ✅ Delivered | `databases/oracle/roles/oracle_db_stig` (`O121-*`, sqlplus) |
+| 38 | **Microsoft SQL Server STIG** | ✅ Delivered | `databases/mssql/roles/mssql_stig` (`SQL6-D0-*`, `community.general.mssql_script`) |
+
+> Remaining candidate STIGs (Juniper Junos, Cisco IOS-XE Router RTR, Windows 11,
+> MongoDB, Apache/Tomcat-specific, Splunk Enterprise, browsers, and additional
+> SRG assessment roles) are catalogued for future tiers.
 
 ---
 

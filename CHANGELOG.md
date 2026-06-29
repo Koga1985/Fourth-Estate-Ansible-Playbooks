@@ -3,6 +3,20 @@
 All notable changes to the Fourth Estate Ansible Playbooks are documented here.
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [2026-06-28] — Tier 2 STIG expansion (operating systems & databases)
+
+Added 7 more dedicated STIG roles (1 new platform: `ubuntu/`, plus `databases/mssql/`):
+
+- `rhel/roles/rhel8_stig` — RHEL 8 STIG (`RHEL-08-*`) via `ansible.builtin`/`ansible.posix`.
+- `ubuntu/roles/ubuntu2204_stig` — Ubuntu 22.04 LTS STIG (`UBTU-22-*`) via apt/ufw/apparmor/faillock/sysctl.
+- `windows/roles/win_server2019_stig` — Windows Server 2019 STIG (`WN19-*`) via `ansible.windows`.
+- `databases/postgresql/roles/postgresql_stig` — PostgreSQL STIG (`PGS9-00-*`) via `community.postgresql`.
+- `databases/mysql/roles/mysql80_stig` — MySQL 8.0 STIG via `community.mysql`.
+- `databases/oracle/roles/oracle_db_stig` — Oracle Database STIG (`O121-*`) via sqlplus.
+- `databases/mssql/roles/mssql_stig` — SQL Server STIG (`SQL6-D0-*`) via `community.general.mssql_script`.
+
+Repository totals updated: **589 roles**, **3,785 YAML files**, **42 platforms**, **33 dedicated STIG/SRG roles**.
+
 ## [2026-06-27] — Tier 1 STIG expansion (network/web/virtualization)
 
 Added 5 more dedicated STIG roles on top of existing vendor platforms, same

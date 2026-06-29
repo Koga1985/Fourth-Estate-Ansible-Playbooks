@@ -827,6 +827,13 @@ authoritative request-to-role traceability and run instructions, see
 | `f5_bigip/roles/f5_bigip_stig` | F5 BIG-IP Device Management | `F5BI-DM-*` | AC, AU, IA, SC |
 | `windows/roles/win_iis10_stig` | Microsoft IIS 10.0 (Server + Site) | `IISW-SV-*`, `IISW-SI-*` | AC, AU, CM, SC |
 | `vmware/roles/vsphere8_stig` | VMware vSphere 8 (ESXi + vCenter) | `ESXI-80-*`, `VCSA-80-*` | AC, AU, CM, SC, AC-11 |
+| `rhel/roles/rhel8_stig` | Red Hat Enterprise Linux 8 | `RHEL-08-*` | AC, AU, IA, CM, SC, SI |
+| `ubuntu/roles/ubuntu2204_stig` | Canonical Ubuntu 22.04 LTS | `UBTU-22-*` | AC, AU, IA, CM, SC, SI |
+| `windows/roles/win_server2019_stig` | Windows Server 2019 (+ AD + DNS) | `WN19-*`, `AD.*`, `WDNS-*` | AC, AU, IA, CM, SC |
+| `databases/postgresql/roles/postgresql_stig` | PostgreSQL (Crunchy Data) | `PGS9-00-*` | AC, AU, IA, SC |
+| `databases/mysql/roles/mysql80_stig` | Oracle MySQL 8.0 | MySQL STIG | AC, AU, IA, SC |
+| `databases/oracle/roles/oracle_db_stig` | Oracle Database 12c/19c | `O121-*` | AC, AU, IA, SC |
+| `databases/mssql/roles/mssql_stig` | Microsoft SQL Server 2016 | `SQL6-D0-*` | AC, AU, CM, SC |
 | `rhel/roles/rhel9_stig` | RHEL 9 (V2R6) | `RHEL-09-*` | AC, AU, IA, CM, SC, SI |
 | `windows/roles/win_server2022_stig` | Windows Server 2022 (V2R6) + AD + DNS | `WN22-*`, `AD.*`, `WDNS-*` | AC, AU, IA, CM, SC |
 | `openshift/roles/ocp_stig_profile` | OpenShift 4.x (V2R4) | `CNTR-OS-*` | AC, AU, CM, SC |
