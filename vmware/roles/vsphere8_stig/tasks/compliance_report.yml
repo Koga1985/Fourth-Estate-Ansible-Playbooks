@@ -1,0 +1,38 @@
+---
+# vSphere 8 STIG compliance/remediation artifact (JSON).
+
+- name: Assemble result map
+  ansible.builtin.set_fact:
+    vsphere_stig_results:
+      meta:
+        vcenter: "{{ vcenter_hostname }}"
+        esxi_hosts: "{{ esxi_hosts }}"
+        timestamp: "{{ ansible_date_time.iso8601 | default(lookup('pipe', 'date -u +%Y-%m-%dT%H:%M:%SZ')) }}"
+        benchmark: "{{ stig_benchmark }}"
+        version: "{{ stig_version }}"
+        mode: "{{ 'enforce' if apply_changes | bool else 'dry-run' }}"
+        compliance_frameworks: "{{ compliance_frameworks }}"
+      controls:
+        - { id: "ESXI-80-advanced", title: "Advanced host settings (banner/lockout/timeouts/MOB/syslog)", changed: "{{ esxi_adv.changed | default(false) }}" }
+        - { id: "ESXI-80-000193", title: "SSH service off", changed: "{{ esxi_ssh.changed | default(false) }}" }
+        - { id: "ESXI-80-000035", title: "ESXi Shell off", changed: "{{ esxi_shell.changed | default(false) }}" }
+        - { id: "ESXI-80-000124", title: "NTP configured", changed: "{{ esxi_ntp.changed | default(false) }}" }
+        - { id: "ESXI-80-000201", title: "Lockdown mode", changed: "{{ esxi_lockdown.changed | default(false) }}" }
+        - { id: "VCSA-80-000034", title: "vCenter logging level", changed: "{{ vcsa_logging.changed | default(false) }}" }
+  tags: [report]
+
+- name: Write JSON compliance artifact
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/vsphere8_stig.json"
+    mode: "0640"
+    content: "{{ vsphere_stig_results | to_nice_json }}"
+  delegate_to: localhost
+  tags: [report]
+
+- name: Summarize
+  ansible.builtin.debug:
+    msg: >-
+      vSphere 8 STIG {{ 'enforced' if apply_changes | bool else 'dry-run' }} across
+      {{ esxi_hosts | length }} ESXi host(s).
+      Artifact: {{ artifacts_dir }}/vsphere8_stig.json
+  tags: [report]

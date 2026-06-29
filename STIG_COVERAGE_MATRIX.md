@@ -50,6 +50,26 @@ production-ready" Ansible playbooks against what exists in this repository.
 
 ---
 
+## Additional STIG roles (beyond the original request)
+
+Built on top of existing vendor platforms in the repo (Tier 1 expansion). Same
+grab-and-go contract: safe-by-default, real rule IDs, certified collections,
+README + runnable playbook + inventory/vars examples + JSON artifact.
+
+| # | STIG | Status | Location |
+|---|------|--------|----------|
+| 27 | **Palo Alto PAN-OS NDM STIG** | ✅ Delivered | `palo_alto/roles/panos_stig` (`PANW-NM-*`, `paloaltonetworks.panos`) |
+| 28 | **Fortinet FortiGate Firewall STIG** | ✅ Delivered | `fortinet/roles/fortigate_stig` (`FGFW-ND-*`, `fortinet.fortios`) |
+| 29 | **F5 BIG-IP Device Management STIG** | ✅ Delivered | `f5_bigip/roles/f5_bigip_stig` (`F5BI-DM-*`, `f5networks.f5_modules`) |
+| 30 | **Microsoft IIS 10.0 STIG** | ✅ Delivered | `windows/roles/win_iis10_stig` (`IISW-SV-*`, `IISW-SI-*`, `ansible.windows`) |
+| 31 | **VMware vSphere 8 STIG (ESXi 8 + vCenter 8)** | ✅ Delivered | `vmware/roles/vsphere8_stig` (`ESXI-80-*`, `VCSA-80-*`, `community.vmware`) |
+
+> More candidate STIGs (Juniper Junos, SQL Server 2022, Ubuntu 22.04, RHEL 8,
+> Windows Server 2019/11, Oracle 19c, Apache/Tomcat-specific, Splunk, browsers,
+> and additional SRG assessment roles) are catalogued for future tiers.
+
+---
+
 ## Roadmap detail
 
 | ID | Scope | Intended approach |

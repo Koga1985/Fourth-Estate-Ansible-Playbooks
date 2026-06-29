@@ -1,24 +1,25 @@
 # Fourth Estate Ansible Playbooks
 
-An enterprise-grade collection of **577 roles** and **3,684 YAML files** for infrastructure automation across **41 technology platforms** with emphasis on **DoD STIG, NIST 800-53, NIST 800-171, FedRAMP, and FISMA compliance**.
+An enterprise-grade collection of **582 roles** and **3,734 YAML files** for infrastructure automation across **41 technology platforms** with emphasis on **DoD STIG, NIST 800-53, NIST 800-171, FedRAMP, and FISMA compliance**.
 
-> **New:** 21 dedicated DoD STIG / SRG roles were added covering Cisco network
-> devices (IOS XE L2, NX-OS, ASA, FTD, ACI Router, ISE), RHEL 9, Windows Server
-> 2022 (+ AD + DNS), OpenShift 4.x, IBM DB2 V10.5, the Application & Web Server
-> SRGs, the Application Security & Development STIG, the NDM / Network
-> Infrastructure Policy and Cloud Computing SRG assessments, and the IBM z/OS
-> family (RACF, TSS, CICS, NetView, TDMF, zSecure). See the full
+> **New:** 26 dedicated DoD STIG / SRG roles were added covering Cisco network
+> devices (IOS XE L2, NX-OS, ASA, FTD, ACI Router, ISE), Palo Alto PAN-OS,
+> Fortinet FortiGate, F5 BIG-IP, Microsoft IIS 10.0, VMware vSphere 8, RHEL 9,
+> Windows Server 2022 (+ AD + DNS), OpenShift 4.x, IBM DB2 V10.5, the Application
+> & Web Server SRGs, the Application Security & Development STIG, the NDM /
+> Network Infrastructure Policy and Cloud Computing SRG assessments, and the IBM
+> z/OS family (RACF, TSS, CICS, NetView, TDMF, zSecure). See the full
 > **[STIG / SRG Coverage Matrix](./STIG_COVERAGE_MATRIX.md)**.
 
 This repository provides production-ready Ansible automation for network infrastructure, cloud platforms, container orchestration, storage systems, backup solutions, security scanning, secrets management, ITSM integration, and operational technology (OT/ICS) security with a special focus on **Fourth Estate** (free press/media) organizations.
 
 ## 📊 Repository Statistics
 
-- **Total Roles:** 577
-- **Total YAML Files:** 3,684
-- **README Documentation Files:** 651
+- **Total Roles:** 582
+- **Total YAML Files:** 3,734
+- **README Documentation Files:** 657
 - **Technology Platforms:** 41
-- **Dedicated DoD STIG / SRG roles:** 21 (see [STIG_COVERAGE_MATRIX.md](./STIG_COVERAGE_MATRIX.md))
+- **Dedicated DoD STIG / SRG roles:** 26 (see [STIG_COVERAGE_MATRIX.md](./STIG_COVERAGE_MATRIX.md))
 - **Compliance Frameworks:** DoD STIG, DoD Cloud Computing SRG, NIST 800-53 Rev 5, NIST 800-171, FedRAMP, FISMA, CIS Benchmarks
 - **Cloud Platforms:** 4 (AWS, Azure, GCP, VMware vSphere)
 - **Database Platforms:** 5 (PostgreSQL, MySQL, Oracle, IBM DB2, Cloud Databases)
@@ -687,6 +688,11 @@ rule-family detail and run instructions are in
 | Cisco FTD (via FMC) | NDM/Firewall | `cisco/roles/cisco_ftd_stig` |
 | Cisco ACI Router | `CISC-RT-*` | `cisco/roles/cisco_aci_router_stig` |
 | Cisco ISE (NDM) | `CISC-ND-*` | `cisco/roles/cisco_ise_stig` |
+| Palo Alto PAN-OS (NDM) | `PANW-NM-*` | `palo_alto/roles/panos_stig` |
+| Fortinet FortiGate Firewall | `FGFW-ND-*` | `fortinet/roles/fortigate_stig` |
+| F5 BIG-IP Device Management | `F5BI-DM-*` | `f5_bigip/roles/f5_bigip_stig` |
+| Microsoft IIS 10.0 (Server + Site) | `IISW-SV-*`, `IISW-SI-*` | `windows/roles/win_iis10_stig` |
+| VMware vSphere 8 (ESXi + vCenter) | `ESXI-80-*`, `VCSA-80-*` | `vmware/roles/vsphere8_stig` |
 | RHEL 9 (V2R6) | `RHEL-09-*` | `rhel/roles/rhel9_stig` |
 | Windows Server 2022 + AD + DNS (V2R6) | `WN22-*`, `AD.*`, `WDNS-*` | `windows/roles/win_server2022_stig` |
 | OpenShift 4.x (V2R4) | `CNTR-OS-*` | `openshift/roles/ocp_stig_profile` |

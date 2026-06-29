@@ -1,0 +1,93 @@
+---
+# defaults file for vsphere8_stig
+# VMware vSphere 8 STIG - ESXi 8 (ESXI-80-*) host hardening plus selected
+# vCenter 8 (VCSA-80-*) settings, via the certified community.vmware collection.
+# NIST SP 800-53 Rev 5 aligned.
+#
+# Safe by default: apply_changes=false runs every task in check mode (reports,
+# no change). With apply_changes=true the settings are applied and a per-host
+# JSON artifact is written. Runs from the control node against vCenter.
+
+# ============================================================
+# vCenter connection (set in inventory / vars; vault the password)
+# ============================================================
+vcenter_hostname: "{{ vault_vcenter_hostname | default('vcenter.example.mil') }}"
+vcenter_username: "{{ vault_vcenter_username | default('administrator@vsphere.local') }}"
+vcenter_password: "{{ vault_vcenter_password | default('') }}"
+vcenter_validate_certs: true
+
+# ESXi hosts to harden (as known to vCenter). Alternatively target a cluster.
+esxi_hosts:
+  - esxi-01.example.mil
+  - esxi-02.example.mil
+cluster_name: ""
+
+# ============================================================
+# Deployment control
+# ============================================================
+apply_changes: false
+artifacts_dir: "/tmp/vsphere8-stig-artifacts"
+
+# ============================================================
+# Control-area toggles
+# ============================================================
+stig_esxi_advanced: true
+stig_esxi_services: true
+stig_vcenter_settings: true
+stig_compliance_report: true
+
+# ============================================================
+# DoD banner (ESXI-80-000004 / 000005)
+# ============================================================
+esxi_dod_banner: >-
+  You are accessing a U.S. Government (USG) Information System (IS) that is
+  provided for USG-authorized use only. By using this IS you consent to the
+  conditions in the full DoD Notice and Consent Banner.
+
+# ============================================================
+# ESXI-80-* - Advanced host settings (applied as one options map)
+# ============================================================
+esxi_advanced_settings:
+  Annotations.WelcomeMessage: "{{ esxi_dod_banner }}"          # ESXI-80-000004
+  Security.AccountLockFailures: "3"                             # ESXI-80-000111
+  Security.AccountUnlockTime: "900"                             # ESXI-80-000113
+  Security.PasswordHistory: "5"                                 # ESXI-80-000156
+  Security.PasswordQualityControl: "similar=deny retry=3 min=disabled,disabled,disabled,disabled,15"  # ESXI-80-000035
+  Config.HostAgent.plugins.solo.enableMob: "false"             # ESXI-80-000220 (disable MOB)
+  UserVars.ESXiShellInteractiveTimeOut: "600"                  # ESXI-80-000068
+  UserVars.ESXiShellTimeOut: "600"                             # ESXI-80-000195
+  UserVars.DcuiTimeOut: "600"                                  # ESXI-80-000196
+  UserVars.SuppressShellWarning: "0"                           # ESXI-80-000222
+  Config.HostAgent.log.level: "info"                           # ESXI-80-000114
+  Net.BlockGuestBPDU: "1"                                      # ESXI-80-000202
+  Config.HostAgent.plugins.hostsvc.esxAdminsGroup: "ESXi Admins"  # ESXI-80-000241 (not 'ESX Admins')
+  Syslog.global.logHost: "tcp://10.0.0.20:514"                 # ESXI-80-000124
+  Syslog.global.logDirUnique: "true"                           # ESXI-80-000115
+
+# ============================================================
+# ESXI-80-* - Services and lockdown
+# ============================================================
+esxi_ssh_policy: "off"                # ESXI-80-000193 - SSH not running/auto-start
+esxi_shell_policy: "off"              # ESXI-80-000035 - ESXi Shell off
+esxi_lockdown_mode: "normal"          # ESXI-80-000201 - normal | strict
+esxi_ntp_servers:
+  - "{{ vault_ntp_server_primary | default('10.0.0.30') }}"
+  - "{{ vault_ntp_server_secondary | default('10.0.0.31') }}"
+
+# ============================================================
+# VCSA-80-* - vCenter advanced settings
+# ============================================================
+vcenter_advanced_settings:
+  config.log.level: "info"                      # VCSA-80-000034
+  config.vpxd.event.syslog.enabled: "true"      # VCSA-80-000089 (forward events to syslog)
+  config.nfc.useSSL: "true"                     # VCSA-80-000257
+
+# ============================================================
+# Reporting metadata
+# ============================================================
+compliance_frameworks:
+  - dod_stig
+  - nist_800_53
+  - nist_800_171
+stig_benchmark: "VMware vSphere 8 STIG (ESXi 8 + vCenter 8)"
+stig_version: "V1R2"

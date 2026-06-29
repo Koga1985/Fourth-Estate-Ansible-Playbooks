@@ -1,0 +1,73 @@
+---
+# ESXi services, lockdown mode, NTP
+# ESXI-80-000193 (SSH) | ESXI-80-000035 (Shell) | ESXI-80-000201 (lockdown)
+# ESXI-80-000124 (NTP) | NIST AC-17, CM-7, AU-8
+
+- name: ESXI-80-000193 - SSH service stopped and not auto-starting
+  community.vmware.vmware_host_service_manager:
+    hostname: "{{ vcenter_hostname }}"
+    username: "{{ vcenter_username }}"
+    password: "{{ vcenter_password }}"
+    validate_certs: "{{ vcenter_validate_certs }}"
+    esxi_hostname: "{{ item }}"
+    service_name: TSM-SSH
+    service_policy: "{{ esxi_ssh_policy }}"
+    state: "{{ 'stopped' if apply_changes | bool else 'unchanged' }}"
+  loop: "{{ esxi_hosts }}"
+  loop_control:
+    label: "{{ item }}"
+  no_log: true
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: esxi_ssh
+  tags: [stig_cat2, "ESXI-80-000193"]
+
+- name: ESXI-80-000035 - ESXi Shell service stopped and not auto-starting
+  community.vmware.vmware_host_service_manager:
+    hostname: "{{ vcenter_hostname }}"
+    username: "{{ vcenter_username }}"
+    password: "{{ vcenter_password }}"
+    validate_certs: "{{ vcenter_validate_certs }}"
+    esxi_hostname: "{{ item }}"
+    service_name: TSM
+    service_policy: "{{ esxi_shell_policy }}"
+    state: "{{ 'stopped' if apply_changes | bool else 'unchanged' }}"
+  loop: "{{ esxi_hosts }}"
+  loop_control:
+    label: "{{ item }}"
+  no_log: true
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: esxi_shell
+  tags: [stig_cat2, "ESXI-80-000035"]
+
+- name: ESXI-80-000124 - Configure NTP servers and start ntpd
+  community.vmware.vmware_host_ntp:
+    hostname: "{{ vcenter_hostname }}"
+    username: "{{ vcenter_username }}"
+    password: "{{ vcenter_password }}"
+    validate_certs: "{{ vcenter_validate_certs }}"
+    esxi_hostname: "{{ item }}"
+    ntp_servers: "{{ esxi_ntp_servers }}"
+    state: present
+  loop: "{{ esxi_hosts }}"
+  loop_control:
+    label: "{{ item }}"
+  no_log: true
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: esxi_ntp
+  tags: [stig_cat2, "ESXI-80-000124"]
+
+- name: ESXI-80-000201 - Enable lockdown mode
+  community.vmware.vmware_host_lockdown:
+    hostname: "{{ vcenter_hostname }}"
+    username: "{{ vcenter_username }}"
+    password: "{{ vcenter_password }}"
+    validate_certs: "{{ vcenter_validate_certs }}"
+    esxi_hostname: "{{ item }}"
+    state: "{{ esxi_lockdown_mode }}"
+  loop: "{{ esxi_hosts }}"
+  loop_control:
+    label: "{{ item }}"
+  no_log: true
+  when: apply_changes | bool
+  register: esxi_lockdown
+  tags: [stig_cat2, "ESXI-80-000201"]

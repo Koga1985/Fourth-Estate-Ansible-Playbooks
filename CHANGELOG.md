@@ -3,6 +3,19 @@
 All notable changes to the Fourth Estate Ansible Playbooks are documented here.
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [2026-06-27] — Tier 1 STIG expansion (network/web/virtualization)
+
+Added 5 more dedicated STIG roles on top of existing vendor platforms, same
+safe-by-default contract (assessment/dry-run first, per-host JSON artifact):
+
+- `palo_alto/roles/panos_stig` — Palo Alto PAN-OS NDM STIG (`PANW-NM-*`) via `paloaltonetworks.panos`.
+- `fortinet/roles/fortigate_stig` — FortiGate Firewall STIG (`FGFW-ND-*`) via `fortinet.fortios`.
+- `f5_bigip/roles/f5_bigip_stig` — F5 BIG-IP Device Management STIG (`F5BI-DM-*`) via `f5networks.f5_modules`.
+- `windows/roles/win_iis10_stig` — Microsoft IIS 10.0 Server + Site STIG (`IISW-SV-*`, `IISW-SI-*`) via `ansible.windows`.
+- `vmware/roles/vsphere8_stig` — VMware vSphere 8 STIG, ESXi 8 (`ESXI-80-*`) + vCenter 8 (`VCSA-80-*`) via `community.vmware`.
+
+Repository totals updated: **582 roles**, **3,734 YAML files**, **26 dedicated STIG/SRG roles**.
+
 ## [2026-06-26] — DoD STIG / SRG expansion
 
 Added **21 dedicated DoD STIG / SRG roles** across **5 new platform areas**. Every

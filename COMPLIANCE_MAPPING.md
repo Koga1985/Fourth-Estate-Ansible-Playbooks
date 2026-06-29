@@ -822,6 +822,11 @@ authoritative request-to-role traceability and run instructions, see
 | `cisco/roles/cisco_ftd_stig` | Cisco FTD (via FMC) | NDM / Firewall | AC, AU, IA, SC |
 | `cisco/roles/cisco_aci_router_stig` | Cisco Router (ACI L3Out) | `CISC-RT-*` | AC, SC, CM |
 | `cisco/roles/cisco_ise_stig` | Cisco ISE NDM | `CISC-ND-*` | AC, AU, IA, SC |
+| `palo_alto/roles/panos_stig` | Palo Alto PAN-OS NDM | `PANW-NM-*` | AC, AU, IA, SC, CM |
+| `fortinet/roles/fortigate_stig` | FortiGate Firewall | `FGFW-ND-*` | AC, AU, IA, SC, CM |
+| `f5_bigip/roles/f5_bigip_stig` | F5 BIG-IP Device Management | `F5BI-DM-*` | AC, AU, IA, SC |
+| `windows/roles/win_iis10_stig` | Microsoft IIS 10.0 (Server + Site) | `IISW-SV-*`, `IISW-SI-*` | AC, AU, CM, SC |
+| `vmware/roles/vsphere8_stig` | VMware vSphere 8 (ESXi + vCenter) | `ESXI-80-*`, `VCSA-80-*` | AC, AU, CM, SC, AC-11 |
 | `rhel/roles/rhel9_stig` | RHEL 9 (V2R6) | `RHEL-09-*` | AC, AU, IA, CM, SC, SI |
 | `windows/roles/win_server2022_stig` | Windows Server 2022 (V2R6) + AD + DNS | `WN22-*`, `AD.*`, `WDNS-*` | AC, AU, IA, CM, SC |
 | `openshift/roles/ocp_stig_profile` | OpenShift 4.x (V2R4) | `CNTR-OS-*` | AC, AU, CM, SC |
