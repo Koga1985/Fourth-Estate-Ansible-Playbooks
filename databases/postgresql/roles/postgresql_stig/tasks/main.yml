@@ -1,0 +1,82 @@
+---
+# tasks file for postgresql_stig
+
+- name: Ensure artifacts directory exists
+  ansible.builtin.file:
+    path: "{{ artifacts_dir }}"
+    state: directory
+    mode: "0750"
+  delegate_to: localhost
+  run_once: true
+  changed_when: false
+  tags: [always]
+
+- name: Show run mode
+  ansible.builtin.debug:
+    msg: "postgresql_stig on {{ inventory_hostname }} - {{ 'ENFORCING' if apply_changes | bool else 'DRY-RUN / check mode only' }}"
+  tags: [always]
+
+- name: PGS9-00-* - Apply STIG server parameters
+  community.postgresql.postgresql_set:
+    login_host: "{{ pg_login_host }}"
+    login_user: "{{ pg_login_user }}"
+    login_password: "{{ pg_login_password }}"
+    login_db: "{{ pg_login_db }}"
+    port: "{{ pg_login_port }}"
+    name: "{{ item.key }}"
+    value: "{{ item.value }}"
+  loop: "{{ pg_parameters | dict2items }}"
+  loop_control:
+    label: "{{ item.key }} = {{ item.value }}"
+  no_log: true
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: pg_set
+  failed_when:
+    - pg_set is failed
+    - "'already' not in (pg_set.msg | default(''))"
+  tags: [stig_cat2, parameters]
+
+- name: PGS9-00-008600 - Verify pg_hba.conf has no 'trust' auth (assessment)
+  community.postgresql.postgresql_query:
+    login_host: "{{ pg_login_host }}"
+    login_user: "{{ pg_login_user }}"
+    login_password: "{{ pg_login_password }}"
+    login_db: "{{ pg_login_db }}"
+    port: "{{ pg_login_port }}"
+    query: "SELECT type, database, user_name, auth_method FROM pg_hba_file_rules WHERE auth_method = 'trust'"
+  no_log: true
+  register: pg_trust
+  changed_when: false
+  failed_when: false
+  tags: [stig_cat1, "PGS9-00-008600"]
+
+- name: Assemble compliance result map
+  ansible.builtin.set_fact:
+    pg_stig_results:
+      meta:
+        host: "{{ inventory_hostname }}"
+        timestamp: "{{ ansible_date_time.iso8601 | default(lookup('pipe', 'date -u +%Y-%m-%dT%H:%M:%SZ')) }}"
+        benchmark: "{{ stig_benchmark }}"
+        version: "{{ stig_version }}"
+        mode: "{{ 'enforce' if apply_changes | bool else 'dry-run' }}"
+        compliance_frameworks: "{{ compliance_frameworks }}"
+      parameters_drift: "{{ pg_set.results | default([]) | selectattr('changed', 'defined') | selectattr('changed') | map(attribute='item') | map(attribute='key') | list }}"
+      restart_required: "{{ pg_set.results | default([]) | selectattr('restart_required', 'defined') | selectattr('restart_required') | map(attribute='item') | map(attribute='key') | list }}"
+      pg_hba_trust_rules: "{{ pg_trust.rowcount | default('unknown') }}"
+  tags: [report]
+
+- name: Write JSON compliance artifact
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/{{ inventory_hostname }}_postgresql_stig.json"
+    mode: "0640"
+    content: "{{ pg_stig_results | to_nice_json }}"
+  delegate_to: localhost
+  tags: [report]
+
+- name: Summarize
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }}: {{ pg_stig_results.parameters_drift | length }} parameter(s)
+      {{ 'to remediate (dry-run)' if not (apply_changes | bool) else 'remediated' }};
+      pg_hba trust rules found: {{ pg_stig_results.pg_hba_trust_rules }}.
+  tags: [report]

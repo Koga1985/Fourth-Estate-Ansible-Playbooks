@@ -1,0 +1,54 @@
+---
+# defaults file for mysql80_stig
+# Oracle MySQL 8.0 STIG (DISA) hardening + assessment via community.mysql.
+# NIST SP 800-53 Rev 5 aligned.
+#
+# Safe by default: apply_changes=false sets nothing - it queries current values
+# and reports drift. With apply_changes=true the dynamic GLOBAL variables are set
+# and a my.cnf STIG drop-in is written (static settings need a service restart).
+
+# ============================================================
+# Connection (community.mysql)
+# ============================================================
+mysql_login_user: "root"
+mysql_login_password: "{{ vault_mysql_root_password | default('') }}"
+mysql_login_host: "127.0.0.1"
+mysql_login_port: 3306
+# mysql_login_unix_socket: /var/run/mysqld/mysqld.sock
+
+# ============================================================
+# Deployment control
+# ============================================================
+apply_changes: false
+artifacts_dir: "/tmp/mysql80-stig-artifacts"
+mysql_confd_dropin: /etc/mysql/mysql.conf.d/00-stig.cnf
+
+# ============================================================
+# Dynamic GLOBAL variables (settable at runtime)
+# ============================================================
+mysql_global_variables:
+  require_secure_transport: "ON"      # force TLS for client connections
+  local_infile: "OFF"                 # disable LOAD DATA LOCAL INFILE
+  general_log: "OFF"                  # use audit plugin, not general log
+  log_error_verbosity: "2"
+  connect_timeout: "10"
+
+# ============================================================
+# Static settings (written to a my.cnf drop-in; require restart)
+# ============================================================
+mysql_static_settings:
+  default_authentication_plugin: "caching_sha2_password"
+  secure_file_priv: "/var/lib/mysql-files"
+  skip_symbolic_links: "ON"
+  sql_mode: "STRICT_ALL_TABLES,NO_ENGINE_SUBSTITUTION"
+  log_error: "/var/log/mysql/error.log"
+
+# validate_password component thresholds (assessment + guidance)
+mysql_password_min_length: 15
+
+compliance_frameworks:
+  - dod_stig
+  - nist_800_53
+  - nist_800_171
+stig_benchmark: "Oracle MySQL 8.0 STIG"
+stig_version: "V2R1"

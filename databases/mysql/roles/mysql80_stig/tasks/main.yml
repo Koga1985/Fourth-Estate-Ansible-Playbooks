@@ -1,0 +1,94 @@
+---
+# tasks file for mysql80_stig
+
+- name: Ensure artifacts directory exists
+  ansible.builtin.file:
+    path: "{{ artifacts_dir }}"
+    state: directory
+    mode: "0750"
+  delegate_to: localhost
+  run_once: true
+  changed_when: false
+  tags: [always]
+
+- name: Show run mode
+  ansible.builtin.debug:
+    msg: "mysql80_stig on {{ inventory_hostname }} - {{ 'ENFORCING' if apply_changes | bool else 'DRY-RUN / report only' }}"
+  tags: [always]
+
+- name: MYS8-00 - Set dynamic GLOBAL variables per STIG
+  community.mysql.mysql_variables:
+    login_user: "{{ mysql_login_user }}"
+    login_password: "{{ mysql_login_password }}"
+    login_host: "{{ mysql_login_host }}"
+    login_port: "{{ mysql_login_port }}"
+    variable: "{{ item.key }}"
+    value: "{{ item.value }}"
+  loop: "{{ mysql_global_variables | dict2items }}"
+  loop_control:
+    label: "{{ item.key }} = {{ item.value }}"
+  no_log: true
+  when: apply_changes | bool
+  register: mysql_vars
+  tags: [stig_cat2, variables]
+
+- name: MYS8-00 - Assess current dynamic variable values (dry-run safe)
+  community.mysql.mysql_query:
+    login_user: "{{ mysql_login_user }}"
+    login_password: "{{ mysql_login_password }}"
+    login_host: "{{ mysql_login_host }}"
+    login_port: "{{ mysql_login_port }}"
+    query: "SHOW GLOBAL VARIABLES WHERE Variable_name IN ('require_secure_transport','local_infile','general_log')"
+  no_log: true
+  register: mysql_assess
+  changed_when: false
+  failed_when: false
+  tags: [variables]
+
+- name: MYS8-00 - Write my.cnf STIG drop-in (static settings; requires restart)
+  ansible.builtin.copy:
+    dest: "{{ mysql_confd_dropin }}"
+    owner: root
+    group: root
+    mode: "0640"
+    content: |
+      # Managed by mysql80_stig - {{ stig_benchmark }} {{ stig_version }}
+      [mysqld]
+      {% for k, v in mysql_static_settings.items() %}
+      {{ k }} = {{ v }}
+      {% endfor %}
+      require_secure_transport = ON
+      local_infile = OFF
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: mysql_cnf
+  tags: [stig_cat2, static]
+
+- name: Assemble compliance result map
+  ansible.builtin.set_fact:
+    mysql_stig_results:
+      meta:
+        host: "{{ inventory_hostname }}"
+        timestamp: "{{ ansible_date_time.iso8601 | default(lookup('pipe', 'date -u +%Y-%m-%dT%H:%M:%SZ')) }}"
+        benchmark: "{{ stig_benchmark }}"
+        version: "{{ stig_version }}"
+        mode: "{{ 'enforce' if apply_changes | bool else 'dry-run' }}"
+        compliance_frameworks: "{{ compliance_frameworks }}"
+      current_dynamic_values: "{{ mysql_assess.query_result | default([]) }}"
+      static_dropin_changed: "{{ mysql_cnf.changed | default(false) }}"
+      notes:
+        - "Static settings in {{ mysql_confd_dropin }} require a mysqld restart."
+        - "Install/enable MySQL Enterprise Audit and the validate_password component (min length {{ mysql_password_min_length }}) per STIG."
+  tags: [report]
+
+- name: Write JSON compliance artifact
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/{{ inventory_hostname }}_mysql80_stig.json"
+    mode: "0640"
+    content: "{{ mysql_stig_results | to_nice_json }}"
+  delegate_to: localhost
+  tags: [report]
+
+- name: Summarize
+  ansible.builtin.debug:
+    msg: "{{ inventory_hostname }}: MySQL 8.0 STIG {{ 'enforced (restart needed for static settings)' if apply_changes | bool else 'assessed (dry-run)' }}."
+  tags: [report]

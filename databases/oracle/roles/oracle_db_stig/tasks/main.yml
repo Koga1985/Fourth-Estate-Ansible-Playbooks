@@ -1,0 +1,111 @@
+---
+# tasks file for oracle_db_stig
+
+- name: Ensure artifacts directory exists
+  ansible.builtin.file:
+    path: "{{ artifacts_dir }}"
+    state: directory
+    mode: "0750"
+  delegate_to: localhost
+  run_once: true
+  changed_when: false
+  tags: [always]
+
+- name: Set sqlplus environment prefix
+  ansible.builtin.set_fact:
+    oracle_env: "export ORACLE_HOME={{ oracle_home }}; export ORACLE_SID={{ oracle_sid }}; export PATH=$ORACLE_HOME/bin:$PATH;"
+  tags: [always]
+
+- name: Show run mode
+  ansible.builtin.debug:
+    msg: "oracle_db_stig on {{ inventory_hostname }} (SID {{ oracle_sid }}) - {{ 'ENFORCING' if apply_changes | bool else 'DRY-RUN / assessment only' }}"
+  tags: [always]
+
+- name: O121-* - Assess current system parameter values
+  ansible.builtin.shell: >
+    {{ oracle_env }}
+    sqlplus -s "/ as sysdba" <<'SQL'
+    set heading off feedback off pagesize 0
+    SELECT name||'='||value FROM v$parameter
+    WHERE upper(name) IN ({{ oracle_system_parameters.keys() | map('lower') | map('regex_replace', '^(.*)$', "'\\1'") | join(',') }});
+    exit
+    SQL
+  args:
+    executable: /bin/bash
+  become: true
+  become_user: "{{ oracle_os_user }}"
+  register: oracle_param_assess
+  changed_when: false
+  check_mode: false
+  failed_when: false
+  tags: [assess]
+
+- name: O121-* - Apply system (init) parameters
+  ansible.builtin.shell: >
+    {{ oracle_env }}
+    sqlplus -s "/ as sysdba" <<'SQL'
+    ALTER SYSTEM SET {{ item.key }}={{ item.value }} SCOPE=SPFILE;
+    exit
+    SQL
+  args:
+    executable: /bin/bash
+  become: true
+  become_user: "{{ oracle_os_user }}"
+  loop: "{{ oracle_system_parameters | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}={{ item.value }}"
+  when: apply_changes | bool
+  register: oracle_param_apply
+  changed_when: "'System altered' in (oracle_param_apply.stdout | default(''))"
+  tags: [stig_cat2, parameters]
+
+- name: O121-* - Apply password profile settings
+  ansible.builtin.shell: >
+    {{ oracle_env }}
+    sqlplus -s "/ as sysdba" <<'SQL'
+    ALTER PROFILE {{ oracle_profile_name }} LIMIT {{ item.key }} {{ item.value }};
+    exit
+    SQL
+  args:
+    executable: /bin/bash
+  become: true
+  become_user: "{{ oracle_os_user }}"
+  loop: "{{ oracle_profile_settings | dict2items }}"
+  loop_control:
+    label: "{{ item.key }} {{ item.value }}"
+  when: apply_changes | bool
+  register: oracle_profile_apply
+  changed_when: "'Profile altered' in (oracle_profile_apply.stdout | default(''))"
+  tags: [stig_cat2, profile]
+
+- name: Assemble compliance result map
+  ansible.builtin.set_fact:
+    oracle_stig_results:
+      meta:
+        host: "{{ inventory_hostname }}"
+        sid: "{{ oracle_sid }}"
+        timestamp: "{{ ansible_date_time.iso8601 | default(lookup('pipe', 'date -u +%Y-%m-%dT%H:%M:%SZ')) }}"
+        benchmark: "{{ stig_benchmark }}"
+        version: "{{ stig_version }}"
+        mode: "{{ 'enforce' if apply_changes | bool else 'dry-run' }}"
+        compliance_frameworks: "{{ compliance_frameworks }}"
+      current_parameters: "{{ (oracle_param_assess.stdout_lines | default([])) | reject('equalto', '') | list }}"
+      target_parameters: "{{ oracle_system_parameters }}"
+      target_profile: "{{ oracle_profile_settings }}"
+      notes:
+        - "SPFILE parameter changes (AUDIT_TRAIL, O7_DICTIONARY_ACCESSIBILITY, REMOTE_LOGIN_PASSWORDFILE) require a database restart to take effect."
+        - "Assign a PASSWORD_VERIFY_FUNCTION to the profile per O121 password complexity requirements."
+  tags: [report]
+
+- name: Write JSON compliance artifact
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/{{ inventory_hostname }}_oracle_db_stig.json"
+    mode: "0640"
+    content: "{{ oracle_stig_results | to_nice_json }}"
+  delegate_to: localhost
+  tags: [report]
+
+- name: Summarize
+  ansible.builtin.debug:
+    msg: "{{ inventory_hostname }} ({{ oracle_sid }}): Oracle STIG {{ 'enforced (restart required for SPFILE params)' if apply_changes | bool else 'assessed (dry-run)' }}."
+  tags: [report]

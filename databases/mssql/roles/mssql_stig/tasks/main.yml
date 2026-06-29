@@ -1,0 +1,84 @@
+---
+# tasks file for mssql_stig
+
+- name: Ensure artifacts directory exists
+  ansible.builtin.file:
+    path: "{{ artifacts_dir }}"
+    state: directory
+    mode: "0750"
+  delegate_to: localhost
+  run_once: true
+  changed_when: false
+  tags: [always]
+
+- name: Show run mode
+  ansible.builtin.debug:
+    msg: "mssql_stig on {{ inventory_hostname }} - {{ 'ENFORCING' if apply_changes | bool else 'DRY-RUN / assessment only' }}"
+  tags: [always]
+
+- name: SQL6-D0-* - Assess current configuration values
+  community.general.mssql_script:
+    login_user: "{{ mssql_login_user }}"
+    login_password: "{{ mssql_login_password }}"
+    login_host: "{{ mssql_login_host }}"
+    login_port: "{{ mssql_login_port }}"
+    db: "{{ mssql_login_db }}"
+    script: |
+      SELECT name, CAST(value_in_use AS int) AS value_in_use
+      FROM sys.configurations
+      WHERE name IN ({{ mssql_sp_configure.keys() | map('regex_replace', '^(.*)$', "'\\1'") | join(',') }})
+      ORDER BY name;
+  no_log: true
+  register: mssql_assess
+  changed_when: false
+  failed_when: false
+  tags: [assess]
+
+- name: SQL6-D0-* - Apply surface-area configuration (sp_configure + RECONFIGURE)
+  community.general.mssql_script:
+    login_user: "{{ mssql_login_user }}"
+    login_password: "{{ mssql_login_password }}"
+    login_host: "{{ mssql_login_host }}"
+    login_port: "{{ mssql_login_port }}"
+    db: "{{ mssql_login_db }}"
+    script: |
+      EXEC sp_configure 'show advanced options', 1; RECONFIGURE;
+      {% for name, value in mssql_sp_configure.items() %}
+      EXEC sp_configure '{{ name }}', {{ value }}; RECONFIGURE;
+      {% endfor %}
+      EXEC sp_configure 'show advanced options', 0; RECONFIGURE;
+  no_log: true
+  when: apply_changes | bool
+  register: mssql_apply
+  changed_when: apply_changes | bool
+  tags: [stig_cat2, configure]
+
+- name: Assemble compliance result map
+  ansible.builtin.set_fact:
+    mssql_stig_results:
+      meta:
+        host: "{{ inventory_hostname }}"
+        timestamp: "{{ ansible_date_time.iso8601 | default(lookup('pipe', 'date -u +%Y-%m-%dT%H:%M:%SZ')) }}"
+        benchmark: "{{ stig_benchmark }}"
+        version: "{{ stig_version }}"
+        mode: "{{ 'enforce' if apply_changes | bool else 'dry-run' }}"
+        compliance_frameworks: "{{ compliance_frameworks }}"
+      current_configuration: "{{ mssql_assess.query_results | default([]) }}"
+      target_configuration: "{{ mssql_sp_configure }}"
+      notes:
+        - "Configure SQL Server Audit (or login auditing for both successful and failed logins) per SQL6-D0 audit requirements."
+        - "Enforce TLS for client connections (Force Encryption) and Windows/AD authentication per the STIG."
+  tags: [report]
+
+- name: Write JSON compliance artifact
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/{{ inventory_hostname }}_mssql_stig.json"
+    mode: "0640"
+    content: "{{ mssql_stig_results | to_nice_json }}"
+  delegate_to: localhost
+  tags: [report]
+
+- name: Summarize
+  ansible.builtin.debug:
+    msg: "{{ inventory_hostname }}: SQL Server STIG {{ 'enforced' if apply_changes | bool else 'assessed (dry-run)' }}."
+  tags: [report]
