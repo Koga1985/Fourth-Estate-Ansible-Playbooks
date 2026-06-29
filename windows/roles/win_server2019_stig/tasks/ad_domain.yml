@@ -1,0 +1,57 @@
+---
+# Active Directory Domain STIG controls (domain controllers only)
+# NIST AC-2, AC-3, AC-6, AU-9
+# These are largely assessment + safe enforcement; review before applying.
+
+- name: AD - Assess domain and forest functional level
+  ansible.windows.win_powershell:
+    script: |
+      $ErrorActionPreference = 'Stop'
+      Import-Module ActiveDirectory
+      $domain = Get-ADDomain
+      $forest = Get-ADForest
+      $Ansible.Result = @{
+        domain_mode = $domain.DomainMode.ToString()
+        forest_mode = $forest.ForestMode.ToString()
+        dns_root    = $domain.DNSRoot
+      }
+      $Ansible.Changed = $false
+  register: win_ad_levels
+  changed_when: false
+  tags: ["AD.0001", ad]
+
+- name: AD - Assess privileged group membership (Domain/Enterprise/Schema Admins)
+  ansible.windows.win_powershell:
+    script: |
+      $ErrorActionPreference = 'Stop'
+      Import-Module ActiveDirectory
+      $groups = 'Domain Admins','Enterprise Admins','Schema Admins'
+      $out = @{}
+      foreach ($g in $groups) {
+        try { $out[$g] = @(Get-ADGroupMember -Identity $g -ErrorAction Stop | Select-Object -Expand SamAccountName) }
+        catch { $out[$g] = @() }
+      }
+      $Ansible.Result = $out
+      $Ansible.Changed = $false
+  register: win_ad_priv_groups
+  changed_when: false
+  tags: ["AD.0002", ad]
+
+- name: AD - Enforce that the AD Recycle Bin is enabled (recoverability)
+  ansible.windows.win_powershell:
+    script: |
+      param([bool]$Apply)
+      $ErrorActionPreference = 'Stop'
+      Import-Module ActiveDirectory
+      $forest = (Get-ADForest).RootDomain
+      $feature = Get-ADOptionalFeature -Filter {Name -eq 'Recycle Bin Feature'}
+      if ($feature.EnabledScopes.Count -eq 0) {
+        if ($Apply) {
+          Enable-ADOptionalFeature 'Recycle Bin Feature' -Scope ForestOrConfigurationSet -Target $forest -Confirm:$false
+        }
+        $Ansible.Changed = $true
+      } else { $Ansible.Changed = $false }
+    parameters:
+      Apply: "{{ apply_changes | bool }}"
+  register: win_ad_recyclebin
+  tags: ["AD.0003", ad]
