@@ -1,0 +1,26 @@
+---
+# System-wide cryptographic policy
+# RHEL-08-010020 (crypto policy) | RHEL-08-010130/672020 (PKCS#11)
+# NIST SC-8, SC-13, SC-23
+
+- name: RHEL-08-010020 - Query current system-wide crypto policy
+  ansible.builtin.command: update-crypto-policies --show
+  register: r_crypto_current
+  changed_when: false
+  check_mode: false
+  tags: [stig_cat2, "RHEL-08-010020"]
+
+- name: RHEL-08-010020 - Set system-wide crypto policy to {{ rhel8_crypto_policy }}
+  ansible.builtin.command: "update-crypto-policies --set {{ rhel8_crypto_policy }}"
+  register: r_crypto_set
+  when:
+    - apply_changes | bool
+    - r_crypto_current.stdout | trim != rhel8_crypto_policy
+  changed_when: r_crypto_set.rc == 0
+  notify: reboot required
+  tags: [stig_cat2, "RHEL-08-010020"]
+
+- name: RHEL-08-010020 - Report crypto policy compliance (dry-run)
+  ansible.builtin.set_fact:
+    r_crypto_compliant: "{{ r_crypto_current.stdout | trim == rhel8_crypto_policy }}"
+  tags: [stig_cat2, "RHEL-08-010020"]

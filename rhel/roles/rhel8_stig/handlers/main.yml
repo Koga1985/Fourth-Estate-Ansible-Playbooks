@@ -1,0 +1,22 @@
+---
+# handlers file for rhel8_stig
+
+- name: restart sshd
+  ansible.builtin.systemd:
+    name: sshd
+    state: restarted
+  when: apply_changes | bool
+  listen: restart sshd
+
+- name: restart auditd
+  # auditd must be restarted via service (systemctl restart is blocked by design)
+  ansible.builtin.command: /usr/sbin/service auditd restart
+  register: auditd_restart
+  changed_when: auditd_restart.rc == 0
+  when: apply_changes | bool
+  listen: restart auditd
+
+- name: reboot required
+  ansible.builtin.debug:
+    msg: "A reboot is required for crypto policy / FIPS changes to take full effect."
+  listen: reboot required

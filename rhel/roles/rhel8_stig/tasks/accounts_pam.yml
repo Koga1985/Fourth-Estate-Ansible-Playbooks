@@ -1,0 +1,118 @@
+---
+# Accounts, PAM password quality, faillock, login.defs, session timeout
+# RHEL-08-020xxx (pwquality/faillock/pwhistory) | RHEL-08-020xxx/412xxx
+# NIST IA-5, AC-7, AC-11, AC-12
+
+- name: RHEL-08-020xxx - Configure password quality (pwquality.conf)
+  ansible.builtin.lineinfile:
+    path: /etc/security/pwquality.conf
+    regexp: '^#?\s*{{ item.key }}\s*='
+    line: "{{ item.key }} = {{ item.value }}"
+    owner: root
+    group: root
+    mode: "0644"
+    create: true
+  loop: "{{ rhel8_pwquality | dict2items }}"
+  loop_control:
+    label: "{{ item.key }} = {{ item.value }}"
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: r_pwquality
+  tags: [stig_cat2, "RHEL-08-020230", "RHEL-08-020110", "RHEL-08-020300"]
+
+- name: RHEL-08-020011/611080/611085 - Configure account lockout (faillock.conf)
+  ansible.builtin.lineinfile:
+    path: /etc/security/faillock.conf
+    regexp: '^#?\s*{{ item.key }}\s*='
+    line: "{{ item.key }} = {{ item.value }}"
+    owner: root
+    group: root
+    mode: "0644"
+    create: true
+  loop: "{{ rhel8_faillock | dict2items }}"
+  loop_control:
+    label: "{{ item.key }} = {{ item.value }}"
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: r_faillock
+  tags: [stig_cat2, "RHEL-08-020011", "RHEL-08-020012", "RHEL-08-020013"]
+
+- name: RHEL-08-020014 - Ensure faillock entry present (silent option)
+  ansible.builtin.lineinfile:
+    path: /etc/security/faillock.conf
+    regexp: '^#?\s*silent'
+    line: 'silent'
+    create: true
+    owner: root
+    group: root
+    mode: "0644"
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: r_faillock_silent
+  tags: [stig_cat2, "RHEL-08-020014"]
+
+- name: RHEL-08-020017 - Enable faillock via authselect feature
+  ansible.builtin.command: authselect enable-feature with-faillock
+  register: r_authselect_faillock
+  changed_when: "'No existing configuration' not in r_authselect_faillock.stderr and r_authselect_faillock.rc == 0"
+  failed_when:
+    - r_authselect_faillock.rc != 0
+    - "'No existing configuration detected' not in (r_authselect_faillock.stderr | default(''))"
+  when: apply_changes | bool
+  tags: [stig_cat2, "RHEL-08-020017"]
+
+- name: RHEL-08-020220 - Configure password history (pwhistory remember)
+  ansible.builtin.lineinfile:
+    path: /etc/security/pwhistory.conf
+    regexp: '^#?\s*remember\s*='
+    line: "remember = {{ rhel8_pwhistory_remember }}"
+    owner: root
+    group: root
+    mode: "0644"
+    create: true
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: r_pwhistory
+  tags: [stig_cat2, "RHEL-08-020220"]
+
+- name: RHEL-08-020200/411015 - Configure password aging in login.defs
+  ansible.builtin.lineinfile:
+    path: /etc/login.defs
+    regexp: '^#?\s*{{ item.key }}\s'
+    line: "{{ item.key }}\t{{ item.value }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - { key: "PASS_MAX_DAYS", value: "{{ rhel8_pass_max_days }}" }
+    - { key: "PASS_MIN_DAYS", value: "{{ rhel8_pass_min_days }}" }
+    - { key: "PASS_WARN_AGE", value: "{{ rhel8_pass_warn_age }}" }
+    - { key: "UMASK", value: "{{ rhel8_umask }}" }
+  loop_control:
+    label: "{{ item.key }} {{ item.value }}"
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: r_login_defs
+  tags: [stig_cat2, "RHEL-08-020200", "RHEL-08-020180", "RHEL-08-020351"]
+
+- name: RHEL-08-020330 - Set default account inactivity lock (useradd)
+  ansible.builtin.lineinfile:
+    path: /etc/default/useradd
+    regexp: '^#?INACTIVE='
+    line: "INACTIVE={{ rhel8_account_inactive_days }}"
+    owner: root
+    group: root
+    mode: "0644"
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: r_useradd_inactive
+  tags: [stig_cat2, "RHEL-08-020330"]
+
+- name: RHEL-08-020320 - Enforce interactive session timeout (TMOUT)
+  ansible.builtin.copy:
+    dest: /etc/profile.d/99-stig-tmout.sh
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by rhel8_stig - RHEL-08-020320 interactive session timeout
+      declare -xr TMOUT={{ rhel8_session_tmout }}
+      readonly TMOUT
+      export TMOUT
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: r_tmout
+  tags: [stig_cat2, "RHEL-08-020320"]

@@ -1,0 +1,39 @@
+---
+# Banner / interactive session controls
+# RHEL-08-010060 (/etc/issue banner) | RHEL-08-040170/211050 (ctrl-alt-del)
+# NIST AC-8, CM-6
+
+- name: RHEL-08-010060 - Configure the DoD login banner in /etc/issue
+  ansible.builtin.copy:
+    dest: /etc/issue
+    content: "{{ rhel8_dod_banner }}"
+    owner: root
+    group: root
+    mode: "0644"
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: r_banner_issue
+  tags: [stig_cat2, "RHEL-08-010060"]
+
+- name: RHEL-08-040170 - Disable the ctrl-alt-del.target (reboot)
+  ansible.builtin.systemd:
+    name: ctrl-alt-del.target
+    masked: true
+    state: stopped
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: r_cad_target
+  failed_when:
+    - r_cad_target is failed
+    - "'Could not find the requested service' not in (r_cad_target.msg | default(''))"
+  tags: [stig_cat1, "RHEL-08-040170"]
+
+- name: RHEL-08-040172 - Disable the ctrl-alt-del burst action
+  ansible.builtin.lineinfile:
+    path: /etc/systemd/system.conf
+    regexp: '^#?CtrlAltDelBurstAction='
+    line: 'CtrlAltDelBurstAction=none'
+    owner: root
+    group: root
+    mode: "0644"
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: r_cad_burst
+  tags: [stig_cat1, "RHEL-08-040172"]

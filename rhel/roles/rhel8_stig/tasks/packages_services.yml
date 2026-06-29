@@ -1,0 +1,64 @@
+---
+# Package hygiene and required services
+# RHEL-08-040xxx (remove) | RHEL-08-010xxx (install) | RHEL-08-010370 (gpgcheck)
+# RHEL-08-040100 (firewalld) | RHEL-08-030740 (chrony) | NIST CM-7, SC-7, AU-8
+
+- name: RHEL-08-040xxx - Remove prohibited packages
+  ansible.builtin.dnf:
+    name: "{{ rhel8_packages_absent }}"
+    state: absent
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: r_pkgs_absent
+  tags: [stig_cat1, "RHEL-08-040000", "RHEL-08-040180", "RHEL-08-040190"]
+
+- name: RHEL-08-010xxx - Install required security packages
+  ansible.builtin.dnf:
+    name: "{{ rhel8_packages_present }}"
+    state: present
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: r_pkgs_present
+  tags: [stig_cat2, "RHEL-08-010359", "RHEL-08-030180"]
+
+- name: RHEL-08-010370 - Enforce dnf gpgcheck globally
+  ansible.builtin.lineinfile:
+    path: /etc/dnf/dnf.conf
+    regexp: '^#?gpgcheck='
+    line: 'gpgcheck=1'
+    owner: root
+    group: root
+    mode: "0644"
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: r_gpgcheck
+  tags: [stig_cat1, "RHEL-08-010370"]
+
+- name: RHEL-08-010371 - Disable local override of gpgcheck per-repo
+  ansible.builtin.lineinfile:
+    path: /etc/dnf/dnf.conf
+    regexp: '^#?localpkg_gpgcheck='
+    line: 'localpkg_gpgcheck=1'
+    owner: root
+    group: root
+    mode: "0644"
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: r_localgpg
+  tags: [stig_cat2, "RHEL-08-010371"]
+
+- name: RHEL-08-040100 - Enable and start firewalld
+  ansible.builtin.systemd:
+    name: firewalld
+    enabled: true
+    state: started
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: r_firewalld
+  when: apply_changes | bool
+  tags: [stig_cat2, "RHEL-08-040100"]
+
+- name: RHEL-08-030740 - Enable and start chronyd time sync
+  ansible.builtin.systemd:
+    name: chronyd
+    enabled: true
+    state: started
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: r_chronyd
+  when: apply_changes | bool
+  tags: [stig_cat2, "RHEL-08-030740"]

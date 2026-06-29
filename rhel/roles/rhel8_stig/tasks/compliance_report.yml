@@ -1,0 +1,52 @@
+---
+# Per-host RHEL 8 STIG compliance/remediation artifact (JSON).
+# In dry-run, changed: true means the control is NOT yet compliant.
+
+- name: Assemble per-control result map
+  ansible.builtin.set_fact:
+    rhel8_stig_results:
+      meta:
+        host: "{{ inventory_hostname }}"
+        timestamp: "{{ ansible_date_time.iso8601 }}"
+        os: "{{ ansible_facts['distribution'] }} {{ ansible_facts['distribution_version'] }}"
+        benchmark: "{{ stig_benchmark }}"
+        version: "{{ stig_version }}"
+        mode: "{{ 'enforce' if apply_changes | bool else 'dry-run' }}"
+        compliance_frameworks: "{{ compliance_frameworks }}"
+      controls:
+        - { id: "RHEL-08-010060", title: "DoD login banner", would_change: "{{ r_banner_issue.changed | default(false) }}" }
+        - { id: "RHEL-08-040170", title: "ctrl-alt-del disabled", would_change: "{{ (r_cad_target.changed | default(false)) or (r_cad_burst.changed | default(false)) }}" }
+        - { id: "RHEL-08-010370", title: "dnf gpgcheck enabled", would_change: "{{ r_gpgcheck.changed | default(false) }}" }
+        - { id: "RHEL-08-040xxx", title: "Prohibited packages removed", would_change: "{{ r_pkgs_absent.changed | default(false) }}" }
+        - { id: "RHEL-08-010xxx", title: "Required packages installed", would_change: "{{ r_pkgs_present.changed | default(false) }}" }
+        - { id: "RHEL-08-040100", title: "firewalld enabled", would_change: "{{ r_firewalld.changed | default(false) }}" }
+        - { id: "RHEL-08-030740", title: "chronyd enabled", would_change: "{{ r_chronyd.changed | default(false) }}" }
+        - { id: "RHEL-08-010xxx", title: "SSH daemon hardened", would_change: "{{ r_sshd_dropin.changed | default(false) }}" }
+        - { id: "RHEL-08-010020", title: "Crypto policy = {{ rhel8_crypto_policy }}", would_change: "{{ not (r_crypto_compliant | default(true)) }}" }
+        - { id: "RHEL-08-020xxx", title: "Password quality policy", would_change: "{{ r_pwquality.changed | default(false) }}" }
+        - { id: "RHEL-08-020011", title: "Account lockout (faillock)", would_change: "{{ r_faillock.changed | default(false) }}" }
+        - { id: "RHEL-08-020220", title: "Password history", would_change: "{{ r_pwhistory.changed | default(false) }}" }
+        - { id: "RHEL-08-020200", title: "Password aging (login.defs)", would_change: "{{ r_login_defs.changed | default(false) }}" }
+        - { id: "RHEL-08-020330", title: "Account inactivity lock", would_change: "{{ r_useradd_inactive.changed | default(false) }}" }
+        - { id: "RHEL-08-020320", title: "Interactive session timeout", would_change: "{{ r_tmout.changed | default(false) }}" }
+        - { id: "RHEL-08-030180", title: "auditd enabled", would_change: "{{ r_auditd_service.changed | default(false) }}" }
+        - { id: "RHEL-08-030731", title: "auditd disk actions", would_change: "{{ r_auditd_conf.changed | default(false) }}" }
+        - { id: "RHEL-08-030171", title: "STIG audit rules", would_change: "{{ r_audit_rules.changed | default(false) }}" }
+        - { id: "RHEL-08-040209", title: "Kernel sysctl hardening", would_change: "{{ r_sysctl.changed | default(false) }}" }
+  tags: [report]
+
+- name: Write JSON compliance artifact
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/{{ inventory_hostname }}_rhel8_stig.json"
+    mode: "0640"
+    content: "{{ rhel8_stig_results | to_nice_json }}"
+  delegate_to: localhost
+  tags: [report]
+
+- name: Summarize compliance state
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }}: {{ rhel8_stig_results.controls | selectattr('would_change') | list | length }}
+      of {{ rhel8_stig_results.controls | length }} control groups
+      {{ 'still need remediation (dry-run)' if not (apply_changes | bool) else 'were remediated' }}.
+  tags: [report]
