@@ -1,0 +1,114 @@
+---
+# tasks file for dynatrace_activegate (Linux)
+
+- name: Ensure artifacts directory exists on control node
+  ansible.builtin.file:
+    path: "{{ artifacts_dir }}"
+    state: directory
+    mode: "0750"
+  delegate_to: localhost
+  run_once: true
+  changed_when: false
+  tags: [always]
+
+- name: Show run mode
+  ansible.builtin.debug:
+    msg: >-
+      dynatrace_activegate on {{ inventory_hostname }} -
+      {{ 'ENFORCING (install/configure)' if apply_changes | bool else 'DRY-RUN / assessment only' }}
+  tags: [always]
+
+- name: Check whether ActiveGate is already installed
+  ansible.builtin.stat:
+    path: "{{ activegate_install_dir }}"
+  register: ag_dir
+  tags: [activegate]
+
+- name: Download ActiveGate installer (PaaS token)
+  ansible.builtin.get_url:
+    url: "{{ dt_environment_url }}/api/v1/deployment/installer/gateway/unix/latest"
+    dest: "{{ activegate_installer_dir }}/Dynatrace-ActiveGate.sh"
+    headers:
+      Authorization: "Api-Token {{ dt_paas_token }}"
+    validate_certs: "{{ dt_validate_certs }}"
+    mode: "0700"
+  become: true
+  no_log: true
+  when:
+    - not ag_dir.stat.exists
+    - apply_changes | bool
+  tags: [activegate]
+
+- name: Install ActiveGate
+  ansible.builtin.command:
+    cmd: >-
+      /bin/sh {{ activegate_installer_dir }}/Dynatrace-ActiveGate.sh
+      {{ ('--set-network-zone=' + activegate_network_zone) if activegate_network_zone | length > 0 else '' }}
+    creates: "{{ activegate_install_dir }}"
+  become: true
+  no_log: true
+  when:
+    - not ag_dir.stat.exists
+    - apply_changes | bool
+  register: ag_install
+  notify: restart activegate
+  tags: [activegate]
+
+- name: Set ActiveGate group in custom.properties
+  community.general.ini_file:
+    path: "{{ activegate_custom_properties }}"
+    section: collector
+    option: group
+    value: "{{ activegate_group }}"
+    owner: dynatrace
+    group: dynatrace
+    mode: "0640"
+    create: false
+  become: true
+  when:
+    - activegate_group | length > 0
+    - apply_changes | bool
+    - ag_dir.stat.exists or (ag_install is changed)
+  register: ag_group
+  notify: restart activegate
+  failed_when: false
+  tags: [activegate]
+
+- name: Set ActiveGate network zone in custom.properties (existing install)
+  community.general.ini_file:
+    path: "{{ activegate_custom_properties }}"
+    section: connectivity
+    option: networkZone
+    value: "{{ activegate_network_zone }}"
+    owner: dynatrace
+    group: dynatrace
+    mode: "0640"
+    create: false
+  become: true
+  when:
+    - activegate_network_zone | length > 0
+    - apply_changes | bool
+    - ag_dir.stat.exists
+  register: ag_zone
+  notify: restart activegate
+  failed_when: false
+  tags: [activegate]
+
+- name: Ensure ActiveGate service is enabled and running
+  ansible.builtin.systemd:
+    name: "{{ activegate_service_name }}"
+    enabled: true
+    state: started
+  become: true
+  when: apply_changes | bool
+  register: ag_service
+  failed_when: false
+  tags: [activegate]
+
+- name: Record ActiveGate state
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/{{ inventory_hostname }}_activegate.json"
+    mode: "0640"
+    content: "{{ {'host': inventory_hostname, 'installed_before_run': ag_dir.stat.exists, 'group': activegate_group, 'network_zone': activegate_network_zone, 'enforced': apply_changes | bool} | to_nice_json }}"
+  delegate_to: localhost
+  tags: [activegate, report]
