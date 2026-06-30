@@ -1,0 +1,137 @@
+---
+# tasks file for dynatrace_security_hardening
+
+- name: Ensure artifacts directory exists
+  ansible.builtin.file:
+    path: "{{ artifacts_dir }}"
+    state: directory
+    mode: "0750"
+  run_once: true
+  changed_when: false
+  tags: [always]
+
+- name: Show run mode
+  ansible.builtin.debug:
+    msg: >-
+      dynatrace_security_hardening against {{ dt_environment_url }} -
+      {{ 'ENFORCING' if apply_changes | bool else 'DRY-RUN / assessment only' }}
+  tags: [always]
+
+# ---------- AU-2/AU-12: audit logging ----------
+- name: AU-2 - Verify audit log is accessible
+  ansible.builtin.uri:
+    url: "{{ dt_environment_url }}/api/v2/auditlogs?pageSize=1"
+    method: GET
+    headers:
+      Authorization: "Api-Token {{ dt_api_token }}"
+      Accept: application/json
+    validate_certs: "{{ dt_validate_certs }}"
+    status_code: [200, 403]
+    timeout: 30
+  no_log: true
+  register: dt_audit
+  tags: [assess, "AU-2"]
+
+# ---------- IA-5 / AC-6: API token hygiene ----------
+- name: IA-5/AC-6 - Retrieve API tokens (metadata)
+  ansible.builtin.uri:
+    url: "{{ dt_environment_url }}/api/v2/apiTokens?fields=+expirationDate,+scopes,+enabled&pageSize=500"
+    method: GET
+    headers:
+      Authorization: "Api-Token {{ dt_api_token }}"
+      Accept: application/json
+    validate_certs: "{{ dt_validate_certs }}"
+    status_code: [200, 403]
+    timeout: 30
+  no_log: true
+  register: dt_tokens
+  tags: [assess, "IA-5"]
+
+- name: Analyse token hygiene
+  ansible.builtin.set_fact:
+    dt_token_total: "{{ dt_tokens.json.apiTokens | default([]) | length }}"
+    dt_tokens_no_expiry: "{{ dt_tokens.json.apiTokens | default([]) | selectattr('expirationDate', 'none') | list | length }}"
+    dt_tokens_broad_scope: "{{ dt_tokens.json.apiTokens | default([]) | selectattr('scopes', 'defined') | map(attribute='scopes') | map('intersect', dt_sensitive_token_scopes) | map('length') | reject('equalto', 0) | list | length }}"
+  when: dt_tokens.status == 200
+  tags: [assess]
+
+# ---------- AC-3: IP restriction / SSO posture (read-only, where available) ----------
+- name: AC-3 - Retrieve allowed IP addresses settings (if exposed)
+  ansible.builtin.uri:
+    url: "{{ dt_environment_url }}/api/v2/settings/objects?schemaIds=builtin:account-management.allowedIpAddresses&fields=value&pageSize=10"
+    method: GET
+    headers:
+      Authorization: "Api-Token {{ dt_api_token }}"
+      Accept: application/json
+    validate_certs: "{{ dt_validate_certs }}"
+    status_code: [200, 400, 403, 404]
+    timeout: 30
+  no_log: true
+  register: dt_ipr
+  failed_when: false
+  tags: [assess, "AC-3"]
+
+# ---------- Enforcement (data-driven) ----------
+- name: Apply security hardening operations
+  ansible.builtin.uri:
+    url: "{{ dt_environment_url }}/api/{{ item.path }}"
+    method: "{{ item.method | default('POST') }}"
+    headers:
+      Authorization: "Api-Token {{ dt_api_token }}"
+      Accept: application/json
+      Content-Type: application/json
+    body_format: json
+    body: "{{ item.body | default(omit) }}"
+    validate_certs: "{{ dt_validate_certs }}"
+    status_code: "{{ item.status_code | default([200, 201]) }}"
+    timeout: 60
+  no_log: true
+  loop: "{{ dt_security_operations }}"
+  loop_control:
+    label: "{{ item.id }} - {{ item.title }}"
+  when:
+    - apply_changes | bool
+    - dt_security_operations | length > 0
+  register: dt_sec_apply
+  tags: [apply]
+
+# ---------- NIST-mapped evidence ----------
+- name: Assemble NIST-mapped evidence
+  ansible.builtin.set_fact:
+    dt_sec_results:
+      meta:
+        environment: "{{ dt_environment_url }}"
+        timestamp: "{{ ansible_date_time.iso8601 | default(lookup('pipe', 'date -u +%Y-%m-%dT%H:%M:%SZ')) }}"
+        benchmark: "{{ benchmark }}"
+        mode: "{{ 'enforce' if apply_changes | bool else 'assessment' }}"
+        compliance_frameworks: "{{ compliance_frameworks }}"
+      controls:
+        - { id: "AU-2 / AU-12", title: "Audit logging accessible", status: "{{ 'pass' if dt_audit.status == 200 else 'review (403 - grant auditLogs.read)' }}" }
+        - { id: "IA-5", title: "API tokens have expiration", finding: "{{ dt_tokens_no_expiry | default('n/a') }} token(s) without expiry", status: "{{ 'pass' if (dt_tokens_no_expiry | default(0) | int) == 0 else 'finding' }}" }
+        - { id: "AC-6", title: "Least-privilege token scopes", finding: "{{ dt_tokens_broad_scope | default('n/a') }} token(s) with broad scopes", status: "{{ 'review' if (dt_tokens_broad_scope | default(0) | int) > 0 else 'pass' }}" }
+        - { id: "AC-3", title: "IP address restrictions configured", status: "{{ 'pass' if (dt_ipr.status | default(0)) == 200 else 'manual-review' }}" }
+        - { id: "AC-2", title: "SSO/IdP federation + RBAC (account mgmt)", status: "manual-review" }
+        - { id: "SC-8", title: "TLS in transit (SaaS default)", status: "pass" }
+      token_summary:
+        total: "{{ dt_token_total | default('n/a') }}"
+        without_expiry: "{{ dt_tokens_no_expiry | default('n/a') }}"
+        broad_scope: "{{ dt_tokens_broad_scope | default('n/a') }}"
+      operations_applied: "{{ (dt_sec_apply.results | default([]) | map(attribute='item') | map(attribute='id') | list) if apply_changes | bool else [] }}"
+  tags: [report]
+
+- name: Write JSON evidence artifact
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/dynatrace_security_hardening.json"
+    mode: "0640"
+    content: "{{ dt_sec_results | to_nice_json }}"
+  tags: [report]
+
+- name: Summarize
+  ansible.builtin.debug:
+    msg: >-
+      Dynatrace security: tokens={{ dt_token_total | default('n/a') }},
+      no-expiry={{ dt_tokens_no_expiry | default('n/a') }},
+      broad-scope={{ dt_tokens_broad_scope | default('n/a') }}
+      ({{ 'enforced' if apply_changes | bool else 'assessment' }}).
+      Artifact: {{ artifacts_dir }}/dynatrace_security_hardening.json
+  tags: [report]

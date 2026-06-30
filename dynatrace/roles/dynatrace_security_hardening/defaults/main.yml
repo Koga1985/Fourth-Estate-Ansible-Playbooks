@@ -1,0 +1,52 @@
+---
+# defaults file for dynatrace_security_hardening
+# Assess and harden a Dynatrace tenant's security posture against NIST 800-53
+# Rev 5 (AC/AU/IA/SC). There is no DISA STIG for Dynatrace; this role applies
+# vendor + NIST best practices via the Dynatrace REST APIs (ansible.builtin.uri).
+#
+# Safe by default: apply_changes=false runs read-only assessment (audit log
+# access, API-token hygiene, IP restrictions) and writes a NIST-mapped evidence
+# artifact. With apply_changes=true the data-driven hardening operations are
+# applied.
+
+# Runs on the control node
+ansible_connection: local
+
+# ============================================================
+# Tenant API (vault the token)
+# ============================================================
+dt_environment_url: "{{ vault_dt_environment_url | default('https://ENVID.live.dynatrace.com') }}"
+# API token scopes: auditLogs.read, apiTokens.read, settings.read (+ write to enforce)
+dt_api_token: "{{ vault_dt_api_token | default('') }}"
+dt_validate_certs: true
+
+# ============================================================
+# Deployment control
+# ============================================================
+apply_changes: false
+artifacts_dir: "/tmp/dynatrace-artifacts"
+
+# ============================================================
+# Expected security posture (used by the assessment to flag findings)
+# ============================================================
+# IA-5 - every API token should have an expiration date
+dt_require_token_expiration: true
+# AC-6 - tokens should not hold these broad/admin scopes unless justified
+dt_sensitive_token_scopes:
+  - "WriteConfig"
+  - "settings.write"
+  - "DataExport"
+  - "InstallerDownload"
+  - "apiTokens.write"
+
+# ============================================================
+# Data-driven hardening operations (applied only with apply_changes=true)
+# Each item: { id, title, method, path, body, status_code }
+# e.g. enable IP restrictions, data-masking settings via Settings 2.0.
+# ============================================================
+dt_security_operations: []
+
+compliance_frameworks:
+  - nist_800_53
+  - nist_800_171
+benchmark: "Dynatrace tenant security (NIST 800-53 Rev 5)"
