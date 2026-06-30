@@ -1,0 +1,68 @@
+---
+# tasks file for dynatrace_notifications
+
+- name: Ensure artifacts directory exists
+  ansible.builtin.file:
+    path: "{{ artifacts_dir }}"
+    state: directory
+    mode: "0750"
+  run_once: true
+  changed_when: false
+  tags: [always]
+
+- name: Show run mode
+  ansible.builtin.debug:
+    msg: "dynatrace_notifications against {{ dt_environment_url }} - {{ 'ENFORCING' if apply_changes | bool else 'DRY-RUN / assessment only' }}"
+  tags: [always]
+
+- name: Retrieve existing problem notifications
+  ansible.builtin.uri:
+    url: "{{ dt_environment_url }}/api/config/v1/notifications"
+    method: GET
+    headers: { Authorization: "Api-Token {{ dt_api_token }}", Accept: application/json }
+    validate_certs: "{{ dt_validate_certs }}"
+    status_code: [200, 403]
+    timeout: 30
+  no_log: true
+  register: dt_notif
+  tags: [assess]
+
+- name: Display assessment
+  ansible.builtin.debug:
+    msg: "Existing problem notifications: {{ dt_notif.json.values | default([]) | length if dt_notif.status == 200 else 'forbidden' }}"
+  tags: [assess]
+
+- name: Apply notification operations
+  ansible.builtin.uri:
+    url: "{{ dt_environment_url }}/api/{{ item.path }}"
+    method: "{{ item.method | default('POST') }}"
+    headers:
+      Authorization: "Api-Token {{ dt_api_token }}"
+      Accept: application/json
+      Content-Type: application/json
+    body_format: json
+    body: "{{ item.body | default(omit) }}"
+    validate_certs: "{{ dt_validate_certs }}"
+    status_code: "{{ item.status_code | default([200, 201]) }}"
+    timeout: 60
+  no_log: true
+  loop: "{{ dt_notifications }}"
+  loop_control:
+    label: "{{ item.id }} - {{ item.title }}"
+  when:
+    - apply_changes | bool
+    - dt_notifications | length > 0
+  register: dt_notif_apply
+  tags: [apply]
+
+- name: Write artifact
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/dynatrace_notifications.json"
+    mode: "0640"
+    content: "{{ {'environment': dt_environment_url, 'mode': 'enforce' if apply_changes | bool else 'assessment', 'existing_notifications': (dt_notif.json.values | default([]) | length) if dt_notif.status == 200 else 'forbidden', 'operations_applied': (dt_notif_apply.results | default([]) | map(attribute='item') | map(attribute='id') | list) if apply_changes | bool else []} | to_nice_json }}"
+  tags: [report]
+
+- name: Summarize
+  ansible.builtin.debug:
+    msg: "Dynatrace notifications {{ 'enforced' if apply_changes | bool else 'assessed' }}. Artifact: {{ artifacts_dir }}/dynatrace_notifications.json"
+  tags: [report]

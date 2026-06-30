@@ -1,0 +1,94 @@
+---
+# tasks file for dynatrace_monitoring_as_code
+
+- name: Ensure artifacts directory exists
+  ansible.builtin.file:
+    path: "{{ artifacts_dir }}"
+    state: directory
+    mode: "0750"
+  run_once: true
+  changed_when: false
+  tags: [always]
+
+- name: Show run mode
+  ansible.builtin.debug:
+    msg: "dynatrace_monitoring_as_code against {{ dt_environment_url }} - {{ 'ENFORCING' if apply_changes | bool else 'DRY-RUN / assessment only' }}"
+  tags: [always]
+
+- name: Assess existing monitoring-as-code objects
+  tags: [assess]
+  block:
+    - name: Retrieve SLOs
+      ansible.builtin.uri:
+        url: "{{ dt_environment_url }}/api/v2/slo?pageSize=1"
+        method: GET
+        headers: { Authorization: "Api-Token {{ dt_api_token }}", Accept: application/json }
+        validate_certs: "{{ dt_validate_certs }}"
+        status_code: [200, 403]
+        timeout: 30
+      no_log: true
+      register: dt_slo
+
+    - name: Retrieve synthetic monitors
+      ansible.builtin.uri:
+        url: "{{ dt_environment_url }}/api/v1/synthetic/monitors"
+        method: GET
+        headers: { Authorization: "Api-Token {{ dt_api_token }}", Accept: application/json }
+        validate_certs: "{{ dt_validate_certs }}"
+        status_code: [200, 403]
+        timeout: 30
+      no_log: true
+      register: dt_syn
+
+    - name: Retrieve dashboards
+      ansible.builtin.uri:
+        url: "{{ dt_environment_url }}/api/config/v1/dashboards"
+        method: GET
+        headers: { Authorization: "Api-Token {{ dt_api_token }}", Accept: application/json }
+        validate_certs: "{{ dt_validate_certs }}"
+        status_code: [200, 403]
+        timeout: 30
+      no_log: true
+      register: dt_dash
+
+    - name: Display assessment
+      ansible.builtin.debug:
+        msg:
+          - "SLOs:               {{ dt_slo.json.totalCount | default('forbidden') }}"
+          - "Synthetic monitors: {{ dt_syn.json.monitors | default([]) | length if dt_syn.status == 200 else 'forbidden' }}"
+          - "Dashboards:         {{ dt_dash.json.dashboards | default([]) | length if dt_dash.status == 200 else 'forbidden' }}"
+
+- name: Apply monitoring-as-code operations
+  ansible.builtin.uri:
+    url: "{{ dt_environment_url }}/api/{{ item.path }}"
+    method: "{{ item.method | default('POST') }}"
+    headers:
+      Authorization: "Api-Token {{ dt_api_token }}"
+      Accept: application/json
+      Content-Type: application/json
+    body_format: json
+    body: "{{ item.body | default(omit) }}"
+    validate_certs: "{{ dt_validate_certs }}"
+    status_code: "{{ item.status_code | default([200, 201]) }}"
+    timeout: 60
+  no_log: true
+  loop: "{{ dt_mac_operations }}"
+  loop_control:
+    label: "{{ item.id }} - {{ item.title }}"
+  when:
+    - apply_changes | bool
+    - dt_mac_operations | length > 0
+  register: dt_mac_apply
+  tags: [apply]
+
+- name: Write artifact
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/dynatrace_monitoring_as_code.json"
+    mode: "0640"
+    content: "{{ {'environment': dt_environment_url, 'mode': 'enforce' if apply_changes | bool else 'assessment', 'slos': dt_slo.json.totalCount | default('n/a'), 'operations_applied': (dt_mac_apply.results | default([]) | map(attribute='item') | map(attribute='id') | list) if apply_changes | bool else []} | to_nice_json }}"
+  tags: [report]
+
+- name: Summarize
+  ansible.builtin.debug:
+    msg: "Dynatrace monitoring-as-code {{ 'enforced' if apply_changes | bool else 'assessed' }}. Artifact: {{ artifacts_dir }}/dynatrace_monitoring_as_code.json"
+  tags: [report]

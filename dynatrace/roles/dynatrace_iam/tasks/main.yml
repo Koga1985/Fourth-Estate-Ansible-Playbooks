@@ -1,0 +1,104 @@
+---
+# tasks file for dynatrace_iam
+
+- name: Ensure artifacts directory exists
+  ansible.builtin.file:
+    path: "{{ artifacts_dir }}"
+    state: directory
+    mode: "0750"
+  run_once: true
+  changed_when: false
+  tags: [always]
+
+- name: Show run mode
+  ansible.builtin.debug:
+    msg: >-
+      dynatrace_iam (account {{ dt_account_uuid }}) -
+      {{ 'ENFORCING' if apply_changes | bool else 'DRY-RUN / assessment only' }}
+  tags: [always]
+
+- name: Obtain OAuth2 access token
+  ansible.builtin.uri:
+    url: "{{ dt_oauth_token_url }}"
+    method: POST
+    headers:
+      Content-Type: application/x-www-form-urlencoded
+    body_format: form-urlencoded
+    body:
+      grant_type: client_credentials
+      client_id: "{{ dt_oauth_client_id }}"
+      client_secret: "{{ dt_oauth_client_secret }}"
+      scope: "{{ dt_oauth_scope }}"
+      resource: "urn:dtaccount:{{ dt_account_uuid }}"
+    validate_certs: "{{ dt_validate_certs }}"
+    status_code: 200
+    timeout: 30
+  no_log: true
+  register: dt_oauth
+  tags: [always]
+
+- name: Set IAM auth header
+  ansible.builtin.set_fact:
+    dt_iam_headers:
+      Authorization: "Bearer {{ dt_oauth.json.access_token }}"
+      Accept: application/json
+  no_log: true
+  tags: [always]
+
+# ---------- Assessment ----------
+- name: AC-2 - Retrieve account groups
+  ansible.builtin.uri:
+    url: "{{ dt_iam_api_base }}/accounts/{{ dt_account_uuid }}/groups"
+    method: GET
+    headers: "{{ dt_iam_headers }}"
+    validate_certs: "{{ dt_validate_certs }}"
+    status_code: [200, 403]
+    timeout: 30
+  no_log: true
+  register: dt_groups
+  tags: [assess]
+
+- name: AC-2 - Retrieve account users
+  ansible.builtin.uri:
+    url: "{{ dt_iam_api_base }}/accounts/{{ dt_account_uuid }}/users"
+    method: GET
+    headers: "{{ dt_iam_headers }}"
+    validate_certs: "{{ dt_validate_certs }}"
+    status_code: [200, 403]
+    timeout: 30
+  no_log: true
+  register: dt_users
+  tags: [assess]
+
+# ---------- Enforcement ----------
+- name: Apply IAM operations (groups / policies / bindings)
+  ansible.builtin.uri:
+    url: "{{ dt_iam_api_base }}/{{ item.path }}"
+    method: "{{ item.method | default('POST') }}"
+    headers: "{{ dt_iam_headers | combine({'Content-Type': 'application/json'}) }}"
+    body_format: json
+    body: "{{ item.body | default(omit) }}"
+    validate_certs: "{{ dt_validate_certs }}"
+    status_code: "{{ item.status_code | default([200, 201]) }}"
+    timeout: 60
+  no_log: true
+  loop: "{{ dt_iam_operations }}"
+  loop_control:
+    label: "{{ item.id }} - {{ item.title }}"
+  when:
+    - apply_changes | bool
+    - dt_iam_operations | length > 0
+  register: dt_iam_apply
+  tags: [apply]
+
+- name: Write IAM evidence artifact
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/dynatrace_iam.json"
+    mode: "0640"
+    content: "{{ {'account': dt_account_uuid, 'benchmark': benchmark, 'mode': 'enforce' if apply_changes | bool else 'assessment', 'groups': (dt_groups.json.items | default([]) | length) if dt_groups.status == 200 else 'forbidden', 'users': (dt_users.json.items | default([]) | length) if dt_users.status == 200 else 'forbidden', 'operations_applied': (dt_iam_apply.results | default([]) | map(attribute='item') | map(attribute='id') | list) if apply_changes | bool else []} | to_nice_json }}"
+  tags: [report]
+
+- name: Summarize
+  ansible.builtin.debug:
+    msg: "Dynatrace IAM {{ 'enforced' if apply_changes | bool else 'assessed' }} for account {{ dt_account_uuid }}. Artifact: {{ artifacts_dir }}/dynatrace_iam.json"
+  tags: [report]

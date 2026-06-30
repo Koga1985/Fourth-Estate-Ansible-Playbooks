@@ -1,0 +1,48 @@
+---
+# defaults file for dynatrace_kubernetes
+# Deploy Dynatrace full-stack observability to Kubernetes/OpenShift by creating
+# the token Secret and the DynaKube custom resource that the Dynatrace Operator
+# reconciles. (Install the Operator first - see README - via Helm or manifest.)
+#
+# Safe by default: apply_changes=false runs kubernetes.core.k8s in check mode
+# (server dry-run, no persistence) and writes a findings artifact. Use
+# -e apply_changes=true to apply.
+
+# Runs on the control node against the cluster
+ansible_connection: local
+kubeconfig: "{{ lookup('env', 'KUBECONFIG') | default('~/.kube/config', true) }}"
+
+# ============================================================
+# Tenant + tokens (vault these)
+# ============================================================
+dt_api_url: "{{ vault_dt_environment_url | default('https://ENVID.live.dynatrace.com') }}/api"
+dt_api_token: "{{ vault_dt_api_token | default('') }}"          # scope: API v2 (Dynatrace API)
+dt_data_ingest_token: "{{ vault_dt_data_ingest_token | default('') }}"  # metrics/logs ingest
+
+# ============================================================
+# Deployment control
+# ============================================================
+apply_changes: false
+artifacts_dir: "/tmp/dynatrace-artifacts"
+
+# ============================================================
+# DynaKube configuration
+# ============================================================
+dynatrace_namespace: dynatrace
+dynakube_name: dynakube
+dynakube_api_version: "dynatrace.com/v1beta3"
+# OneAgent deployment mode
+dynakube_oneagent_mode: "cloudNativeFullStack"   # cloudNativeFullStack | classicFullStack | applicationMonitoring | hostMonitoring
+# ActiveGate capabilities
+dynakube_activegate_capabilities:
+  - kubernetes-monitoring
+  - routing
+  - dynatrace-api
+# Network zone (optional)
+dynakube_network_zone: ""
+# Install the operator manifest from this URL if provided (else install via Helm first)
+dynatrace_operator_manifest_url: ""
+
+compliance_frameworks:
+  - nist_800_53
+  - nist_800_171

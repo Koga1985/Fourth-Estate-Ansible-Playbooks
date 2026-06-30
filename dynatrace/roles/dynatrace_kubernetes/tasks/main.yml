@@ -1,0 +1,100 @@
+---
+# tasks file for dynatrace_kubernetes
+
+- name: Ensure artifacts directory exists
+  ansible.builtin.file:
+    path: "{{ artifacts_dir }}"
+    state: directory
+    mode: "0750"
+  run_once: true
+  changed_when: false
+  tags: [always]
+
+- name: Show run mode
+  ansible.builtin.debug:
+    msg: >-
+      dynatrace_kubernetes ({{ dynakube_oneagent_mode }}) -
+      {{ 'ENFORCING' if apply_changes | bool else 'DRY-RUN / check mode only' }}
+  tags: [always]
+
+- name: Ensure dynatrace namespace exists
+  kubernetes.core.k8s:
+    kubeconfig: "{{ kubeconfig }}"
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: "{{ dynatrace_namespace }}"
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: dk_ns
+  tags: [k8s]
+
+- name: Install Dynatrace Operator manifest (optional)
+  kubernetes.core.k8s:
+    kubeconfig: "{{ kubeconfig }}"
+    state: present
+    src: "{{ dynatrace_operator_manifest_url }}"
+  check_mode: "{{ not (apply_changes | bool) }}"
+  when: dynatrace_operator_manifest_url | length > 0
+  register: dk_operator
+  failed_when: false
+  tags: [k8s, operator]
+
+- name: Create DynaKube token secret
+  kubernetes.core.k8s:
+    kubeconfig: "{{ kubeconfig }}"
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: "{{ dynakube_name }}"
+        namespace: "{{ dynatrace_namespace }}"
+      type: Opaque
+      stringData:
+        apiToken: "{{ dt_api_token }}"
+        dataIngestToken: "{{ dt_data_ingest_token }}"
+  no_log: true
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: dk_secret
+  tags: [k8s, secret]
+
+- name: Apply DynaKube custom resource
+  kubernetes.core.k8s:
+    kubeconfig: "{{ kubeconfig }}"
+    state: present
+    definition:
+      apiVersion: "{{ dynakube_api_version }}"
+      kind: DynaKube
+      metadata:
+        name: "{{ dynakube_name }}"
+        namespace: "{{ dynatrace_namespace }}"
+        annotations:
+          feature.dynatrace.com/k8s-app-enabled: "true"
+      spec: "{{ dynakube_spec }}"
+  vars:
+    dynakube_spec: >-
+      {{
+        {
+          'apiUrl': dt_api_url,
+          'tokens': dynakube_name,
+          'oneAgent': {dynakube_oneagent_mode: ({'networkZone': dynakube_network_zone} if dynakube_network_zone | length > 0 else {})},
+          'activeGate': {'capabilities': dynakube_activegate_capabilities}
+        }
+      }}
+  check_mode: "{{ not (apply_changes | bool) }}"
+  register: dk_cr
+  tags: [k8s, dynakube]
+
+- name: Write deployment artifact
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/dynatrace_kubernetes.json"
+    mode: "0640"
+    content: "{{ {'namespace': dynatrace_namespace, 'dynakube': dynakube_name, 'oneagent_mode': dynakube_oneagent_mode, 'activegate_capabilities': dynakube_activegate_capabilities, 'mode': 'enforce' if apply_changes | bool else 'dry-run', 'namespace_changed': dk_ns.changed | default(false), 'secret_changed': dk_secret.changed | default(false), 'dynakube_changed': dk_cr.changed | default(false)} | to_nice_json }}"
+  tags: [report]
+
+- name: Summarize
+  ansible.builtin.debug:
+    msg: "Dynatrace K8s ({{ dynakube_oneagent_mode }}) {{ 'applied' if apply_changes | bool else 'dry-run' }} to namespace {{ dynatrace_namespace }}. Artifact: {{ artifacts_dir }}/dynatrace_kubernetes.json"
+  tags: [report]
