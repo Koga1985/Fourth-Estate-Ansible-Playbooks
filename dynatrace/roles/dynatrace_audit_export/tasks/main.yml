@@ -1,0 +1,62 @@
+---
+# tasks file for dynatrace_audit_export
+
+- name: Ensure artifacts directory exists
+  ansible.builtin.file:
+    path: "{{ artifacts_dir }}"
+    state: directory
+    mode: "0750"
+  run_once: true
+  changed_when: false
+  tags: [always]
+
+- name: Retrieve Dynatrace audit log ({{ audit_lookback }})
+  ansible.builtin.uri:
+    url: "{{ dt_environment_url }}/api/v2/auditlogs?from={{ audit_lookback }}&pageSize={{ audit_page_size }}{{ ('&filter=' + (audit_filter | urlencode)) if audit_filter | length > 0 else '' }}"
+    method: GET
+    headers: { Authorization: "Api-Token {{ dt_api_token }}", Accept: application/json }
+    validate_certs: "{{ dt_validate_certs }}"
+    status_code: 200
+    timeout: 60
+  no_log: true
+  register: dt_audit
+  tags: [export]
+
+- name: Write audit log to NDJSON evidence file
+  ansible.builtin.copy:
+    dest: "{{ audit_output_file }}"
+    mode: "0640"
+    content: "{{ (dt_audit.json.auditLogs | default([]) | map('to_json') | join('\n')) + '\n' }}"
+  tags: [export]
+
+- name: Forward audit log to SIEM/HTTP collector (optional)
+  ansible.builtin.uri:
+    url: "{{ audit_forward_url }}"
+    method: POST
+    headers: "{{ audit_forward_headers | combine({'Content-Type': 'application/json'}) }}"
+    body_format: json
+    body: "{{ item }}"
+    validate_certs: "{{ dt_validate_certs }}"
+    status_code: [200, 201, 202]
+    timeout: 30
+  no_log: true
+  loop: "{{ dt_audit.json.auditLogs | default([]) }}"
+  loop_control:
+    label: "{{ item.eventType | default('event') }} {{ item.timestamp | default('') }}"
+  when: audit_forward_url | length > 0
+  register: dt_audit_forward
+  tags: [forward]
+
+- name: Write export summary artifact
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/dynatrace_audit_export.json"
+    mode: "0640"
+    content: "{{ {'environment': dt_environment_url, 'benchmark': benchmark, 'window': audit_lookback, 'records': dt_audit.json.auditLogs | default([]) | length, 'more_pages': (dt_audit.json.nextPageKey is defined and dt_audit.json.nextPageKey), 'evidence_file': audit_output_file, 'forwarded': (audit_forward_url | length > 0)} | to_nice_json }}"
+  tags: [report]
+
+- name: Summarize
+  ansible.builtin.debug:
+    msg: >-
+      Exported {{ dt_audit.json.auditLogs | default([]) | length }} audit record(s) for {{ audit_lookback }}
+      to {{ audit_output_file }}{{ ' (more pages exist - narrow the window or shorten the schedule)' if (dt_audit.json.nextPageKey is defined and dt_audit.json.nextPageKey) else '' }}.
+  tags: [report]

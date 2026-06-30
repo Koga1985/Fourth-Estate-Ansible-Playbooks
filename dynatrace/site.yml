@@ -1,0 +1,80 @@
+---
+# Dynatrace master playbook - sequences agent/gateway deployment and tenant
+# configuration/security. Safe by default (apply_changes=false everywhere).
+#
+# Usage:
+#   # Assess everything (dry-run):
+#   ansible-playbook dynatrace/site.yml -i inventory
+#   # Apply a single area with tags:
+#   ansible-playbook dynatrace/site.yml -i inventory -e apply_changes=true --tags oneagent
+#   ansible-playbook dynatrace/site.yml -i inventory -e apply_changes=true --tags tenant
+#
+# Expected inventory groups:
+#   [dynatrace_hosts]       - hosts that get the OneAgent
+#   [dynatrace_activegates] - ActiveGate hosts
+#   [dynatrace_tenant]      - one local-connection host representing the tenant
+#   [dynatrace_account]     - one local-connection host for Account Management (IAM)
+#   localhost               - for the Kubernetes role
+
+- name: Dynatrace - OneAgent deployment
+  hosts: dynatrace_hosts
+  gather_facts: true
+  vars:
+    apply_changes: false
+  roles:
+    - role: dynatrace_oneagent
+  tags: [oneagent, deploy]
+
+- name: Dynatrace - ActiveGate deployment
+  hosts: dynatrace_activegates
+  become: true
+  gather_facts: true
+  vars:
+    apply_changes: false
+  roles:
+    - role: dynatrace_activegate
+  tags: [activegate, deploy]
+
+- name: Dynatrace - Kubernetes/OpenShift (DynaKube)
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    apply_changes: false
+  roles:
+    - role: dynatrace_kubernetes
+  tags: [kubernetes, deploy]
+  when: "'dynatrace_kubernetes' in (enabled_components | default(['dynatrace_kubernetes']))"
+
+- name: Dynatrace - Tenant configuration & monitoring-as-code
+  hosts: dynatrace_tenant
+  gather_facts: true
+  vars:
+    apply_changes: false
+  roles:
+    - role: dynatrace_tenant_config
+    - role: dynatrace_notifications
+    - role: dynatrace_monitoring_as_code
+  tags: [tenant, config]
+
+- name: Dynatrace - Security, data privacy, log monitoring, AppSec
+  hosts: dynatrace_tenant
+  gather_facts: true
+  vars:
+    apply_changes: false
+  roles:
+    - role: dynatrace_security_hardening
+    - role: dynatrace_data_privacy
+    - role: dynatrace_log_monitoring
+    - role: dynatrace_appsec
+    - role: dynatrace_audit_export
+  tags: [security, compliance]
+
+- name: Dynatrace - Account Management (IAM)
+  hosts: dynatrace_account
+  gather_facts: false
+  vars:
+    apply_changes: false
+  roles:
+    - role: dynatrace_iam
+  tags: [iam, security]

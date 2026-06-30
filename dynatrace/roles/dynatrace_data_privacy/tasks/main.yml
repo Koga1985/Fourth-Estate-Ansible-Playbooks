@@ -1,0 +1,69 @@
+---
+# tasks file for dynatrace_data_privacy
+
+- name: Ensure artifacts directory exists
+  ansible.builtin.file:
+    path: "{{ artifacts_dir }}"
+    state: directory
+    mode: "0750"
+  run_once: true
+  changed_when: false
+  tags: [always]
+
+- name: Show run mode
+  ansible.builtin.debug:
+    msg: "dynatrace_data_privacy against {{ dt_environment_url }} - {{ 'ENFORCING' if apply_changes | bool else 'DRY-RUN / assessment only' }}"
+  tags: [always]
+
+- name: Assess current Settings 2.0 objects ({{ dt_assess_schema_ids }})
+  ansible.builtin.uri:
+    url: "{{ dt_environment_url }}/api/v2/settings/objects?schemaIds={{ dt_assess_schema_ids }}&fields=value,schemaId,scope&pageSize=100"
+    method: GET
+    headers: { Authorization: "Api-Token {{ dt_api_token }}", Accept: application/json }
+    validate_certs: "{{ dt_validate_certs }}"
+    status_code: [200, 400, 403, 404]
+    timeout: 30
+  no_log: true
+  register: dt_assess
+  failed_when: false
+  tags: [assess]
+
+- name: Display assessment
+  ansible.builtin.debug:
+    msg: "Settings objects for {{ dt_assess_schema_ids }}: {{ dt_assess.json.totalCount | default('n/a (status ' + (dt_assess.status | string) + ')') }}"
+  tags: [assess]
+
+- name: Apply Dynatrace data privacy / masking operations
+  ansible.builtin.uri:
+    url: "{{ dt_environment_url }}/api/{{ item.path }}"
+    method: "{{ item.method | default('POST') }}"
+    headers:
+      Authorization: "Api-Token {{ dt_api_token }}"
+      Accept: application/json
+      Content-Type: application/json
+    body_format: json
+    body: "{{ item.body | default(omit) }}"
+    validate_certs: "{{ dt_validate_certs }}"
+    status_code: "{{ item.status_code | default([200, 201]) }}"
+    timeout: 60
+  no_log: true
+  loop: "{{ dt_privacy_operations }}"
+  loop_control:
+    label: "{{ item.id }} - {{ item.title }}"
+  when:
+    - apply_changes | bool
+    - dt_privacy_operations | length > 0
+  register: dt_ops_apply
+  tags: [apply]
+
+- name: Write evidence artifact
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/dynatrace_data_privacy.json"
+    mode: "0640"
+    content: "{{ {'environment': dt_environment_url, 'benchmark': benchmark, 'mode': 'enforce' if apply_changes | bool else 'assessment', 'schema_ids': dt_assess_schema_ids, 'objects_found': dt_assess.json.totalCount | default('n/a'), 'operations_applied': (dt_ops_apply.results | default([]) | map(attribute='item') | map(attribute='id') | list) if apply_changes | bool else []} | to_nice_json }}"
+  tags: [report]
+
+- name: Summarize
+  ansible.builtin.debug:
+    msg: "Dynatrace data privacy / masking {{ 'enforced' if apply_changes | bool else 'assessed' }}. Artifact: {{ artifacts_dir }}/dynatrace_data_privacy.json"
+  tags: [report]
