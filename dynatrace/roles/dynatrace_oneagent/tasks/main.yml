@@ -1,0 +1,29 @@
+---
+# tasks file for dynatrace_oneagent
+
+- name: Ensure artifacts directory exists on control node
+  ansible.builtin.file:
+    path: "{{ artifacts_dir }}"
+    state: directory
+    mode: "0750"
+  delegate_to: localhost
+  run_once: true
+  changed_when: false
+  tags: [always]
+
+- name: Show run mode
+  ansible.builtin.debug:
+    msg: >-
+      dynatrace_oneagent on {{ inventory_hostname }} ({{ ansible_facts['os_family'] | default('unknown') }}) -
+      {{ 'ENFORCING (install/configure)' if apply_changes | bool else 'DRY-RUN / assessment only' }}
+  tags: [always]
+
+- name: Deploy OneAgent on Linux
+  ansible.builtin.import_tasks: linux.yml
+  when: ansible_facts['os_family'] | default('') not in ['Windows']
+  tags: [oneagent, linux]
+
+- name: Deploy OneAgent on Windows
+  ansible.builtin.import_tasks: windows.yml
+  when: ansible_facts['os_family'] | default('') == 'Windows'
+  tags: [oneagent, windows]

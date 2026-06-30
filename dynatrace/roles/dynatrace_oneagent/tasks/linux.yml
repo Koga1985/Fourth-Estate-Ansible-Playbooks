@@ -1,0 +1,70 @@
+---
+# Linux OneAgent install + idempotent reconfigure
+
+- name: Check whether OneAgent is already installed
+  ansible.builtin.stat:
+    path: "{{ oneagent_ctl_linux }}"
+  register: oa_ctl
+  tags: [linux]
+
+- name: Build oneagentctl parameter list
+  ansible.builtin.set_fact:
+    oa_ctl_params: >-
+      {{
+        (['--set-host-group=' + oneagent_host_group] if oneagent_host_group | length > 0 else []) +
+        (['--set-network-zone=' + oneagent_network_zone] if oneagent_network_zone | length > 0 else []) +
+        ['--set-infra-only=' + ('true' if oneagent_monitoring_mode == 'infra-only' else 'false')] +
+        ['--set-app-log-content-access=' + (oneagent_app_log_content_access | string | lower)]
+      }}
+  tags: [linux]
+
+# ---------- Fresh install ----------
+- name: Download OneAgent installer (PaaS token)
+  ansible.builtin.get_url:
+    url: "{{ dt_environment_url }}/api/v1/deployment/installer/agent/unix/default/latest?arch={{ oneagent_arch }}&flavor={{ oneagent_flavor }}"
+    dest: "{{ oneagent_installer_dir }}/Dynatrace-OneAgent.sh"
+    headers:
+      Authorization: "Api-Token {{ dt_paas_token }}"
+    validate_certs: "{{ dt_validate_certs }}"
+    mode: "0700"
+  become: true
+  no_log: true
+  when:
+    - not oa_ctl.stat.exists
+    - apply_changes | bool
+  tags: [linux]
+
+- name: Install OneAgent
+  ansible.builtin.command:
+    cmd: >-
+      /bin/sh {{ oneagent_installer_dir }}/Dynatrace-OneAgent.sh
+      {{ oa_ctl_params | join(' ') }}
+      --set-monitoring-mode={{ oneagent_monitoring_mode }}
+    creates: "{{ oneagent_ctl_linux }}"
+  become: true
+  no_log: true
+  when:
+    - not oa_ctl.stat.exists
+    - apply_changes | bool
+  register: oa_install
+  tags: [linux]
+
+# ---------- Idempotent reconfigure of existing agent ----------
+- name: Reconfigure existing OneAgent (oneagentctl)
+  ansible.builtin.command:
+    cmd: "{{ oneagent_ctl_linux }} {{ oa_ctl_params | join(' ') }} {{ '--restart-service' if oneagent_restart_service else '' }}"
+  become: true
+  when:
+    - oa_ctl.stat.exists
+    - apply_changes | bool
+  register: oa_reconfig
+  changed_when: "'Configuration was changed' in (oa_reconfig.stdout | default('')) or oa_reconfig.rc == 0"
+  tags: [linux]
+
+- name: Record OneAgent state
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/{{ inventory_hostname }}_oneagent.json"
+    mode: "0640"
+    content: "{{ {'host': inventory_hostname, 'installed_before_run': oa_ctl.stat.exists, 'mode': oneagent_monitoring_mode, 'host_group': oneagent_host_group, 'network_zone': oneagent_network_zone, 'enforced': apply_changes | bool} | to_nice_json }}"
+  delegate_to: localhost
+  tags: [linux, report]

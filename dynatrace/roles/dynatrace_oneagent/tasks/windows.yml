@@ -1,0 +1,43 @@
+---
+# Windows OneAgent install + idempotent reconfigure
+
+- name: Check whether OneAgent is already installed
+  ansible.windows.win_stat:
+    path: "{{ oneagent_ctl_windows }}"
+  register: oa_ctl_win
+  tags: [windows]
+
+- name: Download OneAgent installer (PaaS token)
+  ansible.windows.win_get_url:
+    url: "{{ dt_environment_url }}/api/v1/deployment/installer/agent/windows/default/latest?arch=x86&flavor=default"
+    dest: 'C:\Windows\Temp\Dynatrace-OneAgent.exe'
+    headers:
+      Authorization: "Api-Token {{ dt_paas_token }}"
+    validate_certs: "{{ dt_validate_certs }}"
+  no_log: true
+  when:
+    - not oa_ctl_win.stat.exists
+    - apply_changes | bool
+  tags: [windows]
+
+- name: Install OneAgent (silent)
+  ansible.windows.win_package:
+    path: 'C:\Windows\Temp\Dynatrace-OneAgent.exe'
+    arguments: "--quiet HOST_GROUP={{ oneagent_host_group }} NETWORK_ZONE={{ oneagent_network_zone }}"
+    state: present
+  no_log: true
+  when:
+    - not oa_ctl_win.stat.exists
+    - apply_changes | bool
+  register: oa_install_win
+  tags: [windows]
+
+- name: Reconfigure existing OneAgent (oneagentctl)
+  ansible.windows.win_command:
+    cmd: '"{{ oneagent_ctl_windows }}" --set-host-group={{ oneagent_host_group }} --set-network-zone={{ oneagent_network_zone }} --set-infra-only={{ "true" if oneagent_monitoring_mode == "infra-only" else "false" }} --restart-service'
+  when:
+    - oa_ctl_win.stat.exists
+    - apply_changes | bool
+  register: oa_reconfig_win
+  changed_when: oa_reconfig_win.rc == 0
+  tags: [windows]
