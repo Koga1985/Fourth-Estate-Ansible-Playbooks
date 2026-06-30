@@ -1,0 +1,114 @@
+---
+# tasks file for dynatrace_tenant_config
+
+- name: Ensure artifacts directory exists
+  ansible.builtin.file:
+    path: "{{ artifacts_dir }}"
+    state: directory
+    mode: "0750"
+  run_once: true
+  changed_when: false
+  tags: [always]
+
+- name: Show run mode
+  ansible.builtin.debug:
+    msg: >-
+      dynatrace_tenant_config against {{ dt_environment_url }} -
+      {{ 'ENFORCING' if apply_changes | bool else 'DRY-RUN / assessment only' }}
+  tags: [always]
+
+- name: Assess tenant configuration (read-only)
+  when: stig_assess | bool
+  tags: [assess]
+  block:
+    - name: Retrieve management zones
+      ansible.builtin.uri:
+        url: "{{ dt_environment_url }}/api/config/v1/managementZones"
+        method: GET
+        headers:
+          Authorization: "Api-Token {{ dt_api_token }}"
+          Accept: application/json
+        validate_certs: "{{ dt_validate_certs }}"
+        status_code: 200
+        timeout: 30
+      no_log: true
+      register: dt_mz
+
+    - name: Retrieve alerting profiles
+      ansible.builtin.uri:
+        url: "{{ dt_environment_url }}/api/config/v1/alertingProfiles"
+        method: GET
+        headers:
+          Authorization: "Api-Token {{ dt_api_token }}"
+          Accept: application/json
+        validate_certs: "{{ dt_validate_certs }}"
+        status_code: 200
+        timeout: 30
+      no_log: true
+      register: dt_ap
+
+    - name: Retrieve auto-tags
+      ansible.builtin.uri:
+        url: "{{ dt_environment_url }}/api/config/v1/autoTags"
+        method: GET
+        headers:
+          Authorization: "Api-Token {{ dt_api_token }}"
+          Accept: application/json
+        validate_certs: "{{ dt_validate_certs }}"
+        status_code: 200
+        timeout: 30
+      no_log: true
+      register: dt_tags
+
+    - name: Derive assessment
+      ansible.builtin.set_fact:
+        dt_assessment:
+          management_zones: "{{ dt_mz.json.values | default([]) | length }}"
+          alerting_profiles: "{{ dt_ap.json.values | default([]) | length }}"
+          auto_tags: "{{ dt_tags.json.values | default([]) | length }}"
+
+    - name: Display assessment
+      ansible.builtin.debug:
+        msg:
+          - "Dynatrace tenant assessment ({{ dt_environment_url }}):"
+          - "Management zones:  {{ dt_assessment.management_zones }}"
+          - "Alerting profiles: {{ dt_assessment.alerting_profiles }}"
+          - "Auto-tags:         {{ dt_assessment.auto_tags }}"
+
+- name: Apply tenant configuration operations
+  ansible.builtin.uri:
+    url: "{{ dt_environment_url }}/api/{{ item.path }}"
+    method: "{{ item.method | default('POST') }}"
+    headers:
+      Authorization: "Api-Token {{ dt_api_token }}"
+      Accept: application/json
+      Content-Type: application/json
+    body_format: json
+    body: "{{ item.body | default(omit) }}"
+    validate_certs: "{{ dt_validate_certs }}"
+    status_code: "{{ item.status_code | default([200, 201]) }}"
+    timeout: 60
+  no_log: true
+  loop: "{{ dt_config_operations }}"
+  loop_control:
+    label: "{{ item.id }} - {{ item.title }}"
+  when:
+    - stig_apply_operations | bool
+    - apply_changes | bool
+    - dt_config_operations | length > 0
+  register: dt_apply
+  tags: [apply]
+
+- name: Write JSON artifact
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/dynatrace_tenant_config.json"
+    mode: "0640"
+    content: "{{ {'environment': dt_environment_url, 'mode': 'enforce' if apply_changes | bool else 'assessment', 'assessment': dt_assessment | default({}), 'operations_applied': (dt_apply.results | default([]) | map(attribute='item') | map(attribute='id') | list) if apply_changes | bool else []} | to_nice_json }}"
+  when: stig_compliance_report | bool
+  tags: [report]
+
+- name: Summarize
+  ansible.builtin.debug:
+    msg: "Dynatrace tenant config {{ 'enforced' if apply_changes | bool else 'assessed (dry-run)' }}. Artifact: {{ artifacts_dir }}/dynatrace_tenant_config.json"
+  when: stig_compliance_report | bool
+  tags: [report]
