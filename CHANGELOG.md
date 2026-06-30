@@ -3,6 +3,30 @@
 All notable changes to the Fourth Estate Ansible Playbooks are documented here.
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [2026-06-30] — Dynatrace platform expansion (Tier C)
+
+Grew the `dynatrace/` platform from 12 to **17 roles** (operational lifecycle,
+DR, and remaining tenant-config surfaces):
+
+- `dynatrace_oneagent_lifecycle` — fleet lifecycle for installed OneAgents:
+  version assessment, host-group/network-zone/monitoring-mode reconfigure via
+  `oneagentctl`, service restart, and a **double-gated** decommission/uninstall
+  (requires `apply_changes=true` **and** `oneagent_decommission=true`).
+- `dynatrace_config_backup` — read-only export of tenant Config API + Settings 2.0
+  objects to timestamped JSON (DR / change-audit) with a manifest artifact.
+- `dynatrace_synthetic_locations` — manage private synthetic locations (ActiveGate
+  synthetic capability), assess + data-driven apply.
+- `dynatrace_cloud_integrations` — manage AWS/Azure/GCP monitoring connectors,
+  assess + data-driven apply.
+- `dynatrace_extensions` — Extension Framework 2.0 install/activate, assess +
+  data-driven apply.
+- `dynatrace/site.yml` extended: opt-in `dynatrace_oneagent_lifecycle` and
+  `dynatrace_config_backup` plays (gated via `enabled_components`), and the three
+  new config roles added to the tenant-config play.
+
+All safe-by-default (`apply_changes=false` assesses/reports; tokens `no_log`).
+Repository totals updated: **619 roles**, **3,920 YAML files**, **44 platforms**.
+
 ## [2026-06-30] — Dynatrace platform expansion (Tier A + B)
 
 Grew the `dynatrace/` platform from 4 to **12 roles** + a master `site.yml`:

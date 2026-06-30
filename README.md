@@ -1,6 +1,6 @@
 # Fourth Estate Ansible Playbooks
 
-An enterprise-grade collection of **607 roles** and **3,895 YAML files** for infrastructure automation across **44 technology platforms** with emphasis on **DoD STIG, NIST 800-53, NIST 800-171, FedRAMP, and FISMA compliance**.
+An enterprise-grade collection of **619 roles** and **3,920 YAML files** for infrastructure automation across **44 technology platforms** with emphasis on **DoD STIG, NIST 800-53, NIST 800-171, FedRAMP, and FISMA compliance**.
 
 > **New:** 26 dedicated DoD STIG / SRG roles were added covering Cisco network
 > devices (IOS XE L2, NX-OS, ASA, FTD, ACI Router, ISE), Palo Alto PAN-OS,
@@ -15,8 +15,8 @@ This repository provides production-ready Ansible automation for network infrast
 
 ## 📊 Repository Statistics
 
-- **Total Roles:** 607
-- **Total YAML Files:** 3,895
+- **Total Roles:** 619
+- **Total YAML Files:** 3,920
 - **README Documentation Files:** 686
 - **Technology Platforms:** 44
 - **Dedicated DoD STIG / SRG roles:** 39 (see [STIG_COVERAGE_MATRIX.md](./STIG_COVERAGE_MATRIX.md))
@@ -107,7 +107,7 @@ Each top-level directory focuses on a specific technology platform and contains 
 ### 📊 Monitoring & Observability (4 platforms)
 - **ScienceLogic SL1** - Platform monitoring, RBA, powerflow, governance (33 roles)
 - **Dragos** - OT threat detection, inventory, topology, integration (12 roles)
-- **Dynatrace** - OneAgent/ActiveGate/Kubernetes deployment, tenant config, monitoring-as-code, notifications, IAM, and NIST 800-53 security/compliance (12 roles)
+- **Dynatrace** - OneAgent/ActiveGate/Kubernetes deployment, tenant config, monitoring-as-code, notifications, synthetic locations, cloud integrations, extensions, lifecycle, config backup, IAM, and NIST 800-53 security/compliance (17 roles)
 - **Prometheus/Grafana** - Metrics collection, alerting, dashboarding (11 roles)
 - **ELK Stack** - Elasticsearch, Logstash, Kibana, Filebeat, Metricbeat (12 roles)
 
@@ -256,7 +256,7 @@ Fourth-Estate-Ansible-Playbooks/
 │   ├── README.md
 │   └── roles/
 │
-├── dynatrace/                     # Dynatrace observability (12 roles)
+├── dynatrace/                     # Dynatrace observability (17 roles)
 │   ├── README.md
 │   ├── site.yml
 │   ├── requirements.yml
