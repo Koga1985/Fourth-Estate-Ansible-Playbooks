@@ -3,6 +3,20 @@
 All notable changes to the Fourth Estate Ansible Playbooks are documented here.
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [2026-06-30] — Dynatrace platform
+
+Added the **`dynatrace/`** observability platform (4 roles), following the
+monitoring-platform deployment + NIST-aligned security pattern (no DISA STIG
+exists for Dynatrace):
+
+- `dynatrace/roles/dynatrace_oneagent` — deploy/configure OneAgent (Linux/Windows), idempotent via `oneagentctl`.
+- `dynatrace/roles/dynatrace_activegate` — deploy ActiveGate (group / network zone).
+- `dynatrace/roles/dynatrace_tenant_config` — tenant config via Config/Settings 2.0 APIs (assessment + data-driven apply).
+- `dynatrace/roles/dynatrace_security_hardening` — NIST 800-53 (AC/AU/IA/SC) posture assessment + hardening (token hygiene, audit-log access, IP restrictions).
+
+All safe-by-default (`apply_changes=false` assesses/reports; tokens `no_log`).
+Repository totals updated: **599 roles**, **3,854 YAML files**, **44 platforms**.
+
 ## [2026-06-29] — Tier 3 STIG expansion (network / endpoint / database)
 
 Added 6 more dedicated STIG roles (1 new platform: `juniper/`, plus `databases/mongodb/`):

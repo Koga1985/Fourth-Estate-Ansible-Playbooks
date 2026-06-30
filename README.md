@@ -1,6 +1,6 @@
 # Fourth Estate Ansible Playbooks
 
-An enterprise-grade collection of **595 roles** and **3,830 YAML files** for infrastructure automation across **43 technology platforms** with emphasis on **DoD STIG, NIST 800-53, NIST 800-171, FedRAMP, and FISMA compliance**.
+An enterprise-grade collection of **599 roles** and **3,854 YAML files** for infrastructure automation across **44 technology platforms** with emphasis on **DoD STIG, NIST 800-53, NIST 800-171, FedRAMP, and FISMA compliance**.
 
 > **New:** 26 dedicated DoD STIG / SRG roles were added covering Cisco network
 > devices (IOS XE L2, NX-OS, ASA, FTD, ACI Router, ISE), Palo Alto PAN-OS,
@@ -15,10 +15,10 @@ This repository provides production-ready Ansible automation for network infrast
 
 ## 📊 Repository Statistics
 
-- **Total Roles:** 595
-- **Total YAML Files:** 3,830
-- **README Documentation Files:** 673
-- **Technology Platforms:** 43
+- **Total Roles:** 599
+- **Total YAML Files:** 3,854
+- **README Documentation Files:** 678
+- **Technology Platforms:** 44
 - **Dedicated DoD STIG / SRG roles:** 39 (see [STIG_COVERAGE_MATRIX.md](./STIG_COVERAGE_MATRIX.md))
 - **Compliance Frameworks:** DoD STIG, DoD Cloud Computing SRG, NIST 800-53 Rev 5, NIST 800-171, FedRAMP, FISMA, CIS Benchmarks
 - **Cloud Platforms:** 4 (AWS, Azure, GCP, VMware vSphere)
@@ -107,6 +107,7 @@ Each top-level directory focuses on a specific technology platform and contains 
 ### 📊 Monitoring & Observability (4 platforms)
 - **ScienceLogic SL1** - Platform monitoring, RBA, powerflow, governance (33 roles)
 - **Dragos** - OT threat detection, inventory, topology, integration (12 roles)
+- **Dynatrace** - OneAgent/ActiveGate deployment, tenant config, NIST 800-53 security hardening (4 roles)
 - **Prometheus/Grafana** - Metrics collection, alerting, dashboarding (11 roles)
 - **ELK Stack** - Elasticsearch, Logstash, Kibana, Filebeat, Metricbeat (12 roles)
 
@@ -254,6 +255,11 @@ Fourth-Estate-Ansible-Playbooks/
 ├── dragos/                        # Dragos OT monitoring (12 roles)
 │   ├── README.md
 │   └── roles/
+│
+├── dynatrace/                     # Dynatrace observability (4 roles)
+│   ├── README.md
+│   ├── requirements.yml
+│   └── roles/                     # oneagent, activegate, tenant_config, security_hardening
 │
 ├── elk_stack/                     # ELK Stack (12 roles)
 │   ├── README.md
