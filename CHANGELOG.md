@@ -3,6 +3,21 @@
 All notable changes to the Fourth Estate Ansible Playbooks are documented here.
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [2026-06-30] — Dynatrace platform expansion (Tier A + B)
+
+Grew the `dynatrace/` platform from 4 to **12 roles** + a master `site.yml`:
+
+- **Tier A** — `dynatrace_kubernetes` (DynaKube on K8s/OpenShift), `dynatrace_iam`
+  (Account Management groups/users/policies, NIST AC-2/AC-6), `dynatrace_monitoring_as_code`
+  (SLOs/synthetic monitors/dashboards), `dynatrace_notifications` (ServiceNow/Slack/etc.).
+- **Tier B** — `dynatrace_data_privacy` (PII/IP masking, SC-28/SI-12),
+  `dynatrace_log_monitoring` (log masking/storage, AU-9/SC-28), `dynatrace_appsec`
+  (runtime vulnerability + attack protection, SA-11/RA-5), `dynatrace_audit_export`
+  (audit log → NDJSON evidence + SIEM forward, AU-6/AU-9/AU-11).
+- `dynatrace/site.yml` sequences deploy → config → security/compliance → IAM.
+
+Repository totals updated: **607 roles**, **3,895 YAML files**, **44 platforms**.
+
 ## [2026-06-30] — Dynatrace platform
 
 Added the **`dynatrace/`** observability platform (4 roles), following the
