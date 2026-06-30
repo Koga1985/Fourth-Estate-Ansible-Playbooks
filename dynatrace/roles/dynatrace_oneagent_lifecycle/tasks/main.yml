@@ -1,0 +1,86 @@
+---
+# tasks file for dynatrace_oneagent_lifecycle (Linux)
+
+- name: Ensure artifacts directory exists on control node
+  ansible.builtin.file:
+    path: "{{ artifacts_dir }}"
+    state: directory
+    mode: "0750"
+  delegate_to: localhost
+  run_once: true
+  changed_when: false
+  tags: [always]
+
+- name: Check whether OneAgent is installed
+  ansible.builtin.stat:
+    path: "{{ oneagent_ctl_linux }}"
+  register: oal_ctl
+  tags: [always]
+
+- name: Show run mode
+  ansible.builtin.debug:
+    msg: >-
+      dynatrace_oneagent_lifecycle on {{ inventory_hostname }} -
+      installed={{ oal_ctl.stat.exists }},
+      {{ 'ENFORCING' if apply_changes | bool else 'DRY-RUN / assessment only' }}
+      {{ '(DECOMMISSION REQUESTED)' if oneagent_decommission | bool else '' }}
+  tags: [always]
+
+- name: Assess OneAgent version
+  ansible.builtin.command: "{{ oneagent_ctl_linux }} --version"
+  register: oal_version
+  changed_when: false
+  check_mode: false
+  when: oal_ctl.stat.exists
+  become: true
+  tags: [assess]
+
+- name: Build reconfigure parameter list
+  ansible.builtin.set_fact:
+    oal_params: >-
+      {{
+        (['--set-host-group=' + oneagent_set_host_group] if oneagent_set_host_group | length > 0 else []) +
+        (['--set-network-zone=' + oneagent_set_network_zone] if oneagent_set_network_zone | length > 0 else []) +
+        (['--set-infra-only=' + ('true' if oneagent_set_monitoring_mode == 'infra-only' else 'false')] if oneagent_set_monitoring_mode | length > 0 else [])
+      }}
+  tags: [always]
+
+- name: Reconfigure OneAgent (oneagentctl)
+  ansible.builtin.command:
+    cmd: "{{ oneagent_ctl_linux }} {{ oal_params | join(' ') }} {{ '--restart-service' if oneagent_restart_after_change else '' }}"
+  become: true
+  when:
+    - oal_ctl.stat.exists
+    - apply_changes | bool
+    - oal_params | length > 0
+    - not (oneagent_decommission | bool)
+  register: oal_reconfig
+  changed_when: oal_reconfig.rc == 0
+  tags: [reconfigure]
+
+- name: Decommission / uninstall OneAgent (double-gated)
+  ansible.builtin.command:
+    cmd: "/bin/sh {{ oneagent_uninstall_linux }}"
+    removes: "{{ oneagent_ctl_linux }}"
+  become: true
+  when:
+    - oal_ctl.stat.exists
+    - apply_changes | bool
+    - oneagent_decommission | bool
+  register: oal_uninstall
+  tags: [decommission]
+
+- name: Record lifecycle state
+  ansible.builtin.copy:
+    dest: "{{ artifacts_dir }}/{{ inventory_hostname }}_oneagent_lifecycle.json"
+    mode: "0640"
+    content: "{{ {'host': inventory_hostname, 'installed': oal_ctl.stat.exists, 'version': (oal_version.stdout | default('n/a') | trim), 'reconfigured': oal_reconfig.changed | default(false), 'decommissioned': (oal_uninstall.changed | default(false)), 'mode': 'enforce' if apply_changes | bool else 'assessment'} | to_nice_json }}"
+  delegate_to: localhost
+  tags: [report]
+
+- name: Summarize
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }}: OneAgent version={{ oal_version.stdout | default('n/a') | trim }}
+      {{ '| DECOMMISSIONED' if (oal_uninstall.changed | default(false)) else ('| reconfigured' if (oal_reconfig.changed | default(false)) else '| no change') }}.
+  tags: [report]
