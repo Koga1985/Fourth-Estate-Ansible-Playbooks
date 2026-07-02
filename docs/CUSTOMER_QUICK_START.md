@@ -314,7 +314,7 @@ Notes:
 | Known non-idempotent tasks | [KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md) |
 | Common errors and fixes | [TROUBLESHOOTING.md](TROUBLESHOOTING.md) |
 | NIST 800-53 / STIG mapping | [COMPLIANCE_MAPPING.md](COMPLIANCE_MAPPING.md) |
-| Policy-as-Code deployment | [policy_as_code/DEPLOYMENT_GUIDE.md](policy_as_code/DEPLOYMENT_GUIDE.md) |
-| Full repository reference | [README.md](README.md) |
+| Policy-as-Code deployment | [policy_as_code/DEPLOYMENT_GUIDE.md](../policy_as_code/DEPLOYMENT_GUIDE.md) |
+| Full repository reference | [README.md](../README.md) |
 | Platform-specific guide | `<platform>/README.md` |
 | Individual role reference | `<platform>/roles/<role>/README.md` |

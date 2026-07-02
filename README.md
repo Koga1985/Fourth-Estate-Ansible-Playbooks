@@ -8,7 +8,7 @@ An enterprise-grade collection of **577 roles** and **3,684 YAML files** for inf
 > SRGs, the Application Security & Development STIG, the NDM / Network
 > Infrastructure Policy and Cloud Computing SRG assessments, and the IBM z/OS
 > family (RACF, TSS, CICS, NetView, TDMF, zSecure). See the full
-> **[STIG / SRG Coverage Matrix](./STIG_COVERAGE_MATRIX.md)**.
+> **[STIG / SRG Coverage Matrix](./docs/STIG_COVERAGE_MATRIX.md)**.
 
 This repository provides production-ready Ansible automation for network infrastructure, cloud platforms, container orchestration, storage systems, backup solutions, security scanning, secrets management, ITSM integration, and operational technology (OT/ICS) security with a special focus on **Fourth Estate** (free press/media) organizations.
 
@@ -18,7 +18,7 @@ This repository provides production-ready Ansible automation for network infrast
 - **Total YAML Files:** 3,684
 - **README Documentation Files:** 651
 - **Technology Platforms:** 41
-- **Dedicated DoD STIG / SRG roles:** 21 (see [STIG_COVERAGE_MATRIX.md](./STIG_COVERAGE_MATRIX.md))
+- **Dedicated DoD STIG / SRG roles:** 21 (see [STIG_COVERAGE_MATRIX.md](./docs/STIG_COVERAGE_MATRIX.md))
 - **Compliance Frameworks:** DoD STIG, DoD Cloud Computing SRG, NIST 800-53 Rev 5, NIST 800-171, FedRAMP, FISMA, CIS Benchmarks
 - **Cloud Platforms:** 4 (AWS, Azure, GCP, VMware vSphere)
 - **Database Platforms:** 5 (PostgreSQL, MySQL, Oracle, IBM DB2, Cloud Databases)
@@ -26,7 +26,7 @@ This repository provides production-ready Ansible automation for network infrast
 - **Inventory Examples:** 76
 
 > Repository statistics are verified in CI (`yamllint` + a YAML parse check over all
-> files). See [`PRODUCTION_READINESS_ASSESSMENT.md`](./PRODUCTION_READINESS_ASSESSMENT.md)
+> files). See [`PRODUCTION_READINESS_ASSESSMENT.md`](./docs/PRODUCTION_READINESS_ASSESSMENT.md)
 > for the current validation status and known follow-ups.
 
 ## Table of Contents
@@ -44,12 +44,12 @@ This repository provides production-ready Ansible automation for network infrast
 - [Compliance and Security](#compliance-and-security)
 - [Contribution Guidelines](#contribution-guidelines)
 - [Where to Get Help](#where-to-get-help)
-- [**Customer Quick Start**](./CUSTOMER_QUICK_START.md)
-- [**Known Limitations**](./KNOWN_LIMITATIONS.md)
-- [**Troubleshooting**](./TROUBLESHOOTING.md)
-- [**Changelog**](./CHANGELOG.md)
-- [**DISA STIG & NIST 800-53 Compliance Mapping**](./COMPLIANCE_MAPPING.md)
-- [**STIG / SRG Coverage Matrix**](./STIG_COVERAGE_MATRIX.md)
+- [**Customer Quick Start**](./docs/CUSTOMER_QUICK_START.md)
+- [**Known Limitations**](./docs/KNOWN_LIMITATIONS.md)
+- [**Troubleshooting**](./docs/TROUBLESHOOTING.md)
+- [**Changelog**](./docs/CHANGELOG.md)
+- [**DISA STIG & NIST 800-53 Compliance Mapping**](./docs/COMPLIANCE_MAPPING.md)
+- [**STIG / SRG Coverage Matrix**](./docs/STIG_COVERAGE_MATRIX.md)
 
 ## Repository Purpose
 
@@ -658,7 +658,7 @@ Each technology should have:
 ## Compliance and Security
 
 > For a full role-by-role mapping to specific DISA STIG findings and NIST 800-53 Rev 5
-> controls, see **[COMPLIANCE_MAPPING.md](./COMPLIANCE_MAPPING.md)**.
+> controls, see **[COMPLIANCE_MAPPING.md](./docs/COMPLIANCE_MAPPING.md)**.
 
 ### DoD Security Technical Implementation Guides (STIGs)
 
@@ -677,7 +677,7 @@ Implemented STIG controls for:
 These 21 roles each target a specific DISA benchmark, are safe-by-default
 (dry-run / assessment first), and emit a per-host JSON evidence artifact. Full
 rule-family detail and run instructions are in
-[STIG_COVERAGE_MATRIX.md](./STIG_COVERAGE_MATRIX.md).
+[STIG_COVERAGE_MATRIX.md](./docs/STIG_COVERAGE_MATRIX.md).
 
 | Benchmark | Rule family | Role |
 |-----------|-------------|------|
@@ -800,10 +800,10 @@ stig(kubernetes): Implement STIG finding V-242376 for pod security
 
 ### Documentation
 
-- **New to this repo?** Start with [CUSTOMER_QUICK_START.md](./CUSTOMER_QUICK_START.md)
-- **Errors or unexpected behavior?** See [TROUBLESHOOTING.md](./TROUBLESHOOTING.md)
-- **Non-idempotent tasks, version constraints** — [KNOWN_LIMITATIONS.md](./KNOWN_LIMITATIONS.md)
-- **What changed and when** — [CHANGELOG.md](./CHANGELOG.md)
+- **New to this repo?** Start with [CUSTOMER_QUICK_START.md](./docs/CUSTOMER_QUICK_START.md)
+- **Errors or unexpected behavior?** See [TROUBLESHOOTING.md](./docs/TROUBLESHOOTING.md)
+- **Non-idempotent tasks, version constraints** — [KNOWN_LIMITATIONS.md](./docs/KNOWN_LIMITATIONS.md)
+- **What changed and when** — [CHANGELOG.md](./docs/CHANGELOG.md)
 - **Technology-specific README files** - See `<technology>/README.md` for each platform
 - **Policy as Code Guide** - [policy_as_code/DEPLOYMENT_GUIDE.md](./policy_as_code/DEPLOYMENT_GUIDE.md)
 - **Role documentation** - Each role has a dedicated README with variables and examples
@@ -842,7 +842,7 @@ This repository was built in four content phases and subsequently hardened for p
 - **Phase 2** - Added Azure (30+ roles), database platforms (PostgreSQL, MySQL, Oracle), NetApp ONTAP, Fortinet FortiGate, Prometheus/Grafana, ELK Stack, and expanded Policy as Code to 8 NIST control families
 - **Phase 3** - Added F5 BIG-IP, Tenable Security Center, ServiceNow CMDB, HashiCorp Vault, and Ansible Tower/AAP to complete the enterprise automation suite
 - **Security hardening (March 2026)** - Added `no_log: true` to 954 credential-handling tasks, `changed_when` correctness to all query tasks, `any_errors_fatal: true` to all plays, and comprehensive customer documentation (CUSTOMER_QUICK_START, KNOWN_LIMITATIONS, TROUBLESHOOTING, CHANGELOG)
-- **STIG/SRG expansion (June 2026)** - Added 21 dedicated DoD STIG / SRG roles across 5 new platform areas (`app_web_server/`, `network_policy/`, `cloud_policy/`, `ibm_zos/`, `databases/db2/`): Cisco network devices, RHEL 9, Windows Server 2022/AD/DNS, OpenShift 4.x, IBM DB2, App/Web Server SRGs, Application Security & Development STIG, NDM & Cloud Computing SRG assessments, and the IBM z/OS family. All safe-by-default with per-host evidence artifacts. See [STIG_COVERAGE_MATRIX.md](./STIG_COVERAGE_MATRIX.md) and [CHANGELOG.md](./CHANGELOG.md).
+- **STIG/SRG expansion (June 2026)** - Added 21 dedicated DoD STIG / SRG roles across 5 new platform areas (`app_web_server/`, `network_policy/`, `cloud_policy/`, `ibm_zos/`, `databases/db2/`): Cisco network devices, RHEL 9, Windows Server 2022/AD/DNS, OpenShift 4.x, IBM DB2, App/Web Server SRGs, Application Security & Development STIG, NDM & Cloud Computing SRG assessments, and the IBM z/OS family. All safe-by-default with per-host evidence artifacts. See [STIG_COVERAGE_MATRIX.md](./docs/STIG_COVERAGE_MATRIX.md) and [CHANGELOG.md](./docs/CHANGELOG.md).
 
 ---
 
@@ -920,5 +920,5 @@ ansible-playbook vmware/playbooks/esxi_stig_hardening.yml -i inventory/vmware.ym
 
 **Repository Maintained By:** Fourth Estate Infrastructure Team
 **Classification:** UNCLASSIFIED
-**Last Updated:** 2026-06-26
+**Last Updated:** 2026-07-02
 **License:** See LICENSE file
