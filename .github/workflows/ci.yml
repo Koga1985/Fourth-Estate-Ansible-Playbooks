@@ -70,6 +70,51 @@ jobs:
           ansible-lint --offline $dirs
 
   # ---------------------------------------------------------------------------
+  # ENFORCED GATE 3: ansible-playbook --syntax-check for the grab-and-go
+  # playbooks that resolve with ansible-core alone (no Galaxy collections
+  # needed at parse time). Deterministic on any runner. Add new entries here
+  # as more playbooks become collection-free at parse time.
+  # ---------------------------------------------------------------------------
+  syntax-check-core:
+    name: syntax-check, core-only playbooks (required)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install ansible-core (pinned)
+        run: pip install --quiet ansible-core==2.19.11
+
+      - name: Syntax-check core-only playbooks
+        run: |
+          # "<roles_path> <playbook>" pairs, verified to parse with ansible-core only.
+          set -e
+          fail=0
+          while read -r roles_path pb; do
+            echo "::group::${pb}"
+            if ! ANSIBLE_ROLES_PATH="$roles_path" ansible-playbook --syntax-check "$pb"; then
+              fail=$((fail+1))
+            fi
+            echo "::endgroup::"
+          done <<'EOF'
+          cloud_policy/roles cloud_policy/roles/cloud_computing_srg_assessment/playbooks/run.yml
+          network_policy/roles network_policy/roles/ndm_srg_assessment/playbooks/run.yml
+          databases/db2/roles databases/db2/roles/db2_stig/playbooks/run.yml
+          policy_as_code/roles policy_as_code/roles/app_sec_dev_stig/playbooks/run.yml
+          app_web_server/roles app_web_server/roles/apache_web_server_srg/playbooks/run.yml
+          ibm_zos/roles ibm_zos/roles/zos_racf_stig/playbooks/run.yml
+          ibm_zos/roles ibm_zos/roles/zos_tss_stig/playbooks/run.yml
+          ibm_zos/roles ibm_zos/roles/zos_cics_tss_stig/playbooks/run.yml
+          ibm_zos/roles ibm_zos/roles/zos_netview_tss_stig/playbooks/run.yml
+          ibm_zos/roles ibm_zos/roles/zos_tdmf_tss_stig/playbooks/run.yml
+          ibm_zos/roles ibm_zos/roles/zos_zsecure_stig/playbooks/run.yml
+          EOF
+          exit $fail
+
+  # ---------------------------------------------------------------------------
   # INFORMATIONAL: full ansible-lint + ansible-playbook --syntax-check with the
   # declared collections installed. Not blocking (continue-on-error) because it
   # depends on Galaxy reachability and a fully resolved roles_path. Promote to a

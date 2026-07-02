@@ -3,6 +3,52 @@
 All notable changes to the Fourth Estate Ansible Playbooks are documented here.
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [v1.0.0] — 2026-07-02 — First tagged release
+
+First versioned, customer-consumable release. See
+[PRODUCTION_READINESS_ASSESSMENT.md](./PRODUCTION_READINESS_ASSESSMENT.md) for
+the audit this release closes out.
+
+### Added
+- **MIT `LICENSE`** — the repository is now legally redistributable.
+- `docs/PRODUCTION_READINESS_ASSESSMENT.md` — full production-readiness audit.
+- `requirements.yml` + `inventory.example` scaffolding for the newest platform
+  directories (`app_web_server`, `cloud_policy`, `network_policy`,
+  `databases/db2`, `ibm_zos`).
+- **CI gate 3**: required `ansible-playbook --syntax-check` for the 11
+  grab-and-go playbooks that parse with ansible-core alone (cloud_policy,
+  network_policy, db2, app_sec_dev_stig, apache SRG, and the six `ibm_zos`
+  checklist generators).
+
+### Fixed
+- **CI determinism**: the required ansible-lint gate now pins
+  `ansible-core==2.19.11` / `ansible-lint==26.6.0`; the baseline was
+  regenerated against those exact versions. (An unpinned toolchain let a new
+  ansible-lint release silently invalidate the baseline and turn `main` red.)
+- **All 30 `jinja[invalid]` findings triaged — every one was a real runtime
+  bug** and all are fixed: Python list comprehensions and nested `{{ }}` in
+  Dragos drift/allowlist/topology tasks; `{% if %}`/`{% else %}` split across
+  separate `msg` list items in the Illumio OT ACL playbooks (crashed on every
+  run); `{% do %}` tags (extension not enabled) in the OT inventory tasks;
+  malformed division-guard ternaries in the Infoblox capacity reports;
+  Jinja-precedence bugs (`x | length > 0 | ternary(...)`) in Cohesity restore
+  and Panorama commit; `#` comments inside Jinja expressions (Infoblox RPZ,
+  vSphere permissions export, VM encryption); a stray `.` before pipes in the
+  Dragos sensor report; `{{ sl1. }}` dangling attribute in ScienceLogic system
+  settings; doubled PowerShell braces + `\$`/`\"` mis-escapes in the vSphere
+  host-profile and PowerCLI report tasks; block tags inside `{{ }}` in vSphere
+  RBAC delta computation; a templated `vars:` mapping in the Illumio guard;
+  Prometheus/Velero alert annotations (`{{ $labels.* }}`) now marked `!unsafe`
+  so the Ansible templar never renders them.
+- PowerShell `#` line comments inside folded (`>-`) script blocks converted to
+  `<# … #>` block comments — YAML folding was silently commenting out the rest
+  of the folded line, swallowing statements.
+- Root README links updated for the `docs/` move; `STIG_COVERAGE_MATRIX.md`
+  restored to `docs/`; README statistics corrected (604 roles, 3,688 YAML
+  files, 63 inventory examples).
+- `scripts/check_yaml.py` now accepts the Ansible-specific `!unsafe` / `!vault`
+  YAML tags.
+
 ## [2026-06-26] — DoD STIG / SRG expansion
 
 Added **21 dedicated DoD STIG / SRG roles** across **5 new platform areas**. Every

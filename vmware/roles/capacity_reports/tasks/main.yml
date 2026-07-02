@@ -34,15 +34,15 @@
 
        $dc = Get-Datacenter -Name '{{ vcenter_datacenter }}' -ErrorAction Stop
 
-       # Resolve clusters
+       <# Resolve clusters #>
        $clusters = @()
        {% if clusters %}
-       $clusters = @('{{ clusters | join(\"','\") }}' | ForEach-Object { Get-Cluster -Name $_ -ErrorAction SilentlyContinue }) | Where-Object { $_ }
+       $clusters = @('{{ clusters | join("','") }}' | ForEach-Object { Get-Cluster -Name $_ -ErrorAction SilentlyContinue }) | Where-Object { $_ }
        {% else %}
        $clusters = ($dc | Get-Cluster)
        {% endif %}
 
-       # Datastore filter
+       <# Datastore filter #>
        $dsRegex = '{{ include_datastores_regex }}'
        function DS-Match($ds) {
          if ([string]::IsNullOrWhiteSpace($dsRegex)) { return $true }
@@ -54,29 +54,29 @@
        $rowsDatastores = @()
 
        foreach ($cl in $clusters) {
-         # Hosts & pCPU/pMem
+         <# Hosts & pCPU/pMem #>
          $hosts = Get-VMHost -Location $cl | Where-Object { $_.ConnectionState -eq 'Connected' }
          $pCpuCores = ($hosts | Measure-Object -Property NumCpu -Sum).Sum
          $pCpuMhz  = ($hosts | Measure-Object -Property CpuMhz -Sum).Sum
          $pMemGB   = [math]::Round((($hosts | Measure-Object -Property MemoryTotalGB -Sum).Sum),2)
 
-         # VM allocations
+         <# VM allocations #>
          $vms = Get-VM -Location $cl
          $vCpuAlloc = ($vms | Measure-Object -Property NumCpu -Sum).Sum
          $vMemAllocGB = [math]::Round((($vms | Measure-Object -Property MemoryGB -Sum).Sum),2)
 
-         # Datastores summary (usable vs used)
+         <# Datastores summary (usable vs used) #>
          $datastores = Get-Datastore -Location $cl | Where-Object { DS-Match $_ }
          $dsCapTB = [math]::Round((($datastores | Measure-Object -Property CapacityGB -Sum).Sum / 1024),3)
          $dsFreeTB = [math]::Round((($datastores | Measure-Object -Property FreeSpaceGB -Sum).Sum / 1024),3)
          $dsUsedTB = [math]::Round(($dsCapTB - $dsFreeTB),3)
          $dsFreePct = if ($dsCapTB -gt 0) { [math]::Round((100 * $dsFreeTB / $dsCapTB),1) } else { 0 }
 
-         # Headroom signals (simple)
+         <# Headroom signals (simple) #>
          $cpuOvercommit = if ($pCpuCores -gt 0) { [math]::Round(($vCpuAlloc / $pCpuCores),2) } else { 0 }
          $memHeadroomGB = [math]::Round(($pMemGB - $vMemAllocGB),2)
 
-         # Status
+         <# Status #>
          $storageStatus = if ($dsFreePct -le {{ crit_free_pct }}) { 'CRIT' } elseif ($dsFreePct -le {{ warn_free_pct }}) { 'WARN' } else { 'OK' }
 
          $rowsClusters += [pscustomobject]@{
@@ -111,15 +111,15 @@
          }
        }
 
-       # Ensure output directory exists
+       <# Ensure output directory exists #>
        $outDir = '{{ out_dir }}'
        if (-not (Test-Path $outDir)) { New-Item -ItemType Directory -Path $outDir -Force | Out-Null }
 
-       # Export CSVs
+       <# Export CSVs #>
        $rowsClusters | Export-Csv -NoTypeInformation -Encoding UTF8 -Path '{{ csv_clusters }}'
        $rowsDatastores | Export-Csv -NoTypeInformation -Encoding UTF8 -Path '{{ csv_datastores }}'
 
-       # History append (one aggregate row per cluster per run)
+       <# History append (one aggregate row per cluster per run) #>
        $histPath = '{{ history_csv }}'
        if (-not [string]::IsNullOrWhiteSpace($histPath)) {
          $exists = Test-Path $histPath
@@ -130,7 +130,7 @@
          }
        }
 
-       # Compute trend if history exists
+       <# Compute trend if history exists #>
        $trend = @()
        if (-not [string]::IsNullOrWhiteSpace($histPath) -and (Test-Path $histPath)) {
          $N = [int]'{{ trend_days }}'

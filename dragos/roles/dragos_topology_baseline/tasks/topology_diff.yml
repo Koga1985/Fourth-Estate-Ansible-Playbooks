@@ -10,23 +10,26 @@
     dest: "{{ artifacts_dir }}/topology_drift.json"
     mode: "0644"
     content: |
-      {{
-        {{
-          'added': (
-            (_now.items if _now.items is defined else _now.data | default([]))
-            | map('extract', {{'src':'src','dst':'dst','proto':'proto','port':'port'}}) | list
-          )
-          | difference(
-            (_gold.items if _gold.items is defined else _gold.data | default([]))
-            | map('extract', {{'src':'src','dst':'dst','proto':'proto','port':'port'}}) | list
-          ),
-          'removed': (
-            (_gold.items if _gold.items is defined else _gold.data | default([]))
-            | map('extract', {{'src':'src','dst':'dst','proto':'proto','port':'port'}}) | list
-          )
-          | difference(
-            (_now.items if _now.items is defined else _now.data | default([]))
-            | map('extract', {{'src':'src','dst':'dst','proto':'proto','port':'port'}}) | list
-          )
-        }} | to_nice_json
-      }}
+      {#- Normalize each edge to {src,dst,proto,port}; use ['items'] indexing
+          because .items on a dict resolves to the method in Jinja. -#}
+      {%- set now_items = _now['items'] | default(_now['data'] | default([])) -%}
+      {%- set gold_items = _gold['items'] | default(_gold['data'] | default([])) -%}
+      {%- set now_edges = [] -%}
+      {%- for e in now_items -%}
+        {%- set _ = now_edges.append({'src': e.src | default(''), 'dst': e.dst | default(''),
+                                      'proto': e.proto | default(''), 'port': e.port | default('')}) -%}
+      {%- endfor -%}
+      {%- set gold_edges = [] -%}
+      {%- for e in gold_items -%}
+        {%- set _ = gold_edges.append({'src': e.src | default(''), 'dst': e.dst | default(''),
+                                       'proto': e.proto | default(''), 'port': e.port | default('')}) -%}
+      {%- endfor -%}
+      {%- set added = [] -%}
+      {%- for e in now_edges -%}
+        {%- if e not in gold_edges -%}{%- set _ = added.append(e) -%}{%- endif -%}
+      {%- endfor -%}
+      {%- set removed = [] -%}
+      {%- for e in gold_edges -%}
+        {%- if e not in now_edges -%}{%- set _ = removed.append(e) -%}{%- endif -%}
+      {%- endfor -%}
+      {{ {'added': added, 'removed': removed} | to_nice_json }}

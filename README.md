@@ -1,6 +1,6 @@
 # Fourth Estate Ansible Playbooks
 
-An enterprise-grade collection of **577 roles** and **3,684 YAML files** for infrastructure automation across **41 technology platforms** with emphasis on **DoD STIG, NIST 800-53, NIST 800-171, FedRAMP, and FISMA compliance**.
+An enterprise-grade collection of **604 roles** and **3,688 YAML files** for infrastructure automation across **41 technology platforms** with emphasis on **DoD STIG, NIST 800-53, NIST 800-171, FedRAMP, and FISMA compliance**.
 
 > **New:** 21 dedicated DoD STIG / SRG roles were added covering Cisco network
 > devices (IOS XE L2, NX-OS, ASA, FTD, ACI Router, ISE), RHEL 9, Windows Server
@@ -14,8 +14,8 @@ This repository provides production-ready Ansible automation for network infrast
 
 ## 📊 Repository Statistics
 
-- **Total Roles:** 577
-- **Total YAML Files:** 3,684
+- **Total Roles:** 604
+- **Total YAML Files:** 3,688
 - **README Documentation Files:** 651
 - **Technology Platforms:** 41
 - **Dedicated DoD STIG / SRG roles:** 21 (see [STIG_COVERAGE_MATRIX.md](./docs/STIG_COVERAGE_MATRIX.md))
@@ -23,7 +23,7 @@ This repository provides production-ready Ansible automation for network infrast
 - **Cloud Platforms:** 4 (AWS, Azure, GCP, VMware vSphere)
 - **Database Platforms:** 5 (PostgreSQL, MySQL, Oracle, IBM DB2, Cloud Databases)
 - **Jinja2 Templates:** 320
-- **Inventory Examples:** 76
+- **Inventory Examples:** 63
 
 > Repository statistics are verified in CI (`yamllint` + a YAML parse check over all
 > files). See [`PRODUCTION_READINESS_ASSESSMENT.md`](./docs/PRODUCTION_READINESS_ASSESSMENT.md)

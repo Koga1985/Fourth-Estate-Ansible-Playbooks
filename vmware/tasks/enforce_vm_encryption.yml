@@ -115,39 +115,34 @@
 - name: "VM | Build disk maps (controller/unit) for each VM"
   ansible.builtin.set_fact:
     _vm_disks: >-
-      {{
-        dict(vm_hw.results |
-        map('extract', 'item') |
-        list |
-        zip(
-          vm_hw.results |
-          map(attribute='instance.config.hardware.device') |
-          map('selectattr','_wsdlName','equalto','VirtualDisk') |
-          map('map','extract', ['controllerKey','unitNumber']) |
-          map('list') |
-          list
-        ))
-      }}
+      {%- set m = {} -%}
+      {%- for r in vm_hw.results -%}
+        {%- set disks = [] -%}
+        {%- for d in r.instance.config.hardware.device
+              | selectattr('_wsdlName', 'equalto', 'VirtualDisk') | list -%}
+          {%- set _ = disks.append({'controllerKey': d.controllerKey, 'unitNumber': d.unitNumber}) -%}
+        {%- endfor -%}
+        {%- set _ = m.update({r.item: disks}) -%}
+      {%- endfor -%}
+      {{ m }}
 
 # Helper to translate controllerKey -> controller_number (0..3).
 # We derive by ordering controllers as they appear.
 - name: "VM | Map controller keys to (0..3) index"
   ansible.builtin.set_fact:
     _vm_ctrl_index: >-
-      {{
-        dict(vm_hw.results |
-          map(attribute='item') | list |
-          zip(
-            vm_hw.results |
-            map(attribute='instance.config.hardware.device') |
-            map('selectattr','_wsdlName','in',['VirtualLsiLogicController','ParaVirtualSCSIController','VirtualLsiLogicSASController']) |
-            map('list') |
-            map('map','extract',['key']) |
-            map('list') |
-            map('community.general.lists_set_index')  # produces dict {key: idx}
-          )
-        )
-      }}
+      {%- set m = {} -%}
+      {%- for r in vm_hw.results -%}
+        {%- set km = {} -%}
+        {%- for c in r.instance.config.hardware.device
+              | selectattr('_wsdlName', 'in',
+                  ['VirtualLsiLogicController', 'ParaVirtualSCSIController', 'VirtualLsiLogicSASController'])
+              | list -%}
+          {%- set _ = km.update({c.key | string: loop.index0}) -%}
+        {%- endfor -%}
+        {%- set _ = m.update({r.item: km}) -%}
+      {%- endfor -%}
+      {{ m }}
 
 - name: "VM | Apply encryption policy to VM Home + all disks"
   community.vmware.vmware_guest_storage_policy:
@@ -159,18 +154,16 @@
     name: "{{ item.key }}"
     vm_home: "{{ encryption_policy_name }}"
     disk: >-
-      {{
-        item.value | map('extract', ['controllerKey','unitNumber']) | list
-        | map('combine', {'policy': encryption_policy_name})
-        | map('combine', {'controller_number':
-              (_vm_ctrl_index[item.key][item.1.controllerKey]
-               if (_vm_ctrl_index[item.key] is defined and _vm_ctrl_index[item.key][item.1.controllerKey] is defined)
-               else 0) })
-        | map('combine', {'unit_number': item.1.unitNumber})
-        | list
-      }}
+      {%- set disks = [] -%}
+      {%- for d in item.value -%}
+        {%- set ctrl = (_vm_ctrl_index[item.key] | default({}))[d.controllerKey | string] | default(0) -%}
+        {%- set _ = disks.append({'policy': encryption_policy_name,
+                                  'controller_number': ctrl,
+                                  'unit_number': d.unitNumber}) -%}
+      {%- endfor -%}
+      {{ disks }}
   no_log: true
-  loop: "{{ dict(_vm_disks) | dict2items }}"
+  loop: "{{ _vm_disks | dict2items }}"
   loop_control:
     label: "{{ item.key }}"
   delegate_to: localhost
