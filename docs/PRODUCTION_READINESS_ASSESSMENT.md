@@ -4,6 +4,18 @@
 **Scope:** Entire repository at `main` (ffd9918) — 41 platform directories, 604 roles, 3,684 YAML files
 **Question assessed:** Is this repo "grab and go" production ready for customers?
 
+> **Status update (2026-07-02, this branch):** the three blockers below are
+> **fixed** on `claude/production-readiness-assessment-i97zqj`:
+> B1 — the required ansible-lint gate passes again (root cause was an
+> *unpinned* lint toolchain: a new ansible-lint release reclassified
+> syntax-check findings and invalidated the June 15 baseline; the toolchain is
+> now pinned in CI and the baseline regenerated against it, verified 0 failures
+> locally). B2 — all README/docs links repaired and `STIG_COVERAGE_MATRIX.md`
+> restored to `docs/`. B3 — MIT `LICENSE` added. H2 scaffolding
+> (`requirements.yml` / `inventory.example` for the new directories) is also
+> done. Remaining: H1 (tag a release), H3 (stats drift), H4 (lint-debt triage),
+> H5 (functional testing), and the M items.
+
 ## Verdict
 
 **Not yet grab-and-go. Close, but three blockers and a handful of high-priority gaps stand in the way.**
