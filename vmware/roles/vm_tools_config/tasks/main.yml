@@ -26,10 +26,10 @@
        Set-PowerCLIConfiguration -InvalidCertificateAction {{ vcenter_validate_certs | ternary('Ignore','Fail') }} -Confirm:$false | Out-Null;
        $null = Connect-VIServer -Server '{{ vcenter_hostname }}' -User '{{ vcenter_username }}' -Password '{{ vcenter_password }}';
 
-       # --- Resolve target VMs ---
+       <# --- Resolve target VMs --- #>
        $targets = @();
-       if (@('{{ vm_names | join(\"','\") }}').Length -gt 0) {
-         $targets += @('{{ vm_names | join(\"','\") }}' | ForEach-Object { Get-VM -Name $_ -ErrorAction SilentlyContinue }) | Where-Object { $_ }
+       if (@('{{ vm_names | join("','") }}').Length -gt 0) {
+         $targets += @('{{ vm_names | join("','") }}' | ForEach-Object { Get-VM -Name $_ -ErrorAction SilentlyContinue }) | Where-Object { $_ }
        }
        if ('{{ cluster_name }}' -ne '') {
          $targets += (Get-Cluster -Name '{{ cluster_name }}' | Get-VM)
@@ -42,27 +42,27 @@
        }
        $targets = $targets | Sort-Object -Unique
 
-       # --- Build desired Tools config ---
+       <# --- Build desired Tools config --- #>
        $spec = New-Object VMware.Vim.VirtualMachineConfigSpec
        $spec.tools = New-Object VMware.Vim.ToolsConfigInfo
 
-       # Time sync
+       <# Time sync #>
        $timeSync = [bool]{{ tools.time_sync | default(true) | ternary('1','0') }}
        $spec.tools.syncTimeWithHost = $timeSync
 
-       # Scripts controls
+       <# Scripts controls #>
        $spec.tools.afterPowerOn = [bool]{{ tools.scripts.after_power_on | default(true) | ternary('1','0') }}
        $spec.tools.afterResume   = [bool]{{ tools.scripts.after_resume | default(true) | ternary('1','0') }}
        $spec.tools.beforeGuestStandby = [bool]{{ tools.scripts.before_guest_standby | default(true) | ternary('1','0') }}
        $spec.tools.beforeGuestShutdown = [bool]{{ tools.scripts.before_guest_shutdown | default(true) | ternary('1','0') }}
 
-       # Upgrade policy
+       <# Upgrade policy #>
        $upgradePolicy = '{{ tools.upgrade_policy | default('') }}'
        if ($upgradePolicy -ne '') {
          $spec.tools.toolsUpgradePolicy = $upgradePolicy  # e.g., UpgradeAtPowerCycle
        }
 
-       # Advanced setting: disk.EnableUUID (supports app-consistent snapshots)
+       <# Advanced setting: disk.EnableUUID (supports app-consistent snapshots) #>
        $setUUID = [bool]{{ tools.set_disk_enable_uuid | default(true) | ternary('1','0') }}
 
        function Set-AdvancedSetting($vm, $key, $val) {
@@ -73,7 +73,7 @@
          $vm.ExtensionData.ReconfigVM_Task($cfg) | Out-Null
        }
 
-       # Apply config to each VM (idempotent-ish; vSphere handles no-op)
+       <# Apply config to each VM (idempotent-ish; vSphere handles no-op) #>
        foreach ($vm in $targets) {
          try {
            $vm.ExtensionData.ReconfigVM_Task($spec) | Out-Null
@@ -83,7 +83,7 @@
          }
        }
 
-       # --- Report VMware Tools status ---
+       <# --- Report VMware Tools status --- #>
        $report = @()
        foreach ($vm in $targets) {
          $ext = $vm.ExtensionData
@@ -107,7 +107,7 @@
          $report += $item
        }
 
-       # Stale tools = need upgrade or not running
+       <# Stale tools = need upgrade or not running #>
        $stale = $report | Where-Object {
          $_.ToolsVersionStatus2 -in @('guestToolsNeedUpgrade','guestToolsSupportedOld') -or
          $_.ToolsRunningStatus -ne 'guestToolsRunning'

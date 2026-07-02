@@ -21,6 +21,13 @@ try:
 except ImportError:
     sys.exit("PyYAML is required: pip install pyyaml")
 
+# Ansible-specific YAML tags that are valid in playbook/vars files but unknown
+# to PyYAML's SafeLoader. Constructed as plain scalars for parse purposes.
+for _tag in ("!unsafe", "!vault"):
+    yaml.SafeLoader.add_constructor(
+        _tag, lambda loader, node: loader.construct_scalar(node)
+    )
+
 SKIP_DIRS = (".git/", ".github/", ".vscode/")
 
 

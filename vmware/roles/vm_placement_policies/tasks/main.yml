@@ -30,9 +30,9 @@
          return (Get-Cluster -Name $cName -ErrorAction Stop)
        }
 
-       # ---------------------------------------
-       # 1) VM-VM (anti-)affinity by tag
-       # ---------------------------------------
+       <# --------------------------------------- #>
+       <# 1) VM-VM (anti-)affinity by tag #>
+       <# --------------------------------------- #>
        $affResults = @()
        {% for pol in affinity_policies %}
        try {
@@ -43,7 +43,7 @@
          $mandatory = {{ pol.mandatory | default(false) | ternary('$true','$false') }}
          $vms = @(); try { $vms = Get-VM -Tag '{{ pol.vm_tag }}' } catch { $vms = @() }
 
-         # Find existing rule
+         <# Find existing rule #>
          $rule = Get-DrsRule -Cluster $cluster -Name $name -ErrorAction SilentlyContinue
          if (-not $rule) {
            if ($type -eq 'separate') {
@@ -53,7 +53,7 @@
            }
            $affResults += [pscustomobject]@{ name=$name; cluster=$cluster.Name; action='created'; vm_count=$vms.Count; type=$type }
          } else {
-           # Update rule properties + membership
+           <# Update rule properties + membership #>
            if ($type -eq 'separate') {
              Set-DrsRule -DrsRule $rule -Enabled:$enabled -Mandatory:$mandatory -KeepTogether:$false -VirtualMachine $vms -ErrorAction Stop | Out-Null
            } else {
@@ -66,9 +66,9 @@
        }
        {% endfor %}
 
-       # ---------------------------------------
-       # 2) VM↔Host affinity via groups
-       # ---------------------------------------
+       <# --------------------------------------- #>
+       <# 2) VM↔Host affinity via groups #>
+       <# --------------------------------------- #>
        $hostAffResults = @()
        {% for pol in host_affinity_policies %}
        try {
@@ -80,22 +80,22 @@
          $vmGroupName = $name + '-VMs'
          $hostGroupName = '{{ pol.host_group.name | default(pol.name + "-Hosts") }}'
 
-         # Build groups
+         <# Build groups #>
          $vms = @(); try { $vms = Get-VM -Tag $vmTag } catch { $vms = @() }
-         $hostNames = @('{{ (pol.host_group.hosts | default([])) | join(\"','\") }}')
+         $hostNames = @('{{ (pol.host_group.hosts | default([])) | join("','") }}')
          $hosts = @(); foreach ($hn in $hostNames) { if (-not [string]::IsNullOrWhiteSpace($hn)) { $h = Get-VMHost -Name $hn -ErrorAction SilentlyContinue; if ($h) { $hosts += $h } } }
 
-         # Ensure VM group
+         <# Ensure VM group #>
          $vmGroup = Get-DrsClusterGroup -Cluster $cluster -Name $vmGroupName -ErrorAction SilentlyContinue | Where-Object {$_.Type -eq 'Vm'}
          if (-not $vmGroup) { $vmGroup = New-DrsVmGroup -Cluster $cluster -Name $vmGroupName -VM $vms }
          else { Set-DrsClusterGroup -Cluster $cluster -DrsClusterGroup $vmGroup -VM $vms | Out-Null }
 
-         # Ensure Host group
+         <# Ensure Host group #>
          $hostGroup = Get-DrsClusterGroup -Cluster $cluster -Name $hostGroupName -ErrorAction SilentlyContinue | Where-Object {$_.Type -eq 'Host'}
          if (-not $hostGroup) { $hostGroup = New-DrsHostGroup -Cluster $cluster -Name $hostGroupName -VMHost $hosts }
          else { Set-DrsClusterGroup -Cluster $cluster -DrsClusterGroup $hostGroup -VMHost $hosts | Out-Null }
 
-         # Ensure rule linking groups
+         <# Ensure rule linking groups #>
          $rule = Get-DrsRule -Cluster $cluster -Name $name -ErrorAction SilentlyContinue
          if (-not $rule) {
            switch ($policy) {
@@ -114,9 +114,9 @@
        }
        {% endfor %}
 
-       # ---------------------------------------
-       # 3) Resource Pools + move VMs by tag
-       # ---------------------------------------
+       <# --------------------------------------- #>
+       <# 3) Resource Pools + move VMs by tag #>
+       <# --------------------------------------- #>
        function Set-RpShares($rp, [string]$what, [pscustomobject]$cfg) {
          $level = ($cfg.shares); if (-not $level) { $level = 'Normal' }
          if ($level -ieq 'custom') {
@@ -149,19 +149,19 @@
            $rpResults += [pscustomobject]@{ name=$name; action='exists'; parent=($parent.Name) }
          }
 
-         # CPU
+         <# CPU #>
          try {
            Set-ResourcePool -ResourcePool $rp -CpuReservationMhz ([int]'{{ rp.cpu.reservation_mhz | default(0) }}') -CpuLimitMhz ([int]'{{ rp.cpu.limit_mhz | default(-1) }}') -Confirm:$false | Out-Null
            Set-RpShares -rp $rp -what 'cpu' -cfg ([pscustomobject]@{ shares='{{ rp.cpu.shares | default('normal') }}'; shares_value=[int]'{{ rp.cpu.shares_value | default(0) }}' })
          } catch { }
 
-         # Memory
+         <# Memory #>
          try {
            Set-ResourcePool -ResourcePool $rp -MemReservationMB ([int]'{{ rp.memory.reservation_mb | default(0) }}') -MemLimitMB ([int]'{{ rp.memory.limit_mb | default(-1) }}') -Confirm:$false | Out-Null
            Set-RpShares -rp $rp -what 'mem' -cfg ([pscustomobject]@{ shares='{{ rp.memory.shares | default('normal') }}'; shares_value=[int]'{{ rp.memory.shares_value | default(0) }}' })
          } catch { }
 
-         # Move VMs by tag
+         <# Move VMs by tag #>
          $tag = '{{ rp.vm_tag | default('') }}'
          if (-not [string]::IsNullOrWhiteSpace($tag)) {
            $targets = @(); try { $targets = Get-VM -Tag $tag -ErrorAction SilentlyContinue } catch { $targets = @() }

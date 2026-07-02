@@ -99,71 +99,69 @@
 ##############################################################################
 # PowerCLI block: capture (optional), attach, test, remediate
 ##############################################################################
+# Script flow: look up (or capture) the host profile, resolve the attach
+# scope (cluster or host list), associate the profile, test compliance,
+# optionally remediate, and emit a compact JSON result.
+# NOTE: the >- block folds newlines to spaces, so every PowerShell statement
+# ends with ';' and line comments must not be used inside the script.
 - name: Enforce Host Profile via PowerCLI
   ansible.builtin.command:
     cmd: >-
       pwsh -NoLogo -NoProfile -NonInteractive -Command "$ErrorActionPreference='Stop';
       Import-Module VMware.PowerCLI -ErrorAction Stop;
-      Set-PowerCLIConfiguration -InvalidCertificateAction {{ vcenter_validate_certs | ternary('Ignore','Fail') }} -Confirm:\$false | Out-Null;
-      \$si = Connect-VIServer -Server '{{ vcenter_hostname }}' -User '{{ vcenter_username }}' -Password '{{ vcenter_password }}';
+      Set-PowerCLIConfiguration -InvalidCertificateAction {{ vcenter_validate_certs | ternary('Ignore', 'Fail') }} -Confirm:$false | Out-Null;
+      $si = Connect-VIServer -Server '{{ vcenter_hostname }}' -User '{{ vcenter_username }}' -Password '{{ vcenter_password }}';
 
-      # Lookup or capture profile
-      \$profile = Get-VMHostProfile -Name '{{ profile_name }}' -ErrorAction SilentlyContinue;
-      if ({{ capture_from_reference | ternary('$true','$false') }}) {{
-        if ('{{ reference_host | default('') }}' -eq '') {{ throw 'reference_host is required when capture_from_reference is true.' }}
-        if (\$profile -and {{ replace_existing_profile | ternary('$true','$false') }}) {{
-          Remove-VMHostProfile -VMHostProfile \$profile -Confirm:\$false;
-          \$profile = \$null
-        }}
-        if (-not \$profile) {{
-          \$ref = Get-VMHost -Name '{{ reference_host | default('') }}';
-          \$profile = New-VMHostProfile -Name '{{ profile_name }}' -ReferenceHost \$ref;  # capture
-        }}
-      }}
+      $profile = Get-VMHostProfile -Name '{{ profile_name }}' -ErrorAction SilentlyContinue;
+      if ({{ capture_from_reference | ternary('$true', '$false') }}) {
+        if ('{{ reference_host | default('') }}' -eq '') { throw 'reference_host is required when capture_from_reference is true.' }
+        if ($profile -and {{ replace_existing_profile | ternary('$true', '$false') }}) {
+          Remove-VMHostProfile -VMHostProfile $profile -Confirm:$false;
+          $profile = $null
+        }
+        if (-not $profile) {
+          $ref = Get-VMHost -Name '{{ reference_host | default('') }}';
+          $profile = New-VMHostProfile -Name '{{ profile_name }}' -ReferenceHost $ref
+        }
+      }
 
-      # Attach scope
-      if ('{{ attach_to_cluster | default('') }}' -ne '') {{
-        \$scope = Get-Cluster -Name '{{ attach_to_cluster | default('') }}';
-      }} elseif (@('{{ (attach_to_hosts | default([])) | join(\"','\") }}').Length -gt 0) {{
-        \$scope = @('{{ (attach_to_hosts | default([])) | join(\"','\") }}' | ForEach-Object {{ Get-VMHost -Name \$_ }});
-      }} else {{
+      if ('{{ attach_to_cluster | default('') }}' -ne '') {
+        $scope = Get-Cluster -Name '{{ attach_to_cluster | default('') }}';
+      } elseif (@('{{ (attach_to_hosts | default([])) | join("','") }}').Length -gt 0) {
+        $scope = @('{{ (attach_to_hosts | default([])) | join("','") }}' | ForEach-Object { Get-VMHost -Name $_ });
+      } else {
         throw 'Provide attach_to_cluster or attach_to_hosts.'
-      }}
+      }
 
-      # If profile not found yet (no capture and not existing), throw
-      if (-not \$profile) {{
-        \$profile = Get-VMHostProfile -Name '{{ profile_name }}' -ErrorAction Stop;
-      }}
+      if (-not $profile) {
+        $profile = Get-VMHostProfile -Name '{{ profile_name }}' -ErrorAction Stop;
+      }
 
-      # Associate the profile to the entity
-      Set-VMHostProfile -VMHostProfile \$profile -AssociateEntity \$scope | Out-Null;
+      Set-VMHostProfile -VMHostProfile $profile -AssociateEntity $scope | Out-Null;
 
-      # Test compliance
-      \$comp = if (\$scope -is [VMware.VimAutomation.ViCore.Impl.V1.Inventory.ClusterImpl]) {{
-        Test-VMHostProfileCompliance -Profile \$profile
-      }} else {{
-        Test-VMHostProfileCompliance -VMHost \$scope
-      }};
+      $comp = if ($scope -is [VMware.VimAutomation.ViCore.Impl.V1.Inventory.ClusterImpl]) {
+        Test-VMHostProfileCompliance -Profile $profile
+      } else {
+        Test-VMHostProfileCompliance -VMHost $scope
+      };
 
-      # Apply/remediate if requested
-      if ({{ remediate | ternary('$true','$false') }}) {{
-        Invoke-VMHostProfile -Entity \$scope -Profile \$profile | Out-Null;
+      if ({{ remediate | ternary('$true', '$false') }}) {
+        Invoke-VMHostProfile -Entity $scope -Profile $profile | Out-Null;
         Start-Sleep -Seconds 5;
-        \$comp = if (\$scope -is [VMware.VimAutomation.ViCore.Impl.V1.Inventory.ClusterImpl]) {{
-          Test-VMHostProfileCompliance -Profile \$profile
-        }} else {{
-          Test-VMHostProfileCompliance -VMHost \$scope
-        }};
-      }}
+        $comp = if ($scope -is [VMware.VimAutomation.ViCore.Impl.V1.Inventory.ClusterImpl]) {
+          Test-VMHostProfileCompliance -Profile $profile
+        } else {
+          Test-VMHostProfileCompliance -VMHost $scope
+        };
+      }
 
-      # Emit a compact result
-      \$out = [pscustomobject]@{{
+      $out = [pscustomobject]@{
         profile = '{{ profile_name }}';
-        attached_to = if ('{{ attach_to_cluster | default('') }}' -ne '') {{ '{{ attach_to_cluster }}' }} else {{ '{{ (attach_to_hosts | default([])) | join(',') }}' }};
-        remediate = {{ remediate | ternary('$true','$false') }};
-        compliant = -not (\$comp | Where-Object {{ \$_.Status -ne 'Compliant' }});
-      }};
-      \$out | ConvertTo-Json -Depth 5;
+        attached_to = if ('{{ attach_to_cluster | default('') }}' -ne '') { '{{ attach_to_cluster | default('') }}' } else { '{{ (attach_to_hosts | default([])) | join(',') }}' };
+        remediate = {{ remediate | ternary('$true', '$false') }};
+        compliant = -not ($comp | Where-Object { $_.Status -ne 'Compliant' });
+      };
+      $out | ConvertTo-Json -Depth 5;
       "
   register: hostprof_result
   changed_when: true
