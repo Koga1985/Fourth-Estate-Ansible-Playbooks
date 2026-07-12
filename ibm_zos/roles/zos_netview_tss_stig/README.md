@@ -9,6 +9,41 @@ Assessment + command-reference **skeleton** for the DISA **IBM z/OS NetView for 
 > against a real LPAR via `ibm.ibm_zos_core` and captures the output as evidence.
 > Remediation is performed by the z/OS systems programmer / ESM administrator.
 
+## Requirements
+
+- Ansible 2.15+
+- Collection: `ibm.ibm_zos_core` (`ansible-galaxy collection install ibm.ibm_zos_core`)
+
+## Role Variables
+
+All variables below are defined in `defaults/main.yml`. "Required" marks values that ship as a placeholder you must replace (e.g. `CHANGE_ME`); everything else has a working default.
+
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
+| `ansible_connection` | `local` | No | — |
+| `artifacts_dir` | `"/tmp/zos-netview-tss-stig-artifacts"` | No | — |
+| `zos_live_assessment` | `false` | No | — |
+| `zos_target` | `""` | No | — |
+| `zos_netview_catalog` | `(see defaults/main.yml)` | No | NetView security is configured in CNMSTYLE/CNMSTGEN and enforced via SAF/TSS. Confirm exact V-IDs/rule-IDs against the NetView (TSS) STIG release at audit. |
+| `compliance_frameworks` | `(see defaults/main.yml)` | No | — |
+| `stig_benchmark` | `"IBM z/OS NetView for TSS STIG"` | No | — |
+| `stig_version` | `"V7R2"` | No | — |
+| `zos_esm` | `TSS` | No | — |
+
+## Example Playbook
+
+```yaml
+- name: Use zos_netview_tss_stig
+  hosts: all
+  gather_facts: false
+  roles:
+    - role: zos_netview_tss_stig
+```
+
+## Tags
+
+`--tags report` (checklist), `--tags live` (read-only assessment).
+
 ## Quick start
 
 ```bash
@@ -33,6 +68,6 @@ reconcile with exact V-/rule-IDs in your STIG release at audit time.
 `ibm.ibm_zos_core` ≥ 1.10, z/OS Open Enterprise Python, ZOAU, and SSH to USS on
 the LPAR with an automation user authorized for the (read-only) commands.
 
-## Tags
+## License
 
-`--tags report` (checklist), `--tags live` (read-only assessment).
+MIT

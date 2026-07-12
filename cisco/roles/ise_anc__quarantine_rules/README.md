@@ -13,71 +13,39 @@ Manages Cisco ISE Adaptive Network Control (ANC) quarantine policies and endpoin
 
 ## Role Variables
 
-### ISE Connection
+All variables below are defined in `defaults/main.yml`. "Required" marks values that ship as a placeholder you must replace (e.g. `CHANGE_ME`); everything else has a working default.
 
 | Variable | Default | Required | Description |
-|---|---|---|
-| `ise_hostname` | `{{ vault_ise_hostname }}` | **Yes** | ISE primary PAN hostname or IP |
-| `ise_username` | `{{ vault_ise_username }}` | **Yes** | ISE admin username |
-| `ise_password` | `{{ vault_ise_password }}` | **Yes** | ISE admin password (vault-protected) |
-| `ise_verify_ssl` | `true` | No | Validate ISE TLS certificate |
-| `ise_use_proxy` | `false` | No | Route ISE API calls through a proxy |
-| `ise_debug` | `false` | No | Enable verbose ISE SDK debug logging |
-
-### Deployment Control
-
-| Variable | Default | Required | Description |
-|---|---|---|
-| `apply_changes` | `false` | No | Set to `true` to write changes; `false` runs in plan/audit mode |
-| `ise_artifacts_dir` | `/tmp/ise-artifacts` | No | Local directory for generated reports and plan documents |
-
-### ANC Policies
-
-| Variable | Default | Required | Description |
-|---|---|---|
-| `anc_policies` | See `defaults/main.yml` | No | List of ANC policy definitions with `name`, `actions`, `description`, and `enabled` fields |
-| `anc_endpoint_assignments` | `[]` | No | List of explicit endpoint-to-policy assignments (`mac_address`, `policy_name`, `reason`) |
-| `anc_exceptions` | `[]` | No | List of endpoints exempt from quarantine (`mac_address`, `reason`, `approved_by`, `expiry_date`) |
-
-### DISA STIG Compliance
-
-| Variable | Default | Required | Description |
-|---|---|---|
-| `enable_disa_stig_compliance` | `true` | No | Create additional STIG-mandated ANC policies |
-| `disa_stig_anc_policies` | See `defaults/main.yml` | No | STIG-specific ANC policy list |
-
-### Automated Threat Response
-
-| Variable | Default | Required | Description |
-|---|---|---|
-| `anc_auto_quarantine_enabled` | `true` | No | Enable automated quarantine on threat detection |
-| `anc_auto_quarantine_threats` | `[malware_detected, posture_failed, ...]` | No | Threat categories that trigger automatic quarantine |
-
-### Integration and Notifications
-
-| Variable | Default | Required | Description |
-|---|---|---|
-| `anc_siem_integration_enabled` | `true` | No | Forward quarantine events to SIEM |
-| `anc_siem_endpoint` | `{{ vault_siem_endpoint }}` | **Yes** | SIEM ingest endpoint URL |
-| `anc_notify_on_quarantine` | `true` | No | Send email on quarantine action |
-| `anc_notification_email` | `{{ vault_security_team_email }}` | **Yes** | Recipient address for quarantine alerts |
-| `anc_log_to_syslog` | `true` | No | Forward ANC events to syslog |
-| `anc_syslog_server` | `{{ vault_syslog_server }}` | **Yes** | Syslog server address |
-
-### Quarantine Duration
-
-| Variable | Default | Required | Description |
-|---|---|---|
-| `anc_default_quarantine_duration` | `86400` | No | Default quarantine duration in seconds (24 h) |
-| `anc_max_quarantine_duration` | `604800` | No | Maximum quarantine duration in seconds (7 days) |
-| `anc_enable_auto_remediation` | `false` | No | Redirect quarantined endpoints to a remediation portal |
-| `anc_remediation_portal_url` | `https://{{ ise_hostname }}/remediation` | No | Remediation portal URL |
-
-### Compliance Frameworks
-
-| Variable | Default | Required | Description |
-|---|---|---|
-| `compliance_frameworks` | `[dod_stig, nist_800_53, nist_800_171, fisma_moderate]` | No | Frameworks referenced in generated audit documents |
+|----------|---------|----------|-------------|
+| `ise_hostname` | `"{{ vault_ise_hostname }}"` | No | ISE Connection Parameters |
+| `ise_username` | `"{{ vault_ise_username }}"` | No | — |
+| `ise_password` | `"{{ vault_ise_password }}"` | No | — |
+| `ise_verify_ssl` | `true` | No | — |
+| `ise_use_proxy` | `false` | No | — |
+| `ise_debug` | `false` | No | — |
+| `apply_changes` | `false` | No | Deployment Control |
+| `ise_artifacts_dir` | `"/tmp/ise-artifacts"` | No | — |
+| `fourth_estate_org` | `"FourthEstate"` | No | Fourth Estate Configuration |
+| `fourth_estate_contact` | `"{{ vault_fourth_estate_contact }}"` | No | — |
+| `anc_policies` | `(see defaults/main.yml)` | No | ANC Quarantine Policies |
+| `enable_disa_stig_compliance` | `true` | No | DISA STIG Compliance ANC Policies |
+| `disa_stig_anc_policies` | `(see defaults/main.yml)` | No | — |
+| `anc_endpoint_assignments` | `[]` | No | ANC Endpoint Assignments (manual quarantine assignments) |
+| `anc_exceptions` | `[]` | No | ANC Exceptions (devices exempt from automatic quarantine) |
+| `anc_auto_quarantine_enabled` | `true` | No | Automated Threat Response |
+| `anc_auto_quarantine_threats` | `(see defaults/main.yml)` | No | — |
+| `anc_siem_integration_enabled` | `true` | No | Integration with SIEM |
+| `anc_siem_endpoint` | `"{{ vault_siem_endpoint }}"` | No | — |
+| `anc_notify_on_quarantine` | `true` | No | Notification Settings |
+| `anc_notification_email` | `"{{ vault_security_team_email }}"` | No | — |
+| `compliance_frameworks` | `(see defaults/main.yml)` | No | Compliance Frameworks |
+| `anc_log_level` | `"INFO"` | No | Logging |
+| `anc_log_to_syslog` | `true` | No | — |
+| `anc_syslog_server` | `"{{ vault_syslog_server }}"` | No | — |
+| `anc_default_quarantine_duration` | `86400` | No | Quarantine Duration 24 hours in seconds |
+| `anc_max_quarantine_duration` | `604800` | No | 7 days in seconds |
+| `anc_enable_auto_remediation` | `false` | No | Remediation Settings |
+| `anc_remediation_portal_url` | `"https://{{ ise_hostname }}/remediation"` | No | — |
 
 ## Example Playbook
 
@@ -133,3 +101,7 @@ Manages Cisco ISE Adaptive Network Control (ANC) quarantine policies and endpoin
 - Credentials must be stored in Ansible Vault; never commit plain-text passwords.
 - The `SHUTDOWN` ANC policy is disabled by default to prevent accidental port shutdowns.
 - Generated artifacts are written to `ise_artifacts_dir` and include both a plan document and a timestamped quarantine report.
+
+## License
+
+MIT

@@ -591,30 +591,44 @@ api_key: "{{ vault_api_key }}"
 - Limit target scope: `ansible-playbook playbook.yml --limit firewall01`
 - Use `--tags` and `tags:` on tasks to target small changes during rollouts.
 
-Example (run a vendor playbook from repo root):
+Example (run a vendor platform from repo root):
 
 ```bash
-ansible-playbook palo_alto/playbooks/panos_create_object.yml -i inventories/prod.ini --ask-vault-pass
+cp palo_alto/inventory.example palo_alto/inventory
+ansible-playbook palo_alto/site.yml -i palo_alto/inventory --ask-vault-pass
 ```
 
 ## Testing and CI Guidance
 
-### Enforced CI gate
+### Enforced CI gates
 
-Every push and pull request runs [`.github/workflows/ci.yml`](./.github/workflows/ci.yml):
+Every push and pull request runs [`.github/workflows/ci.yml`](./.github/workflows/ci.yml).
+Four gates are **required** (a failure blocks the build) and one is informational:
 
 - **Required — YAML parse + lint:** `python3 scripts/check_yaml.py .` (every `.yml`/`.yaml`
   must load) and `yamllint -c .yamllint .` (catches YAML syntax errors and duplicate keys).
-  This is what guarantees a customer can grab a playbook and have it parse and run.
-- **Informational — ansible-lint + `--syntax-check`:** installs the collections declared in
-  the per-vendor `requirements.yml` files and reports findings. Currently non-blocking; flip
-  `continue-on-error: false` in the workflow once findings are triaged.
+  This is what guarantees a customer can grab a playbook and have it parse.
+- **Required — ansible-lint (offline, baseline-ratcheted):** runs with a **pinned** toolchain
+  (`ansible-core==2.19.11`, `ansible-lint==26.6.0`) against `.ansible-lint` + the
+  `.ansible-lint-ignore` baseline. The current tree passes; any **new** violation fails the
+  build. Bumping the pins requires regenerating the baseline in the same PR
+  (`ansible-lint --offline --generate-ignore <dirs>`).
+- **Required — syntax-check (core-only playbooks):** `ansible-playbook --syntax-check` for the
+  grab-and-go playbooks that parse with pinned `ansible-core` alone (the assessment/checklist
+  roles under `cloud_policy/`, `network_policy/`, `databases/db2/`, `policy_as_code/`,
+  `app_web_server/`, and the six `ibm_zos/` generators).
+- **Informational — full ansible-lint + `--syntax-check` with collections:** installs the
+  collections declared in the per-vendor `requirements.yml` files and reports findings. Depends
+  on Ansible Galaxy reachability, so it is non-blocking.
 
-Reproduce the required gate locally:
+Reproduce the required gates locally:
 ```bash
 pip install yamllint pyyaml
+pip install ansible-core==2.19.11 ansible-lint==26.6.0
 python3 scripts/check_yaml.py .
 yamllint -c .yamllint .
+dirs=$(ls -d */ | grep -vE '^(docs|\.vscode|scripts)/' | tr -d '/' | tr '\n' ' ')
+ansible-lint --offline $dirs
 ```
 
 ### Additional local validation
@@ -906,14 +920,19 @@ ansible-playbook cisco/site.yml -i cisco/inventory --tags ucs,security --ask-vau
 ### Example 4: VMware vSphere STIG Hardening
 
 ```bash
-# 1. Review VMware STIG roles
+# 1. Review VMware STIG roles (vsphere_esxi_stig_hardening, vsphere_vm_stig_hardening)
 ls -la vmware/roles/
 
-# 2. Run ESXi hardening playbook
-ansible-playbook vmware/playbooks/esxi_stig_hardening.yml -i inventory/vmware.yml --check
+# 2. Set up inventory
+cp vmware/inventory.example vmware/inventory
 
-# 3. Apply hardening
-ansible-playbook vmware/playbooks/esxi_stig_hardening.yml -i inventory/vmware.yml
+# 3. Dry-run the STIG hardening via the platform entry point (stig tag)
+ansible-playbook vmware/site.yml -i vmware/inventory \
+  --tags stig -e "apply_changes=false" --ask-vault-pass
+
+# 4. Apply hardening after reviewing the dry-run
+ansible-playbook vmware/site.yml -i vmware/inventory \
+  --tags stig -e "apply_changes=true" --ask-vault-pass
 ```
 
 ---

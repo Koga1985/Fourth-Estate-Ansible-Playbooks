@@ -120,11 +120,17 @@ A README that only says "See defaults/main.yml" **does not meet this standard** 
 
 ---
 
-## Enforcement
+## Review Checklist
 
-CI validates the following automatically (see `.github/workflows/readme-lint.yml`):
+These are the conventions reviewers check before a role is merged:
+
 - Every variable in `defaults/main.yml` has a matching entry in `README.md`.
-- Every variable documented in `README.md` exists in `defaults/main.yml`.
-- README.md is at least 20 lines long.
+- Every variable documented in `README.md` exists in `defaults/main.yml`
+  (or is explicitly passed at invocation).
+- README.md meaningfully documents the role — "See defaults/main.yml" is
+  not sufficient.
 
-Violations block merge.
+> CI currently enforces YAML parse, `yamllint`, `ansible-lint` (offline,
+> baseline-ratcheted), and `ansible-playbook --syntax-check` for the
+> core-only playbooks (see `.github/workflows/ci.yml`). README completeness
+> is a manual review step, not yet an automated gate.

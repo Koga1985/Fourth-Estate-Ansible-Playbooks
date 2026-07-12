@@ -4,30 +4,34 @@ Aws Nacls role for Fourth Estate infrastructure automation.
 
 > For full details, see the platform-level README: `aws/README.md`
 
-## Role Variables
-
-| Variable | Default | Required | Description |
-|----------|---------|----------|-------------|
-| `nacl_state` | `"present"` |  |
-| `nacl_public_name` | `"{{ vpc_name | No | default('main') }}-public-nacl"` |
-| `nacl_private_name` | `"{{ vpc_name | No | default('main') }}-private-nacl"` |
-| `nacl_database_name` | `"{{ vpc_name | No | default('main') }}-database-nacl"` |
-| `nacl_dmz_name` | `"{{ vpc_name | No | default('main') }}-dmz-nacl"` |
-| `create_public_nacl` | `true` |  |
-| `create_private_nacl` | `true` |  |
-| `create_database_nacl` | `true` |  |
-| `create_dmz_nacl` | `false` |  |
-| `apply_fedramp_deny_rules` | `true` |  |
-| `network_acls` | `[]` |  |
-| `app_subnet_cidr` | `"10.0.10.0/24"` |  |
-
-See `defaults/main.yml` for the full variable list.
-
 ## Requirements
 
 - Ansible 2.15+
 - Collection: `amazon.aws community.aws`
 - See platform `requirements.yml` for install instructions
+
+## Role Variables
+
+All variables below are defined in `defaults/main.yml`. "Required" marks values that ship as a placeholder you must replace (e.g. `CHANGE_ME`); everything else has a working default.
+
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
+| `nacl_state` | `"present"` | No | NACL Configuration |
+| `nacl_public_name` | `"{{ vpc_name \| default('main') }}-public-nacl"` | No | — |
+| `nacl_private_name` | `"{{ vpc_name \| default('main') }}-private-nacl"` | No | — |
+| `nacl_database_name` | `"{{ vpc_name \| default('main') }}-database-nacl"` | No | — |
+| `nacl_dmz_name` | `"{{ vpc_name \| default('main') }}-dmz-nacl"` | No | — |
+| `create_public_nacl` | `true` | No | Feature flags |
+| `create_private_nacl` | `true` | No | — |
+| `create_database_nacl` | `true` | No | — |
+| `create_dmz_nacl` | `false` | No | — |
+| `apply_fedramp_deny_rules` | `true` | No | — |
+| `nacl_tags` | `(see defaults/main.yml)` | No | Default tags |
+| `network_acls` | `[]` | No | Network ACLs configuration (override in inventory/playbook) |
+| `nacl_fedramp_deny_rules` | `(see defaults/main.yml)` | No | FedRAMP compliance deny rules |
+| `nacl_dmz_ingress_rules` | `(see defaults/main.yml)` | No | DMZ NACL rules (override as needed) |
+| `nacl_dmz_egress_rules` | `(see defaults/main.yml)` | No | — |
+| `app_subnet_cidr` | `"10.0.10.0/24"` | No | CIDR blocks |
 
 ## Example Playbook
 

@@ -4,27 +4,27 @@ Infoblox Tsig Acls role for Fourth Estate infrastructure automation.
 
 > For full details, see the platform-level README: `infoblox/day0_deploy_config/README.md`
 
-## Role Variables
-
-| Variable | Default | Required | Description |
-|----------|---------|----------|-------------|
-| `nios_host` | `""` |  |
-| `nios_username` | `""` |  |
-| `nios_password` | `""` |  |
-| `nios_validate_certs` | `false` |  |
-| `nios_wapi_version` | `"v2.12"` |  |
-| `artifact_dir` | `"/tmp/infoblox-tsig-acls"` |  |
-| `tsig_keys` | `[]` |  |
-| `named_acls` | `[]` |  |
-| `dns_view_policies` | `[]` |  |
-
-See `defaults/main.yml` for the full variable list.
-
 ## Requirements
 
 - Ansible 2.15+
 - Collection: `infoblox.nios_modules`
 - See platform `requirements.yml` for install instructions
+
+## Role Variables
+
+All variables below are defined in `defaults/main.yml`. "Required" marks values that ship as a placeholder you must replace (e.g. `CHANGE_ME`); everything else has a working default.
+
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
+| `nios_host` | `""` | No | — |
+| `nios_username` | `""` | No | — |
+| `nios_password` | `""` | No | — |
+| `nios_validate_certs` | `false` | No | — |
+| `nios_wapi_version` | `"v2.12"` | No | — |
+| `artifact_dir` | `"/tmp/infoblox-tsig-acls"` | No | — |
+| `tsig_keys` | `[]` | No | — |
+| `named_acls` | `[]` | No | — |
+| `dns_view_policies` | `[]` | No | — |
 
 ## Example Playbook
 

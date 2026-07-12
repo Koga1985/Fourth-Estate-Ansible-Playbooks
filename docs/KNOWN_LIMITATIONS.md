@@ -161,9 +161,13 @@ OT environments require additional precautions beyond standard IT deployments.
 | `app_web_server/roles/apache_web_server_srg` | Path defaults assume RHEL/EL (`/etc/httpd`); set the `apache_*` path vars for Debian/Ubuntu. |
 | `databases/db2/roles/db2_stig` | Several `dbm cfg` and SSL changes require a DB2 instance restart; native encryption (`ENCRLIB`) requires the instance to be licensed and a keystore configured. |
 
-> **CI note:** the repository CI gate validates YAML parse + `yamllint`. Full
-> `ansible-lint`/`--syntax-check` requires the per-role collections from Ansible
-> Galaxy; install them in your execution environment to run those checks locally.
+> **CI note:** the repository enforces four required gates — YAML parse,
+> `yamllint`, `ansible-lint` (offline, pinned toolchain, baseline-ratcheted),
+> and `ansible-playbook --syntax-check` for the core-only playbooks. A **full**
+> `ansible-lint`/`--syntax-check` with every vendor collection resolved requires
+> the per-role collections from Ansible Galaxy (run as an informational,
+> non-blocking job); install them in your execution environment to reproduce
+> those checks locally.
 
 ---
 

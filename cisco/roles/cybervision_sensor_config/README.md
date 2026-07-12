@@ -2,6 +2,56 @@
 
 Ansible role for Cisco Cyber Vision sensor enrollment, zone (group) creation, reporting policy configuration, and capture mode setup.
 
+## Requirements
+
+- Ansible 2.15+
+- Collection: `community.general` (`ansible-galaxy collection install community.general`)
+- Collection: `ansible.utils` (`ansible-galaxy collection install ansible.utils`)
+
+## Role Variables
+
+All variables below are defined in `defaults/main.yml`. "Required" marks values that ship as a placeholder you must replace (e.g. `CHANGE_ME`); everything else has a working default.
+
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
+| `cv_center_host` | `"{{ vault_cv_center_hostname }}"` | No | Cyber Vision Center API Connection |
+| `cv_api_url` | `"https://{{ cv_center_host }}/api/3.0"` | No | — |
+| `cv_api_token` | `"{{ vault_cv_api_token }}"` | No | — |
+| `cv_validate_certs` | `true` | No | — |
+| `cv_use_proxy` | `false` | No | — |
+| `cv_timeout` | `60` | No | — |
+| `apply_changes` | `false` | No | Deployment Control |
+| `artifacts_dir` | `"/tmp/cv-artifacts"` | No | — |
+| `enable_sensor_enrollment` | `true` | No | Feature Toggles |
+| `enable_sensor_policies` | `true` | No | — |
+| `enable_capture_modes` | `true` | No | — |
+| `cv_sensor_enrollment_ttl_hours` | `24` | No | Enrollment token validity window |
+| `cv_sensor_defaults` | `(see defaults/main.yml)` | No | Default sensor configuration applied to all sensors unless overridden |
+| `cv_sensor_zones` | `(see defaults/main.yml)` | No | Sensor Groups / Zones Maps sensor_zone inventory variable to Cyber Vision groups |
+| `cv_sensor_policies` | `(see defaults/main.yml)` | No | Sensor Policies Controls what traffic categories sensors report to the Center |
+| `cv_capture_modes` | `(see defaults/main.yml)` | No | Capture Mode Defaults by Sensor Type |
+
+## Example Playbook
+
+```yaml
+- name: Use cybervision_sensor_config
+  hosts: all
+  gather_facts: false
+  roles:
+    - role: cybervision_sensor_config
+      vars:
+        apply_changes: false   # set true to apply
+```
+
+## Tags
+
+```bash
+--tags sensors       # All sensor config tasks
+--tags enrollment    # Enrollment and zones only
+--tags policies      # Sensor reporting policies only
+--tags capture       # Capture mode config only
+```
+
 ## Quick Start
 
 ```bash
@@ -79,11 +129,6 @@ vault_cv_api_token: "your-api-bearer-token"
 | `cv_capture_modes.json` | Capture mode defaults and sensor count |
 | `cv_sensor_validation.json` | Online/offline sensor status |
 
-## Tags
+## License
 
-```bash
---tags sensors       # All sensor config tasks
---tags enrollment    # Enrollment and zones only
---tags policies      # Sensor reporting policies only
---tags capture       # Capture mode config only
-```
+MIT

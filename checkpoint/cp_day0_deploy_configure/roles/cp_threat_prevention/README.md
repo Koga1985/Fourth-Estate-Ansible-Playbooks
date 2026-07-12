@@ -4,27 +4,27 @@ Cp Threat Prevention role for Fourth Estate infrastructure automation.
 
 > For full details, see the platform-level README: `checkpoint/cp_day0_deploy_configure/README.md`
 
-## Role Variables
-
-| Variable | Default | Required | Description |
-|----------|---------|----------|-------------|
-| `tp_layer` | `"Threat Prevention"` |  |
-| `policy_package` | `"Standard"` |  |
-| `install_targets` | `[]` |  |
-| `publish_changes` | `true` |  |
-| `parallel_batches` | `1` |  |
-| `tp_profile_name` | `"TP-Baseline"` |  |
-| `tp_profile_desc` | `"Baseline protections; prevent medium+"` |  |
-| `tp_profile_mode` | `"optimized"` |  |
-| `tp_managed_tag` | `"tp-managed"` |  |
-
-See `defaults/main.yml` for the full variable list.
-
 ## Requirements
 
 - Ansible 2.15+
 - Collection: `See platform requirements.yml`
 - See platform `requirements.yml` for install instructions
+
+## Role Variables
+
+All variables below are defined in `defaults/main.yml`. "Required" marks values that ship as a placeholder you must replace (e.g. `CHANGE_ME`); everything else has a working default.
+
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
+| `tp_layer` | `"Threat Prevention"` | No | — |
+| `policy_package` | `"Standard"` | No | — |
+| `install_targets` | `[]` | No | — |
+| `publish_changes` | `true` | No | — |
+| `parallel_batches` | `1` | No | — |
+| `tp_profile_name` | `"TP-Baseline"` | No | — |
+| `tp_profile_desc` | `"Baseline protections; prevent medium+"` | No | — |
+| `tp_profile_mode` | `"optimized"` | No | — |
+| `tp_managed_tag` | `"tp-managed"` | No | — |
 
 ## Example Playbook
 

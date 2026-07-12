@@ -95,7 +95,9 @@ requested benchmark to its role/status.
 - Per-platform and per-role READMEs for all new areas; `CHANGELOG.md` (this file).
 
 ### Notes
-- Repository totals updated: **577 roles**, **3,684 YAML files**, **41 platforms**.
+- Repository totals at this expansion: **41 platforms**. (The role/YAML counts
+  originally published in this entry were later found inaccurate and corrected
+  to **604 roles** / **3,688 YAML files** in the v1.0.0 entry above.)
 - All new YAML passes the CI gate (`scripts/check_yaml.py` + `yamllint`). The
   localhost-executable assessment roles (`ndm_srg_assessment`,
   `cloud_computing_srg_assessment`, `app_sec_dev_stig`, the six `ibm_zos/*`

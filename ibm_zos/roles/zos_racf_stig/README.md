@@ -9,6 +9,41 @@ Assessment + command-reference **skeleton** for the DISA **IBM z/OS RACF STIG**.
 > verify commands against a real LPAR via `ibm.ibm_zos_core` and captures the
 > output as evidence. Remediation is performed by the z/OS systems programmer.
 
+## Requirements
+
+- Ansible 2.15+
+- Collection: `ibm.ibm_zos_core` (`ansible-galaxy collection install ibm.ibm_zos_core`)
+
+## Role Variables
+
+All variables below are defined in `defaults/main.yml`. "Required" marks values that ship as a placeholder you must replace (e.g. `CHANGE_ME`); everything else has a working default.
+
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
+| `ansible_connection` | `local` | No | Runs on the control node; live checks delegate to the z/OS host. |
+| `artifacts_dir` | `"/tmp/zos-racf-stig-artifacts"` | No | — |
+| `zos_live_assessment` | `false` | No | Live assessment (read-only) controls |
+| `zos_target` | `""` | No | inventory hostname of the z/OS LPAR (USS+ZOAU+SSH) |
+| `zos_racf_catalog` | `(see defaults/main.yml)` | No | Control-area identifiers are aligned to the DISA z/OS RACF STIG control set. Confirm exact V-IDs/rule-IDs against your STIG release at audit time. |
+| `compliance_frameworks` | `(see defaults/main.yml)` | No | — |
+| `stig_benchmark` | `"IBM z/OS RACF STIG"` | No | — |
+| `stig_version` | `"confirm-at-audit"` | No | — |
+| `zos_esm` | `RACF` | No | — |
+
+## Example Playbook
+
+```yaml
+- name: Use zos_racf_stig
+  hosts: all
+  gather_facts: false
+  roles:
+    - role: zos_racf_stig
+```
+
+## Tags
+
+`--tags report` (checklist), `--tags live` (read-only assessment).
+
 ## Quick start
 
 ```bash
@@ -37,6 +72,6 @@ classes. See `defaults/main.yml` for the full catalog with commands.
 `ibm.ibm_zos_core` ≥ 1.10, z/OS Open Enterprise Python, ZOAU, and SSH to USS on
 the LPAR with an automation user authorized for the (read-only) commands.
 
-## Tags
+## License
 
-`--tags report` (checklist), `--tags live` (read-only assessment).
+MIT

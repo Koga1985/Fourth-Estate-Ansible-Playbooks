@@ -12,6 +12,43 @@ assessment artifacts present, and emits a consolidated JSON + Markdown evidence
 package, plus the DoD-specific (Impact Level, FedRAMP authorization, CAP/CSSP)
 and SaaS shared-responsibility checklists. Pure `ansible.builtin` — read-only.
 
+## Requirements
+
+- Ansible 2.15+
+- No additional Ansible collections required (uses `ansible.builtin`), unless noted below.
+
+## Role Variables
+
+All variables below are defined in `defaults/main.yml`. "Required" marks values that ship as a placeholder you must replace (e.g. `CHANGE_ME`); everything else has a working default.
+
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
+| `ansible_connection` | `local` | No | — |
+| `artifacts_dir` | `"/tmp/cloud-srg-artifacts"` | No | — |
+| `cloud_providers_in_scope` | `(see defaults/main.yml)` | No | Cloud providers in scope for this assessment. |
+| `cloud_impact_level` | `IL4` | No | DoD Impact Level the system is being assessed against (IL2/IL4/IL5/IL6). |
+| `cc_evidence_input_dirs` | `(see defaults/main.yml)` | No | Directories scanned for per-provider assessment artifacts (*.json). |
+| `cc_srg_catalog` | `(see defaults/main.yml)` | No | CC SRG / FedRAMP control families mapped to implementing provider roles. status: auto = covered by provider roles in this repo; manual = procedural. |
+| `cc_srg_dod_specific` | `(see defaults/main.yml)` | No | DoD CC SRG-specific requirements (procedural / authorization - manual). |
+| `saas_catalog` | `(see defaults/main.yml)` | No | SaaS shared-responsibility checklist (manual / contractual). |
+| `compliance_frameworks` | `(see defaults/main.yml)` | No | — |
+| `stig_benchmark` | `"DoD Cloud Computing SRG + SaaS"` | No | — |
+| `stig_version` | `"CC SRG v1r4"` | No | — |
+
+## Example Playbook
+
+```yaml
+- name: Use cloud_computing_srg_assessment
+  hosts: all
+  gather_facts: false
+  roles:
+    - role: cloud_computing_srg_assessment
+```
+
+## Tags
+
+`--tags assess`, `report`.
+
 ## Why "grab and go"
 
 * Runs out of the box on the control node — no cloud credentials needed for the
@@ -48,6 +85,6 @@ view works regardless.
 `azure/roles/azure_nist_compliance`, `azure/roles/azure_compliance`, and the
 broader `aws_*` / `azure_*` / `gcp_*` security roles.
 
-## Tags
+## License
 
-`--tags assess`, `report`.
+MIT

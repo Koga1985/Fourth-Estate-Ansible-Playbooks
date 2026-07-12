@@ -9,15 +9,26 @@ Configures firewalld zones, allowed services and ports, and SELinux mode/policy 
 
 ## Role Variables
 
+All variables below are defined in `defaults/main.yml`. "Required" marks values that ship as a placeholder you must replace (e.g. `CHANGE_ME`); everything else has a working default.
+
 | Variable | Default | Required | Description |
 |----------|---------|----------|-------------|
-| `rhel_selinux_state` | `"enforcing"` | No | SELinux state: `enforcing`, `permissive`, `disabled` |
-| `rhel_selinux_policy` | `"targeted"` | No | SELinux policy type |
-| `rhel_selinux_booleans` | `{}` | No | SELinux booleans to set (key: value pairs) |
-| `rhel_firewall_enabled` | `true` | No | Enable and start firewalld |
-| `rhel_firewall_default_zone` | `"public"` | No | Default firewalld zone |
-| `rhel_firewall_services` | `["ssh"]` | No | Services to allow in the default zone |
-| `rhel_firewall_ports` | `[]` | No | Ports to allow (e.g. `["8080/tcp"]`) |
+| `rhel_selinux_state` | `enforcing` | No | SELinux state: enforcing, permissive, disabled STIG V-204401 |
+| `rhel_selinux_policy` | `targeted` | No | SELinux policy type: targeted, mls |
+| `rhel_selinux_booleans` | `{}` | No | SELinux booleans to configure |
+| `rhel_install_selinux_tools` | `true` | No | Install SELinux troubleshooting tools |
+| `rhel_firewall_enabled` | `true` | No | Enable firewalld STIG V-204500 |
+| `rhel_firewall_default_zone` | `public` | No | Default firewall zone |
+| `rhel_firewall_services` | `(see defaults/main.yml)` | No | Firewall services to allow |
+| `rhel_firewall_ports` | `[]` | No | Firewall ports to open |
+| `rhel_firewall_rich_rules` | `[]` | No | Firewall rich rules |
+| `rhel_firewall_zones` | `[]` | No | Firewall zones configuration |
+| `rhel_firewall_remove_services` | `[]` | No | Remove services from firewall |
+| `rhel_firewall_panic` | `false` | No | Panic mode (block all traffic) |
+| `rhel_firewall_direct_rules` | `[]` | No | Direct rules (iptables) |
+| `rhel_firewall_block_icmp` | `[]` | No | ICMP block |
+| `rhel_firewall_masquerade` | `false` | No | Masquerading |
+| `rhel_firewall_port_forward` | `[]` | No | Port forwarding |
 
 ## Example Playbook
 
@@ -36,6 +47,16 @@ Configures firewalld zones, allowed services and ports, and SELinux mode/policy 
         rhel_firewall_ports:
           - "8443/tcp"
 ```
+
+## Tags
+
+| Tag | Description |
+|-----|-------------|
+| `firewall` | Tasks tagged `firewall` |
+| `packages` | Tasks tagged `packages` |
+| `selinux` | Tasks tagged `selinux` |
+| `services` | Tasks tagged `services` |
+| `validation` | Tasks tagged `validation` |
 
 ## License
 

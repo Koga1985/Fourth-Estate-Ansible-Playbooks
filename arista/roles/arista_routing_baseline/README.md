@@ -13,41 +13,29 @@ Configures the routing stack on Arista EOS devices: loopback interfaces, static 
 
 ## Role Variables
 
-All variables are defined in `defaults/main.yml`.
+All variables below are defined in `defaults/main.yml`. "Required" marks values that ship as a placeholder you must replace (e.g. `CHANGE_ME`); everything else has a working default.
 
 | Variable | Default | Required | Description |
-|---|---|---|
-| `arista_apply_changes` | `false` | No | Safety gate. Set to `true` to push configuration; otherwise only a plan artifact is written. |
-| `arista_artifacts_dir` | `/tmp/arista-artifacts` | No | Directory on the Ansible controller for plan and state artifacts. |
-| `routing_loopbacks` | Loopback0 with `fabric_router_id`/32 | No | Loopback interfaces used as router IDs. |
-| `static_routes` | Default route `0.0.0.0/0` via `10.0.0.1` (AD 250) | No | Static route definitions in `arista.eos.eos_static_routes` format. |
-| `prefix_lists` | `DEFAULT_ONLY`, `LOOPBACKS` | No | IPv4 prefix-list definitions (`name`, `afi`, `entries`). |
-| `route_maps` | `RM_CONNECTED_TO_BGP` (permits LOOPBACKS) | No | Route-map definitions (`name`, `entries`). |
-| `bgp_config.enabled` | `true` | No | Enables BGP configuration. |
-| `bgp_config.asn` | `65000` | No | BGP autonomous system number. |
-| `bgp_config.router_id` | `fabric_router_id` | No | BGP router ID. |
-| `bgp_config.max_paths` | `4` | No | Maximum ECMP paths for BGP. |
-| `bgp_config.max_paths_ibgp` | `4` | No | Maximum iBGP ECMP paths. |
-| `bgp_address_families` | IPv4 (redistribute connected via RM_CONNECTED_TO_BGP), EVPN | No | BGP address-family configurations. |
-| `bgp_neighbors` | `[]` | No | Individual BGP neighbor definitions (`neighbor`, `remote_as`, `description`, `update_source`, etc.). |
-| `bgp_peer_groups` | `SPINE_UNDERLAY`, `SPINE_OVERLAY` | No | BGP peer-group definitions for spine peerings. |
-| `bgp_evpn.enabled` | `true` | No | Enables the BGP EVPN address family for VXLAN overlay. |
-| `bgp_evpn.peer_group` | `SPINE_OVERLAY` | No | Peer group activated in the EVPN address family. |
-| `bgp_vrfs` | `[]` | No | Per-VRF BGP instances with RD and route-targets for L3VNI. |
-| `ospf_config.enabled` | `false` | No | Enables OSPFv2 configuration. |
-| `ospf_config.process_id` | `1` | No | OSPF process ID. |
-| `ospf_config.passive_default` | `true` | No | Makes all interfaces passive by default (active interfaces must be explicitly enabled). |
-| `ospf_interfaces` | `[]` | No | Per-interface OSPF settings (area, cost, network type). |
-| `ospf_areas` | `[]` | No | OSPF area definitions (type, authentication). |
-| `isis_config.enabled` | `false` | No | Enables IS-IS configuration. |
-| `isis_config.instance` | `CORE` | No | IS-IS instance name. |
-| `isis_config.is_type` | `level-2` | No | IS-IS level (level-1, level-2, or level-1-2). |
-| `isis_config.auth_mode` | `md5` | No | IS-IS authentication mode. |
-| `isis_interfaces` | `[]` | No | Per-interface IS-IS settings (circuit-type, network type, metric). |
-| `bfd_config.enabled` | `true` | No | Enables BFD globally for fast failure detection. |
-| `bfd_config.interval` | `300` | No | BFD transmit interval in milliseconds. |
-| `bfd_config.min_rx` | `300` | No | BFD minimum receive interval in milliseconds. |
-| `bfd_config.multiplier` | `3` | No | BFD detection multiplier. |
+|----------|---------|----------|-------------|
+| `arista_apply_changes` | `false` | No | — |
+| `arista_artifacts_dir` | `"/tmp/arista-artifacts"` | No | — |
+| `routing_loopbacks` | `(see defaults/main.yml)` | No | Loopback interfaces |
+| `static_routes` | `(see defaults/main.yml)` | No | Static routes |
+| `prefix_lists` | `(see defaults/main.yml)` | No | Prefix lists |
+| `route_maps` | `(see defaults/main.yml)` | No | Route maps |
+| `bgp_config` | `(see defaults/main.yml)` | No | BGP Configuration |
+| `bgp_address_families` | `(see defaults/main.yml)` | No | BGP Address Families |
+| `bgp_neighbors` | `[]` | No | BGP Neighbors |
+| `bgp_peer_groups` | `(see defaults/main.yml)` | No | BGP Peer Groups |
+| `bgp_evpn` | `(see defaults/main.yml)` | No | BGP EVPN Configuration |
+| `bgp_vrfs` | `[]` | No | BGP VRFs |
+| `ospf_config` | `(see defaults/main.yml)` | No | OSPF Configuration |
+| `ospf_interfaces` | `[]` | No | OSPF Interfaces |
+| `ospf_areas` | `[]` | No | OSPF Areas |
+| `isis_config` | `(see defaults/main.yml)` | No | ISIS Configuration |
+| `isis_interfaces` | `[]` | No | ISIS Interfaces |
+| `bfd_config` | `(see defaults/main.yml)` | No | BFD Configuration |
+| `routing_config` | `(see defaults/main.yml)` | No | Routing configuration composite |
 
 ## Example Playbook
 
@@ -121,3 +109,7 @@ All variables are defined in `defaults/main.yml`.
 - `fabric_router_id` is used as the default value for BGP and OSPF router IDs and must be a unique /32 per device. Define it in `host_vars`.
 - BGP EVPN (`bgp_evpn.enabled: true`) requires that the VXLAN interface be configured, which is handled by the `arista_interfaces_fabric` role. Both roles should be applied together for a complete fabric deployment.
 - The handler `save eos configuration` is notified by all configuration tasks and writes the running configuration to startup at play completion.
+
+## License
+
+MIT

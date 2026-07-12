@@ -12,25 +12,27 @@ Backs up, restores, and compares Arista EOS device configurations. The role capt
 
 ## Role Variables
 
-All variables are defined in `defaults/main.yml`.
+All variables below are defined in `defaults/main.yml`. "Required" marks values that ship as a placeholder you must replace (e.g. `CHANGE_ME`); everything else has a working default.
 
 | Variable | Default | Required | Description |
-|---|---|---|
-| `backup_dir` | `/tmp/arista-backups` | No | Root directory for device backup files on the controller. A per-device subdirectory is created automatically. |
-| `backup_archive_dir` | `/tmp/arista-backups/archives` | No | Directory where compressed `.tar.gz` archives of aged-out backups are stored. |
-| `backup_operation` | `backup` | No | Operational mode. Valid values: `backup`, `restore`, `compare`, `both`. |
-| `backup_startup` | `true` | No | When `true`, the startup configuration is also captured in addition to the running configuration. |
-| `backup_snapshots` | `true` | No | When `true`, collects operational-state outputs (version, inventory, VLANs, interfaces, routes, BGP). |
-| `backup_retention_days` | `30` | No | Files older than this many days are archived and removed from the active backup directory. |
-| `restore_file` | `""` | No | Absolute path to the configuration file used during a restore operation. Required when `backup_operation` is `restore` or `both`. |
-| `restore_mode` | `replace` | No | How the configuration is applied during restore. Valid values: `replace` (full replacement), `merge` (additive). |
-| `pre_restore_backup` | `true` | No | Creates a timestamped backup immediately before any restore so the previous state can be recovered. |
-| `save_after_restore` | `true` | No | Saves the running configuration to startup after a successful restore. |
-| `verify_after_restore` | `true` | No | Runs a brief verification (hostname, software version, connected interfaces) after restore completes. |
-| `baseline_config` | `""` | No | Path to a baseline configuration file used when `backup_operation` is `compare`. |
-| `backup_git.enabled` | `false` | No | Enables Git commit of backup files after each run. |
-| `backup_encryption.enabled` | `false` | No | Enables GPG or Ansible Vault encryption of backup files. |
-| `backup_compliance.enabled` | `true` | No | Enables post-backup compliance checks (STIG and baseline deviation reporting). |
+|----------|---------|----------|-------------|
+| `backup_dir` | `"/tmp/arista-backups"` | No | Backup directory |
+| `backup_archive_dir` | `"/tmp/arista-backups/archives"` | No | — |
+| `backup_operation` | `"backup"` | No | Backup operation mode: backup, restore, compare, both |
+| `backup_startup` | `true` | No | Backup options |
+| `backup_snapshots` | `true` | No | — |
+| `backup_retention_days` | `30` | No | — |
+| `restore_file` | `""` | No | Restore options |
+| `restore_mode` | `"replace"` | No | Options: replace, merge |
+| `pre_restore_backup` | `true` | No | — |
+| `save_after_restore` | `true` | No | — |
+| `verify_after_restore` | `true` | No | — |
+| `baseline_config` | `""` | No | Compare options |
+| `backup_schedule` | `(see defaults/main.yml)` | No | Backup schedule (for use with cron/scheduled jobs) |
+| `backup_notification` | `(see defaults/main.yml)` | No | Backup notification |
+| `backup_git` | `(see defaults/main.yml)` | No | Git integration for version control |
+| `backup_encryption` | `(see defaults/main.yml)` | No | Encryption options |
+| `backup_compliance` | `(see defaults/main.yml)` | No | Backup compliance |
 
 ## Example Playbook
 
@@ -83,3 +85,7 @@ All variables are defined in `defaults/main.yml`.
 - When `backup_retention_days` is set, files older than the threshold are archived to `backup_archive_dir` before deletion. The archive step uses `ignore_errors: true` so a missing archive directory does not abort the play.
 - Notification (`backup_notification`) and Git integration (`backup_git`) options are available but require additional site-specific configuration such as an SMTP server and a Git remote URL.
 - Sensitive variables such as GPG recipients and email addresses should be stored in Ansible Vault.
+
+## License
+
+MIT

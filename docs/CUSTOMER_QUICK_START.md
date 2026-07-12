@@ -17,17 +17,24 @@ This guide gets you from zero to a running deployment. Read it top to bottom on 
 
 ### How This Repo Works
 
-Every technology platform has its own directory (`cisco/`, `vmware/`, `vast/`, etc.). Inside each:
+Every technology platform has its own directory (`cisco/`, `vmware/`, `vast/`, etc.). A typical platform looks like:
 
 ```
 <platform>/
-├── site.yml              # Entry point — run this
+├── site.yml              # Aggregate entry point (most platforms — run this)
 ├── inventory.example     # Copy this, fill in your hosts/credentials
 ├── requirements.yml      # Collections to install
 ├── README.md             # Platform-specific guide
 ├── roles/                # Automation logic (do not edit)
 └── tasks/                # Standalone task files
 ```
+
+> **Entry points vary.** Most platforms provide a top-level `site.yml`. The
+> newer STIG/SRG areas (`app_web_server/`, `cloud_policy/`, `network_policy/`,
+> `ibm_zos/`, `databases/`) instead ship a runnable playbook per role at
+> `roles/<role>/playbooks/run.yml` (see the STIG/SRG section below). Kubernetes
+> uses phase playbooks. The platform's own `README.md` always names its entry
+> point.
 
 **You only need to touch three things:**
 1. Your inventory file (hosts + variables)
@@ -43,56 +50,56 @@ Each platform is independent. Pick one to start.
 | You want to automate... | Directory | README |
 |------------------------|-----------|--------|
 | **Network & Security** | | |
-| Cisco ACI / ISE / UCS | `cisco/` | [cisco/README.md](cisco/README.md) |
-| Palo Alto firewalls | `palo_alto/` | [palo_alto/README.md](palo_alto/README.md) |
-| Check Point firewalls | `checkpoint/` | [checkpoint/README.md](checkpoint/README.md) |
-| Arista EOS / CVP | `arista/` | [arista/README.md](arista/README.md) |
-| F5 BIG-IP | `f5_bigip/` | [f5_bigip/README.md](f5_bigip/README.md) |
-| Fortinet FortiGate | `fortinet/` | [fortinet/README.md](fortinet/README.md) |
-| Infoblox DNS/DHCP | `infoblox/` | [infoblox/README.md](infoblox/README.md) |
-| Illumio micro-seg | `illumio/` | [illumio/README.md](illumio/README.md) |
+| Cisco ACI / ISE / UCS | `cisco/` | [cisco/README.md](../cisco/README.md) |
+| Palo Alto firewalls | `palo_alto/` | [palo_alto/README.md](../palo_alto/README.md) |
+| Check Point firewalls | `checkpoint/` | [checkpoint/README.md](../checkpoint/README.md) |
+| Arista EOS / CVP | `arista/` | [arista/README.md](../arista/README.md) |
+| F5 BIG-IP | `f5_bigip/` | [f5_bigip/README.md](../f5_bigip/README.md) |
+| Fortinet FortiGate | `fortinet/` | [fortinet/README.md](../fortinet/README.md) |
+| Infoblox DNS/DHCP | `infoblox/` | [infoblox/README.md](../infoblox/README.md) |
+| Illumio micro-seg | `illumio/` | [illumio/README.md](../illumio/README.md) |
 | **Cloud Platforms** | | |
-| AWS | `aws/` | [aws/README.md](aws/README.md) |
-| Azure | `azure/` | [azure/README.md](azure/README.md) |
-| Google Cloud Platform | `google_cloud_platform/` | [google_cloud_platform/README.md](google_cloud_platform/README.md) |
-| VMware vSphere / NSX-T | `vmware/` | [vmware/README.md](vmware/README.md) |
+| AWS | `aws/` | [aws/README.md](../aws/README.md) |
+| Azure | `azure/` | [azure/README.md](../azure/README.md) |
+| Google Cloud Platform | `google_cloud_platform/` | [google_cloud_platform/README.md](../google_cloud_platform/README.md) |
+| VMware vSphere / NSX-T | `vmware/` | [vmware/README.md](../vmware/README.md) |
 | **Operating Systems** | | |
-| RHEL servers | `rhel/` | [rhel/README.md](rhel/README.md) |
-| Windows servers | `windows/` | [windows/README.md](windows/README.md) |
+| RHEL servers | `rhel/` | [rhel/README.md](../rhel/README.md) |
+| Windows servers | `windows/` | [windows/README.md](../windows/README.md) |
 | **Container & Orchestration** | | |
-| Kubernetes clusters | `kubernetes/` | [kubernetes/README.md](kubernetes/README.md) |
-| Red Hat OpenShift | `openshift/` | [openshift/README.md](openshift/README.md) |
+| Kubernetes clusters | `kubernetes/` | [kubernetes/README.md](../kubernetes/README.md) |
+| Red Hat OpenShift | `openshift/` | [openshift/README.md](../openshift/README.md) |
 | **Storage & Backup** | | |
-| VAST Data | `vast/` | [vast/README.md](vast/README.md) |
-| NetApp ONTAP | `netapp/` | [netapp/README.md](netapp/README.md) |
-| Pure Storage | `pure_storage/` | [pure_storage/README.md](pure_storage/README.md) |
-| Veeam Backup | `veeam/` | [veeam/README.md](veeam/README.md) |
-| Cohesity | `cohesity/` | [cohesity/README.md](cohesity/README.md) |
+| VAST Data | `vast/` | [vast/README.md](../vast/README.md) |
+| NetApp ONTAP | `netapp/` | [netapp/README.md](../netapp/README.md) |
+| Pure Storage | `pure_storage/` | [pure_storage/README.md](../pure_storage/README.md) |
+| Veeam Backup | `veeam/` | [veeam/README.md](../veeam/README.md) |
+| Cohesity | `cohesity/` | [cohesity/README.md](../cohesity/README.md) |
 | **Database Platforms** | | |
-| PostgreSQL | `databases/postgresql/` | [databases/postgresql/README.md](databases/postgresql/README.md) |
-| MySQL / MariaDB | `databases/mysql/` | [databases/mysql/README.md](databases/mysql/README.md) |
-| Oracle Database | `databases/oracle/` | [databases/oracle/README.md](databases/oracle/README.md) |
+| PostgreSQL | `databases/postgresql/` | [databases/postgresql/README.md](../databases/postgresql/README.md) |
+| MySQL / MariaDB | `databases/mysql/` | [databases/mysql/README.md](../databases/mysql/README.md) |
+| Oracle Database | `databases/oracle/` | [databases/oracle/README.md](../databases/oracle/README.md) |
 | **Monitoring & Logging** | | |
-| Splunk | `splunk/` | [splunk/README.md](splunk/README.md) |
-| ELK Stack | `elk_stack/` | [elk_stack/README.md](elk_stack/README.md) |
-| Prometheus / Grafana | `prometheus_grafana/` | [prometheus_grafana/README.md](prometheus_grafana/README.md) |
-| ScienceLogic SL1 | `sciencelogic/` | [sciencelogic/README.md](sciencelogic/README.md) |
+| Splunk | `splunk/` | [splunk/README.md](../splunk/README.md) |
+| ELK Stack | `elk_stack/` | [elk_stack/README.md](../elk_stack/README.md) |
+| Prometheus / Grafana | `prometheus_grafana/` | [prometheus_grafana/README.md](../prometheus_grafana/README.md) |
+| ScienceLogic SL1 | `sciencelogic/` | [sciencelogic/README.md](../sciencelogic/README.md) |
 | **Security & Compliance** | | |
-| HashiCorp Vault | `hashicorp_vault/` | [hashicorp_vault/README.md](hashicorp_vault/README.md) |
-| Tenable Security Center | `tenable/` | [tenable/README.md](tenable/README.md) |
-| CrowdStrike Falcon EDR | `crowdstrike/` | [crowdstrike/README.md](crowdstrike/README.md) |
-| SentinelOne EDR | `sentinelone/` | [sentinelone/README.md](sentinelone/README.md) |
+| HashiCorp Vault | `hashicorp_vault/` | [hashicorp_vault/README.md](../hashicorp_vault/README.md) |
+| Tenable Security Center | `tenable/` | [tenable/README.md](../tenable/README.md) |
+| CrowdStrike Falcon EDR | `crowdstrike/` | [crowdstrike/README.md](../crowdstrike/README.md) |
+| SentinelOne EDR | `sentinelone/` | [sentinelone/README.md](../sentinelone/README.md) |
 | **Enterprise Integration** | | |
-| ServiceNow CMDB | `servicenow/` | [servicenow/README.md](servicenow/README.md) |
+| ServiceNow CMDB | `servicenow/` | [servicenow/README.md](../servicenow/README.md) |
 | **Automation Platform** | | |
-| Ansible Automation Platform | `ansible/` | [ansible/README.md](ansible/README.md) |
-| Ansible Tower / AAP | `ansible_tower/` | [ansible_tower/README.md](ansible_tower/README.md) |
+| Ansible Automation Platform | `ansible/` | [ansible/README.md](../ansible/README.md) |
+| Ansible Tower / AAP | `ansible_tower/` | [ansible_tower/README.md](../ansible_tower/README.md) |
 | **Compliance Frameworks** | | |
-| NIST / DoD STIG policy | `policy_as_code/` | [policy_as_code/README.md](policy_as_code/README.md) |
+| NIST / DoD STIG policy | `policy_as_code/` | [policy_as_code/README.md](../policy_as_code/README.md) |
 | **OT / ICS** | | |
-| Operational Technology | `operational_technology/` | [operational_technology/README.md](operational_technology/README.md) |
-| Dragos OT monitoring | `dragos/` | [dragos/README.md](dragos/README.md) |
-| Claroty OT security | `claroty/` | [claroty/README.md](claroty/README.md) |
+| Operational Technology | `operational_technology/` | [operational_technology/README.md](../operational_technology/README.md) |
+| Dragos OT monitoring | `dragos/` | [dragos/README.md](../dragos/README.md) |
+| Claroty OT security | `claroty/` | [claroty/README.md](../claroty/README.md) |
 
 ---
 
@@ -244,10 +251,12 @@ ansible-playbook cisco/site.yml -i cisco/inventory --syntax-check
 
 ### Re-run safely after a partial failure
 
-All playbooks are designed to be idempotent — tasks that have already
-completed will report `ok` on a second run rather than making duplicate
-changes. See [KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md) for the small
-set of exceptions.
+Most playbooks are idempotent — tasks that have already completed report
+`ok` on a second run rather than making duplicate changes. Idempotency is
+**not** guaranteed for every role, so always run twice in a test
+environment before production and review the second run's `changed`
+results. See [KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md) §2 for the
+known non-idempotent operations (notably some Veeam and VMware roles).
 
 ---
 

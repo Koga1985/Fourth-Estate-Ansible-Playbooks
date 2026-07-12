@@ -9,6 +9,61 @@ controls through the DB2 CLP (`dbm cfg`, `db cfg`), `db2audit`, and SQL.
 > controls is the DB2 CLP run as the instance owner, which is exactly what this
 > role does. Confirm the benchmark release in `defaults/main.yml`.
 
+## Requirements
+
+- Ansible 2.15+
+- No additional Ansible collections required (uses `ansible.builtin`), unless noted below.
+
+## Role Variables
+
+All variables below are defined in `defaults/main.yml`. "Required" marks values that ship as a placeholder you must replace (e.g. `CHANGE_ME`); everything else has a working default.
+
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
+| `db2_instance_owner` | `db2inst1` | No | Connection / instance context (set in inventory, vault secrets) |
+| `db2_database` | `SAMPLE` | No | — |
+| `db2_connect_user` | `"{{ vault_db2_admin_user \| default(db2_instance_owner) }}"` | No | db2_connect_user/password used for SQL GRANT/REVOKE/audit operations. |
+| `db2_connect_password` | `"{{ vault_db2_admin_password \| default('') }}"` | No | — |
+| `db2_profile_path` | `"~{{ db2_instance_owner }}/sqllib/db2profile"` | No | — |
+| `apply_changes` | `false` | No | Deployment control |
+| `artifacts_dir` | `"/tmp/db2-stig-artifacts"` | No | — |
+| `stig_dbm_cfg` | `true` | No | Control-area toggles |
+| `stig_db_cfg` | `true` | No | — |
+| `stig_audit` | `true` | No | — |
+| `stig_privileges` | `true` | No | — |
+| `stig_ssl` | `true` | No | — |
+| `stig_compliance_report` | `true` | No | — |
+| `db2_dbm_cfg` | `(see defaults/main.yml)` | No | DB2X-00-000xxx - Instance (dbm cfg) hardening Key/value pairs applied with: db2 update dbm cfg using <key> <value> |
+| `db2_db_cfg` | `(see defaults/main.yml)` | No | DB2X-00-001xxx - Database (db cfg) hardening |
+| `db2_audit_categories` | `(see defaults/main.yml)` | No | DB2X-00-0007xx - Audit (db2audit) policy |
+| `db2_audit_error_type` | `AUDIT` | No | AUDIT = fail closed on audit error (STIG) |
+| `db2_revoke_public_statements` | `(see defaults/main.yml)` | No | DB2X-00-00xxxx - Privilege hygiene (revoke from PUBLIC) |
+| `db2_ssl_enable` | `true` | No | DB2X-00-0014xx - SSL/TLS for client communication |
+| `db2_ssl_svr_label` | `"{{ vault_db2_ssl_label \| default('db2_server_cert') }}"` | No | — |
+| `db2_ssl_svr_keydb` | `"/home/{{ db2_instance_owner }}/sqllib/security/keystore/db2.p12"` | No | — |
+| `db2_ssl_svr_stash` | `"/home/{{ db2_instance_owner }}/sqllib/security/keystore/db2.sth"` | No | — |
+| `db2_ssl_versions` | `"TLSv12"` | No | — |
+| `db2_ssl_svcename` | `50001` | No | — |
+| `compliance_frameworks` | `(see defaults/main.yml)` | No | Reporting metadata |
+| `stig_benchmark` | `"IBM DB2 V10.5 LUW STIG"` | No | — |
+| `stig_version` | `"V2R1"` | No | — |
+
+## Example Playbook
+
+```yaml
+- name: Use db2_stig
+  hosts: all
+  gather_facts: false
+  roles:
+    - role: db2_stig
+      vars:
+        apply_changes: false   # set true to apply
+```
+
+## Tags
+
+`--tags dbm_cfg`, `db_cfg`, `audit`, `privileges`, `ssl`, `report`.
+
 ## Why "grab and go"
 
 * No extra collections — pure SSH + `become` to the instance owner.
@@ -55,6 +110,6 @@ cat /tmp/db2-stig-artifacts/db2-prod-01_db2_stig.json
   dry-run.
 * Always review the dry-run drift report before enforcing on production.
 
-## Tags
+## License
 
-`--tags dbm_cfg`, `db_cfg`, `audit`, `privileges`, `ssl`, `report`.
+MIT

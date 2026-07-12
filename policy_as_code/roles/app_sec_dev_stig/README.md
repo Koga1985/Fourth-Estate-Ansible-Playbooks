@@ -10,6 +10,49 @@ build** when policy thresholds are exceeded.
 
 Pure `ansible.builtin` — the scanners are external tools detected on `PATH`.
 
+## Requirements
+
+- Ansible 2.15+
+- No additional Ansible collections required (uses `ansible.builtin`), unless noted below.
+
+## Role Variables
+
+All variables below are defined in `defaults/main.yml`. "Required" marks values that ship as a placeholder you must replace (e.g. `CHANGE_ME`); everything else has a working default.
+
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
+| `ansible_connection` | `local` | No | Run context (CI runner / control node) |
+| `app_src_dir` | `"{{ playbook_dir }}"` | No | Application source tree to assess (the repo/workspace root). |
+| `app_name` | `"{{ app_src_dir \| basename }}"` | No | — |
+| `artifacts_dir` | `"/tmp/appsec-stig-artifacts"` | No | — |
+| `enforce_gate` | `false` | No | Gate control true = fail the build when thresholds exceeded |
+| `gate_max_critical` | `0` | No | Per-severity ceilings for the gate (only used when enforce_gate=true) |
+| `gate_max_high` | `0` | No | — |
+| `gate_fail_on_secrets` | `true` | No | — |
+| `scan_secrets` | `true` | No | Scanner selection - each runs only if its binary is on PATH. Override the command if you wrap them differently. |
+| `scan_sast` | `true` | No | — |
+| `scan_dependencies` | `true` | No | — |
+| `scan_iac` | `true` | No | — |
+| `appsec_tools` | `(see defaults/main.yml)` | No | — |
+| `app_sec_dev_catalog` | `(see defaults/main.yml)` | No | APSC-DV control catalog - auto controls are evidenced by a scanner; manual controls require documented procedural verification. |
+| `compliance_frameworks` | `(see defaults/main.yml)` | No | Reporting metadata |
+| `stig_benchmark` | `"Application Security and Development STIG"` | No | — |
+| `stig_version` | `"V6R4"` | No | — |
+
+## Example Playbook
+
+```yaml
+- name: Use app_sec_dev_stig
+  hosts: all
+  gather_facts: false
+  roles:
+    - role: app_sec_dev_stig
+```
+
+## Tags
+
+`--tags scan` (all scanners), `secrets`, `sast`, `sca`, `iac`, `report`, `gate`.
+
 ## Why "grab and go"
 
 * **Report-only by default** (`enforce_gate=false`) — produces JSON + Markdown
@@ -60,6 +103,6 @@ Any tool is overridable via `appsec_tools` (e.g. swap `grype` for `trivy`,
   per-control evaluation).
 * `<app>_app_sec_dev_stig.md` — human-readable evidence report for the ATO package.
 
-## Tags
+## License
 
-`--tags scan` (all scanners), `secrets`, `sast`, `sca`, `iac`, `report`, `gate`.
+MIT
