@@ -15,29 +15,16 @@ Manages the end-to-end security policy lifecycle in Illumio PCE: applies rule se
 
 ## Role Variables
 
-All variables are defined in `defaults/main.yml`.
+All variables below are defined in `defaults/main.yml`. "Required" marks values that ship as a placeholder you must replace (e.g. `CHANGE_ME`); everything else has a working default.
 
 | Variable | Default | Required | Description |
-|---|---|---|
-| `verify_ssl` | `true` | No | Verify TLS certificates when calling the PCE API. Set to `false` only in lab environments. |
-| `artifacts_dir` | `/tmp/illumio-artifacts` | No | Directory on the Ansible controller where intermediate artifacts are written. |
-| `promote_comment` | `"Change via Ansible"` | No | Change description recorded in the PCE when the policy is promoted. |
-| `deny_threshold` | `0` | No | Maximum number of blocked flows allowed during the impact simulation before the brownout gate fails the play. |
-| `dry_run` | `true` | No | When `true`, the role promotes Draft to Staged but does **not** promote Staged to Active. Set to `false` to complete a full promotion to Active. |
-| `brownout_enabled` | `true` | No | When `true`, runs the traffic-simulation brownout check before promoting. Set to `false` to skip the gate. |
-
-### Runtime-only variables (no defaults)
-
-| Variable | Description |
-|---|---|
-| `pce_url` | Base URL of the PCE (e.g. `https://pce.example.mil:8443`). |
-| `org_id` | PCE organization ID integer. |
-| `api_user` | PCE API authentication username. |
-| `api_key` | PCE API key. Store in Ansible Vault. |
-| `rule_set` | List of rule objects to apply to the draft policy. When defined, the `illumio_rules__apply` include runs. |
-| `exceptions` | List of exception objects to apply to the draft policy. When defined and non-empty, the `illumio_rules__exceptions` include runs. |
-| `simulate_query` | JSON body for the PCE traffic-flow simulation query. Required when `brownout_enabled: true`. |
-| `target_version` | Optional PCE policy version href to roll back to. When omitted, the rollback include uses the most recent previous version. |
+|----------|---------|----------|-------------|
+| `verify_ssl` | `true` | No | — |
+| `artifacts_dir` | `/tmp/illumio-artifacts` | No | — |
+| `promote_comment` | `"Change via Ansible"` | No | — |
+| `deny_threshold` | `0` | No | — |
+| `dry_run` | `true` | No | — |
+| `brownout_enabled` | `true` | No | — |
 
 ## Example Playbook
 
@@ -78,3 +65,7 @@ All variables are defined in `defaults/main.yml`.
 - The rollback task file (`illumio_policy__rollback.yml`) is not invoked automatically by `tasks/main.yml`. Include it explicitly in a separate play when a rollback is required.
 - `artifacts_dir` is created on the Ansible controller before each include task runs. Artifacts are primarily used for inter-task state; no report files are written by this role.
 - The role makes direct HTTPS calls to the PCE API using `ansible.builtin.uri`. No Illumio Ansible collection is required.
+
+## License
+
+MIT

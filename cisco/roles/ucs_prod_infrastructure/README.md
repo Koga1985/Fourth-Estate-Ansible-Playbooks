@@ -2,18 +2,6 @@
 
 Cisco UCS Production Infrastructure deployment role for Fourth Estate organizations.
 
-## Description
-
-This role automates the deployment of Cisco UCS infrastructure for production environments with a focus on Fourth Estate (free press and media) organizations. It includes comprehensive configuration management for:
-
-- UCS Manager initial setup
-- Organization hierarchy
-- Service profile templates
-- Network and storage connectivity
-- Server pools and policies
-- High availability configuration
-- DoD STIG and NIST 800-53 compliance
-
 ## Requirements
 
 - Ansible >= 2.9
@@ -24,35 +12,95 @@ This role automates the deployment of Cisco UCS infrastructure for production en
 
 ## Role Variables
 
-### Connection Variables (Required)
-- `ucs_hostname`: UCS Manager IP or hostname
-- `ucs_username`: UCS Manager username
-- `ucs_password`: UCS Manager password
+All variables below are defined in `defaults/main.yml`. "Required" marks values that ship as a placeholder you must replace (e.g. `CHANGE_ME`); everything else has a working default.
 
-### Fourth Estate Configuration
-- `fourth_estate_org_name`: Organization name (default: "FourthEstate")
-- `fourth_estate_description`: Organization description
-- `fourth_estate_contact`: Technical contact
-- `fourth_estate_email`: Contact email
-- `fourth_estate_sub_orgs`: List of sub-organizations
-
-### Deployment Control
-- `apply_changes`: Set to `true` to apply changes (default: `false` for dry-run)
-- `ucs_artifacts_dir`: Directory for deployment artifacts
-
-### Feature Toggles
-- `ucs_enable_ucsm_config`: Enable UCS Manager initial configuration
-- `ucs_enable_org_setup`: Enable organization setup
-- `ucs_enable_service_profiles`: Enable service profile configuration
-- `ucs_enable_vnic_vhba`: Enable network/storage templates
-- `ucs_enable_san`: Enable SAN connectivity
-- `ucs_enable_ha`: Enable high availability features
-
-See `defaults/main.yml` for complete variable documentation.
-
-## Dependencies
-
-None
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
+| `ucs_hostname` | `"{{ vault_ucs_hostname }}"` | No | UCS Manager Connection |
+| `ucs_username` | `"{{ vault_ucs_username }}"` | No | — |
+| `ucs_password` | `"{{ vault_ucs_password }}"` | No | — |
+| `ucs_use_ssl` | `true` | No | — |
+| `ucs_validate_certs` | `true` | No | — |
+| `apply_changes` | `false` | No | Deployment Control |
+| `ucs_artifacts_dir` | `"/tmp/ucs-artifacts"` | No | — |
+| `fourth_estate_org_name` | `"FourthEstate"` | No | Fourth Estate Configuration |
+| `fourth_estate_description` | `"Fourth Estate Organization - Free Press and Media"` | No | — |
+| `fourth_estate_contact` | `"{{ vault_fourth_estate_contact }}"` | No | — |
+| `fourth_estate_phone` | `"{{ vault_fourth_estate_phone }}"` | No | — |
+| `fourth_estate_email` | `"{{ vault_fourth_estate_email }}"` | No | — |
+| `fourth_estate_address` | `"{{ vault_fourth_estate_address }}"` | No | — |
+| `fourth_estate_sub_orgs` | `(see defaults/main.yml)` | No | Sub-organizations |
+| `ucs_system_name` | `"UCS-FourthEstate"` | No | UCS System Configuration |
+| `ucs_system_description` | `"Fourth Estate UCS Domain"` | No | — |
+| `ucs_timezone` | `"America/New_York"` | No | — |
+| `ucs_enable_ucsm_config` | `true` | No | Feature Toggles |
+| `ucs_enable_org_setup` | `true` | No | — |
+| `ucs_enable_service_profiles` | `true` | No | — |
+| `ucs_enable_vnic_vhba` | `true` | No | — |
+| `ucs_enable_server_pools` | `true` | No | — |
+| `ucs_enable_address_pools` | `true` | No | — |
+| `ucs_enable_firmware_mgmt` | `true` | No | — |
+| `ucs_enable_chassis_discovery` | `true` | No | — |
+| `ucs_enable_server_config` | `true` | No | — |
+| `ucs_enable_ha` | `true` | No | — |
+| `ucs_enable_san` | `true` | No | — |
+| `ucs_enable_iscsi` | `false` | No | — |
+| `ucs_enable_snmp` | `true` | No | — |
+| `ucs_enable_firmware_updates` | `false` | No | — |
+| `ucs_auto_associate_servers` | `false` | No | — |
+| `ucs_dns_servers` | `(see defaults/main.yml)` | No | DNS Servers |
+| `ucs_ntp_servers` | `(see defaults/main.yml)` | No | NTP Servers (DoD approved) |
+| `ucs_callhome_enabled` | `true` | No | Call Home Configuration |
+| `ucs_snmp_communities` | `(see defaults/main.yml)` | No | SNMP Configuration |
+| `ucs_server_pools` | `(see defaults/main.yml)` | No | Server Pools |
+| `ucs_server_pool_qualifications` | `[]` | No | Server Pool Qualifications |
+| `ucs_power_groups` | `(see defaults/main.yml)` | No | Power Groups |
+| `ucs_uuid_pools` | `(see defaults/main.yml)` | No | UUID Pools |
+| `ucs_mac_pools` | `(see defaults/main.yml)` | No | MAC Address Pools |
+| `ucs_wwnn_pools` | `(see defaults/main.yml)` | No | WWNN Pools |
+| `ucs_wwpn_pools_a` | `(see defaults/main.yml)` | No | WWPN Pools (Fabric A) |
+| `ucs_wwpn_pools_b` | `(see defaults/main.yml)` | No | WWPN Pools (Fabric B) |
+| `ucs_iqn_pools` | `(see defaults/main.yml)` | No | IQN Pools |
+| `ucs_service_profile_templates` | `(see defaults/main.yml)` | No | Service Profile Templates |
+| `ucs_bios_policies` | `(see defaults/main.yml)` | No | BIOS Policies |
+| `ucs_boot_policies` | `(see defaults/main.yml)` | No | Boot Policies |
+| `ucs_maintenance_policies` | `(see defaults/main.yml)` | No | Maintenance Policies |
+| `ucs_vnic_templates` | `(see defaults/main.yml)` | No | vNIC Templates |
+| `ucs_vhba_templates` | `(see defaults/main.yml)` | No | vHBA Templates |
+| `ucs_lan_connectivity_policies` | `(see defaults/main.yml)` | No | LAN Connectivity Policies |
+| `ucs_san_connectivity_policies` | `(see defaults/main.yml)` | No | SAN Connectivity Policies |
+| `ucs_host_firmware_packages` | `(see defaults/main.yml)` | No | Host Firmware Packages |
+| `ucs_service_profile_instances` | `[]` | No | Service Profile Instances |
+| `ucs_power_policies` | `(see defaults/main.yml)` | No | Power Policies |
+| `ucs_disk_group_policies` | `(see defaults/main.yml)` | No | Disk Group Policies |
+| `ucs_chassis_link_aggregation` | `"port-channel"` | No | Chassis Discovery |
+| `ucs_chassis_num_links` | `"2"` | No | — |
+| `ucs_backup_enabled` | `true` | No | High Availability |
+| `ucs_backup_type` | `"full-state"` | No | — |
+| `ucs_backup_protocol` | `"scp"` | No | — |
+| `ucs_backup_path` | `"/backups/ucs/{{ fourth_estate_org_name }}"` | No | — |
+| `ucs_backup_server` | `"{{ vault_backup_server }}"` | No | — |
+| `ucs_backup_username` | `"{{ vault_backup_username }}"` | No | — |
+| `ucs_backup_password` | `"{{ vault_backup_password }}"` | No | — |
+| `compliance_frameworks` | `(see defaults/main.yml)` | No | Compliance Frameworks |
+| `ucs_enable_fabric_interconnects` | `true` | No | Fabric Interconnect Configuration |
+| `fi_cluster_mode` | `"ha"` | No | ha or standalone |
+| `fi_a_mgmt_ip` | `"{{ vault_fi_a_mgmt_ip \| default('192.168.1.10') }}"` | No | — |
+| `fi_b_mgmt_ip` | `"{{ vault_fi_b_mgmt_ip \| default('192.168.1.11') }}"` | No | — |
+| `fi_mgmt_subnet` | `"255.255.255.0"` | No | — |
+| `fi_mgmt_gateway` | `"{{ vault_fi_mgmt_gateway \| default('192.168.1.1') }}"` | No | — |
+| `fi_a_server_ports` | `(see defaults/main.yml)` | No | Fabric Interconnect A - Server Ports (ports connected to servers) |
+| `fi_b_server_ports` | `(see defaults/main.yml)` | No | Fabric Interconnect B - Server Ports |
+| `fi_a_uplink_ports` | `(see defaults/main.yml)` | No | Fabric Interconnect A - Uplink Ports (ports connected to network) |
+| `fi_b_uplink_ports` | `(see defaults/main.yml)` | No | Fabric Interconnect B - Uplink Ports |
+| `fi_a_port_channels` | `(see defaults/main.yml)` | No | Fabric Interconnect A - Port Channels |
+| `fi_b_port_channels` | `(see defaults/main.yml)` | No | Fabric Interconnect B - Port Channels |
+| `ucs_enable_sp_association` | `true` | No | Service Profile Association Configuration |
+| `sp_association_mode` | `"auto"` | No | auto or manual |
+| `sp_manual_associations` | `[]` | No | Manual Association (when sp_association_mode is 'manual') |
+| `sp_server_pool_name` | `"FourthEstate-Pool"` | No | Auto Association (when sp_association_mode is 'auto') |
+| `sp_pool_servers` | `[]` | No | — |
+| `sp_templates_for_auto_assoc` | `[]` | No | Service profile templates to enable for auto-association |
 
 ## Example Playbook
 
@@ -70,6 +118,42 @@ None
   roles:
     - role: ucs_prod_infrastructure
 ```
+
+## Tags
+
+Available tags for selective execution:
+- `prerequisites`: Run prerequisite checks only
+- `organizations`: Configure organizations only
+- `service_profiles`: Configure service profiles only
+- `vnic_vhba`: Configure vNIC/vHBA templates only
+- `pools`: Configure address pools only
+- `policies`: Configure server policies only
+- `ha`: Configure high availability only
+
+**Example:**
+```bash
+# Deploy only organizations and pools
+ansible-playbook playbooks/deploy_ucs.yml --tags "organizations,pools"
+
+# Skip service profiles
+ansible-playbook playbooks/deploy_ucs.yml --skip-tags "service_profiles"
+```
+
+## Description
+
+This role automates the deployment of Cisco UCS infrastructure for production environments with a focus on Fourth Estate (free press and media) organizations. It includes comprehensive configuration management for:
+
+- UCS Manager initial setup
+- Organization hierarchy
+- Service profile templates
+- Network and storage connectivity
+- Server pools and policies
+- High availability configuration
+- DoD STIG and NIST 800-53 compliance
+
+## Dependencies
+
+None
 
 ## Usage
 
@@ -194,26 +278,6 @@ Service Profiles → Server Pools → Physical Servers
 - **Check Uplinks**: Verify uplink connectivity
 - **Review Failover**: Test failover mechanisms
 - **Monitor Heartbeat**: Check cluster state
-
-## Tags
-
-Available tags for selective execution:
-- `prerequisites`: Run prerequisite checks only
-- `organizations`: Configure organizations only
-- `service_profiles`: Configure service profiles only
-- `vnic_vhba`: Configure vNIC/vHBA templates only
-- `pools`: Configure address pools only
-- `policies`: Configure server policies only
-- `ha`: Configure high availability only
-
-**Example:**
-```bash
-# Deploy only organizations and pools
-ansible-playbook playbooks/deploy_ucs.yml --tags "organizations,pools"
-
-# Skip service profiles
-ansible-playbook playbooks/deploy_ucs.yml --skip-tags "service_profiles"
-```
 
 ## Artifacts Generated
 
@@ -369,10 +433,10 @@ ansible-playbook playbooks/deploy_ucs.yml \
   -e "ucs_enable_ha=false"
 ```
 
-## License
-
-MIT
-
 ## Author Information
 
 Created for Fourth Estate production deployments.
+
+## License
+
+MIT

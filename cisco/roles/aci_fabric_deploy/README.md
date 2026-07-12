@@ -1,21 +1,5 @@
 # aci_fabric_deploy
 
-## Overview
-This role automates the initial deployment of a Cisco ACI fabric for Fourth Estate infrastructure, covering APIC cluster configuration, spine and leaf node registration, fabric-wide policies, access policies (VLAN pools, domains, AEP), and interface/switch profiles. It is designed as Phase 1 of the ACI platform deployment pipeline and defaults to dry-run mode to prevent unintended changes.
-
-## Features
-- APIC cluster configuration: system name, OOB management, NTP, DNS, and syslog
-- Fabric node registration for spine and leaf nodes with discovery wait/retry logic
-- Fabric-wide policies: node control (MACsec/analytics), link level, ISIS redistribution, COOP group
-- Endpoint security policies: loop protection and rogue endpoint control
-- VLAN pool creation with encapsulation block ranges
-- Physical domain and L3 domain creation with VLAN pool associations
-- Attachable Entity Profile (AEP) configuration with domain bindings
-- Leaf and spine switch profile creation with node selectors
-- Interface policy group creation (access, port-channel, vPC)
-- vPC protection group configuration for dual-homed leaf pairs
-- JSON artifact generation for every configuration stage
-
 ## Requirements
 - Ansible >= 2.15
 - Collections: `cisco.aci >= 2.8.0`, `ansible.utils >= 2.10.0`
@@ -24,52 +8,57 @@ This role automates the initial deployment of a Cisco ACI fabric for Fourth Esta
 
 ## Role Variables
 
-### Connection Variables
+All variables below are defined in `defaults/main.yml`. "Required" marks values that ship as a placeholder you must replace (e.g. `CHANGE_ME`); everything else has a working default.
+
 | Variable | Default | Required | Description |
 |----------|---------|----------|-------------|
-| `aci_host` | `{{ vault_aci_apic_hostname }}` | **Yes** | APIC hostname or IP address |
-| `aci_username` | `{{ vault_aci_apic_username }}` | **Yes** | APIC admin username |
-| `aci_password` | `{{ vault_aci_apic_password }}` | **Yes** | APIC admin password (vault-encrypted) |
-| `aci_verify_ssl` | `true` | No | Validate APIC TLS certificate |
-| `aci_timeout` | `30` | No | APIC API request timeout (seconds) |
-
-### Deployment Control
-`apply_changes: false` — The role defaults to **dry-run mode**. No configuration changes are written to the APIC unless `apply_changes: true` is explicitly passed. In dry-run mode, all tasks execute `state: query` instead of `state: present`.
-
-### Fabric Configuration
-| Variable | Default | Required | Description |
-|----------|---------|----------|-------------|
-| `aci_fabric_name` | `FourthEstate-ACI` | No | Fabric instance name |
-| `aci_pod_id` | `1` | No | Default pod ID |
-| `aci_infra_vlan` | `4093` | No | Infrastructure VLAN ID |
-| `aci_multicast_gipo` | `225.0.0.0/15` | No | Multicast GIPo address range |
-| `aci_ntp_servers` | NIST servers | No | List of NTP server objects |
-| `aci_dns_servers` | 8.8.8.8, 8.8.4.4 | No | List of DNS server objects |
-
-### Feature Toggles
-| Variable | Default | Required | Description |
-|----------|---------|----------|-------------|
-| `enable_apic_config` | `true` | No | Configure APIC system settings |
-| `enable_node_registration` | `true` | No | Register fabric nodes |
-| `enable_fabric_policies` | `true` | No | Configure fabric-wide policies |
-| `enable_access_policies` | `true` | No | Configure VLAN pools, domains, AEP |
-| `enable_interface_profiles` | `true` | No | Configure switch and interface profiles |
-| `enable_vpc_protection` | `true` | No | Configure vPC protection groups |
-
-### Node Registration
-`aci_nodes` is a list of node objects. Each entry must include:
-```yaml
-aci_nodes:
-  - node_id: 101          # ACI node ID (101-4000)
-    name: "spine-101"     # Node hostname in fabric
-    role: "spine"         # spine or leaf
-    pod_id: 1             # Pod ID (default: aci_pod_id)
-    serial: "TEP-1-101"   # Serial number for auto-discovery
-    description: "..."    # Optional description
-```
-
-## Dependencies
-None
+| `aci_host` | `"{{ vault_aci_apic_hostname }}"` | No | APIC Connection Parameters |
+| `aci_username` | `"{{ vault_aci_apic_username }}"` | No | — |
+| `aci_password` | `"{{ vault_aci_apic_password }}"` | No | — |
+| `aci_verify_ssl` | `true` | No | — |
+| `aci_use_proxy` | `false` | No | — |
+| `aci_timeout` | `30` | No | — |
+| `aci_port` | `443` | No | — |
+| `apply_changes` | `false` | No | Deployment Control |
+| `artifacts_dir` | `"/tmp/aci-artifacts"` | No | — |
+| `fourth_estate_org` | `"FourthEstate"` | No | Fourth Estate Organization |
+| `fourth_estate_contact` | `"{{ vault_fourth_estate_contact }}"` | No | — |
+| `fourth_estate_environment` | `"production"` | No | — |
+| `fourth_estate_region` | `"primary"` | No | — |
+| `enable_apic_config` | `true` | No | Feature Toggles |
+| `enable_node_registration` | `true` | No | — |
+| `enable_fabric_policies` | `true` | No | — |
+| `enable_access_policies` | `true` | No | — |
+| `enable_interface_profiles` | `true` | No | — |
+| `enable_vpc_protection` | `true` | No | — |
+| `aci_fabric_name` | `"FourthEstate-ACI"` | No | Fabric Global Settings |
+| `aci_pod_id` | `1` | No | — |
+| `aci_infra_vlan` | `4093` | No | — |
+| `aci_multicast_gipo` | `"225.0.0.0/15"` | No | — |
+| `aci_ntp_servers` | `(see defaults/main.yml)` | No | NTP Servers (DoD Approved) |
+| `aci_dns_servers` | `(see defaults/main.yml)` | No | DNS Servers |
+| `aci_dns_search_domains` | `(see defaults/main.yml)` | No | — |
+| `aci_nodes` | `(see defaults/main.yml)` | No | Fabric Node Registration |
+| `aci_node_discovery_retries` | `10` | No | Node registration wait settings |
+| `aci_node_discovery_delay` | `30` | No | — |
+| `aci_leaf_switch_profiles` | `(see defaults/main.yml)` | No | Leaf Switch Profiles |
+| `aci_spine_switch_profiles` | `(see defaults/main.yml)` | No | Spine Switch Profiles |
+| `aci_interface_policy_groups` | `(see defaults/main.yml)` | No | Interface Policy Groups |
+| `aci_vpc_protection_groups` | `(see defaults/main.yml)` | No | VPC Protection Groups |
+| `aci_vlan_pools` | `(see defaults/main.yml)` | No | VLAN Pools |
+| `aci_physical_domains` | `(see defaults/main.yml)` | No | Physical Domains |
+| `aci_l3_domains` | `(see defaults/main.yml)` | No | L3 Domains |
+| `aci_vmm_domains` | `[]` | No | VMM Domains (empty by default - configure per environment) |
+| `aci_syslog_enabled` | `true` | No | Syslog Settings |
+| `aci_syslog_server` | `"{{ vault_syslog_server }}"` | No | — |
+| `aci_syslog_port` | `514` | No | — |
+| `aci_syslog_severity` | `"warnings"` | No | — |
+| `aci_syslog_facility` | `"local0"` | No | — |
+| `aci_snmp_enabled` | `true` | No | SNMP Settings |
+| `aci_snmp_community` | `"{{ vault_aci_snmp_community }}"` | No | — |
+| `aci_snmp_location` | `"Fourth Estate Primary Data Center"` | No | — |
+| `aci_snmp_contact` | `"{{ vault_fourth_estate_contact }}"` | No | — |
+| `compliance_frameworks` | `(see defaults/main.yml)` | No | Compliance Frameworks |
 
 ## Example Playbook
 ```yaml
@@ -111,6 +100,25 @@ ansible-playbook -i inventory site.yml -e "apply_changes=true" --ask-vault-pass
 | `vpc` | vPC protection group tasks |
 | `validation` | Validation and verification tasks |
 
+## Overview
+This role automates the initial deployment of a Cisco ACI fabric for Fourth Estate infrastructure, covering APIC cluster configuration, spine and leaf node registration, fabric-wide policies, access policies (VLAN pools, domains, AEP), and interface/switch profiles. It is designed as Phase 1 of the ACI platform deployment pipeline and defaults to dry-run mode to prevent unintended changes.
+
+## Features
+- APIC cluster configuration: system name, OOB management, NTP, DNS, and syslog
+- Fabric node registration for spine and leaf nodes with discovery wait/retry logic
+- Fabric-wide policies: node control (MACsec/analytics), link level, ISIS redistribution, COOP group
+- Endpoint security policies: loop protection and rogue endpoint control
+- VLAN pool creation with encapsulation block ranges
+- Physical domain and L3 domain creation with VLAN pool associations
+- Attachable Entity Profile (AEP) configuration with domain bindings
+- Leaf and spine switch profile creation with node selectors
+- Interface policy group creation (access, port-channel, vPC)
+- vPC protection group configuration for dual-homed leaf pairs
+- JSON artifact generation for every configuration stage
+
+## Dependencies
+None
+
 ## Compliance
 
 ### DoD STIG Controls
@@ -139,3 +147,7 @@ ansible-playbook -i inventory site.yml -e "apply_changes=true" --ask-vault-pass
 
 ## Author
 Fourth Estate Infrastructure Team
+
+## License
+
+MIT

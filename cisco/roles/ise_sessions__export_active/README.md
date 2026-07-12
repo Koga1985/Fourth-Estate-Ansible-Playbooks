@@ -12,47 +12,29 @@ Retrieves the current active session list from Cisco ISE and exports it in both 
 
 ## Role Variables
 
-### ISE Connection
+All variables below are defined in `defaults/main.yml`. "Required" marks values that ship as a placeholder you must replace (e.g. `CHANGE_ME`); everything else has a working default.
 
 | Variable | Default | Required | Description |
-|---|---|---|
-| `ise_hostname` | `{{ vault_ise_hostname }}` | **Yes** | ISE primary PAN hostname or IP |
-| `ise_username` | `{{ vault_ise_username }}` | **Yes** | ISE admin username |
-| `ise_password` | `{{ vault_ise_password }}` | **Yes** | ISE admin password (vault-protected) |
-| `ise_verify_ssl` | `true` | No | Validate ISE TLS certificate |
-| `ise_use_proxy` | `false` | No | Route ISE API calls through a proxy |
-| `ise_debug` | `false` | No | Enable verbose debug logging |
-
-### Deployment Control
-
-| Variable | Default | Required | Description |
-|---|---|---|
-| `apply_changes` | `false` | No | Not used for mutation in this role |
-| `ise_artifacts_dir` | `/tmp/ise-artifacts` | No | Local directory for generated reports and exports |
-
-### Feature Flags
-
-| Variable | Default | Required | Description |
-|---|---|---|
-| `ise_sessions__export_active_enabled` | `true` | No | Master toggle for this role |
-| `enable_disa_stig_compliance` | `true` | No | Apply STIG-compliant settings |
-
-### Logging and Notifications
-
-| Variable | Default | Required | Description |
-|---|---|---|
-| `ise_sessions__export_active_log_level` | `INFO` | No | Log verbosity level |
-| `ise_sessions__export_active_log_to_syslog` | `true` | No | Forward events to syslog |
-| `ise_sessions__export_active_syslog_server` | `{{ vault_syslog_server }}` | **Yes** | Syslog server address |
-| `ise_sessions__export_active_notify_on_completion` | `false` | No | Send email on completion |
-| `ise_sessions__export_active_notification_email` | `{{ vault_security_team_email }}` | **Yes** | Notification recipient |
-| `ise_sessions__export_active_auto_backup` | `true` | No | Reserved |
-
-### Compliance Frameworks
-
-| Variable | Default | Required | Description |
-|---|---|---|
-| `compliance_frameworks` | `[dod_stig, nist_800_53, nist_800_171, fisma_moderate]` | No | Frameworks referenced in generated reports |
+|----------|---------|----------|-------------|
+| `ise_hostname` | `"{{ vault_ise_hostname }}"` | No | ISE Connection Parameters |
+| `ise_username` | `"{{ vault_ise_username }}"` | No | — |
+| `ise_password` | `"{{ vault_ise_password }}"` | No | — |
+| `ise_verify_ssl` | `true` | No | — |
+| `ise_use_proxy` | `false` | No | — |
+| `ise_debug` | `false` | No | — |
+| `apply_changes` | `false` | No | Deployment Control |
+| `ise_artifacts_dir` | `"/tmp/ise-artifacts"` | No | — |
+| `fourth_estate_org` | `"FourthEstate"` | No | Fourth Estate Configuration |
+| `fourth_estate_contact` | `"{{ vault_fourth_estate_contact }}"` | No | — |
+| `ise_sessions__export_active_enabled` | `true` | No | Feature Configuration |
+| `enable_disa_stig_compliance` | `true` | No | DISA STIG Compliance |
+| `compliance_frameworks` | `(see defaults/main.yml)` | No | Compliance Frameworks |
+| `ise_sessions__export_active_log_level` | `"INFO"` | No | Logging |
+| `ise_sessions__export_active_log_to_syslog` | `true` | No | — |
+| `ise_sessions__export_active_syslog_server` | `"{{ vault_syslog_server }}"` | No | — |
+| `ise_sessions__export_active_notify_on_completion` | `false` | No | Notification Settings |
+| `ise_sessions__export_active_notification_email` | `"{{ vault_security_team_email }}"` | No | — |
+| `ise_sessions__export_active_auto_backup` | `true` | No | Backup Settings |
 
 ## Example Playbook
 
@@ -99,3 +81,7 @@ The role produces two files for each run:
 - This role is entirely read-only with respect to ISE.
 - Active session data is a point-in-time snapshot; run this role on a schedule for longitudinal tracking.
 - All credentials must be stored in Ansible Vault.
+
+## License
+
+MIT

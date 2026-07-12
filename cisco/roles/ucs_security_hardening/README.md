@@ -2,21 +2,6 @@
 
 Security hardening role for Cisco UCS with DoD STIG and NIST 800-53 compliance.
 
-## Description
-
-This role implements comprehensive security hardening for Cisco UCS infrastructure following DoD STIG requirements and NIST 800-53 security controls. It is designed for fourth estate organizations requiring high security standards.
-
-## Features
-
-- **STIG Compliance**: Category I, II, and III findings remediation
-- **NIST 800-53 Controls**: AC, IA, AU, SC, CM, SI, PE families
-- **Authentication**: LDAP, RADIUS, TACACS+, certificate-based
-- **Audit Logging**: Comprehensive logging with remote syslog
-- **Cryptographic Controls**: Strong TLS/SSL, cipher suites
-- **Network Security**: VLAN isolation, HTTP to HTTPS redirect
-- **Access Control**: RBAC, session management, account lockout
-- **Compliance Reporting**: Automated compliance verification
-
 ## Requirements
 
 - Ansible >= 2.9
@@ -26,31 +11,84 @@ This role implements comprehensive security hardening for Cisco UCS infrastructu
 
 ## Role Variables
 
-### Connection Variables
-- `ucs_hostname`: UCS Manager hostname/IP
-- `ucs_username`: Administrative username
-- `ucs_password`: Administrative password
+All variables below are defined in `defaults/main.yml`. "Required" marks values that ship as a placeholder you must replace (e.g. `CHANGE_ME`); everything else has a working default.
 
-### Feature Toggles
-- `stig_cat1_enabled`: Apply Category I findings (default: true)
-- `stig_cat2_enabled`: Apply Category II findings (default: true)
-- `stig_cat3_enabled`: Apply Category III findings (default: true)
-- `ac_enforce_rbac`: Enforce RBAC (default: true)
-- `ia_enable_strong_auth`: Enable strong authentication (default: true)
-- `au_enable_comprehensive_logging`: Enable full logging (default: true)
-- `sc_enforce_strong_crypto`: Enforce strong cryptography (default: true)
-
-### Security Settings
-- `ia_password_min_length`: Minimum password length (default: 15)
-- `ia_password_max_age_days`: Password expiration (default: 60)
-- `ac_session_timeout_minutes`: Session timeout (default: 15)
-- `ac_max_failed_login_attempts`: Login attempts before lockout (default: 3)
-
-See `defaults/main.yml` for complete variable documentation.
-
-## Dependencies
-
-None
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
+| `ucs_hostname` | `"{{ vault_ucs_hostname }}"` | No | UCS Connection |
+| `ucs_username` | `"{{ vault_ucs_username }}"` | No | — |
+| `ucs_password` | `"{{ vault_ucs_password }}"` | No | — |
+| `apply_changes` | `false` | No | Deployment Control |
+| `ucs_artifacts_dir` | `"/tmp/ucs-artifacts"` | No | — |
+| `fourth_estate_org_name` | `"FourthEstate"` | No | Fourth Estate Configuration |
+| `fourth_estate_contact` | `"{{ vault_fourth_estate_contact }}"` | No | — |
+| `fourth_estate_phone` | `"{{ vault_fourth_estate_phone }}"` | No | — |
+| `fourth_estate_email` | `"{{ vault_fourth_estate_email }}"` | No | — |
+| `ucs_system_description` | `"Fourth Estate UCS Security Hardened System"` | No | — |
+| `ucs_timezone` | `"America/New_York"` | No | — |
+| `stig_cat1_enabled` | `true` | No | STIG Compliance Settings |
+| `stig_cat2_enabled` | `true` | No | — |
+| `stig_cat3_enabled` | `true` | No | — |
+| `stig_disable_default_admin` | `false` | No | — |
+| `ac_enforce_rbac` | `true` | No | Access Control (AC) - NIST 800-53 AC Family |
+| `ac_session_timeout_minutes` | `15` | No | — |
+| `ac_max_failed_login_attempts` | `3` | No | — |
+| `ac_account_lockout_duration_minutes` | `15` | No | — |
+| `ac_configure_mgmt_pool` | `false` | No | — |
+| `ucs_rbac_roles` | `[]` | No | RBAC Configuration |
+| `ucs_user_accounts` | `[]` | No | — |
+| `ucs_user_role_assignments` | `[]` | No | — |
+| `mgmt_pool_first_ip` | `"192.168.100.10"` | No | Management Pool (if ac_configure_mgmt_pool is true) |
+| `mgmt_pool_last_ip` | `"192.168.100.50"` | No | — |
+| `mgmt_pool_subnet_mask` | `"255.255.255.0"` | No | — |
+| `mgmt_pool_gateway` | `"192.168.100.1"` | No | — |
+| `ia_enable_strong_auth` | `true` | No | Identification and Authentication (IA) - NIST 800-53 IA Family |
+| `ia_password_min_length` | `15` | No | — |
+| `ia_password_max_age_days` | `60` | No | — |
+| `ia_password_history_count` | `24` | No | — |
+| `ia_password_change_count` | `2` | No | — |
+| `ia_password_change_interval` | `24` | No | — |
+| `ia_enable_ldap` | `false` | No | External Authentication |
+| `ia_enable_radius` | `false` | No | — |
+| `ia_enable_tacacs` | `false` | No | — |
+| `ia_enable_certificate_auth` | `false` | No | — |
+| `ia_ldap_providers` | `[]` | No | — |
+| `ia_radius_providers` | `[]` | No | — |
+| `ia_tacacs_providers` | `[]` | No | — |
+| `ia_certificate_file` | `""` | No | — |
+| `ia_certificate_key_file` | `""` | No | — |
+| `au_enable_comprehensive_logging` | `true` | No | Audit and Accountability (AU) - NIST 800-53 AU Family |
+| `au_log_retention_days` | `365` | No | — |
+| `au_console_log_level` | `"emergencies"` | No | — |
+| `au_syslog_servers` | `(see defaults/main.yml)` | No | Syslog Servers |
+| `au_log_sources` | `(see defaults/main.yml)` | No | — |
+| `sc_enforce_strong_crypto` | `true` | No | System and Communications Protection (SC) - NIST 800-53 SC Family |
+| `sc_restrict_network_access` | `true` | No | — |
+| `sc_cipher_suite` | `"HIGH:!aNULL:!eNULL:!EXPORT:!DES:!RC4:!MD5:!PSK:!DHE"` | No | — |
+| `sc_enable_tls_10` | `false` | No | — |
+| `sc_enable_tls_11` | `false` | No | — |
+| `sc_enforce_fips_140_2` | `false` | No | — |
+| `sc_custom_certificate` | `false` | No | — |
+| `sc_certificate_file` | `""` | No | — |
+| `sc_certificate_key_file` | `""` | No | — |
+| `sc_dns_servers` | `(see defaults/main.yml)` | No | DNS Servers |
+| `ucs_ntp_servers` | `(see defaults/main.yml)` | No | NTP Servers |
+| `sc_management_ip_pools` | `[]` | No | Management IP Pools |
+| `sc_security_vlans` | `(see defaults/main.yml)` | No | Security VLANs |
+| `cm_baseline_config` | `true` | No | Configuration Management (CM) - NIST 800-53 CM Family |
+| `si_enable_integrity_checks` | `true` | No | System and Information Integrity (SI) - NIST 800-53 SI Family |
+| `si_enable_security_alerts` | `true` | No | — |
+| `pe_enable_physical_controls` | `true` | No | Physical and Environmental Protection (PE) - NIST 800-53 PE Family |
+| `pe_access_log_retention_days` | `365` | No | — |
+| `pe_temperature_range` | `"64-80°F"` | No | — |
+| `pe_humidity_range` | `"40-60%"` | No | — |
+| `ucs_enable_snmp` | `false` | No | SNMP Configuration |
+| `snmp_use_v3` | `true` | No | — |
+| `snmp_v3_users` | `[]` | No | — |
+| `dod_banner_enabled` | `true` | No | DoD Banner |
+| `dod_banner_text` | `(multi-line text — see defaults/main.yml)` | No | — |
+| `ucs_backup_enabled` | `true` | No | Backup Configuration |
+| `compliance_frameworks` | `(see defaults/main.yml)` | No | Compliance Frameworks |
 
 ## Example Playbook
 
@@ -68,6 +106,52 @@ None
   roles:
     - role: ucs_security_hardening
 ```
+
+## Tags
+
+Available tags for selective execution:
+- `stig`: All STIG remediations
+- `stig_cat1`: Category I findings only
+- `stig_cat2`: Category II findings only
+- `stig_cat3`: Category III findings only
+- `nist`: All NIST controls
+- `access_control`: AC family controls only
+- `authentication`: IA family controls only
+- `audit_logging`: AU family controls only
+- `cryptography`: SC family cryptographic controls only
+- `network_security`: Network hardening only
+- `compliance_check`: Run compliance verification only
+
+**Examples:**
+```bash
+# Apply only Category I STIG findings
+ansible-playbook playbooks/security_hardening.yml --tags stig_cat1
+
+# Apply access control and authentication only
+ansible-playbook playbooks/security_hardening.yml --tags "access_control,authentication"
+
+# Run compliance check without applying changes
+ansible-playbook playbooks/security_hardening.yml --tags compliance_check
+```
+
+## Description
+
+This role implements comprehensive security hardening for Cisco UCS infrastructure following DoD STIG requirements and NIST 800-53 security controls. It is designed for fourth estate organizations requiring high security standards.
+
+## Features
+
+- **STIG Compliance**: Category I, II, and III findings remediation
+- **NIST 800-53 Controls**: AC, IA, AU, SC, CM, SI, PE families
+- **Authentication**: LDAP, RADIUS, TACACS+, certificate-based
+- **Audit Logging**: Comprehensive logging with remote syslog
+- **Cryptographic Controls**: Strong TLS/SSL, cipher suites
+- **Network Security**: VLAN isolation, HTTP to HTTPS redirect
+- **Access Control**: RBAC, session management, account lockout
+- **Compliance Reporting**: Automated compliance verification
+
+## Dependencies
+
+None
 
 ## STIG Controls
 
@@ -292,33 +376,6 @@ NIST Controls: 46+ controls across 7 families
 - **Test Logging**: Generate test event, verify reception
 - **Time Sync**: Ensure NTP is configured correctly
 
-## Tags
-
-Available tags for selective execution:
-- `stig`: All STIG remediations
-- `stig_cat1`: Category I findings only
-- `stig_cat2`: Category II findings only
-- `stig_cat3`: Category III findings only
-- `nist`: All NIST controls
-- `access_control`: AC family controls only
-- `authentication`: IA family controls only
-- `audit_logging`: AU family controls only
-- `cryptography`: SC family cryptographic controls only
-- `network_security`: Network hardening only
-- `compliance_check`: Run compliance verification only
-
-**Examples:**
-```bash
-# Apply only Category I STIG findings
-ansible-playbook playbooks/security_hardening.yml --tags stig_cat1
-
-# Apply access control and authentication only
-ansible-playbook playbooks/security_hardening.yml --tags "access_control,authentication"
-
-# Run compliance check without applying changes
-ansible-playbook playbooks/security_hardening.yml --tags compliance_check
-```
-
 ## Artifacts Generated
 
 The role creates the following artifacts in `ucs_artifacts_dir`:
@@ -488,10 +545,10 @@ This role helps meet requirements for:
 - **HIPAA**: Health Insurance Portability and Accountability Act (subset)
 - **PCI DSS**: Payment Card Industry Data Security Standard (subset)
 
-## License
-
-MIT
-
 ## Author Information
 
 Created for Fourth Estate production security deployments.
+
+## License
+
+MIT

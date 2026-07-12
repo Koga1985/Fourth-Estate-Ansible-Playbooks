@@ -12,30 +12,37 @@ Manages the full CloudVision Portal (CVP) inventory model for Arista networks: c
 
 ## Role Variables
 
-All variables are defined in `defaults/main.yml`.
+All variables below are defined in `defaults/main.yml`. "Required" marks values that ship as a placeholder you must replace (e.g. `CHANGE_ME`); everything else has a working default.
 
 | Variable | Default | Required | Description |
-|---|---|---|
-| `arista_apply_changes` | `false` | No | Safety gate. Set to `true` to push configuration to CVP; otherwise only a plan artifact is written. |
-| `arista_artifacts_dir` | `/tmp/arista-artifacts` | No | Directory on the Ansible controller where plan files and CVP facts are written. |
-| `cvp_host` | `$CVP_HOST` env / `cvp.example.mil` | No | Hostname or IP of the CVP server. Prefer the environment variable or Vault. |
-| `cvp_username` | `$CVP_USERNAME` env / `cvpadmin` | No | CVP API username. |
-| `cvp_password` | `$CVP_PASSWORD` env | No | CVP API password. Should be stored in Ansible Vault. |
-| `cvp_protocol` | `https` | No | Protocol used to connect to CVP. |
-| `cvp_port` | `443` | No | TCP port for CVP API. |
-| `cvp_validate_certs` | `true` | No | Verify TLS certificates when connecting to CVP. |
-| `cvp_apply_mode` | `strict` | No | Container/device apply mode. `strict` removes objects not in the desired state; `loose` only adds. |
-| `cvp_search_key` | `hostname` | No | Key used to search for devices in CVP. Valid values: `hostname`, `fqdn`, `serialNumber`. |
-| `cvp_containers` | See defaults | No | List of container definitions (`name`, `parent`) representing the device hierarchy. Defaults to a Fourth Estate / DC1 / DC2 topology. |
-| `cvp_configlets` | See defaults | No | List of configlets (`name`, `content`) to upload. Defaults include `GLOBAL_BASELINE`, `SECURITY_BASELINE`, `AAA_CONFIG`, and `SYSLOG_CONFIG`. |
-| `cvp_devices` | `[]` | No | List of device entries mapping FQDNs to parent containers and configlets. Should be defined in `host_vars` or `group_vars`. |
-| `cvp_device_configlets` | `[]` | No | Per-device configlet assignments (`device`, `configlets`). |
-| `cvp_change_control.enabled` | `true` | No | Creates a CVP change control for pending tasks. |
-| `cvp_change_control.auto_execute` | `false` | No | Automatically approves and executes the change control. Leave `false` for manual review. |
-| `cvp_collect_facts` | `true` | No | Collects CVP facts (devices, containers, configlets, tasks) and saves them to `arista_artifacts_dir`. |
-| `cvp_validate_compliance` | `true` | No | Runs CVP compliance validation after applying changes. |
-| `cvp_task_timeout` | `300` | No | Timeout in seconds to wait for CVP tasks to complete. |
-| `cvp_backup_retention_days` | `30` | No | Retention period for CVP backup artifacts. |
+|----------|---------|----------|-------------|
+| `arista_apply_changes` | `false` | No | Control whether changes are applied or just planned |
+| `arista_artifacts_dir` | `"/tmp/arista-artifacts"` | No | Artifacts directory |
+| `cvp_host` | `"{{ lookup('env', 'CVP_HOST') \| default('cvp.example.mil') }}"` | No | CVP connection parameters (should be overridden in inventory/vault) |
+| `cvp_username` | `"{{ lookup('env', 'CVP_USERNAME') \| default('cvpadmin') }}"` | No | — |
+| `cvp_password` | `"{{ lookup('env', 'CVP_PASSWORD') \| default('') }}"` | No | — |
+| `cvp_protocol` | `"https"` | No | — |
+| `cvp_port` | `443` | No | — |
+| `cvp_validate_certs` | `true` | No | — |
+| `cvp_apply_mode` | `"strict"` | No | CVP operation settings Options: strict, loose |
+| `cvp_search_key` | `"hostname"` | No | Options: hostname, fqdn, serialNumber |
+| `cvp_containers` | `(see defaults/main.yml)` | No | CVP container topology Containers organize devices in CVP hierarchically |
+| `cvp_configlets` | `(see defaults/main.yml)` | No | CVP configlets Configlets are configuration snippets applied to devices |
+| `cvp_devices` | `[]` | No | CVP device inventory Maps physical devices to containers and configlets |
+| `cvp_device_configlets` | `[]` | No | CVP device configlet mappings |
+| `cvp_change_control` | `(see defaults/main.yml)` | No | CVP change control settings |
+| `cvp_collect_facts` | `true` | No | CVP facts collection |
+| `cvp_facts_filter` | `".*"` | No | Regex filter for facts collection |
+| `cvp_validate_compliance` | `true` | No | CVP compliance validation |
+| `cvp_validation_mode` | `"stop_on_error"` | No | Options: stop_on_error, stop_on_warning, valid |
+| `cvp_validation_type` | `"valid"` | No | Options: valid, time, stop_on_error, stop_on_warning |
+| `cvp_inventory` | `(see defaults/main.yml)` | No | CVP inventory structure for fabric deployment |
+| `cvp_task_ids` | `[]` | No | CVP task management List of task IDs for change control |
+| `cvp_task_timeout` | `300` | No | Timeout in seconds for task execution |
+| `cvp_task_retries` | `3` | No | Number of retries for failed tasks |
+| `cvp_backup_enabled` | `true` | No | CVP backup settings |
+| `cvp_backup_location` | `"{{ arista_artifacts_dir }}/cvp_backups"` | No | — |
+| `cvp_backup_retention_days` | `30` | No | — |
 
 ## Example Playbook
 
@@ -73,3 +80,7 @@ All variables are defined in `defaults/main.yml`.
 - `cvp_change_control.auto_execute: false` (default) means that generated change controls must be reviewed and approved manually in the CVP UI before they execute against devices.
 - An HTML deployment report is rendered from `cvp_deployment_report.j2`; this template must be present in the role's `templates/` directory.
 - The role depends on `arista.cvp` collection modules: `cv_container_v3`, `cv_configlet_v3`, `cv_device_v3`, `cv_change_control_v3`, `cv_facts_v3`, and `cv_validate_v3`.
+
+## License
+
+MIT

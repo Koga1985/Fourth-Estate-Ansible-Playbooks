@@ -14,75 +14,45 @@ Retrieves, parses, and reports on Cisco ISE configuration change audit logs. Thi
 
 ## Role Variables
 
-### ISE Connection
+All variables below are defined in `defaults/main.yml`. "Required" marks values that ship as a placeholder you must replace (e.g. `CHANGE_ME`); everything else has a working default.
 
 | Variable | Default | Required | Description |
-|---|---|---|
-| `ise_hostname` | `{{ vault_ise_hostname }}` | **Yes** | ISE primary PAN hostname or IP |
-| `ise_username` | `{{ vault_ise_username }}` | **Yes** | ISE admin username |
-| `ise_password` | `{{ vault_ise_password }}` | **Yes** | ISE admin password (vault-protected) |
-| `ise_verify_ssl` | `true` | No | Validate ISE TLS certificate |
-| `ise_use_proxy` | `false` | No | Route ISE API calls through a proxy |
-| `ise_debug` | `false` | No | Enable verbose debug logging |
-
-### Deployment Control
-
-| Variable | Default | Required | Description |
-|---|---|---|
-| `apply_changes` | `false` | No | Not used for mutation in this role; controls report archiving behavior |
-| `ise_artifacts_dir` | `/tmp/ise-artifacts` | No | Local directory for generated reports |
-
-### Audit Window
-
-| Variable | Default | Required | Description |
-|---|---|---|
-| `audit_start_date` | Last 24 hours (epoch) | No | Start of audit window (Unix epoch) |
-| `audit_end_date` | Current time (epoch) | No | End of audit window (Unix epoch) |
-| `audit_lookback_minutes` | `1440` | No | Convenience variable: lookback window in minutes |
-| `audit_change_categories` | See `defaults/main.yml` | No | ISE change categories to include in the audit query |
-| `ise_enable_api_audit` | `true` | No | Enable MnT API audit log retrieval |
-
-### Authorization and Compliance
-
-| Variable | Default | Required | Description |
-|---|---|---|
-| `authorized_admin_users` | `[admin, automation_user, fourth_estate_admin, ...]` | No | Usernames considered authorized; changes by others trigger an alert |
-| `enable_disa_stig_compliance` | `true` | No | Check for STIG restricted action violations |
-| `stig_restricted_actions` | `[DISABLE_AUDIT, DELETE_BACKUP, ...]` | No | Actions flagged as STIG violations |
-
-### SIEM Integration
-
-| Variable | Default | Required | Description |
-|---|---|---|
-| `audit_siem_integration_enabled` | `true` | No | Forward parsed events to SIEM |
-| `siem_endpoint` | `{{ vault_siem_endpoint }}` | **Yes** | SIEM ingest endpoint URL |
-| `siem_api_token` | `{{ vault_siem_api_token }}` | **Yes** | Bearer token for SIEM API |
-
-### Notifications and Retention
-
-| Variable | Default | Required | Description |
-|---|---|---|
-| `audit_notify_on_completion` | `true` | No | Send email report when audit completes |
-| `audit_notification_email` | `{{ vault_security_team_email }}` | **Yes** | Recipient address |
-| `smtp_host` | `{{ vault_smtp_host \| default('localhost') }}` | SMTP relay hostname |
-| `smtp_port` | `25` | No | SMTP port |
-| `audit_export_zip` | `{{ ise_artifacts_dir }}/ise_config_audit_<epoch>.zip` | No | Path for archived report bundle |
-| `audit_retention_days` | `90` | No | How many days to retain audit artifacts |
-| `audit_archive_old_reports` | `true` | No | Archive reports older than retention period |
-
-### Reporting
-
-| Variable | Default | Required | Description |
-|---|---|---|
-| `audit_report_formats` | `[json, csv, html]` | No | Output formats for audit reports |
-| `audit_detect_unauthorized_changes` | `true` | No | Flag changes by non-authorized users |
-| `audit_alert_on_violations` | `true` | No | Emit warnings for detected violations |
-
-### Compliance Frameworks
-
-| Variable | Default | Required | Description |
-|---|---|---|
-| `compliance_frameworks` | `[dod_stig, nist_800_53, nist_800_171, fisma_moderate]` | No | Frameworks referenced in generated reports |
+|----------|---------|----------|-------------|
+| `ise_hostname` | `"{{ vault_ise_hostname }}"` | No | ISE Connection Parameters |
+| `ise_username` | `"{{ vault_ise_username }}"` | No | — |
+| `ise_password` | `"{{ vault_ise_password }}"` | No | — |
+| `ise_verify_ssl` | `true` | No | — |
+| `ise_use_proxy` | `false` | No | — |
+| `ise_debug` | `false` | No | — |
+| `apply_changes` | `false` | No | Deployment Control |
+| `ise_artifacts_dir` | `"/tmp/ise-artifacts"` | No | — |
+| `fourth_estate_org` | `"FourthEstate"` | No | Fourth Estate Configuration |
+| `fourth_estate_contact` | `"{{ vault_fourth_estate_contact }}"` | No | — |
+| `audit_start_date` | `"{{ (ansible_date_time.epoch \| int - 86400) \| int }}"` | No | Audit Configuration Last 24 hours |
+| `audit_end_date` | `"{{ ansible_date_time.epoch }}"` | No | — |
+| `audit_lookback_minutes` | `1440` | No | 24 hours |
+| `audit_change_categories` | `(see defaults/main.yml)` | No | Audit Categories |
+| `ise_enable_api_audit` | `true` | No | API Audit |
+| `authorized_admin_users` | `(see defaults/main.yml)` | No | Authorized Admin Users |
+| `enable_disa_stig_compliance` | `true` | No | DISA STIG Compliance |
+| `stig_restricted_actions` | `(see defaults/main.yml)` | No | — |
+| `audit_siem_integration_enabled` | `true` | No | SIEM Integration |
+| `siem_endpoint` | `"{{ vault_siem_endpoint }}"` | No | — |
+| `siem_api_token` | `"{{ vault_siem_api_token }}"` | No | — |
+| `audit_notify_on_completion` | `true` | No | Notification Settings |
+| `audit_notification_email` | `"{{ vault_security_team_email }}"` | No | — |
+| `audit_export_zip` | `"{{ ise_artifacts_dir }}/ise_config_audit_{{ ansible_date_time.epoc...` | No | Export Settings |
+| `compliance_frameworks` | `(see defaults/main.yml)` | No | Compliance Frameworks |
+| `audit_log_level` | `"INFO"` | No | Logging |
+| `audit_log_to_syslog` | `true` | No | — |
+| `audit_syslog_server` | `"{{ vault_syslog_server }}"` | No | — |
+| `audit_retention_days` | `90` | No | Retention |
+| `audit_archive_old_reports` | `true` | No | — |
+| `audit_detect_unauthorized_changes` | `true` | No | Change Detection |
+| `audit_alert_on_violations` | `true` | No | — |
+| `audit_report_formats` | `(see defaults/main.yml)` | No | Reporting Format |
+| `smtp_host` | `"{{ vault_smtp_host \| default('localhost') }}"` | No | Email Configuration |
+| `smtp_port` | `25` | No | — |
 
 ## Example Playbook
 
@@ -137,3 +107,7 @@ Retrieves, parses, and reports on Cisco ISE configuration change audit logs. Thi
 - All credentials must be stored in Ansible Vault.
 - SIEM and email notification failures use `ignore_errors: true` to prevent blocking the audit run.
 - Reports are generated in both JSON and CSV format for downstream processing.
+
+## License
+
+MIT

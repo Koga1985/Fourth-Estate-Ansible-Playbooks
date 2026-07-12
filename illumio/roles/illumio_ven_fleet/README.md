@@ -16,29 +16,19 @@ Manages the lifecycle of Illumio Virtual Enforcement Node (VEN) agents across a 
 
 ## Role Variables
 
-All variables are defined in `defaults/main.yml`.
+All variables below are defined in `defaults/main.yml`. "Required" marks values that ship as a placeholder you must replace (e.g. `CHANGE_ME`); everything else has a working default.
 
 | Variable | Default | Required | Description |
-|---|---|---|
-| `verify_ssl` | `true` | No | Verify TLS certificates when calling the PCE API. |
-| `artifacts_dir` | `/tmp/illumio-artifacts` | No | Directory on the Ansible controller where downloaded installers are stored. |
-| `platforms` | `[]` | No | List of platform identifiers (e.g. `linux-rhel8-x86_64`) for which VEN installers are downloaded from the PCE. When non-empty, the download task runs. |
-| `pairing_key` | `""` | No | PCE pairing key used to pair VEN agents during installation. Required for Linux and Windows install tasks. Store in Ansible Vault. |
-| `ven_installer` | `""` | No | Path to the VEN installer package on the Ansible controller. Used by the Linux install task to push the installer to target hosts. |
-| `upgrade_targets` | `[]` | No | List of workload identifiers (PCE hrefs or hostnames) to upgrade. When non-empty, the upgrade task runs. |
-| `batch_size` | `50` | No | Number of VEN agents to upgrade per batch when `upgrade_targets` is set. |
-| `batch_pause` | `60` | No | Pause in seconds between upgrade batches to limit blast radius. |
-| `decom_targets` | `[]` | No | List of workload identifiers to unpair and decommission. When non-empty, the unpair/decom task runs. |
-
-### Runtime-only variables (no defaults)
-
-| Variable | Description |
-|---|---|
-| `pce_url` | Base URL of the PCE. |
-| `org_id` | PCE organization ID integer. |
-| `api_user` | PCE API authentication username. |
-| `api_key` | PCE API key. Store in Ansible Vault. |
-| `extra_flags` | Optional extra command-line flags passed to the VEN installer on Linux (e.g. `--enforcement-mode illuminated`). |
+|----------|---------|----------|-------------|
+| `verify_ssl` | `true` | No | — |
+| `artifacts_dir` | `/tmp/illumio-artifacts` | No | — |
+| `platforms` | `[]` | No | — |
+| `pairing_key` | `""` | No | — |
+| `ven_installer` | `""` | No | — |
+| `upgrade_targets` | `[]` | No | — |
+| `batch_size` | `50` | No | — |
+| `batch_pause` | `60` | No | — |
+| `decom_targets` | `[]` | No | — |
 
 ## Example Playbook
 
@@ -106,3 +96,7 @@ All variables are defined in `defaults/main.yml`.
 - The Linux install task pushes the installer to `/tmp/illumio-ven-installer.pkg` on each target host, executes it with `--pair`, then communicates with the PCE via `pce_url`. Ensure the target hosts can reach the PCE on the configured port.
 - The upgrade task sends a batch upgrade request to the PCE API. The PCE orchestrates the actual upgrade on each VEN; Ansible does not directly touch the endpoints during an upgrade.
 - The role makes direct HTTPS calls to the PCE API using `ansible.builtin.uri` and `ansible.builtin.get_url`. No Illumio Ansible collection is required.
+
+## License
+
+MIT

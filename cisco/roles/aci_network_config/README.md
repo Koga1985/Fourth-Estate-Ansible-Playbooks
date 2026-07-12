@@ -2,25 +2,6 @@
 
 Ansible role for Cisco ACI Network Connectivity configuration - L3Out, L2Out, external EPG, static route, BGP, and OSPF configuration for tenant external connectivity.
 
-## Overview
-
-This role automates the configuration of ACI external network connectivity objects within the Fourth Estate ACI fabric. It supports L3Out and L2Out configurations with associated external EPGs, static routing, and dynamic routing protocols (BGP and OSPF). All tasks default to dry-run (query) mode and must be explicitly enabled for live changes.
-
-**Deployment Phase:** Phase 3 (requires Phase 1 fabric deploy and Phase 2 tenant config to be complete)
-
-## Features
-
-- L3Out configuration with logical node profiles, interface profiles, and routed sub-interfaces
-- L2Out bridged external connectivity with external EPGs
-- External EPG creation with subnet scope configuration and contract bindings
-- Static route configuration with primary and backup next-hops
-- BGP peer configuration with MD5 authentication support
-- OSPF interface policy and area configuration
-- Dry-run mode by default (`apply_changes: false`) - safe for pre-change validation
-- JSON artifact generation for all configured objects
-- DoD STIG and NIST 800-53 compliant configuration patterns
-- Compliance framework tracking
-
 ## Requirements
 
 - Ansible >= 2.15
@@ -31,132 +12,36 @@ This role automates the configuration of ACI external network connectivity objec
 
 ## Role Variables
 
-### APIC Connection Parameters
+All variables below are defined in `defaults/main.yml`. "Required" marks values that ship as a placeholder you must replace (e.g. `CHANGE_ME`); everything else has a working default.
 
 | Variable | Default | Required | Description |
-|---|---|---|
-| `aci_host` | `{{ vault_aci_apic_hostname }}` | **Yes** | APIC hostname or IP address |
-| `aci_username` | `{{ vault_aci_apic_username }}` | **Yes** | APIC username |
-| `aci_password` | `{{ vault_aci_apic_password }}` | **Yes** | APIC password (vault-encrypted) |
-| `aci_verify_ssl` | `true` | No | Verify SSL/TLS certificate |
-| `aci_use_proxy` | `false` | No | Use HTTP proxy for APIC connections |
-| `aci_timeout` | `30` | No | Connection timeout in seconds |
-| `aci_port` | `443` | No | APIC HTTPS port |
-
-### Deployment Control
-
-| Variable | Default | Required | Description |
-|---|---|---|
-| `apply_changes` | `false` | No | Set to `true` to apply changes; `false` for dry-run query mode |
-| `artifacts_dir` | `/tmp/aci-artifacts` | No | Directory for JSON configuration artifacts |
-
-### Feature Toggles
-
-| Variable | Default | Required | Description |
-|---|---|---|
-| `enable_l3out` | `true` | No | Enable L3Out configuration |
-| `enable_l2out` | `false` | No | Enable L2Out configuration |
-| `enable_external_epgs` | `true` | No | Enable external EPG configuration |
-| `enable_static_routes` | `true` | No | Enable static route configuration |
-| `enable_bgp_peers` | `true` | No | Enable BGP peer configuration |
-| `enable_ospf_peers` | `false` | No | Enable OSPF interface policy configuration |
-
-### L3Out Configuration Structure
-
-The `aci_l3outs` list defines all L3Out objects. Each entry supports:
-
-```yaml
-aci_l3outs:
-  - name: "L3Out-Core-Routing"        # L3Out name
-    tenant: "FourthEstate-Prod"        # Parent tenant
-    vrf: "Prod-VRF"                    # Associated VRF
-    domain: "L3Dom-External"           # L3 domain
-    description: "Core routing L3Out"
-    ospf_area: "0.0.0.0"              # OSPF area ID
-    ospf_area_type: "regular"          # regular, stub, nssa
-    bgp_enabled: true                  # Enable BGP external policy
-    ospf_enabled: false                # Enable OSPF external policy
-    node_profile: "NodeProfile-Core"   # Logical node profile name
-    interface_profile: "IntProfile-Core"  # Logical interface profile name
-    nodes:
-      - node_dn: "topology/pod-1/node-201"
-        router_id: "10.0.0.201"
-        loopback: true                 # Use router-id as loopback
-    paths:
-      - path_dn: "topology/pod-1/paths-201/pathep-[eth1/1]"
-        encap: "vlan-100"
-        addr: "10.10.100.1/30"
-        description: "Uplink to core router"
-    bgp_peers:
-      - peer_ip: "10.10.100.2"
-        remote_asn: 65000
-        local_asn: 65100
-        password: "{{ vault_aci_bgp_peer_password }}"
-        description: "Core router BGP peer"
-        path_dn: "topology/pod-1/paths-201/pathep-[eth1/1]"
-    external_epgs:
-      - name: "ExtEPG-Internet"
-        description: "Internet external EPG"
-        subnets:
-          - prefix: "0.0.0.0/0"
-            scope: "import-security"
-        provided_contracts: []
-        consumed_contracts:
-          - "Contract-Internet-Access"
-```
-
-### Static Route Structure
-
-```yaml
-aci_static_routes:
-  - tenant: "FourthEstate-Prod"
-    vrf: "Prod-VRF"
-    node_dn: "topology/pod-1/node-201"
-    l3out_name: "L3Out-Core-Routing"
-    node_profile: "NodeProfile-Core"
-    prefix: "192.168.100.0/24"
-    description: "Static route to remote site A"
-    next_hops:
-      - next_hop: "10.10.100.2"
-        preference: 1
-        description: "Primary next hop"
-      - next_hop: "10.10.100.6"
-        preference: 100
-        description: "Backup next hop"
-```
-
-### OSPF Interface Policy Structure
-
-```yaml
-aci_ospf_interface_policies:
-  - name: "OSPF-P2P-Policy"
-    tenant: "FourthEstate-Prod"
-    network_type: "p2p"       # p2p, bcast
-    hello_interval: 10
-    dead_interval: 40
-    retransmit_interval: 5
-    transmit_delay: 1
-    priority: 1
-
-aci_ospf_configs:
-  - l3out_name: "L3Out-DMZ-Routing"
-    tenant: "FourthEstate-DMZ"
-    area_id: "0.0.0.0"
-    area_type: "regular"
-    area_cost: 1
-    interface_policy: "OSPF-P2P-Policy"
-```
-
-### Compliance Frameworks
-
-```yaml
-compliance_frameworks:
-  - "dod_stig"
-  - "nist_800_53"
-  - "nist_800_171"
-  - "fisma_moderate"
-  - "fisma_high"
-```
+|----------|---------|----------|-------------|
+| `aci_host` | `"{{ vault_aci_apic_hostname }}"` | No | APIC Connection Parameters |
+| `aci_username` | `"{{ vault_aci_apic_username }}"` | No | — |
+| `aci_password` | `"{{ vault_aci_apic_password }}"` | No | — |
+| `aci_verify_ssl` | `true` | No | — |
+| `aci_use_proxy` | `false` | No | — |
+| `aci_timeout` | `30` | No | — |
+| `aci_port` | `443` | No | — |
+| `apply_changes` | `false` | No | Deployment Control |
+| `artifacts_dir` | `"/tmp/aci-artifacts"` | No | — |
+| `fourth_estate_org` | `"FourthEstate"` | No | Fourth Estate Organization |
+| `fourth_estate_contact` | `"{{ vault_fourth_estate_contact }}"` | No | — |
+| `fourth_estate_environment` | `"production"` | No | — |
+| `fourth_estate_region` | `"primary"` | No | — |
+| `enable_l3out` | `true` | No | Feature Toggles |
+| `enable_l2out` | `false` | No | — |
+| `enable_external_epgs` | `true` | No | — |
+| `enable_static_routes` | `true` | No | — |
+| `enable_bgp_peers` | `true` | No | — |
+| `enable_ospf_peers` | `false` | No | — |
+| `aci_l3outs` | `(see defaults/main.yml)` | No | L3Out Configurations |
+| `aci_l2outs` | `(see defaults/main.yml)` | No | L2Out Configurations |
+| `aci_external_epgs` | `[]` | No | Standalone External EPG Configurations (for external EPGs not defined inline with L3Out) |
+| `aci_static_routes` | `(see defaults/main.yml)` | No | Static Route Configurations |
+| `aci_ospf_interface_policies` | `(see defaults/main.yml)` | No | OSPF Interface Policy Settings |
+| `aci_ospf_configs` | `(see defaults/main.yml)` | No | OSPF Area Configurations (per L3Out requiring OSPF) |
+| `compliance_frameworks` | `(see defaults/main.yml)` | No | Compliance Frameworks |
 
 ## Example Playbook
 
@@ -228,6 +113,25 @@ ansible-playbook site.yml --tags "phase3" -e "apply_changes=false"
 | `validation` | Validation and verification tasks |
 | `phase3` | All Phase 3 deployment tasks |
 
+## Overview
+
+This role automates the configuration of ACI external network connectivity objects within the Fourth Estate ACI fabric. It supports L3Out and L2Out configurations with associated external EPGs, static routing, and dynamic routing protocols (BGP and OSPF). All tasks default to dry-run (query) mode and must be explicitly enabled for live changes.
+
+**Deployment Phase:** Phase 3 (requires Phase 1 fabric deploy and Phase 2 tenant config to be complete)
+
+## Features
+
+- L3Out configuration with logical node profiles, interface profiles, and routed sub-interfaces
+- L2Out bridged external connectivity with external EPGs
+- External EPG creation with subnet scope configuration and contract bindings
+- Static route configuration with primary and backup next-hops
+- BGP peer configuration with MD5 authentication support
+- OSPF interface policy and area configuration
+- Dry-run mode by default (`apply_changes: false`) - safe for pre-change validation
+- JSON artifact generation for all configured objects
+- DoD STIG and NIST 800-53 compliant configuration patterns
+- Compliance framework tracking
+
 ## Compliance
 
 This role implements network connectivity patterns aligned with:
@@ -264,3 +168,7 @@ All artifacts are written to `artifacts_dir` (default: `/tmp/aci-artifacts`):
 Company: Fourth Estate
 License: MIT
 Minimum Ansible Version: 2.15
+
+## License
+
+MIT
