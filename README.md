@@ -518,6 +518,26 @@ See `policy_as_code/DEPLOYMENT_GUIDE.md` for detailed deployment procedures.
         # Runs on remote host
 ```
 
+### Collection Dependencies
+
+Every collection a playbook or role calls must be declared in a
+`requirements.yml` -- the repo-root one, or the platform's own. This is enforced
+in CI by `scripts/check_collections.py`, which fails the build on a gap:
+
+```bash
+python3 scripts/check_collections.py .
+```
+
+This exists because the enforced `ansible-lint` gate runs `--offline` with no
+collections installed, so its `syntax-check[unknown-module]` rule fires for
+every non-builtin module and is permanently baselined in `.ansible-lint-ignore`.
+That rule therefore cannot catch the failure it is named after -- a module the
+user cannot install. This check can, and does so deterministically without
+network access.
+
+It does **not** verify that a module exists *inside* a collection (a typo in a
+module name). That needs Galaxy and is exercised by the informational CI job.
+
 ### Preflight / Postflight Validation
 
 Every task file, role and playbook in this repository is wrapped in a uniform
