@@ -1,365 +1,204 @@
 ---
+# tasks file for gcp_cmek_everywhere
+# Entrypoint for the gcp_cmek_everywhere role.
+# NOTE: this was previously written as a standalone play, which made the
+# role unusable via include_role (site.yml calls it as a role). It is now a
+# plain task list so the role works as its callers expect.
+
 # ---------------------------------------------------------------------------
 # Fourth Estate preflight / postflight validation harness
 #
-# Every play below carries a block/rescue/always validation wrapper:
+# The task file body below is wrapped in an Ansible block/rescue/always structure:
 #
-#   pre_tasks   preflight validation. On failure it records the reason,
-#               publishes the outcome with set_stats and aborts the play
-#               before any role or task runs.
-#   tasks       the original task list, wrapped so a failure is captured
-#               (which task, which error) and then re-raised.
-#   post_tasks  postflight validation, then the run record is published with
-#               ansible.builtin.set_stats.
+#   block   preflight validation runs first, then the original task file body, then
+#           postflight validation. Any failure transfers control to rescue.
+#   rescue  records which task failed and why, then re-raises so a failure is
+#           never silently swallowed. Set fe_validation_continue_on_error=true
+#           to record the failure and keep going instead.
+#   always  computes the run duration and publishes the outcome through
+#           ansible.builtin.set_stats, so a wrapping playbook, AWX/AAP or CI can
+#           consume the result without scraping log output.
 #
-# Set fe_validation_continue_on_error=true to record failures and keep going.
-# See docs/VALIDATION_AND_STATS.md for the published stats schema.
+# Published stats (see docs/VALIDATION_AND_STATS.md):
+#   fe_validation_results['google_cloud_platform/gcp_cmek_everywhere']  per-component record
+#   fe_validation_executions / _succeeded / _failed / _duration_seconds
+#   fe_validation_failed_components
+#
+# Add component-specific preflight checks without editing this file by setting
+#   fe_google_cloud_platform_gcp_cmek_everywhere_required_vars: [var_one, var_two]
 # ---------------------------------------------------------------------------
 
-- name: gcp_cmek_everywhere | orchestrate
-  hosts: localhost
-  gather_facts: false
-  tasks:
-    - name: "google_cloud_platform/gcp_cmek_everywhere/tasks/main | Guarded execution with rescue and always handling"
-      block:
+- name: "google_cloud_platform/gcp_cmek_everywhere | Initialize validation state"
+  ansible.builtin.set_fact:
+    fe_google_cloud_platform_gcp_cmek_everywhere_start_epoch: "{{ now(fmt='%s') | int }}"
+    fe_google_cloud_platform_gcp_cmek_everywhere_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+    fe_google_cloud_platform_gcp_cmek_everywhere_status: "running"
+    fe_google_cloud_platform_gcp_cmek_everywhere_preflight_passed: false
+    fe_google_cloud_platform_gcp_cmek_everywhere_postflight_passed: false
+    fe_google_cloud_platform_gcp_cmek_everywhere_failed_task: ""
+    fe_google_cloud_platform_gcp_cmek_everywhere_error: ""
+    fe_google_cloud_platform_gcp_cmek_everywhere_stats_published: false
+  tags:
+    - always
 
-        - import_tasks: gcp_kms__cmek_standards.yml
-        - import_tasks: gcp_kms__grant_bindings.yml
-        - import_tasks: gcp_storage__cmek_enforce.yml
-        - import_tasks: gcp_bq__cmek_validator.yml
-        - import_tasks: gcp_gcs__cmek_validator.yml
+- name: "google_cloud_platform/gcp_cmek_everywhere | Guarded execution with preflight and postflight validation"
+  block:
 
-        - name: "google_cloud_platform/gcp_cmek_everywhere/tasks/main | Flush notified handlers inside the guarded block"
-          ansible.builtin.meta: flush_handlers
-          tags:
-            - always
+    # ----------------------------- preflight --------------------
 
-      rescue:
-
-        - name: "google_cloud_platform/gcp_cmek_everywhere/tasks/main | Rescue | Capture the failing task and error detail"
-          ansible.builtin.set_fact:
-            fe_google_cloud_platform_gcp_cmek_everywhere_tasks_main_status: "failed"
-            fe_google_cloud_platform_gcp_cmek_everywhere_tasks_main_postflight_passed: false
-            fe_google_cloud_platform_gcp_cmek_everywhere_tasks_main_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
-            fe_google_cloud_platform_gcp_cmek_everywhere_tasks_main_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
-          tags:
-            - always
-            - rescue
-
-        - name: "google_cloud_platform/gcp_cmek_everywhere/tasks/main | Rescue | Report the failure"
-          ansible.builtin.debug:
-            msg: >-
-              google_cloud_platform/gcp_cmek_everywhere/tasks/main: FAILED at '{{ fe_google_cloud_platform_gcp_cmek_everywhere_tasks_main_failed_task }}' on
-              {{ inventory_hostname }} - {{ fe_google_cloud_platform_gcp_cmek_everywhere_tasks_main_error }}
-          tags:
-            - always
-            - rescue
-
-        - name: "google_cloud_platform/gcp_cmek_everywhere/tasks/main | Rescue | Re-raise the failure unless the caller opted to continue"
-          ansible.builtin.fail:
-            msg: >-
-              google_cloud_platform/gcp_cmek_everywhere/tasks/main failed at '{{ fe_google_cloud_platform_gcp_cmek_everywhere_tasks_main_failed_task }}': {{ fe_google_cloud_platform_gcp_cmek_everywhere_tasks_main_error }}
-          when: not (fe_validation_continue_on_error | default(false) | bool)
-          tags:
-            - always
-            - rescue
-
-      always:
-
-        - name: "google_cloud_platform/gcp_cmek_everywhere/tasks/main | Always | Compute the execution duration"
-          ansible.builtin.set_fact:
-            fe_google_cloud_platform_gcp_cmek_everywhere_tasks_main_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
-            fe_google_cloud_platform_gcp_cmek_everywhere_tasks_main_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_google_cloud_platform_gcp_cmek_everywhere_tasks_main_start_epoch | default(0) | int) }}"
-          tags:
-            - always
-
-        - name: "google_cloud_platform/gcp_cmek_everywhere/tasks/main | Always | Publish the validation result with set_stats"
-          ansible.builtin.set_stats:
-            data:
-              fe_validation_results:
-                "google_cloud_platform/gcp_cmek_everywhere/tasks/main":
-                  component: "google_cloud_platform/gcp_cmek_everywhere/tasks/main"
-                  type: "playbook"
-                  platform: "google_cloud_platform"
-                  host: "{{ inventory_hostname }}"
-                  status: "{{ fe_google_cloud_platform_gcp_cmek_everywhere_tasks_main_status | default('unknown') }}"
-                  preflight_passed: "{{ fe_google_cloud_platform_gcp_cmek_everywhere_tasks_main_preflight_passed | default(false) | bool }}"
-                  postflight_passed: "{{ fe_google_cloud_platform_gcp_cmek_everywhere_tasks_main_postflight_passed | default(false) | bool }}"
-                  started_at: "{{ fe_google_cloud_platform_gcp_cmek_everywhere_tasks_main_started_at | default('') }}"
-                  ended_at: "{{ fe_google_cloud_platform_gcp_cmek_everywhere_tasks_main_ended_at | default('') }}"
-                  duration_seconds: "{{ fe_google_cloud_platform_gcp_cmek_everywhere_tasks_main_duration_seconds | default(0) | int }}"
-                  failed_task: "{{ fe_google_cloud_platform_gcp_cmek_everywhere_tasks_main_failed_task | default('') }}"
-                  error: "{{ fe_google_cloud_platform_gcp_cmek_everywhere_tasks_main_error | default('') }}"
-                  check_mode: "{{ ansible_check_mode | default(false) | bool }}"
-              fe_validation_executions: 1
-              fe_validation_succeeded: "{{ 1 if fe_google_cloud_platform_gcp_cmek_everywhere_tasks_main_status | default('') == 'succeeded' else 0 }}"
-              fe_validation_failed: "{{ 0 if fe_google_cloud_platform_gcp_cmek_everywhere_tasks_main_status | default('') == 'succeeded' else 1 }}"
-              fe_validation_duration_seconds: "{{ fe_google_cloud_platform_gcp_cmek_everywhere_tasks_main_duration_seconds | default(0) | int }}"
-              fe_validation_failed_components: >-
-                {{ [] if fe_google_cloud_platform_gcp_cmek_everywhere_tasks_main_status | default('') == 'succeeded' else ['google_cloud_platform/gcp_cmek_everywhere/tasks/main'] }}
-            aggregate: true
-            per_host: false
-          when:
-            - fe_google_cloud_platform_gcp_cmek_everywhere_tasks_main_status | default('') == 'failed'
-            - not (fe_google_cloud_platform_gcp_cmek_everywhere_tasks_main_stats_published | default(false) | bool)
-          tags:
-            - always
-
-        - name: "google_cloud_platform/gcp_cmek_everywhere/tasks/main | Always | Mark the validation statistics as published"
-          ansible.builtin.set_fact:
-            fe_google_cloud_platform_gcp_cmek_everywhere_tasks_main_stats_published: true
-          when:
-            - fe_google_cloud_platform_gcp_cmek_everywhere_tasks_main_status | default('') == 'failed'
-          tags:
-            - always
-  pre_tasks:
-    - name: "google_cloud_platform/gcp_cmek_everywhere/tasks/main | Preflight validation"
+    - name: "google_cloud_platform/gcp_cmek_everywhere | Preflight | Verify the control node meets the minimum ansible-core version"
+      ansible.builtin.assert:
+        that:
+          - ansible_version.full is version(fe_validation_min_ansible_version | default('2.12'), '>=')
+        fail_msg: >-
+          google_cloud_platform/gcp_cmek_everywhere: requires ansible-core
+          {{ fe_validation_min_ansible_version | default('2.12') }} or newer,
+          found {{ ansible_version.full }}.
+        success_msg: >-
+          google_cloud_platform/gcp_cmek_everywhere: ansible-core {{ ansible_version.full }} satisfies the minimum.
+        quiet: true
       tags:
         - always
         - preflight
         - validation
-      block:
 
-        - name: "google_cloud_platform/gcp_cmek_everywhere/tasks/main | Initialize validation state"
-          ansible.builtin.set_fact:
-            fe_google_cloud_platform_gcp_cmek_everywhere_tasks_main_start_epoch: "{{ now(fmt='%s') | int }}"
-            fe_google_cloud_platform_gcp_cmek_everywhere_tasks_main_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
-            fe_google_cloud_platform_gcp_cmek_everywhere_tasks_main_status: "running"
-            fe_google_cloud_platform_gcp_cmek_everywhere_tasks_main_preflight_passed: false
-            fe_google_cloud_platform_gcp_cmek_everywhere_tasks_main_postflight_passed: false
-            fe_google_cloud_platform_gcp_cmek_everywhere_tasks_main_failed_task: ""
-            fe_google_cloud_platform_gcp_cmek_everywhere_tasks_main_error: ""
-            fe_google_cloud_platform_gcp_cmek_everywhere_tasks_main_stats_published: false
-          tags:
-            - always
+    - name: "google_cloud_platform/gcp_cmek_everywhere | Preflight | Verify every declared required variable is defined"
+      ansible.builtin.assert:
+        that:
+          - vars[item] is defined
+        fail_msg: "google_cloud_platform/gcp_cmek_everywhere: required variable '{{ item }}' is not defined."
+        success_msg: "google_cloud_platform/gcp_cmek_everywhere: required variable '{{ item }}' is defined."
+        quiet: true
+      loop: "{{ fe_google_cloud_platform_gcp_cmek_everywhere_required_vars | default([]) }}"
+      loop_control:
+        label: "{{ item }}"
+      tags:
+        - always
+        - preflight
+        - validation
 
-        - name: "google_cloud_platform/gcp_cmek_everywhere/tasks/main | Preflight | Verify the control node meets the minimum ansible-core version"
-          ansible.builtin.assert:
-            that:
-              - ansible_version.full is version(fe_validation_min_ansible_version | default('2.12'), '>=')
-            fail_msg: >-
-              google_cloud_platform/gcp_cmek_everywhere/tasks/main: requires ansible-core
-              {{ fe_validation_min_ansible_version | default('2.12') }} or newer,
-              found {{ ansible_version.full }}.
-            success_msg: >-
-              google_cloud_platform/gcp_cmek_everywhere/tasks/main: ansible-core {{ ansible_version.full }} satisfies the minimum.
-            quiet: true
-          tags:
-            - always
-            - preflight
-            - validation
+    - name: "google_cloud_platform/gcp_cmek_everywhere | Preflight | Record that preflight validation passed"
+      ansible.builtin.set_fact:
+        fe_google_cloud_platform_gcp_cmek_everywhere_preflight_passed: true
+      tags:
+        - always
+        - preflight
+        - validation
 
-        - name: "google_cloud_platform/gcp_cmek_everywhere/tasks/main | Preflight | Verify every declared required variable is defined"
-          ansible.builtin.assert:
-            that:
-              - vars[item] is defined
-            fail_msg: "google_cloud_platform/gcp_cmek_everywhere/tasks/main: required variable '{{ item }}' is not defined."
-            success_msg: "google_cloud_platform/gcp_cmek_everywhere/tasks/main: required variable '{{ item }}' is defined."
-            quiet: true
-          loop: "{{ fe_google_cloud_platform_gcp_cmek_everywhere_tasks_main_required_vars | default([]) }}"
-          loop_control:
-            label: "{{ item }}"
-          tags:
-            - always
-            - preflight
-            - validation
+    # ----------------------------- execute ----------------------
 
-        - name: "google_cloud_platform/gcp_cmek_everywhere/tasks/main | Preflight | Record that preflight validation passed"
-          ansible.builtin.set_fact:
-            fe_google_cloud_platform_gcp_cmek_everywhere_tasks_main_preflight_passed: true
-          tags:
-            - always
-            - preflight
-            - validation
+    - name: "gcp_cmek_everywhere | Import gcp_kms__cmek_standards"
+      ansible.builtin.import_tasks: gcp_kms__cmek_standards.yml
 
-      rescue:
+    - name: "gcp_cmek_everywhere | Import gcp_kms__grant_bindings"
+      ansible.builtin.import_tasks: gcp_kms__grant_bindings.yml
 
-        - name: "google_cloud_platform/gcp_cmek_everywhere/tasks/main | Rescue | Capture the failing task and error detail"
-          ansible.builtin.set_fact:
-            fe_google_cloud_platform_gcp_cmek_everywhere_tasks_main_status: "preflight_failed"
-            fe_google_cloud_platform_gcp_cmek_everywhere_tasks_main_postflight_passed: false
-            fe_google_cloud_platform_gcp_cmek_everywhere_tasks_main_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
-            fe_google_cloud_platform_gcp_cmek_everywhere_tasks_main_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
-          tags:
-            - always
-            - rescue
+    - name: "gcp_cmek_everywhere | Import gcp_storage__cmek_enforce"
+      ansible.builtin.import_tasks: gcp_storage__cmek_enforce.yml
 
-        - name: "google_cloud_platform/gcp_cmek_everywhere/tasks/main | Rescue | Report the failure"
-          ansible.builtin.debug:
-            msg: >-
-              google_cloud_platform/gcp_cmek_everywhere/tasks/main: FAILED at '{{ fe_google_cloud_platform_gcp_cmek_everywhere_tasks_main_failed_task }}' on
-              {{ inventory_hostname }} - {{ fe_google_cloud_platform_gcp_cmek_everywhere_tasks_main_error }}
-          tags:
-            - always
-            - rescue
+    - name: "gcp_cmek_everywhere | Import gcp_bq__cmek_validator"
+      ansible.builtin.import_tasks: gcp_bq__cmek_validator.yml
 
-        - name: "google_cloud_platform/gcp_cmek_everywhere/tasks/main | Always | Publish the validation result with set_stats"
-          ansible.builtin.set_stats:
-            data:
-              fe_validation_results:
-                "google_cloud_platform/gcp_cmek_everywhere/tasks/main":
-                  component: "google_cloud_platform/gcp_cmek_everywhere/tasks/main"
-                  type: "playbook"
-                  platform: "google_cloud_platform"
-                  host: "{{ inventory_hostname }}"
-                  status: "{{ fe_google_cloud_platform_gcp_cmek_everywhere_tasks_main_status | default('unknown') }}"
-                  preflight_passed: "{{ fe_google_cloud_platform_gcp_cmek_everywhere_tasks_main_preflight_passed | default(false) | bool }}"
-                  postflight_passed: "{{ fe_google_cloud_platform_gcp_cmek_everywhere_tasks_main_postflight_passed | default(false) | bool }}"
-                  started_at: "{{ fe_google_cloud_platform_gcp_cmek_everywhere_tasks_main_started_at | default('') }}"
-                  ended_at: "{{ fe_google_cloud_platform_gcp_cmek_everywhere_tasks_main_ended_at | default('') }}"
-                  duration_seconds: "{{ fe_google_cloud_platform_gcp_cmek_everywhere_tasks_main_duration_seconds | default(0) | int }}"
-                  failed_task: "{{ fe_google_cloud_platform_gcp_cmek_everywhere_tasks_main_failed_task | default('') }}"
-                  error: "{{ fe_google_cloud_platform_gcp_cmek_everywhere_tasks_main_error | default('') }}"
-                  check_mode: "{{ ansible_check_mode | default(false) | bool }}"
-              fe_validation_executions: 1
-              fe_validation_succeeded: "{{ 1 if fe_google_cloud_platform_gcp_cmek_everywhere_tasks_main_status | default('') == 'succeeded' else 0 }}"
-              fe_validation_failed: "{{ 0 if fe_google_cloud_platform_gcp_cmek_everywhere_tasks_main_status | default('') == 'succeeded' else 1 }}"
-              fe_validation_duration_seconds: "{{ fe_google_cloud_platform_gcp_cmek_everywhere_tasks_main_duration_seconds | default(0) | int }}"
-              fe_validation_failed_components: >-
-                {{ [] if fe_google_cloud_platform_gcp_cmek_everywhere_tasks_main_status | default('') == 'succeeded' else ['google_cloud_platform/gcp_cmek_everywhere/tasks/main'] }}
-            aggregate: true
-            per_host: false
-          tags:
-            - always
+    - name: "gcp_cmek_everywhere | Import gcp_gcs__cmek_validator"
+      ansible.builtin.import_tasks: gcp_gcs__cmek_validator.yml
 
-        - name: "google_cloud_platform/gcp_cmek_everywhere/tasks/main | Always | Mark the validation statistics as published"
-          ansible.builtin.set_fact:
-            fe_google_cloud_platform_gcp_cmek_everywhere_tasks_main_stats_published: true
-          tags:
-            - always
+    # ----------------------------- postflight -------------------
 
-        - name: "google_cloud_platform/gcp_cmek_everywhere/tasks/main | Rescue | Re-raise the failure unless the caller opted to continue"
-          ansible.builtin.fail:
-            msg: >-
-              google_cloud_platform/gcp_cmek_everywhere/tasks/main failed at '{{ fe_google_cloud_platform_gcp_cmek_everywhere_tasks_main_failed_task }}': {{ fe_google_cloud_platform_gcp_cmek_everywhere_tasks_main_error }}
-          when: not (fe_validation_continue_on_error | default(false) | bool)
-          tags:
-            - always
-            - rescue
-
-      always:
-
-        - name: "google_cloud_platform/gcp_cmek_everywhere/tasks/main | Always | Report the preflight outcome"
-          ansible.builtin.debug:
-            msg: >-
-              google_cloud_platform/gcp_cmek_everywhere/tasks/main: preflight
-              {{ 'passed' if fe_google_cloud_platform_gcp_cmek_everywhere_tasks_main_preflight_passed | default(false) | bool else 'FAILED' }}
-              on {{ inventory_hostname }}.
-          tags:
-            - always
-  post_tasks:
-    - name: "google_cloud_platform/gcp_cmek_everywhere/tasks/main | Postflight validation"
+    - name: "google_cloud_platform/gcp_cmek_everywhere | Postflight | Verify the guarded body ran after a passing preflight"
+      ansible.builtin.assert:
+        that:
+          - fe_google_cloud_platform_gcp_cmek_everywhere_preflight_passed | bool
+          - fe_google_cloud_platform_gcp_cmek_everywhere_status in ['running', 'succeeded']
+        fail_msg: >-
+          google_cloud_platform/gcp_cmek_everywhere: postflight validation failed - preflight passed
+          ={{ fe_google_cloud_platform_gcp_cmek_everywhere_preflight_passed | default(false) }},
+          status={{ fe_google_cloud_platform_gcp_cmek_everywhere_status | default('unknown') }}.
+        success_msg: "google_cloud_platform/gcp_cmek_everywhere: postflight validation passed."
+        quiet: true
       tags:
         - always
         - postflight
         - validation
-      block:
 
-        - name: "google_cloud_platform/gcp_cmek_everywhere/tasks/main | Postflight | Verify the guarded body ran after a passing preflight"
-          ansible.builtin.assert:
-            that:
-              - fe_google_cloud_platform_gcp_cmek_everywhere_tasks_main_preflight_passed | bool
-              - fe_google_cloud_platform_gcp_cmek_everywhere_tasks_main_status in ['running', 'succeeded']
-            fail_msg: >-
-              google_cloud_platform/gcp_cmek_everywhere/tasks/main: postflight validation failed - preflight passed
-              ={{ fe_google_cloud_platform_gcp_cmek_everywhere_tasks_main_preflight_passed | default(false) }},
-              status={{ fe_google_cloud_platform_gcp_cmek_everywhere_tasks_main_status | default('unknown') }}.
-            success_msg: "google_cloud_platform/gcp_cmek_everywhere/tasks/main: postflight validation passed."
-            quiet: true
-          tags:
-            - always
-            - postflight
-            - validation
+    - name: "google_cloud_platform/gcp_cmek_everywhere | Postflight | Record the successful outcome"
+      ansible.builtin.set_fact:
+        fe_google_cloud_platform_gcp_cmek_everywhere_postflight_passed: true
+        fe_google_cloud_platform_gcp_cmek_everywhere_status: "succeeded"
+      tags:
+        - always
+        - postflight
+        - validation
 
-        - name: "google_cloud_platform/gcp_cmek_everywhere/tasks/main | Postflight | Record the successful outcome"
-          ansible.builtin.set_fact:
-            fe_google_cloud_platform_gcp_cmek_everywhere_tasks_main_postflight_passed: true
-            fe_google_cloud_platform_gcp_cmek_everywhere_tasks_main_status: "succeeded"
-          tags:
-            - always
-            - postflight
-            - validation
+  rescue:
 
-      rescue:
+    - name: "google_cloud_platform/gcp_cmek_everywhere | Rescue | Capture the failing task and error detail"
+      ansible.builtin.set_fact:
+        fe_google_cloud_platform_gcp_cmek_everywhere_status: "failed"
+        fe_google_cloud_platform_gcp_cmek_everywhere_postflight_passed: false
+        fe_google_cloud_platform_gcp_cmek_everywhere_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+        fe_google_cloud_platform_gcp_cmek_everywhere_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+      tags:
+        - always
+        - rescue
 
-        - name: "google_cloud_platform/gcp_cmek_everywhere/tasks/main | Rescue | Capture the failing task and error detail"
-          ansible.builtin.set_fact:
-            fe_google_cloud_platform_gcp_cmek_everywhere_tasks_main_status: "failed"
-            fe_google_cloud_platform_gcp_cmek_everywhere_tasks_main_postflight_passed: false
-            fe_google_cloud_platform_gcp_cmek_everywhere_tasks_main_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
-            fe_google_cloud_platform_gcp_cmek_everywhere_tasks_main_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
-          tags:
-            - always
-            - rescue
+    - name: "google_cloud_platform/gcp_cmek_everywhere | Rescue | Report the failure"
+      ansible.builtin.debug:
+        msg: >-
+          google_cloud_platform/gcp_cmek_everywhere: FAILED at '{{ fe_google_cloud_platform_gcp_cmek_everywhere_failed_task }}' on
+          {{ inventory_hostname }} - {{ fe_google_cloud_platform_gcp_cmek_everywhere_error }}
+      tags:
+        - always
+        - rescue
 
-        - name: "google_cloud_platform/gcp_cmek_everywhere/tasks/main | Rescue | Report the failure"
-          ansible.builtin.debug:
-            msg: >-
-              google_cloud_platform/gcp_cmek_everywhere/tasks/main: FAILED at '{{ fe_google_cloud_platform_gcp_cmek_everywhere_tasks_main_failed_task }}' on
-              {{ inventory_hostname }} - {{ fe_google_cloud_platform_gcp_cmek_everywhere_tasks_main_error }}
-          tags:
-            - always
-            - rescue
+    - name: "google_cloud_platform/gcp_cmek_everywhere | Rescue | Re-raise the failure unless the caller opted to continue"
+      ansible.builtin.fail:
+        msg: >-
+          google_cloud_platform/gcp_cmek_everywhere failed at '{{ fe_google_cloud_platform_gcp_cmek_everywhere_failed_task }}': {{ fe_google_cloud_platform_gcp_cmek_everywhere_error }}
+      when: not (fe_validation_continue_on_error | default(false) | bool)
+      tags:
+        - always
+        - rescue
 
-        - name: "google_cloud_platform/gcp_cmek_everywhere/tasks/main | Rescue | Re-raise the failure unless the caller opted to continue"
-          ansible.builtin.fail:
-            msg: >-
-              google_cloud_platform/gcp_cmek_everywhere/tasks/main failed at '{{ fe_google_cloud_platform_gcp_cmek_everywhere_tasks_main_failed_task }}': {{ fe_google_cloud_platform_gcp_cmek_everywhere_tasks_main_error }}
-          when: not (fe_validation_continue_on_error | default(false) | bool)
-          tags:
-            - always
-            - rescue
+  always:
 
-      always:
+    - name: "google_cloud_platform/gcp_cmek_everywhere | Always | Compute the execution duration"
+      ansible.builtin.set_fact:
+        fe_google_cloud_platform_gcp_cmek_everywhere_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+        fe_google_cloud_platform_gcp_cmek_everywhere_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_google_cloud_platform_gcp_cmek_everywhere_start_epoch | default(0) | int) }}"
+      tags:
+        - always
 
-        - name: "google_cloud_platform/gcp_cmek_everywhere/tasks/main | Always | Compute the execution duration"
-          ansible.builtin.set_fact:
-            fe_google_cloud_platform_gcp_cmek_everywhere_tasks_main_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
-            fe_google_cloud_platform_gcp_cmek_everywhere_tasks_main_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_google_cloud_platform_gcp_cmek_everywhere_tasks_main_start_epoch | default(0) | int) }}"
-          tags:
-            - always
+    - name: "google_cloud_platform/gcp_cmek_everywhere | Always | Publish the validation result with set_stats"
+      ansible.builtin.set_stats:
+        data:
+          fe_validation_results:
+            "google_cloud_platform/gcp_cmek_everywhere":
+              component: "google_cloud_platform/gcp_cmek_everywhere"
+              type: "role"
+              platform: "google_cloud_platform"
+              host: "{{ inventory_hostname }}"
+              status: "{{ fe_google_cloud_platform_gcp_cmek_everywhere_status | default('unknown') }}"
+              preflight_passed: "{{ fe_google_cloud_platform_gcp_cmek_everywhere_preflight_passed | default(false) | bool }}"
+              postflight_passed: "{{ fe_google_cloud_platform_gcp_cmek_everywhere_postflight_passed | default(false) | bool }}"
+              started_at: "{{ fe_google_cloud_platform_gcp_cmek_everywhere_started_at | default('') }}"
+              ended_at: "{{ fe_google_cloud_platform_gcp_cmek_everywhere_ended_at | default('') }}"
+              duration_seconds: "{{ fe_google_cloud_platform_gcp_cmek_everywhere_duration_seconds | default(0) | int }}"
+              failed_task: "{{ fe_google_cloud_platform_gcp_cmek_everywhere_failed_task | default('') }}"
+              error: "{{ fe_google_cloud_platform_gcp_cmek_everywhere_error | default('') }}"
+              check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+          fe_validation_executions: 1
+          fe_validation_succeeded: "{{ 1 if fe_google_cloud_platform_gcp_cmek_everywhere_status | default('') == 'succeeded' else 0 }}"
+          fe_validation_failed: "{{ 0 if fe_google_cloud_platform_gcp_cmek_everywhere_status | default('') == 'succeeded' else 1 }}"
+          fe_validation_duration_seconds: "{{ fe_google_cloud_platform_gcp_cmek_everywhere_duration_seconds | default(0) | int }}"
+          fe_validation_failed_components: >-
+            {{ [] if fe_google_cloud_platform_gcp_cmek_everywhere_status | default('') == 'succeeded' else ['google_cloud_platform/gcp_cmek_everywhere'] }}
+        aggregate: true
+        per_host: false
+      tags:
+        - always
 
-        - name: "google_cloud_platform/gcp_cmek_everywhere/tasks/main | Always | Publish the validation result with set_stats"
-          ansible.builtin.set_stats:
-            data:
-              fe_validation_results:
-                "google_cloud_platform/gcp_cmek_everywhere/tasks/main":
-                  component: "google_cloud_platform/gcp_cmek_everywhere/tasks/main"
-                  type: "playbook"
-                  platform: "google_cloud_platform"
-                  host: "{{ inventory_hostname }}"
-                  status: "{{ fe_google_cloud_platform_gcp_cmek_everywhere_tasks_main_status | default('unknown') }}"
-                  preflight_passed: "{{ fe_google_cloud_platform_gcp_cmek_everywhere_tasks_main_preflight_passed | default(false) | bool }}"
-                  postflight_passed: "{{ fe_google_cloud_platform_gcp_cmek_everywhere_tasks_main_postflight_passed | default(false) | bool }}"
-                  started_at: "{{ fe_google_cloud_platform_gcp_cmek_everywhere_tasks_main_started_at | default('') }}"
-                  ended_at: "{{ fe_google_cloud_platform_gcp_cmek_everywhere_tasks_main_ended_at | default('') }}"
-                  duration_seconds: "{{ fe_google_cloud_platform_gcp_cmek_everywhere_tasks_main_duration_seconds | default(0) | int }}"
-                  failed_task: "{{ fe_google_cloud_platform_gcp_cmek_everywhere_tasks_main_failed_task | default('') }}"
-                  error: "{{ fe_google_cloud_platform_gcp_cmek_everywhere_tasks_main_error | default('') }}"
-                  check_mode: "{{ ansible_check_mode | default(false) | bool }}"
-              fe_validation_executions: 1
-              fe_validation_succeeded: "{{ 1 if fe_google_cloud_platform_gcp_cmek_everywhere_tasks_main_status | default('') == 'succeeded' else 0 }}"
-              fe_validation_failed: "{{ 0 if fe_google_cloud_platform_gcp_cmek_everywhere_tasks_main_status | default('') == 'succeeded' else 1 }}"
-              fe_validation_duration_seconds: "{{ fe_google_cloud_platform_gcp_cmek_everywhere_tasks_main_duration_seconds | default(0) | int }}"
-              fe_validation_failed_components: >-
-                {{ [] if fe_google_cloud_platform_gcp_cmek_everywhere_tasks_main_status | default('') == 'succeeded' else ['google_cloud_platform/gcp_cmek_everywhere/tasks/main'] }}
-            aggregate: true
-            per_host: false
-          when:
-            - not (fe_google_cloud_platform_gcp_cmek_everywhere_tasks_main_stats_published | default(false) | bool)
-          tags:
-            - always
-
-        - name: "google_cloud_platform/gcp_cmek_everywhere/tasks/main | Always | Mark the validation statistics as published"
-          ansible.builtin.set_fact:
-            fe_google_cloud_platform_gcp_cmek_everywhere_tasks_main_stats_published: true
-          tags:
-            - always
-
-        - name: "google_cloud_platform/gcp_cmek_everywhere/tasks/main | Always | Report the run summary"
-          ansible.builtin.debug:
-            msg: >-
-              google_cloud_platform/gcp_cmek_everywhere/tasks/main: {{ fe_google_cloud_platform_gcp_cmek_everywhere_tasks_main_status | default('unknown') }} in
-              {{ fe_google_cloud_platform_gcp_cmek_everywhere_tasks_main_duration_seconds | default(0) }}s on {{ inventory_hostname }}.
-          tags:
-            - always
+    - name: "google_cloud_platform/gcp_cmek_everywhere | Always | Mark the validation statistics as published"
+      ansible.builtin.set_fact:
+        fe_google_cloud_platform_gcp_cmek_everywhere_stats_published: true
+      tags:
+        - always

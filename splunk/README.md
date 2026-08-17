@@ -220,7 +220,7 @@ ansible-playbook -i inventory splunk/playbooks/install_splunk_enterprise.yml \
 Safely restarts Splunk services with verification.
 
 ```bash
-ansible-playbook -i inventory splunk/tasks/restart_splunk.yml
+ansible-playbook -i inventory splunk/playbooks/restart_splunk.yml
 ```
 
 ### health_check.yml
@@ -228,7 +228,7 @@ ansible-playbook -i inventory splunk/tasks/restart_splunk.yml
 Performs comprehensive health check and generates report.
 
 ```bash
-ansible-playbook -i inventory splunk/tasks/health_check.yml
+ansible-playbook -i inventory splunk/playbooks/health_check.yml
 ```
 
 ### backup_now.yml
@@ -236,7 +236,7 @@ ansible-playbook -i inventory splunk/tasks/health_check.yml
 Executes immediate backup (outside scheduled backups).
 
 ```bash
-ansible-playbook -i inventory splunk/tasks/backup_now.yml
+ansible-playbook -i inventory splunk/playbooks/backup_now.yml
 ```
 
 ### compliance_check.yml
@@ -244,7 +244,7 @@ ansible-playbook -i inventory splunk/tasks/backup_now.yml
 Verifies STIG compliance and generates report.
 
 ```bash
-ansible-playbook -i inventory splunk/tasks/compliance_check.yml
+ansible-playbook -i inventory splunk/playbooks/compliance_check.yml
 ```
 
 ## Testing
@@ -390,13 +390,13 @@ ansible-playbook -i forwarder_inventory \
 ### 3. Run Health Check
 
 ```bash
-ansible-playbook -i inventory splunk/tasks/health_check.yml
+ansible-playbook -i inventory splunk/playbooks/health_check.yml
 ```
 
 ### 4. Verify Compliance
 
 ```bash
-ansible-playbook -i inventory splunk/tasks/compliance_check.yml
+ansible-playbook -i inventory splunk/playbooks/compliance_check.yml
 ```
 
 ## Security Considerations

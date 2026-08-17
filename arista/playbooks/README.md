@@ -1,8 +1,8 @@
-# Arista Tasks
+# Arista Playbooks
 
-This directory contains **14 standalone task files** for Arista EOS operations. These task files can be included directly in any playbook using `ansible.builtin.include_tasks` without requiring the full role structure.
+This directory contains standalone **playbooks** for Arista EOS operations. Each one declares its own `hosts:` and is run directly with `ansible-playbook`; they are not task files and cannot be included with `ansible.builtin.include_tasks`.
 
-## Task Files
+## Playbooks
 
 | File | Description |
 |------|-------------|
@@ -24,18 +24,23 @@ This directory contains **14 standalone task files** for Arista EOS operations. 
 
 ## Usage
 
+Each file here is a complete play with its own `hosts:`, so run it directly:
+
+```bash
+ansible-playbook -i inventory arista/playbooks/arista_backup__running_config.yml
+ansible-playbook -i inventory arista/playbooks/arista_stig__hardening.yml
+```
+
+To chain several in one run, compose them with `import_playbook` (not
+`include_tasks`, which only accepts task files):
+
 ```yaml
 ---
-- name: Backup Arista configurations
-  hosts: arista_switches
-  gather_facts: false
+- name: Capture running config
+  ansible.builtin.import_playbook: arista/playbooks/arista_backup__running_config.yml
 
-  tasks:
-    - name: Capture running config
-      ansible.builtin.include_tasks: arista/tasks/arista_backup__running_config.yml
-
-    - name: Apply STIG hardening
-      ansible.builtin.include_tasks: arista/tasks/arista_stig__hardening.yml
+- name: Apply STIG hardening
+  ansible.builtin.import_playbook: arista/playbooks/arista_stig__hardening.yml
 ```
 
 ## Requirements

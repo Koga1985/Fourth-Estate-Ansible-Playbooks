@@ -1,8 +1,8 @@
-# Splunk Tasks
+# Splunk Operational Playbooks
 
-This directory contains **4 standalone operational task files** for Splunk Enterprise administration. These can be included in any playbook for targeted Splunk operations without running a full deployment role.
+This directory contains standalone operational **playbooks** for Splunk Enterprise administration, alongside the deployment playbooks. Each one declares its own `hosts:` and is run directly with `ansible-playbook`; they are not task files and cannot be included with `include_tasks`.
 
-## Task Files
+## Operational Playbooks
 
 | File | Description |
 |------|-------------|
@@ -17,32 +17,30 @@ This directory contains **4 standalone operational task files** for Splunk Enter
 
 ```bash
 # Run a health check
-ansible-playbook -i inventory splunk/tasks/health_check.yml
+ansible-playbook -i inventory splunk/playbooks/health_check.yml
 
 # Force an immediate backup
-ansible-playbook -i inventory splunk/tasks/backup_now.yml
+ansible-playbook -i inventory splunk/playbooks/backup_now.yml
 
 # Verify STIG compliance
-ansible-playbook -i inventory splunk/tasks/compliance_check.yml
+ansible-playbook -i inventory splunk/playbooks/compliance_check.yml
 ```
 
-### Included in a Playbook
+### Chained from another playbook
+
+Each file here is a complete play, so compose them with `import_playbook`
+rather than `include_tasks`:
 
 ```yaml
 ---
-- name: Splunk post-change validation
-  hosts: splunk_servers
-  become: true
+- name: Restart Splunk after a config change
+  ansible.builtin.import_playbook: splunk/playbooks/restart_splunk.yml
 
-  tasks:
-    - name: Restart Splunk after config change
-      ansible.builtin.include_tasks: splunk/tasks/restart_splunk.yml
+- name: Verify health after the restart
+  ansible.builtin.import_playbook: splunk/playbooks/health_check.yml
 
-    - name: Verify health after restart
-      ansible.builtin.include_tasks: splunk/tasks/health_check.yml
-
-    - name: Check STIG compliance
-      ansible.builtin.include_tasks: splunk/tasks/compliance_check.yml
+- name: Check STIG compliance
+  ansible.builtin.import_playbook: splunk/playbooks/compliance_check.yml
 ```
 
 ## Requirements
