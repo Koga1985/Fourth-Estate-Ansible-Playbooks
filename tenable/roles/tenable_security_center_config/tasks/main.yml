@@ -2,348 +2,531 @@
 # tenable_security_center_config/tasks/main.yml
 # Tenable Security Center Configuration for Fourth Estate Agencies
 
-- name: Get API token for Security Center
-  ansible.builtin.uri:
-    url: "https://{{ tsc_host }}:{{ tsc_port }}/rest/token"
-    method: POST
-    body_format: json
-    body:
-      username: "{{ tsc_username }}"
-      password: "{{ tsc_password }}"
-    validate_certs: "{{ tsc_validate_certs }}"
-    status_code: 200
-  register: token_response
-  no_log: true
+# ---------------------------------------------------------------------------
+# Fourth Estate preflight / postflight validation harness
+#
+# The task file body below is wrapped in an Ansible block/rescue/always structure:
+#
+#   block   preflight validation runs first, then the original task file body, then
+#           postflight validation. Any failure transfers control to rescue.
+#   rescue  records which task failed and why, then re-raises so a failure is
+#           never silently swallowed. Set fe_validation_continue_on_error=true
+#           to record the failure and keep going instead.
+#   always  computes the run duration and publishes the outcome through
+#           ansible.builtin.set_stats, so a wrapping playbook, AWX/AAP or CI can
+#           consume the result without scraping log output.
+#
+# Published stats (see docs/VALIDATION_AND_STATS.md):
+#   fe_validation_results['tenable/tenable_security_center_config']  per-component record
+#   fe_validation_executions / _succeeded / _failed / _duration_seconds
+#   fe_validation_failed_components
+#
+# Add component-specific preflight checks without editing this file by setting
+#   fe_tenable_tenable_security_center_config_required_vars: [var_one, var_two]
+# ---------------------------------------------------------------------------
 
-- name: Set API token fact
+- name: "tenable/tenable_security_center_config | Initialize validation state"
   ansible.builtin.set_fact:
-    tsc_token: "{{ token_response.json.response.token }}"
-  no_log: true
+    fe_tenable_tenable_security_center_config_start_epoch: "{{ now(fmt='%s') | int }}"
+    fe_tenable_tenable_security_center_config_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+    fe_tenable_tenable_security_center_config_status: "running"
+    fe_tenable_tenable_security_center_config_preflight_passed: false
+    fe_tenable_tenable_security_center_config_postflight_passed: false
+    fe_tenable_tenable_security_center_config_failed_task: ""
+    fe_tenable_tenable_security_center_config_error: ""
+    fe_tenable_tenable_security_center_config_stats_published: false
+  tags:
+    - always
 
-# System Settings Configuration
-- name: Configure system settings
-  ansible.builtin.uri:
-    url: "https://{{ tsc_host }}:{{ tsc_port }}/rest/system"
-    method: PATCH
-    headers:
-      X-SecurityCenter: "{{ tsc_token }}"
-    body_format: json
-    body:
-      sessionTimeout: "{{ tsc_session_timeout }}"
-      idleTimeout: "{{ tsc_idle_timeout }}"
-      bannerText: "{{ tsc_banner_text }}"
-      allowPost: "{{ tsc_allow_post | lower }}"
-      enableSyslog: "{{ tsc_enable_syslog | lower }}"
-      syslogHost: "{{ tsc_syslog_host }}"
-      syslogPort: "{{ tsc_syslog_port }}"
-      syslogProtocol: "{{ tsc_syslog_protocol }}"
-    validate_certs: "{{ tsc_validate_certs }}"
-    status_code: 200
+- name: "tenable/tenable_security_center_config | Guarded execution with preflight and postflight validation"
+  block:
 
-# SMTP Configuration
-- name: Configure SMTP settings
-  ansible.builtin.uri:
-    url: "https://{{ tsc_host }}:{{ tsc_port }}/rest/system/smtp"
-    method: PATCH
-    headers:
-      X-SecurityCenter: "{{ tsc_token }}"
-    body_format: json
-    body:
-      smtpHost: "{{ tsc_smtp_host }}"
-      smtpPort: "{{ tsc_smtp_port }}"
-      smtpFrom: "{{ tsc_smtp_from }}"
-      smtpAuthType: "{{ tsc_smtp_auth_type }}"
-      smtpUsername: "{{ tsc_smtp_username | default(omit) }}"
-      smtpPassword: "{{ tsc_smtp_password | default(omit) }}"
-      smtpEncryption: "{{ tsc_smtp_encryption }}"
-    validate_certs: "{{ tsc_validate_certs }}"
-    status_code: 200
-  when: tsc_configure_smtp | bool
-  no_log: true
+    # ----------------------------- preflight --------------------
 
-# LDAP/AD Configuration
-- name: Include LDAP configuration tasks
-  ansible.builtin.include_tasks: ldap_config.yml
-  when: tsc_configure_ldap | bool
+    - name: "tenable/tenable_security_center_config | Preflight | Verify the control node meets the minimum ansible-core version"
+      ansible.builtin.assert:
+        that:
+          - ansible_version.full is version(fe_validation_min_ansible_version | default('2.12'), '>=')
+        fail_msg: >-
+          tenable/tenable_security_center_config: requires ansible-core
+          {{ fe_validation_min_ansible_version | default('2.12') }} or newer,
+          found {{ ansible_version.full }}.
+        success_msg: >-
+          tenable/tenable_security_center_config: ansible-core {{ ansible_version.full }} satisfies the minimum.
+        quiet: true
+      tags:
+        - always
+        - preflight
+        - validation
 
-# Organization Management
-- name: Create organizations
-  ansible.builtin.uri:
-    url: "https://{{ tsc_host }}:{{ tsc_port }}/rest/organization"
-    method: POST
-    headers:
-      X-SecurityCenter: "{{ tsc_token }}"
-    body_format: json
-    body:
-      name: "{{ item.name }}"
-      description: "{{ item.description }}"
-      address: "{{ item.address | default('') }}"
-      city: "{{ item.city | default('') }}"
-      state: "{{ item.state | default('') }}"
-      country: "{{ item.country | default('US') }}"
-      phone: "{{ item.phone | default('') }}"
-      email: "{{ item.email }}"
-      ipRange: "{{ item.ip_range | default('') }}"
-      nessusManagers: "{{ item.nessus_managers | default([]) }}"
-      zones: "{{ item.zones | default([]) }}"
-    validate_certs: "{{ tsc_validate_certs }}"
-    status_code: [200, 400]
-  loop: "{{ tsc_organizations }}"
-  when: tsc_organizations | length > 0
-  register: org_result
+    - name: "tenable/tenable_security_center_config | Preflight | Verify every declared required variable is defined"
+      ansible.builtin.assert:
+        that:
+          - vars[item] is defined
+        fail_msg: "tenable/tenable_security_center_config: required variable '{{ item }}' is not defined."
+        success_msg: "tenable/tenable_security_center_config: required variable '{{ item }}' is defined."
+        quiet: true
+      loop: "{{ fe_tenable_tenable_security_center_config_required_vars | default([]) }}"
+      loop_control:
+        label: "{{ item }}"
+      tags:
+        - always
+        - preflight
+        - validation
 
-# User Management
-- name: Create local users
-  ansible.builtin.uri:
-    url: "https://{{ tsc_host }}:{{ tsc_port }}/rest/user"
-    method: POST
-    headers:
-      X-SecurityCenter: "{{ tsc_token }}"
-    body_format: json
-    body:
-      username: "{{ item.username }}"
-      password: "{{ item.password }}"
-      firstname: "{{ item.firstname }}"
-      lastname: "{{ item.lastname }}"
-      email: "{{ item.email }}"
-      title: "{{ item.title | default('') }}"
-      phone: "{{ item.phone | default('') }}"
-      role:
-        id: "{{ item.role_id }}"
-      group:
-        id: "{{ item.group_id | default('0') }}"
-      organization:
-        id: "{{ item.organization_id | default('0') }}"
-      responsibleAssetID: "{{ item.responsible_asset_id | default('-1') }}"
-      locked: "{{ item.locked | default('false') }}"
-      mustChangePassword: "{{ item.must_change_password | default('true') }}"
-      authType: "local"
-    validate_certs: "{{ tsc_validate_certs }}"
-    status_code: [200, 400]
-  loop: "{{ tsc_users }}"
-  when: tsc_users | length > 0
-  no_log: true
+    - name: "tenable/tenable_security_center_config | Preflight | Record that preflight validation passed"
+      ansible.builtin.set_fact:
+        fe_tenable_tenable_security_center_config_preflight_passed: true
+      tags:
+        - always
+        - preflight
+        - validation
 
-# Role Configuration
-- name: Create custom roles
-  ansible.builtin.uri:
-    url: "https://{{ tsc_host }}:{{ tsc_port }}/rest/role"
-    method: POST
-    headers:
-      X-SecurityCenter: "{{ tsc_token }}"
-    body_format: json
-    body:
-      name: "{{ item.name }}"
-      description: "{{ item.description }}"
-      canCreateTickets: "{{ item.can_create_tickets | default('false') }}"
-      canImportScans: "{{ item.can_import_scans | default('false') }}"
-      canManage: "{{ item.can_manage | default('false') }}"
-      canScan: "{{ item.can_scan | default('true') }}"
-      canSchedule: "{{ item.can_schedule | default('true') }}"
-      canUseAPI: "{{ item.can_use_api | default('true') }}"
-      canViewLogs: "{{ item.can_view_logs | default('false') }}"
-      scanAssetPermission: "{{ item.scan_asset_permission | default('0') }}"
-    validate_certs: "{{ tsc_validate_certs }}"
-    status_code: [200, 400]
-  loop: "{{ tsc_custom_roles }}"
-  when: tsc_custom_roles | length > 0
+    # ----------------------------- execute ----------------------
 
-# Repository Configuration
-- name: Create scan repositories
-  ansible.builtin.uri:
-    url: "https://{{ tsc_host }}:{{ tsc_port }}/rest/repository"
-    method: POST
-    headers:
-      X-SecurityCenter: "{{ tsc_token }}"
-    body_format: json
-    body:
-      name: "{{ item.name }}"
-      description: "{{ item.description }}"
-      dataFormat: "{{ item.data_format | default('IPv4') }}"
-      ipRange: "{{ item.ip_range | default('') }}"
-      trendingDays: "{{ item.trending_days | default('90') }}"
-      trendWithRaw: "{{ item.trend_with_raw | default('false') }}"
-      organizations: "{{ item.organizations | default([]) }}"
-    validate_certs: "{{ tsc_validate_certs }}"
-    status_code: [200, 400]
-  loop: "{{ tsc_repositories }}"
-  when: tsc_repositories | length > 0
+    - name: Get API token for Security Center
+      ansible.builtin.uri:
+        url: "https://{{ tsc_host }}:{{ tsc_port }}/rest/token"
+        method: POST
+        body_format: json
+        body:
+          username: "{{ tsc_username }}"
+          password: "{{ tsc_password }}"
+        validate_certs: "{{ tsc_validate_certs }}"
+        status_code: 200
+      register: token_response
+      no_log: true
 
-# Scanner Configuration
-- name: Register Nessus Scanners
-  ansible.builtin.uri:
-    url: "https://{{ tsc_host }}:{{ tsc_port }}/rest/scanner"
-    method: POST
-    headers:
-      X-SecurityCenter: "{{ tsc_token }}"
-    body_format: json
-    body:
-      name: "{{ item.name }}"
-      description: "{{ item.description }}"
-      ip: "{{ item.ip }}"
-      port: "{{ item.port | default('8834') }}"
-      useProxy: "{{ item.use_proxy | default('false') }}"
-      enabled: "{{ item.enabled | default('true') }}"
-      verifyHost: "{{ item.verify_host | default('false') }}"
-      managementType: "{{ item.management_type | default('agent') }}"
-      authType: "cert"
-      zones: "{{ item.zones | default([]) }}"
-    validate_certs: "{{ tsc_validate_certs }}"
-    status_code: [200, 400]
-  loop: "{{ tsc_scanners }}"
-  when: tsc_scanners | length > 0
+    - name: Set API token fact
+      ansible.builtin.set_fact:
+        tsc_token: "{{ token_response.json.response.token }}"
+      no_log: true
 
-# Credential Management
-- name: Create scan credentials
-  ansible.builtin.uri:
-    url: "https://{{ tsc_host }}:{{ tsc_port }}/rest/credential"
-    method: POST
-    headers:
-      X-SecurityCenter: "{{ tsc_token }}"
-    body_format: json
-    body:
-      name: "{{ item.name }}"
-      description: "{{ item.description }}"
-      type: "{{ item.type }}"
-      authType: "{{ item.auth_type }}"
-      username: "{{ item.username | default(omit) }}"
-      password: "{{ item.password | default(omit) }}"
-      publicKey: "{{ item.public_key | default(omit) }}"
-      privateKey: "{{ item.private_key | default(omit) }}"
-      passphrase: "{{ item.passphrase | default(omit) }}"
-      privilegeEscalation: "{{ item.privilege_escalation | default('none') }}"
-      escalationUsername: "{{ item.escalation_username | default(omit) }}"
-      escalationPassword: "{{ item.escalation_password | default(omit) }}"
-      port: "{{ item.port | default(omit) }}"
-      dbType: "{{ item.db_type | default(omit) }}"
-      tags: "{{ item.tags | default('') }}"
-    validate_certs: "{{ tsc_validate_certs }}"
-    status_code: [200, 400]
-  loop: "{{ tsc_credentials }}"
-  when: tsc_credentials | length > 0
-  no_log: true
+    # System Settings Configuration
+    - name: Configure system settings
+      ansible.builtin.uri:
+        url: "https://{{ tsc_host }}:{{ tsc_port }}/rest/system"
+        method: PATCH
+        headers:
+          X-SecurityCenter: "{{ tsc_token }}"
+        body_format: json
+        body:
+          sessionTimeout: "{{ tsc_session_timeout }}"
+          idleTimeout: "{{ tsc_idle_timeout }}"
+          bannerText: "{{ tsc_banner_text }}"
+          allowPost: "{{ tsc_allow_post | lower }}"
+          enableSyslog: "{{ tsc_enable_syslog | lower }}"
+          syslogHost: "{{ tsc_syslog_host }}"
+          syslogPort: "{{ tsc_syslog_port }}"
+          syslogProtocol: "{{ tsc_syslog_protocol }}"
+        validate_certs: "{{ tsc_validate_certs }}"
+        status_code: 200
 
-# Asset Lists
-- name: Create asset lists
-  ansible.builtin.uri:
-    url: "https://{{ tsc_host }}:{{ tsc_port }}/rest/asset"
-    method: POST
-    headers:
-      X-SecurityCenter: "{{ tsc_token }}"
-    body_format: json
-    body:
-      name: "{{ item.name }}"
-      description: "{{ item.description }}"
-      type: "{{ item.type }}"
-      definedIPs: "{{ item.ips | default(omit) }}"
-      definedDNSNames: "{{ item.dns_names | default(omit) }}"
-      tags: "{{ item.tags | default('') }}"
-      context: "{{ item.context | default('') }}"
-    validate_certs: "{{ tsc_validate_certs }}"
-    status_code: [200, 400]
-  loop: "{{ tsc_assets }}"
-  when: tsc_assets | length > 0
+    # SMTP Configuration
+    - name: Configure SMTP settings
+      ansible.builtin.uri:
+        url: "https://{{ tsc_host }}:{{ tsc_port }}/rest/system/smtp"
+        method: PATCH
+        headers:
+          X-SecurityCenter: "{{ tsc_token }}"
+        body_format: json
+        body:
+          smtpHost: "{{ tsc_smtp_host }}"
+          smtpPort: "{{ tsc_smtp_port }}"
+          smtpFrom: "{{ tsc_smtp_from }}"
+          smtpAuthType: "{{ tsc_smtp_auth_type }}"
+          smtpUsername: "{{ tsc_smtp_username | default(omit) }}"
+          smtpPassword: "{{ tsc_smtp_password | default(omit) }}"
+          smtpEncryption: "{{ tsc_smtp_encryption }}"
+        validate_certs: "{{ tsc_validate_certs }}"
+        status_code: 200
+      when: tsc_configure_smtp | bool
+      no_log: true
 
-# API Key Management
-- name: Create API keys for automation
-  ansible.builtin.uri:
-    url: "https://{{ tsc_host }}:{{ tsc_port }}/rest/token/apikey"
-    method: POST
-    headers:
-      X-SecurityCenter: "{{ tsc_token }}"
-    body_format: json
-    body:
-      name: "{{ item.name }}"
-      description: "{{ item.description }}"
-      expirationDays: "{{ item.expiration_days | default('365') }}"
-    validate_certs: "{{ tsc_validate_certs }}"
-    status_code: [200, 400]
-  loop: "{{ tsc_api_keys }}"
-  when: tsc_api_keys | length > 0
-  register: api_key_result
+    # LDAP/AD Configuration
+    - name: Include LDAP configuration tasks
+      ansible.builtin.include_tasks: ldap_config.yml
+      when: tsc_configure_ldap | bool
 
-- name: Save API keys to vault
-  ansible.builtin.copy:
-    content: |
-      # Tenable Security Center API Keys
-      # Generated: {{ ansible_date_time.iso8601 }}
-      {% for result in api_key_result.results %}
-      {{ result.item.name }}:
-        api_key: {{ result.json.response.apiKey | default('ERROR') }}
-        secret_key: {{ result.json.response.secretKey | default('ERROR') }}
-      {% endfor %}
-    dest: "{{ tsc_api_key_file }}"
-    mode: '0600'
-  when:
-    - tsc_api_keys | length > 0
-    - api_key_result is defined
-  no_log: true
+    # Organization Management
+    - name: Create organizations
+      ansible.builtin.uri:
+        url: "https://{{ tsc_host }}:{{ tsc_port }}/rest/organization"
+        method: POST
+        headers:
+          X-SecurityCenter: "{{ tsc_token }}"
+        body_format: json
+        body:
+          name: "{{ item.name }}"
+          description: "{{ item.description }}"
+          address: "{{ item.address | default('') }}"
+          city: "{{ item.city | default('') }}"
+          state: "{{ item.state | default('') }}"
+          country: "{{ item.country | default('US') }}"
+          phone: "{{ item.phone | default('') }}"
+          email: "{{ item.email }}"
+          ipRange: "{{ item.ip_range | default('') }}"
+          nessusManagers: "{{ item.nessus_managers | default([]) }}"
+          zones: "{{ item.zones | default([]) }}"
+        validate_certs: "{{ tsc_validate_certs }}"
+        status_code: [200, 400]
+      loop: "{{ tsc_organizations }}"
+      when: tsc_organizations | length > 0
+      register: org_result
 
-# Audit Configuration
-- name: Configure audit settings
-  ansible.builtin.uri:
-    url: "https://{{ tsc_host }}:{{ tsc_port }}/rest/system/audit"
-    method: PATCH
-    headers:
-      X-SecurityCenter: "{{ tsc_token }}"
-    body_format: json
-    body:
-      auditLevel: "{{ tsc_audit_level }}"
-      retentionDays: "{{ tsc_audit_retention_days }}"
-      enableDetailedLogging: "{{ tsc_detailed_logging | lower }}"
-    validate_certs: "{{ tsc_validate_certs }}"
-    status_code: 200
-  when: tsc_configure_audit | bool
+    # User Management
+    - name: Create local users
+      ansible.builtin.uri:
+        url: "https://{{ tsc_host }}:{{ tsc_port }}/rest/user"
+        method: POST
+        headers:
+          X-SecurityCenter: "{{ tsc_token }}"
+        body_format: json
+        body:
+          username: "{{ item.username }}"
+          password: "{{ item.password }}"
+          firstname: "{{ item.firstname }}"
+          lastname: "{{ item.lastname }}"
+          email: "{{ item.email }}"
+          title: "{{ item.title | default('') }}"
+          phone: "{{ item.phone | default('') }}"
+          role:
+            id: "{{ item.role_id }}"
+          group:
+            id: "{{ item.group_id | default('0') }}"
+          organization:
+            id: "{{ item.organization_id | default('0') }}"
+          responsibleAssetID: "{{ item.responsible_asset_id | default('-1') }}"
+          locked: "{{ item.locked | default('false') }}"
+          mustChangePassword: "{{ item.must_change_password | default('true') }}"
+          authType: "local"
+        validate_certs: "{{ tsc_validate_certs }}"
+        status_code: [200, 400]
+      loop: "{{ tsc_users }}"
+      when: tsc_users | length > 0
+      no_log: true
 
-# Security Settings
-- name: Configure security settings
-  ansible.builtin.uri:
-    url: "https://{{ tsc_host }}:{{ tsc_port }}/rest/system/security"
-    method: PATCH
-    headers:
-      X-SecurityCenter: "{{ tsc_token }}"
-    body_format: json
-    body:
-      passwordMinLength: "{{ tsc_password_min_length }}"
-      passwordComplexity: "{{ tsc_password_complexity }}"
-      passwordExpiration: "{{ tsc_password_expiration }}"
-      maxLoginAttempts: "{{ tsc_max_login_attempts }}"
-      lockoutDuration: "{{ tsc_lockout_duration }}"
-      enableMFA: "{{ tsc_enable_mfa | lower }}"
-      mfaType: "{{ tsc_mfa_type }}"
-    validate_certs: "{{ tsc_validate_certs }}"
-    status_code: 200
+    # Role Configuration
+    - name: Create custom roles
+      ansible.builtin.uri:
+        url: "https://{{ tsc_host }}:{{ tsc_port }}/rest/role"
+        method: POST
+        headers:
+          X-SecurityCenter: "{{ tsc_token }}"
+        body_format: json
+        body:
+          name: "{{ item.name }}"
+          description: "{{ item.description }}"
+          canCreateTickets: "{{ item.can_create_tickets | default('false') }}"
+          canImportScans: "{{ item.can_import_scans | default('false') }}"
+          canManage: "{{ item.can_manage | default('false') }}"
+          canScan: "{{ item.can_scan | default('true') }}"
+          canSchedule: "{{ item.can_schedule | default('true') }}"
+          canUseAPI: "{{ item.can_use_api | default('true') }}"
+          canViewLogs: "{{ item.can_view_logs | default('false') }}"
+          scanAssetPermission: "{{ item.scan_asset_permission | default('0') }}"
+        validate_certs: "{{ tsc_validate_certs }}"
+        status_code: [200, 400]
+      loop: "{{ tsc_custom_roles }}"
+      when: tsc_custom_roles | length > 0
 
-# Plugin Feed Update
-- name: Trigger plugin feed update
-  ansible.builtin.uri:
-    url: "https://{{ tsc_host }}:{{ tsc_port }}/rest/system/updatePlugins"
-    method: POST
-    headers:
-      X-SecurityCenter: "{{ tsc_token }}"
-    validate_certs: "{{ tsc_validate_certs }}"
-    status_code: 200
-  when: tsc_update_plugins_now | bool
+    # Repository Configuration
+    - name: Create scan repositories
+      ansible.builtin.uri:
+        url: "https://{{ tsc_host }}:{{ tsc_port }}/rest/repository"
+        method: POST
+        headers:
+          X-SecurityCenter: "{{ tsc_token }}"
+        body_format: json
+        body:
+          name: "{{ item.name }}"
+          description: "{{ item.description }}"
+          dataFormat: "{{ item.data_format | default('IPv4') }}"
+          ipRange: "{{ item.ip_range | default('') }}"
+          trendingDays: "{{ item.trending_days | default('90') }}"
+          trendWithRaw: "{{ item.trend_with_raw | default('false') }}"
+          organizations: "{{ item.organizations | default([]) }}"
+        validate_certs: "{{ tsc_validate_certs }}"
+        status_code: [200, 400]
+      loop: "{{ tsc_repositories }}"
+      when: tsc_repositories | length > 0
 
-# Revoke API token
-- name: Revoke API token
-  ansible.builtin.uri:
-    url: "https://{{ tsc_host }}:{{ tsc_port }}/rest/token"
-    method: DELETE
-    headers:
-      X-SecurityCenter: "{{ tsc_token }}"
-    validate_certs: "{{ tsc_validate_certs }}"
-    status_code: 200
-  no_log: true
+    # Scanner Configuration
+    - name: Register Nessus Scanners
+      ansible.builtin.uri:
+        url: "https://{{ tsc_host }}:{{ tsc_port }}/rest/scanner"
+        method: POST
+        headers:
+          X-SecurityCenter: "{{ tsc_token }}"
+        body_format: json
+        body:
+          name: "{{ item.name }}"
+          description: "{{ item.description }}"
+          ip: "{{ item.ip }}"
+          port: "{{ item.port | default('8834') }}"
+          useProxy: "{{ item.use_proxy | default('false') }}"
+          enabled: "{{ item.enabled | default('true') }}"
+          verifyHost: "{{ item.verify_host | default('false') }}"
+          managementType: "{{ item.management_type | default('agent') }}"
+          authType: "cert"
+          zones: "{{ item.zones | default([]) }}"
+        validate_certs: "{{ tsc_validate_certs }}"
+        status_code: [200, 400]
+      loop: "{{ tsc_scanners }}"
+      when: tsc_scanners | length > 0
 
-- name: Display configuration summary
-  ansible.builtin.debug:
-    msg: |
-      Tenable Security Center Configuration Complete
-      Organizations Created: {{ tsc_organizations | length }}
-      Users Created: {{ tsc_users | length }}
-      Repositories Created: {{ tsc_repositories | length }}
-      Scanners Registered: {{ tsc_scanners | length }}
-      Credentials Created: {{ tsc_credentials | length }}
-      Asset Lists Created: {{ tsc_assets | length }}
-      API Keys Generated: {{ tsc_api_keys | length }}
+    # Credential Management
+    - name: Create scan credentials
+      ansible.builtin.uri:
+        url: "https://{{ tsc_host }}:{{ tsc_port }}/rest/credential"
+        method: POST
+        headers:
+          X-SecurityCenter: "{{ tsc_token }}"
+        body_format: json
+        body:
+          name: "{{ item.name }}"
+          description: "{{ item.description }}"
+          type: "{{ item.type }}"
+          authType: "{{ item.auth_type }}"
+          username: "{{ item.username | default(omit) }}"
+          password: "{{ item.password | default(omit) }}"
+          publicKey: "{{ item.public_key | default(omit) }}"
+          privateKey: "{{ item.private_key | default(omit) }}"
+          passphrase: "{{ item.passphrase | default(omit) }}"
+          privilegeEscalation: "{{ item.privilege_escalation | default('none') }}"
+          escalationUsername: "{{ item.escalation_username | default(omit) }}"
+          escalationPassword: "{{ item.escalation_password | default(omit) }}"
+          port: "{{ item.port | default(omit) }}"
+          dbType: "{{ item.db_type | default(omit) }}"
+          tags: "{{ item.tags | default('') }}"
+        validate_certs: "{{ tsc_validate_certs }}"
+        status_code: [200, 400]
+      loop: "{{ tsc_credentials }}"
+      when: tsc_credentials | length > 0
+      no_log: true
+
+    # Asset Lists
+    - name: Create asset lists
+      ansible.builtin.uri:
+        url: "https://{{ tsc_host }}:{{ tsc_port }}/rest/asset"
+        method: POST
+        headers:
+          X-SecurityCenter: "{{ tsc_token }}"
+        body_format: json
+        body:
+          name: "{{ item.name }}"
+          description: "{{ item.description }}"
+          type: "{{ item.type }}"
+          definedIPs: "{{ item.ips | default(omit) }}"
+          definedDNSNames: "{{ item.dns_names | default(omit) }}"
+          tags: "{{ item.tags | default('') }}"
+          context: "{{ item.context | default('') }}"
+        validate_certs: "{{ tsc_validate_certs }}"
+        status_code: [200, 400]
+      loop: "{{ tsc_assets }}"
+      when: tsc_assets | length > 0
+
+    # API Key Management
+    - name: Create API keys for automation
+      ansible.builtin.uri:
+        url: "https://{{ tsc_host }}:{{ tsc_port }}/rest/token/apikey"
+        method: POST
+        headers:
+          X-SecurityCenter: "{{ tsc_token }}"
+        body_format: json
+        body:
+          name: "{{ item.name }}"
+          description: "{{ item.description }}"
+          expirationDays: "{{ item.expiration_days | default('365') }}"
+        validate_certs: "{{ tsc_validate_certs }}"
+        status_code: [200, 400]
+      loop: "{{ tsc_api_keys }}"
+      when: tsc_api_keys | length > 0
+      register: api_key_result
+
+    - name: Save API keys to vault
+      ansible.builtin.copy:
+        content: |
+          # Tenable Security Center API Keys
+          # Generated: {{ ansible_date_time.iso8601 }}
+          {% for result in api_key_result.results %}
+          {{ result.item.name }}:
+            api_key: {{ result.json.response.apiKey | default('ERROR') }}
+            secret_key: {{ result.json.response.secretKey | default('ERROR') }}
+          {% endfor %}
+        dest: "{{ tsc_api_key_file }}"
+        mode: '0600'
+      when:
+        - tsc_api_keys | length > 0
+        - api_key_result is defined
+      no_log: true
+
+    # Audit Configuration
+    - name: Configure audit settings
+      ansible.builtin.uri:
+        url: "https://{{ tsc_host }}:{{ tsc_port }}/rest/system/audit"
+        method: PATCH
+        headers:
+          X-SecurityCenter: "{{ tsc_token }}"
+        body_format: json
+        body:
+          auditLevel: "{{ tsc_audit_level }}"
+          retentionDays: "{{ tsc_audit_retention_days }}"
+          enableDetailedLogging: "{{ tsc_detailed_logging | lower }}"
+        validate_certs: "{{ tsc_validate_certs }}"
+        status_code: 200
+      when: tsc_configure_audit | bool
+
+    # Security Settings
+    - name: Configure security settings
+      ansible.builtin.uri:
+        url: "https://{{ tsc_host }}:{{ tsc_port }}/rest/system/security"
+        method: PATCH
+        headers:
+          X-SecurityCenter: "{{ tsc_token }}"
+        body_format: json
+        body:
+          passwordMinLength: "{{ tsc_password_min_length }}"
+          passwordComplexity: "{{ tsc_password_complexity }}"
+          passwordExpiration: "{{ tsc_password_expiration }}"
+          maxLoginAttempts: "{{ tsc_max_login_attempts }}"
+          lockoutDuration: "{{ tsc_lockout_duration }}"
+          enableMFA: "{{ tsc_enable_mfa | lower }}"
+          mfaType: "{{ tsc_mfa_type }}"
+        validate_certs: "{{ tsc_validate_certs }}"
+        status_code: 200
+
+    # Plugin Feed Update
+    - name: Trigger plugin feed update
+      ansible.builtin.uri:
+        url: "https://{{ tsc_host }}:{{ tsc_port }}/rest/system/updatePlugins"
+        method: POST
+        headers:
+          X-SecurityCenter: "{{ tsc_token }}"
+        validate_certs: "{{ tsc_validate_certs }}"
+        status_code: 200
+      when: tsc_update_plugins_now | bool
+
+    # Revoke API token
+    - name: Revoke API token
+      ansible.builtin.uri:
+        url: "https://{{ tsc_host }}:{{ tsc_port }}/rest/token"
+        method: DELETE
+        headers:
+          X-SecurityCenter: "{{ tsc_token }}"
+        validate_certs: "{{ tsc_validate_certs }}"
+        status_code: 200
+      no_log: true
+
+    - name: Display configuration summary
+      ansible.builtin.debug:
+        msg: |
+          Tenable Security Center Configuration Complete
+          Organizations Created: {{ tsc_organizations | length }}
+          Users Created: {{ tsc_users | length }}
+          Repositories Created: {{ tsc_repositories | length }}
+          Scanners Registered: {{ tsc_scanners | length }}
+          Credentials Created: {{ tsc_credentials | length }}
+          Asset Lists Created: {{ tsc_assets | length }}
+          API Keys Generated: {{ tsc_api_keys | length }}
+
+    # ----------------------------- postflight -------------------
+
+    - name: "tenable/tenable_security_center_config | Postflight | Verify the guarded body ran after a passing preflight"
+      ansible.builtin.assert:
+        that:
+          - fe_tenable_tenable_security_center_config_preflight_passed | bool
+          - fe_tenable_tenable_security_center_config_status in ['running', 'succeeded']
+        fail_msg: >-
+          tenable/tenable_security_center_config: postflight validation failed - preflight passed
+          ={{ fe_tenable_tenable_security_center_config_preflight_passed | default(false) }},
+          status={{ fe_tenable_tenable_security_center_config_status | default('unknown') }}.
+        success_msg: "tenable/tenable_security_center_config: postflight validation passed."
+        quiet: true
+      tags:
+        - always
+        - postflight
+        - validation
+
+    - name: "tenable/tenable_security_center_config | Postflight | Record the successful outcome"
+      ansible.builtin.set_fact:
+        fe_tenable_tenable_security_center_config_postflight_passed: true
+        fe_tenable_tenable_security_center_config_status: "succeeded"
+      tags:
+        - always
+        - postflight
+        - validation
+
+  rescue:
+
+    - name: "tenable/tenable_security_center_config | Rescue | Capture the failing task and error detail"
+      ansible.builtin.set_fact:
+        fe_tenable_tenable_security_center_config_status: "failed"
+        fe_tenable_tenable_security_center_config_postflight_passed: false
+        fe_tenable_tenable_security_center_config_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+        fe_tenable_tenable_security_center_config_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+      tags:
+        - always
+        - rescue
+
+    - name: "tenable/tenable_security_center_config | Rescue | Report the failure"
+      ansible.builtin.debug:
+        msg: >-
+          tenable/tenable_security_center_config: FAILED at '{{ fe_tenable_tenable_security_center_config_failed_task }}' on
+          {{ inventory_hostname }} - {{ fe_tenable_tenable_security_center_config_error }}
+      tags:
+        - always
+        - rescue
+
+    - name: "tenable/tenable_security_center_config | Rescue | Re-raise the failure unless the caller opted to continue"
+      ansible.builtin.fail:
+        msg: >-
+          tenable/tenable_security_center_config failed at '{{ fe_tenable_tenable_security_center_config_failed_task }}': {{ fe_tenable_tenable_security_center_config_error }}
+      when: not (fe_validation_continue_on_error | default(false) | bool)
+      tags:
+        - always
+        - rescue
+
+  always:
+
+    - name: "tenable/tenable_security_center_config | Always | Compute the execution duration"
+      ansible.builtin.set_fact:
+        fe_tenable_tenable_security_center_config_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+        fe_tenable_tenable_security_center_config_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_tenable_tenable_security_center_config_start_epoch | default(0) | int) }}"
+      tags:
+        - always
+
+    - name: "tenable/tenable_security_center_config | Always | Publish the validation result with set_stats"
+      ansible.builtin.set_stats:
+        data:
+          fe_validation_results:
+            "tenable/tenable_security_center_config":
+              component: "tenable/tenable_security_center_config"
+              type: "role"
+              platform: "tenable"
+              host: "{{ inventory_hostname }}"
+              status: "{{ fe_tenable_tenable_security_center_config_status | default('unknown') }}"
+              preflight_passed: "{{ fe_tenable_tenable_security_center_config_preflight_passed | default(false) | bool }}"
+              postflight_passed: "{{ fe_tenable_tenable_security_center_config_postflight_passed | default(false) | bool }}"
+              started_at: "{{ fe_tenable_tenable_security_center_config_started_at | default('') }}"
+              ended_at: "{{ fe_tenable_tenable_security_center_config_ended_at | default('') }}"
+              duration_seconds: "{{ fe_tenable_tenable_security_center_config_duration_seconds | default(0) | int }}"
+              failed_task: "{{ fe_tenable_tenable_security_center_config_failed_task | default('') }}"
+              error: "{{ fe_tenable_tenable_security_center_config_error | default('') }}"
+              check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+          fe_validation_executions: 1
+          fe_validation_succeeded: "{{ 1 if fe_tenable_tenable_security_center_config_status | default('') == 'succeeded' else 0 }}"
+          fe_validation_failed: "{{ 0 if fe_tenable_tenable_security_center_config_status | default('') == 'succeeded' else 1 }}"
+          fe_validation_duration_seconds: "{{ fe_tenable_tenable_security_center_config_duration_seconds | default(0) | int }}"
+          fe_validation_failed_components: >-
+            {{ [] if fe_tenable_tenable_security_center_config_status | default('') == 'succeeded' else ['tenable/tenable_security_center_config'] }}
+        aggregate: true
+        per_host: false
+      tags:
+        - always
+
+    - name: "tenable/tenable_security_center_config | Always | Mark the validation statistics as published"
+      ansible.builtin.set_fact:
+        fe_tenable_tenable_security_center_config_stats_published: true
+      tags:
+        - always

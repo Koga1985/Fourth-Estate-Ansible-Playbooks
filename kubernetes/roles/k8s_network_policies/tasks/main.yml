@@ -2,172 +2,355 @@
 # Main tasks file for k8s_network_policies role
 # Fourth Estate compliant network isolation and segmentation
 
-- name: Validate kubernetes.core collection is available
-  ansible.builtin.assert:
-    that:
-      - "lookup('ansible.builtin.pipe', 'ansible-galaxy collection list') is search('kubernetes.core')"
-    fail_msg: "kubernetes.core collection is required. Install with: ansible-galaxy collection install kubernetes.core"
-  tags:
-    - preflight
-    - validation
+# ---------------------------------------------------------------------------
+# Fourth Estate preflight / postflight validation harness
+#
+# The task file body below is wrapped in an Ansible block/rescue/always structure:
+#
+#   block   preflight validation runs first, then the original task file body, then
+#           postflight validation. Any failure transfers control to rescue.
+#   rescue  records which task failed and why, then re-raises so a failure is
+#           never silently swallowed. Set fe_validation_continue_on_error=true
+#           to record the failure and keep going instead.
+#   always  computes the run duration and publishes the outcome through
+#           ansible.builtin.set_stats, so a wrapping playbook, AWX/AAP or CI can
+#           consume the result without scraping log output.
+#
+# Published stats (see docs/VALIDATION_AND_STATS.md):
+#   fe_validation_results['kubernetes/k8s_network_policies']  per-component record
+#   fe_validation_executions / _succeeded / _failed / _duration_seconds
+#   fe_validation_failed_components
+#
+# Add component-specific preflight checks without editing this file by setting
+#   fe_kubernetes_k8s_network_policies_required_vars: [var_one, var_two]
+# ---------------------------------------------------------------------------
 
-- name: Create network policy namespace if not exists
-  kubernetes.core.k8s:
-    state: present
-    definition:
-      apiVersion: v1
-      kind: Namespace
-      metadata:
-        name: "{{ item }}"
-        labels:
-          pod-security.kubernetes.io/enforce: "{{ k8s_pod_security_standard }}"
-          pod-security.kubernetes.io/audit: "{{ k8s_pod_security_standard }}"
-          pod-security.kubernetes.io/warn: "{{ k8s_pod_security_standard }}"
-  loop: "{{ k8s_network_policy_namespaces }}"
-  when: k8s_network_policy_namespaces is defined
-  tags:
-    - namespaces
-
-- name: Apply default deny-all ingress network policy
-  kubernetes.core.k8s:
-    state: present
-    definition: "{{ lookup('template', 'default-deny-all-ingress.yaml.j2') }}"
-    namespace: "{{ item }}"
-  loop: "{{ k8s_network_policy_namespaces }}"
-  when:
-    - k8s_network_policy_default_deny_ingress | bool
-    - k8s_network_policy_namespaces is defined
-  tags:
-    - network-policy
-    - deny-ingress
-
-- name: Apply default deny-all egress network policy
-  kubernetes.core.k8s:
-    state: present
-    definition: "{{ lookup('template', 'default-deny-all-egress.yaml.j2') }}"
-    namespace: "{{ item }}"
-  loop: "{{ k8s_network_policy_namespaces }}"
-  when:
-    - k8s_network_policy_default_deny_egress | bool
-    - k8s_network_policy_namespaces is defined
-  tags:
-    - network-policy
-    - deny-egress
-
-- name: Allow DNS traffic network policy
-  kubernetes.core.k8s:
-    state: present
-    definition: "{{ lookup('template', 'allow-dns-traffic.yaml.j2') }}"
-    namespace: "{{ item }}"
-  loop: "{{ k8s_network_policy_namespaces }}"
-  when: k8s_network_policy_allow_dns | bool
-  tags:
-    - network-policy
-    - dns
-
-- name: Allow kube-system monitoring access
-  kubernetes.core.k8s:
-    state: present
-    definition: "{{ lookup('template', 'allow-monitoring-access.yaml.j2') }}"
-    namespace: "{{ item }}"
-  loop: "{{ k8s_network_policy_namespaces }}"
-  when: k8s_network_policy_allow_monitoring | bool
-  tags:
-    - network-policy
-    - monitoring
-
-- name: Apply ingress controller access policy
-  kubernetes.core.k8s:
-    state: present
-    definition: "{{ lookup('template', 'allow-ingress-controller.yaml.j2') }}"
-    namespace: "{{ item }}"
-  loop: "{{ k8s_network_policy_namespaces }}"
-  when: k8s_network_policy_allow_ingress_controller | bool
-  tags:
-    - network-policy
-    - ingress
-
-- name: Apply namespace isolation policies
-  kubernetes.core.k8s:
-    state: present
-    definition: "{{ lookup('template', 'namespace-isolation.yaml.j2') }}"
-    namespace: "{{ item.namespace }}"
-  loop: "{{ k8s_network_policy_namespace_isolation }}"
-  when: k8s_network_policy_namespace_isolation is defined
-  tags:
-    - network-policy
-    - isolation
-
-- name: Apply pod-to-pod communication policies
-  kubernetes.core.k8s:
-    state: present
-    definition: "{{ lookup('template', 'pod-to-pod-policy.yaml.j2') }}"
-  loop: "{{ k8s_network_policy_pod_to_pod }}"
-  when: k8s_network_policy_pod_to_pod is defined
-  tags:
-    - network-policy
-    - pod-communication
-
-- name: Apply external service access policies
-  kubernetes.core.k8s:
-    state: present
-    definition: "{{ lookup('template', 'external-service-access.yaml.j2') }}"
-    namespace: "{{ item.namespace }}"
-  loop: "{{ k8s_network_policy_external_services }}"
-  when: k8s_network_policy_external_services is defined
-  tags:
-    - network-policy
-    - external-access
-
-- name: Apply Fourth Estate specific policies
-  kubernetes.core.k8s:
-    state: present
-    definition: "{{ lookup('template', 'fourth-estate-policies.yaml.j2') }}"
-  when: k8s_network_policy_fourth_estate_enabled | bool
-  tags:
-    - network-policy
-    - fourth-estate
-
-- name: Apply CIDR-based policies
-  kubernetes.core.k8s:
-    state: present
-    definition: "{{ lookup('template', 'cidr-based-policy.yaml.j2') }}"
-    namespace: "{{ item.namespace }}"
-  loop: "{{ k8s_network_policy_cidr_rules }}"
-  when: k8s_network_policy_cidr_rules is defined
-  tags:
-    - network-policy
-    - cidr
-
-- name: Apply custom network policies
-  kubernetes.core.k8s:
-    state: present
-    definition: "{{ item.definition }}"
-    namespace: "{{ item.namespace | default('default') }}"
-  loop: "{{ k8s_network_policy_custom }}"
-  when: k8s_network_policy_custom is defined
-  tags:
-    - network-policy
-    - custom
-
-- name: Validate network policies
-  kubernetes.core.k8s_info:
-    kind: NetworkPolicy
-    namespace: "{{ item }}"
-  loop: "{{ k8s_network_policy_namespaces }}"
-  register: network_policies_validation
-  tags:
-    - validation
-
-- name: Display network policy summary
-  ansible.builtin.debug:
-    msg:
-      - "Network Policies Applied Successfully"
-      - "Namespaces: {{ k8s_network_policy_namespaces | join(', ') }}"
-      - "Default Deny Ingress: {{ k8s_network_policy_default_deny_ingress }}"
-      - "Default Deny Egress: {{ k8s_network_policy_default_deny_egress }}"
-      - "DNS Allowed: {{ k8s_network_policy_allow_dns }}"
-      - "Monitoring Allowed: {{ k8s_network_policy_allow_monitoring }}"
-      - "Total Policies: {{ network_policies_validation.results | map(attribute='resources') | flatten | length }}"
+- name: "kubernetes/k8s_network_policies | Initialize validation state"
+  ansible.builtin.set_fact:
+    fe_kubernetes_k8s_network_policies_start_epoch: "{{ now(fmt='%s') | int }}"
+    fe_kubernetes_k8s_network_policies_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+    fe_kubernetes_k8s_network_policies_status: "running"
+    fe_kubernetes_k8s_network_policies_preflight_passed: false
+    fe_kubernetes_k8s_network_policies_postflight_passed: false
+    fe_kubernetes_k8s_network_policies_failed_task: ""
+    fe_kubernetes_k8s_network_policies_error: ""
+    fe_kubernetes_k8s_network_policies_stats_published: false
   tags:
     - always
+
+- name: "kubernetes/k8s_network_policies | Guarded execution with preflight and postflight validation"
+  block:
+
+    # ----------------------------- preflight --------------------
+
+    - name: "kubernetes/k8s_network_policies | Preflight | Verify the control node meets the minimum ansible-core version"
+      ansible.builtin.assert:
+        that:
+          - ansible_version.full is version(fe_validation_min_ansible_version | default('2.12'), '>=')
+        fail_msg: >-
+          kubernetes/k8s_network_policies: requires ansible-core
+          {{ fe_validation_min_ansible_version | default('2.12') }} or newer,
+          found {{ ansible_version.full }}.
+        success_msg: >-
+          kubernetes/k8s_network_policies: ansible-core {{ ansible_version.full }} satisfies the minimum.
+        quiet: true
+      tags:
+        - always
+        - preflight
+        - validation
+
+    - name: "kubernetes/k8s_network_policies | Preflight | Verify every declared required variable is defined"
+      ansible.builtin.assert:
+        that:
+          - vars[item] is defined
+        fail_msg: "kubernetes/k8s_network_policies: required variable '{{ item }}' is not defined."
+        success_msg: "kubernetes/k8s_network_policies: required variable '{{ item }}' is defined."
+        quiet: true
+      loop: "{{ fe_kubernetes_k8s_network_policies_required_vars | default([]) }}"
+      loop_control:
+        label: "{{ item }}"
+      tags:
+        - always
+        - preflight
+        - validation
+
+    - name: "kubernetes/k8s_network_policies | Preflight | Record that preflight validation passed"
+      ansible.builtin.set_fact:
+        fe_kubernetes_k8s_network_policies_preflight_passed: true
+      tags:
+        - always
+        - preflight
+        - validation
+
+    # ----------------------------- execute ----------------------
+
+    - name: Validate kubernetes.core collection is available
+      ansible.builtin.assert:
+        that:
+          - "lookup('ansible.builtin.pipe', 'ansible-galaxy collection list') is search('kubernetes.core')"
+        fail_msg: "kubernetes.core collection is required. Install with: ansible-galaxy collection install kubernetes.core"
+      tags:
+        - preflight
+        - validation
+
+    - name: Create network policy namespace if not exists
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Namespace
+          metadata:
+            name: "{{ item }}"
+            labels:
+              pod-security.kubernetes.io/enforce: "{{ k8s_pod_security_standard }}"
+              pod-security.kubernetes.io/audit: "{{ k8s_pod_security_standard }}"
+              pod-security.kubernetes.io/warn: "{{ k8s_pod_security_standard }}"
+      loop: "{{ k8s_network_policy_namespaces }}"
+      when: k8s_network_policy_namespaces is defined
+      tags:
+        - namespaces
+
+    - name: Apply default deny-all ingress network policy
+      kubernetes.core.k8s:
+        state: present
+        definition: "{{ lookup('template', 'default-deny-all-ingress.yaml.j2') }}"
+        namespace: "{{ item }}"
+      loop: "{{ k8s_network_policy_namespaces }}"
+      when:
+        - k8s_network_policy_default_deny_ingress | bool
+        - k8s_network_policy_namespaces is defined
+      tags:
+        - network-policy
+        - deny-ingress
+
+    - name: Apply default deny-all egress network policy
+      kubernetes.core.k8s:
+        state: present
+        definition: "{{ lookup('template', 'default-deny-all-egress.yaml.j2') }}"
+        namespace: "{{ item }}"
+      loop: "{{ k8s_network_policy_namespaces }}"
+      when:
+        - k8s_network_policy_default_deny_egress | bool
+        - k8s_network_policy_namespaces is defined
+      tags:
+        - network-policy
+        - deny-egress
+
+    - name: Allow DNS traffic network policy
+      kubernetes.core.k8s:
+        state: present
+        definition: "{{ lookup('template', 'allow-dns-traffic.yaml.j2') }}"
+        namespace: "{{ item }}"
+      loop: "{{ k8s_network_policy_namespaces }}"
+      when: k8s_network_policy_allow_dns | bool
+      tags:
+        - network-policy
+        - dns
+
+    - name: Allow kube-system monitoring access
+      kubernetes.core.k8s:
+        state: present
+        definition: "{{ lookup('template', 'allow-monitoring-access.yaml.j2') }}"
+        namespace: "{{ item }}"
+      loop: "{{ k8s_network_policy_namespaces }}"
+      when: k8s_network_policy_allow_monitoring | bool
+      tags:
+        - network-policy
+        - monitoring
+
+    - name: Apply ingress controller access policy
+      kubernetes.core.k8s:
+        state: present
+        definition: "{{ lookup('template', 'allow-ingress-controller.yaml.j2') }}"
+        namespace: "{{ item }}"
+      loop: "{{ k8s_network_policy_namespaces }}"
+      when: k8s_network_policy_allow_ingress_controller | bool
+      tags:
+        - network-policy
+        - ingress
+
+    - name: Apply namespace isolation policies
+      kubernetes.core.k8s:
+        state: present
+        definition: "{{ lookup('template', 'namespace-isolation.yaml.j2') }}"
+        namespace: "{{ item.namespace }}"
+      loop: "{{ k8s_network_policy_namespace_isolation }}"
+      when: k8s_network_policy_namespace_isolation is defined
+      tags:
+        - network-policy
+        - isolation
+
+    - name: Apply pod-to-pod communication policies
+      kubernetes.core.k8s:
+        state: present
+        definition: "{{ lookup('template', 'pod-to-pod-policy.yaml.j2') }}"
+      loop: "{{ k8s_network_policy_pod_to_pod }}"
+      when: k8s_network_policy_pod_to_pod is defined
+      tags:
+        - network-policy
+        - pod-communication
+
+    - name: Apply external service access policies
+      kubernetes.core.k8s:
+        state: present
+        definition: "{{ lookup('template', 'external-service-access.yaml.j2') }}"
+        namespace: "{{ item.namespace }}"
+      loop: "{{ k8s_network_policy_external_services }}"
+      when: k8s_network_policy_external_services is defined
+      tags:
+        - network-policy
+        - external-access
+
+    - name: Apply Fourth Estate specific policies
+      kubernetes.core.k8s:
+        state: present
+        definition: "{{ lookup('template', 'fourth-estate-policies.yaml.j2') }}"
+      when: k8s_network_policy_fourth_estate_enabled | bool
+      tags:
+        - network-policy
+        - fourth-estate
+
+    - name: Apply CIDR-based policies
+      kubernetes.core.k8s:
+        state: present
+        definition: "{{ lookup('template', 'cidr-based-policy.yaml.j2') }}"
+        namespace: "{{ item.namespace }}"
+      loop: "{{ k8s_network_policy_cidr_rules }}"
+      when: k8s_network_policy_cidr_rules is defined
+      tags:
+        - network-policy
+        - cidr
+
+    - name: Apply custom network policies
+      kubernetes.core.k8s:
+        state: present
+        definition: "{{ item.definition }}"
+        namespace: "{{ item.namespace | default('default') }}"
+      loop: "{{ k8s_network_policy_custom }}"
+      when: k8s_network_policy_custom is defined
+      tags:
+        - network-policy
+        - custom
+
+    - name: Validate network policies
+      kubernetes.core.k8s_info:
+        kind: NetworkPolicy
+        namespace: "{{ item }}"
+      loop: "{{ k8s_network_policy_namespaces }}"
+      register: network_policies_validation
+      tags:
+        - validation
+
+    - name: Display network policy summary
+      ansible.builtin.debug:
+        msg:
+          - "Network Policies Applied Successfully"
+          - "Namespaces: {{ k8s_network_policy_namespaces | join(', ') }}"
+          - "Default Deny Ingress: {{ k8s_network_policy_default_deny_ingress }}"
+          - "Default Deny Egress: {{ k8s_network_policy_default_deny_egress }}"
+          - "DNS Allowed: {{ k8s_network_policy_allow_dns }}"
+          - "Monitoring Allowed: {{ k8s_network_policy_allow_monitoring }}"
+          - "Total Policies: {{ network_policies_validation.results | map(attribute='resources') | flatten | length }}"
+      tags:
+        - always
+
+    # ----------------------------- postflight -------------------
+
+    - name: "kubernetes/k8s_network_policies | Postflight | Verify the guarded body ran after a passing preflight"
+      ansible.builtin.assert:
+        that:
+          - fe_kubernetes_k8s_network_policies_preflight_passed | bool
+          - fe_kubernetes_k8s_network_policies_status in ['running', 'succeeded']
+        fail_msg: >-
+          kubernetes/k8s_network_policies: postflight validation failed - preflight passed
+          ={{ fe_kubernetes_k8s_network_policies_preflight_passed | default(false) }},
+          status={{ fe_kubernetes_k8s_network_policies_status | default('unknown') }}.
+        success_msg: "kubernetes/k8s_network_policies: postflight validation passed."
+        quiet: true
+      tags:
+        - always
+        - postflight
+        - validation
+
+    - name: "kubernetes/k8s_network_policies | Postflight | Record the successful outcome"
+      ansible.builtin.set_fact:
+        fe_kubernetes_k8s_network_policies_postflight_passed: true
+        fe_kubernetes_k8s_network_policies_status: "succeeded"
+      tags:
+        - always
+        - postflight
+        - validation
+
+  rescue:
+
+    - name: "kubernetes/k8s_network_policies | Rescue | Capture the failing task and error detail"
+      ansible.builtin.set_fact:
+        fe_kubernetes_k8s_network_policies_status: "failed"
+        fe_kubernetes_k8s_network_policies_postflight_passed: false
+        fe_kubernetes_k8s_network_policies_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+        fe_kubernetes_k8s_network_policies_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+      tags:
+        - always
+        - rescue
+
+    - name: "kubernetes/k8s_network_policies | Rescue | Report the failure"
+      ansible.builtin.debug:
+        msg: >-
+          kubernetes/k8s_network_policies: FAILED at '{{ fe_kubernetes_k8s_network_policies_failed_task }}' on
+          {{ inventory_hostname }} - {{ fe_kubernetes_k8s_network_policies_error }}
+      tags:
+        - always
+        - rescue
+
+    - name: "kubernetes/k8s_network_policies | Rescue | Re-raise the failure unless the caller opted to continue"
+      ansible.builtin.fail:
+        msg: >-
+          kubernetes/k8s_network_policies failed at '{{ fe_kubernetes_k8s_network_policies_failed_task }}': {{ fe_kubernetes_k8s_network_policies_error }}
+      when: not (fe_validation_continue_on_error | default(false) | bool)
+      tags:
+        - always
+        - rescue
+
+  always:
+
+    - name: "kubernetes/k8s_network_policies | Always | Compute the execution duration"
+      ansible.builtin.set_fact:
+        fe_kubernetes_k8s_network_policies_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+        fe_kubernetes_k8s_network_policies_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_kubernetes_k8s_network_policies_start_epoch | default(0) | int) }}"
+      tags:
+        - always
+
+    - name: "kubernetes/k8s_network_policies | Always | Publish the validation result with set_stats"
+      ansible.builtin.set_stats:
+        data:
+          fe_validation_results:
+            "kubernetes/k8s_network_policies":
+              component: "kubernetes/k8s_network_policies"
+              type: "role"
+              platform: "kubernetes"
+              host: "{{ inventory_hostname }}"
+              status: "{{ fe_kubernetes_k8s_network_policies_status | default('unknown') }}"
+              preflight_passed: "{{ fe_kubernetes_k8s_network_policies_preflight_passed | default(false) | bool }}"
+              postflight_passed: "{{ fe_kubernetes_k8s_network_policies_postflight_passed | default(false) | bool }}"
+              started_at: "{{ fe_kubernetes_k8s_network_policies_started_at | default('') }}"
+              ended_at: "{{ fe_kubernetes_k8s_network_policies_ended_at | default('') }}"
+              duration_seconds: "{{ fe_kubernetes_k8s_network_policies_duration_seconds | default(0) | int }}"
+              failed_task: "{{ fe_kubernetes_k8s_network_policies_failed_task | default('') }}"
+              error: "{{ fe_kubernetes_k8s_network_policies_error | default('') }}"
+              check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+          fe_validation_executions: 1
+          fe_validation_succeeded: "{{ 1 if fe_kubernetes_k8s_network_policies_status | default('') == 'succeeded' else 0 }}"
+          fe_validation_failed: "{{ 0 if fe_kubernetes_k8s_network_policies_status | default('') == 'succeeded' else 1 }}"
+          fe_validation_duration_seconds: "{{ fe_kubernetes_k8s_network_policies_duration_seconds | default(0) | int }}"
+          fe_validation_failed_components: >-
+            {{ [] if fe_kubernetes_k8s_network_policies_status | default('') == 'succeeded' else ['kubernetes/k8s_network_policies'] }}
+        aggregate: true
+        per_host: false
+      tags:
+        - always
+
+    - name: "kubernetes/k8s_network_policies | Always | Mark the validation statistics as published"
+      ansible.builtin.set_fact:
+        fe_kubernetes_k8s_network_policies_stats_published: true
+      tags:
+        - always

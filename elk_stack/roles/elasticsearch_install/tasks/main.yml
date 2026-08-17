@@ -1,297 +1,480 @@
 ---
 # Elasticsearch Installation Tasks
 
-- name: Include OS-specific variables
-  include_vars: "{{ ansible_os_family }}.yml"
-  when: ansible_os_family in ['RedHat', 'Debian']
+# ---------------------------------------------------------------------------
+# Fourth Estate preflight / postflight validation harness
+#
+# The task file body below is wrapped in an Ansible block/rescue/always structure:
+#
+#   block   preflight validation runs first, then the original task file body, then
+#           postflight validation. Any failure transfers control to rescue.
+#   rescue  records which task failed and why, then re-raises so a failure is
+#           never silently swallowed. Set fe_validation_continue_on_error=true
+#           to record the failure and keep going instead.
+#   always  computes the run duration and publishes the outcome through
+#           ansible.builtin.set_stats, so a wrapping playbook, AWX/AAP or CI can
+#           consume the result without scraping log output.
+#
+# Published stats (see docs/VALIDATION_AND_STATS.md):
+#   fe_validation_results['elk_stack/elasticsearch_install']  per-component record
+#   fe_validation_executions / _succeeded / _failed / _duration_seconds
+#   fe_validation_failed_components
+#
+# Add component-specific preflight checks without editing this file by setting
+#   fe_elk_stack_elasticsearch_install_required_vars: [var_one, var_two]
+# ---------------------------------------------------------------------------
 
-- name: Validate Elasticsearch configuration
-  assert:
-    that:
-      - elasticsearch_heap_size is defined
-      - elasticsearch_version is defined
-      - elasticsearch_data_dir is defined
-    fail_msg: "Required Elasticsearch variables are not defined"
-    success_msg: "Elasticsearch configuration validated"
+- name: "elk_stack/elasticsearch_install | Initialize validation state"
+  ansible.builtin.set_fact:
+    fe_elk_stack_elasticsearch_install_start_epoch: "{{ now(fmt='%s') | int }}"
+    fe_elk_stack_elasticsearch_install_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+    fe_elk_stack_elasticsearch_install_status: "running"
+    fe_elk_stack_elasticsearch_install_preflight_passed: false
+    fe_elk_stack_elasticsearch_install_postflight_passed: false
+    fe_elk_stack_elasticsearch_install_failed_task: ""
+    fe_elk_stack_elasticsearch_install_error: ""
+    fe_elk_stack_elasticsearch_install_stats_published: false
+  tags:
+    - always
 
-- name: Create Elasticsearch group
-  group:
-    name: "{{ elasticsearch_group }}"
-    state: present
-    system: yes
+- name: "elk_stack/elasticsearch_install | Guarded execution with preflight and postflight validation"
+  block:
 
-- name: Create Elasticsearch user
-  user:
-    name: "{{ elasticsearch_user }}"
-    group: "{{ elasticsearch_group }}"
-    home: "{{ elasticsearch_home }}"
-    shell: /bin/bash
-    system: yes
-    create_home: no
+    # ----------------------------- preflight --------------------
 
-- name: Install prerequisites
-  package:
-    name:
-      - apt-transport-https
-      - gnupg2
-      - curl
-      - wget
-    state: present
-  when: ansible_os_family == 'Debian'
+    - name: "elk_stack/elasticsearch_install | Preflight | Verify the control node meets the minimum ansible-core version"
+      ansible.builtin.assert:
+        that:
+          - ansible_version.full is version(fe_validation_min_ansible_version | default('2.12'), '>=')
+        fail_msg: >-
+          elk_stack/elasticsearch_install: requires ansible-core
+          {{ fe_validation_min_ansible_version | default('2.12') }} or newer,
+          found {{ ansible_version.full }}.
+        success_msg: >-
+          elk_stack/elasticsearch_install: ansible-core {{ ansible_version.full }} satisfies the minimum.
+        quiet: true
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: Install prerequisites (RedHat)
-  package:
-    name:
-      - curl
-      - wget
-    state: present
-  when: ansible_os_family == 'RedHat'
+    - name: "elk_stack/elasticsearch_install | Preflight | Verify every declared required variable is defined"
+      ansible.builtin.assert:
+        that:
+          - vars[item] is defined
+        fail_msg: "elk_stack/elasticsearch_install: required variable '{{ item }}' is not defined."
+        success_msg: "elk_stack/elasticsearch_install: required variable '{{ item }}' is defined."
+        quiet: true
+      loop: "{{ fe_elk_stack_elasticsearch_install_required_vars | default([]) }}"
+      loop_control:
+        label: "{{ item }}"
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: Add Elasticsearch GPG key
-  apt_key:
-    url: "{{ elasticsearch_repo_gpg_key }}"
-    state: present
-  when:
-    - ansible_os_family == 'Debian'
-    - elasticsearch_use_official_repo | bool
+    - name: "elk_stack/elasticsearch_install | Preflight | Record that preflight validation passed"
+      ansible.builtin.set_fact:
+        fe_elk_stack_elasticsearch_install_preflight_passed: true
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: Add Elasticsearch repository (Debian)
-  apt_repository:
-    repo: "deb https://artifacts.elastic.co/packages/{{ elasticsearch_major_version }}/apt stable main"
-    state: present
-    filename: elasticsearch
-  when:
-    - ansible_os_family == 'Debian'
-    - elasticsearch_use_official_repo | bool
+    # ----------------------------- execute ----------------------
 
-- name: Add Elasticsearch repository (RedHat)
-  yum_repository:
-    name: elasticsearch
-    description: "Elasticsearch repository for {{ elasticsearch_major_version }} packages"
-    baseurl: "https://artifacts.elastic.co/packages/{{ elasticsearch_major_version }}/yum"
-    gpgkey: "{{ elasticsearch_repo_gpg_key }}"
-    gpgcheck: yes
-    enabled: yes
-  when:
-    - ansible_os_family == 'RedHat'
-    - elasticsearch_use_official_repo | bool
+    - name: Include OS-specific variables
+      include_vars: "{{ ansible_os_family }}.yml"
+      when: ansible_os_family in ['RedHat', 'Debian']
 
-- name: Install Elasticsearch package
-  package:
-    name: "elasticsearch{% if elasticsearch_version is defined and elasticsearch_version != '' %}={{ elasticsearch_version }}{% endif %}"
-    state: present
-    update_cache: yes
-  when: elasticsearch_install_method == 'package'
-  notify: restart elasticsearch
+    - name: Validate Elasticsearch configuration
+      assert:
+        that:
+          - elasticsearch_heap_size is defined
+          - elasticsearch_version is defined
+          - elasticsearch_data_dir is defined
+        fail_msg: "Required Elasticsearch variables are not defined"
+        success_msg: "Elasticsearch configuration validated"
 
-- name: Hold Elasticsearch package version (Debian)
-  dpkg_selections:
-    name: elasticsearch
-    selection: hold
-  when:
-    - ansible_os_family == 'Debian'
-    - elasticsearch_install_method == 'package'
+    - name: Create Elasticsearch group
+      group:
+        name: "{{ elasticsearch_group }}"
+        state: present
+        system: yes
 
-- name: Create Elasticsearch directories
-  file:
-    path: "{{ item }}"
-    state: directory
-    owner: "{{ elasticsearch_user }}"
-    group: "{{ elasticsearch_group }}"
-    mode: '0755'
-  loop:
-    - "{{ elasticsearch_config_dir }}"
-    - "{{ elasticsearch_log_dir }}"
-    - "{{ elasticsearch_pid_dir }}"
-    - "{{ elasticsearch_backup_dir }}"
-    - "{{ elasticsearch_data_dir }}/tmp"
+    - name: Create Elasticsearch user
+      user:
+        name: "{{ elasticsearch_user }}"
+        group: "{{ elasticsearch_group }}"
+        home: "{{ elasticsearch_home }}"
+        shell: /bin/bash
+        system: yes
+        create_home: no
 
-- name: Create multiple data directories
-  file:
-    path: "{{ item }}"
-    state: directory
-    owner: "{{ elasticsearch_user }}"
-    group: "{{ elasticsearch_group }}"
-    mode: '0755'
-  loop: "{{ elasticsearch_data_paths }}"
-  when: elasticsearch_data_paths | length > 1
+    - name: Install prerequisites
+      package:
+        name:
+          - apt-transport-https
+          - gnupg2
+          - curl
+          - wget
+        state: present
+      when: ansible_os_family == 'Debian'
 
-- name: Create snapshot directory
-  file:
-    path: "{{ elasticsearch_snapshot_dir }}"
-    state: directory
-    owner: "{{ elasticsearch_user }}"
-    group: "{{ elasticsearch_group }}"
-    mode: '0755'
-  when: elasticsearch_snapshot_dir is defined
+    - name: Install prerequisites (RedHat)
+      package:
+        name:
+          - curl
+          - wget
+        state: present
+      when: ansible_os_family == 'RedHat'
 
-- name: Configure system limits for Elasticsearch
-  pam_limits:
-    domain: "{{ elasticsearch_user }}"
-    limit_type: "{{ item.limit_type }}"
-    limit_item: "{{ item.limit_item }}"
-    value: "{{ item.value }}"
-  loop:
-    - { limit_type: 'soft', limit_item: 'nofile', value: "{{ elasticsearch_max_open_files }}" }
-    - { limit_type: 'hard', limit_item: 'nofile', value: "{{ elasticsearch_max_open_files }}" }
-    - { limit_type: 'soft', limit_item: 'memlock', value: "{{ elasticsearch_max_locked_memory }}" }
-    - { limit_type: 'hard', limit_item: 'memlock', value: "{{ elasticsearch_max_locked_memory }}" }
-    - { limit_type: 'soft', limit_item: 'nproc', value: "{{ elasticsearch_max_threads }}" }
-    - { limit_type: 'hard', limit_item: 'nproc', value: "{{ elasticsearch_max_threads }}" }
+    - name: Add Elasticsearch GPG key
+      apt_key:
+        url: "{{ elasticsearch_repo_gpg_key }}"
+        state: present
+      when:
+        - ansible_os_family == 'Debian'
+        - elasticsearch_use_official_repo | bool
 
-- name: Set vm.max_map_count for Elasticsearch
-  sysctl:
-    name: vm.max_map_count
-    value: "{{ elasticsearch_max_map_count }}"
-    state: present
-    sysctl_set: yes
-    reload: yes
+    - name: Add Elasticsearch repository (Debian)
+      apt_repository:
+        repo: "deb https://artifacts.elastic.co/packages/{{ elasticsearch_major_version }}/apt stable main"
+        state: present
+        filename: elasticsearch
+      when:
+        - ansible_os_family == 'Debian'
+        - elasticsearch_use_official_repo | bool
 
-- name: Disable swap
-  command: swapoff -a
-  when: elasticsearch_disable_swap | bool
-  changed_when: false
-  ignore_errors: yes
+    - name: Add Elasticsearch repository (RedHat)
+      yum_repository:
+        name: elasticsearch
+        description: "Elasticsearch repository for {{ elasticsearch_major_version }} packages"
+        baseurl: "https://artifacts.elastic.co/packages/{{ elasticsearch_major_version }}/yum"
+        gpgkey: "{{ elasticsearch_repo_gpg_key }}"
+        gpgcheck: yes
+        enabled: yes
+      when:
+        - ansible_os_family == 'RedHat'
+        - elasticsearch_use_official_repo | bool
 
-- name: Disable swap permanently
-  replace:
-    path: /etc/fstab
-    regexp: '^([^#].*?\sswap\s+sw\s+.*)$'
-    replace: '# \1'
-  when: elasticsearch_disable_swap | bool
+    - name: Install Elasticsearch package
+      package:
+        name: "elasticsearch{% if elasticsearch_version is defined and elasticsearch_version != '' %}={{ elasticsearch_version }}{% endif %}"
+        state: present
+        update_cache: yes
+      when: elasticsearch_install_method == 'package'
+      notify: restart elasticsearch
 
-- name: Configure JVM options
-  template:
-    src: jvm.options.j2
-    dest: "{{ elasticsearch_config_dir }}/jvm.options"
-    owner: root
-    group: "{{ elasticsearch_group }}"
-    mode: '0660'
-  notify: restart elasticsearch
+    - name: Hold Elasticsearch package version (Debian)
+      dpkg_selections:
+        name: elasticsearch
+        selection: hold
+      when:
+        - ansible_os_family == 'Debian'
+        - elasticsearch_install_method == 'package'
 
-- name: Configure Elasticsearch environment
-  template:
-    src: elasticsearch.env.j2
-    dest: /etc/default/elasticsearch
-    owner: root
-    group: root
-    mode: '0644'
-  notify: restart elasticsearch
+    - name: Create Elasticsearch directories
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: "{{ elasticsearch_user }}"
+        group: "{{ elasticsearch_group }}"
+        mode: '0755'
+      loop:
+        - "{{ elasticsearch_config_dir }}"
+        - "{{ elasticsearch_log_dir }}"
+        - "{{ elasticsearch_pid_dir }}"
+        - "{{ elasticsearch_backup_dir }}"
+        - "{{ elasticsearch_data_dir }}/tmp"
 
-- name: Configure systemd service
-  template:
-    src: elasticsearch.service.j2
-    dest: /etc/systemd/system/elasticsearch.service
-    owner: root
-    group: root
-    mode: '0644'
-  notify:
-    - reload systemd
-    - restart elasticsearch
+    - name: Create multiple data directories
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: "{{ elasticsearch_user }}"
+        group: "{{ elasticsearch_group }}"
+        mode: '0755'
+      loop: "{{ elasticsearch_data_paths }}"
+      when: elasticsearch_data_paths | length > 1
 
-- name: Create systemd override directory
-  file:
-    path: /etc/systemd/system/elasticsearch.service.d
-    state: directory
-    mode: '0755'
+    - name: Create snapshot directory
+      file:
+        path: "{{ elasticsearch_snapshot_dir }}"
+        state: directory
+        owner: "{{ elasticsearch_user }}"
+        group: "{{ elasticsearch_group }}"
+        mode: '0755'
+      when: elasticsearch_snapshot_dir is defined
 
-- name: Configure systemd overrides
-  template:
-    src: elasticsearch.service.override.j2
-    dest: /etc/systemd/system/elasticsearch.service.d/override.conf
-    owner: root
-    group: root
-    mode: '0644'
-  notify:
-    - reload systemd
-    - restart elasticsearch
+    - name: Configure system limits for Elasticsearch
+      pam_limits:
+        domain: "{{ elasticsearch_user }}"
+        limit_type: "{{ item.limit_type }}"
+        limit_item: "{{ item.limit_item }}"
+        value: "{{ item.value }}"
+      loop:
+        - { limit_type: 'soft', limit_item: 'nofile', value: "{{ elasticsearch_max_open_files }}" }
+        - { limit_type: 'hard', limit_item: 'nofile', value: "{{ elasticsearch_max_open_files }}" }
+        - { limit_type: 'soft', limit_item: 'memlock', value: "{{ elasticsearch_max_locked_memory }}" }
+        - { limit_type: 'hard', limit_item: 'memlock', value: "{{ elasticsearch_max_locked_memory }}" }
+        - { limit_type: 'soft', limit_item: 'nproc', value: "{{ elasticsearch_max_threads }}" }
+        - { limit_type: 'hard', limit_item: 'nproc', value: "{{ elasticsearch_max_threads }}" }
 
-- name: Configure firewall for Elasticsearch HTTP
-  firewalld:
-    port: "{{ elasticsearch_http_port }}/tcp"
-    permanent: yes
-    state: enabled
-    zone: "{{ elasticsearch_firewall_zone }}"
-    immediate: yes
-  when:
-    - elasticsearch_configure_firewall | bool
-    - ansible_os_family == 'RedHat'
-  ignore_errors: yes
+    - name: Set vm.max_map_count for Elasticsearch
+      sysctl:
+        name: vm.max_map_count
+        value: "{{ elasticsearch_max_map_count }}"
+        state: present
+        sysctl_set: yes
+        reload: yes
 
-- name: Configure firewall for Elasticsearch transport
-  firewalld:
-    port: "{{ elasticsearch_transport_port }}/tcp"
-    permanent: yes
-    state: enabled
-    zone: "{{ elasticsearch_firewall_zone }}"
-    immediate: yes
-  when:
-    - elasticsearch_configure_firewall | bool
-    - ansible_os_family == 'RedHat'
-  ignore_errors: yes
+    - name: Disable swap
+      command: swapoff -a
+      when: elasticsearch_disable_swap | bool
+      changed_when: false
+      ignore_errors: yes
 
-- name: Configure firewall (UFW)
-  ufw:
-    rule: allow
-    port: "{{ item }}"
-    proto: tcp
-  loop:
-    - "{{ elasticsearch_http_port }}"
-    - "{{ elasticsearch_transport_port }}"
-  when:
-    - elasticsearch_configure_firewall | bool
-    - ansible_os_family == 'Debian'
-  ignore_errors: yes
+    - name: Disable swap permanently
+      replace:
+        path: /etc/fstab
+        regexp: '^([^#].*?\sswap\s+sw\s+.*)$'
+        replace: '# \1'
+      when: elasticsearch_disable_swap | bool
 
-- name: Install Elasticsearch plugins
-  elasticsearch_plugin:
-    name: "{{ item.name }}"
-    state: "{{ item.state | default('present') }}"
-  loop: "{{ elasticsearch_plugins }}"
-  when: elasticsearch_plugins | length > 0
-  notify: restart elasticsearch
+    - name: Configure JVM options
+      template:
+        src: jvm.options.j2
+        dest: "{{ elasticsearch_config_dir }}/jvm.options"
+        owner: root
+        group: "{{ elasticsearch_group }}"
+        mode: '0660'
+      notify: restart elasticsearch
 
-- name: Enable Elasticsearch service
-  systemd:
-    name: elasticsearch
-    enabled: "{{ elasticsearch_service_enabled }}"
-    daemon_reload: yes
+    - name: Configure Elasticsearch environment
+      template:
+        src: elasticsearch.env.j2
+        dest: /etc/default/elasticsearch
+        owner: root
+        group: root
+        mode: '0644'
+      notify: restart elasticsearch
 
-- name: Start Elasticsearch service
-  systemd:
-    name: elasticsearch
-    state: "{{ elasticsearch_service_state }}"
-  when: elasticsearch_service_state is defined
+    - name: Configure systemd service
+      template:
+        src: elasticsearch.service.j2
+        dest: /etc/systemd/system/elasticsearch.service
+        owner: root
+        group: root
+        mode: '0644'
+      notify:
+        - reload systemd
+        - restart elasticsearch
 
-- name: Wait for Elasticsearch to start
-  wait_for:
-    host: localhost
-    port: "{{ elasticsearch_http_port }}"
-    delay: 10
-    timeout: 300
-  when: elasticsearch_service_state == 'started'
+    - name: Create systemd override directory
+      file:
+        path: /etc/systemd/system/elasticsearch.service.d
+        state: directory
+        mode: '0755'
 
-- name: Check Elasticsearch cluster health
-  uri:
-    url: "http://localhost:{{ elasticsearch_http_port }}/_cluster/health"
-    method: GET
-    status_code: [200, 401]
-  register: elasticsearch_health
-  until: elasticsearch_health.status in [200, 401]
-  retries: 5
-  delay: 10
-  when: elasticsearch_service_state == 'started'
-  ignore_errors: yes
+    - name: Configure systemd overrides
+      template:
+        src: elasticsearch.service.override.j2
+        dest: /etc/systemd/system/elasticsearch.service.d/override.conf
+        owner: root
+        group: root
+        mode: '0644'
+      notify:
+        - reload systemd
+        - restart elasticsearch
 
-- name: Display Elasticsearch version
-  uri:
-    url: "http://localhost:{{ elasticsearch_http_port }}"
-    method: GET
-    status_code: [200, 401]
-  register: elasticsearch_version_info
-  when: elasticsearch_service_state == 'started'
-  ignore_errors: yes
+    - name: Configure firewall for Elasticsearch HTTP
+      firewalld:
+        port: "{{ elasticsearch_http_port }}/tcp"
+        permanent: yes
+        state: enabled
+        zone: "{{ elasticsearch_firewall_zone }}"
+        immediate: yes
+      when:
+        - elasticsearch_configure_firewall | bool
+        - ansible_os_family == 'RedHat'
+      ignore_errors: yes
 
-- name: Show Elasticsearch installation status
-  debug:
-    msg: "Elasticsearch {{ elasticsearch_version }} installed successfully"
+    - name: Configure firewall for Elasticsearch transport
+      firewalld:
+        port: "{{ elasticsearch_transport_port }}/tcp"
+        permanent: yes
+        state: enabled
+        zone: "{{ elasticsearch_firewall_zone }}"
+        immediate: yes
+      when:
+        - elasticsearch_configure_firewall | bool
+        - ansible_os_family == 'RedHat'
+      ignore_errors: yes
+
+    - name: Configure firewall (UFW)
+      ufw:
+        rule: allow
+        port: "{{ item }}"
+        proto: tcp
+      loop:
+        - "{{ elasticsearch_http_port }}"
+        - "{{ elasticsearch_transport_port }}"
+      when:
+        - elasticsearch_configure_firewall | bool
+        - ansible_os_family == 'Debian'
+      ignore_errors: yes
+
+    - name: Install Elasticsearch plugins
+      elasticsearch_plugin:
+        name: "{{ item.name }}"
+        state: "{{ item.state | default('present') }}"
+      loop: "{{ elasticsearch_plugins }}"
+      when: elasticsearch_plugins | length > 0
+      notify: restart elasticsearch
+
+    - name: Enable Elasticsearch service
+      systemd:
+        name: elasticsearch
+        enabled: "{{ elasticsearch_service_enabled }}"
+        daemon_reload: yes
+
+    - name: Start Elasticsearch service
+      systemd:
+        name: elasticsearch
+        state: "{{ elasticsearch_service_state }}"
+      when: elasticsearch_service_state is defined
+
+    - name: Wait for Elasticsearch to start
+      wait_for:
+        host: localhost
+        port: "{{ elasticsearch_http_port }}"
+        delay: 10
+        timeout: 300
+      when: elasticsearch_service_state == 'started'
+
+    - name: Check Elasticsearch cluster health
+      uri:
+        url: "http://localhost:{{ elasticsearch_http_port }}/_cluster/health"
+        method: GET
+        status_code: [200, 401]
+      register: elasticsearch_health
+      until: elasticsearch_health.status in [200, 401]
+      retries: 5
+      delay: 10
+      when: elasticsearch_service_state == 'started'
+      ignore_errors: yes
+
+    - name: Display Elasticsearch version
+      uri:
+        url: "http://localhost:{{ elasticsearch_http_port }}"
+        method: GET
+        status_code: [200, 401]
+      register: elasticsearch_version_info
+      when: elasticsearch_service_state == 'started'
+      ignore_errors: yes
+
+    - name: Show Elasticsearch installation status
+      debug:
+        msg: "Elasticsearch {{ elasticsearch_version }} installed successfully"
+
+    # ----------------------------- postflight -------------------
+
+    - name: "elk_stack/elasticsearch_install | Postflight | Verify the guarded body ran after a passing preflight"
+      ansible.builtin.assert:
+        that:
+          - fe_elk_stack_elasticsearch_install_preflight_passed | bool
+          - fe_elk_stack_elasticsearch_install_status in ['running', 'succeeded']
+        fail_msg: >-
+          elk_stack/elasticsearch_install: postflight validation failed - preflight passed
+          ={{ fe_elk_stack_elasticsearch_install_preflight_passed | default(false) }},
+          status={{ fe_elk_stack_elasticsearch_install_status | default('unknown') }}.
+        success_msg: "elk_stack/elasticsearch_install: postflight validation passed."
+        quiet: true
+      tags:
+        - always
+        - postflight
+        - validation
+
+    - name: "elk_stack/elasticsearch_install | Postflight | Record the successful outcome"
+      ansible.builtin.set_fact:
+        fe_elk_stack_elasticsearch_install_postflight_passed: true
+        fe_elk_stack_elasticsearch_install_status: "succeeded"
+      tags:
+        - always
+        - postflight
+        - validation
+
+  rescue:
+
+    - name: "elk_stack/elasticsearch_install | Rescue | Capture the failing task and error detail"
+      ansible.builtin.set_fact:
+        fe_elk_stack_elasticsearch_install_status: "failed"
+        fe_elk_stack_elasticsearch_install_postflight_passed: false
+        fe_elk_stack_elasticsearch_install_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+        fe_elk_stack_elasticsearch_install_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+      tags:
+        - always
+        - rescue
+
+    - name: "elk_stack/elasticsearch_install | Rescue | Report the failure"
+      ansible.builtin.debug:
+        msg: >-
+          elk_stack/elasticsearch_install: FAILED at '{{ fe_elk_stack_elasticsearch_install_failed_task }}' on
+          {{ inventory_hostname }} - {{ fe_elk_stack_elasticsearch_install_error }}
+      tags:
+        - always
+        - rescue
+
+    - name: "elk_stack/elasticsearch_install | Rescue | Re-raise the failure unless the caller opted to continue"
+      ansible.builtin.fail:
+        msg: >-
+          elk_stack/elasticsearch_install failed at '{{ fe_elk_stack_elasticsearch_install_failed_task }}': {{ fe_elk_stack_elasticsearch_install_error }}
+      when: not (fe_validation_continue_on_error | default(false) | bool)
+      tags:
+        - always
+        - rescue
+
+  always:
+
+    - name: "elk_stack/elasticsearch_install | Always | Compute the execution duration"
+      ansible.builtin.set_fact:
+        fe_elk_stack_elasticsearch_install_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+        fe_elk_stack_elasticsearch_install_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_elk_stack_elasticsearch_install_start_epoch | default(0) | int) }}"
+      tags:
+        - always
+
+    - name: "elk_stack/elasticsearch_install | Always | Publish the validation result with set_stats"
+      ansible.builtin.set_stats:
+        data:
+          fe_validation_results:
+            "elk_stack/elasticsearch_install":
+              component: "elk_stack/elasticsearch_install"
+              type: "role"
+              platform: "elk_stack"
+              host: "{{ inventory_hostname }}"
+              status: "{{ fe_elk_stack_elasticsearch_install_status | default('unknown') }}"
+              preflight_passed: "{{ fe_elk_stack_elasticsearch_install_preflight_passed | default(false) | bool }}"
+              postflight_passed: "{{ fe_elk_stack_elasticsearch_install_postflight_passed | default(false) | bool }}"
+              started_at: "{{ fe_elk_stack_elasticsearch_install_started_at | default('') }}"
+              ended_at: "{{ fe_elk_stack_elasticsearch_install_ended_at | default('') }}"
+              duration_seconds: "{{ fe_elk_stack_elasticsearch_install_duration_seconds | default(0) | int }}"
+              failed_task: "{{ fe_elk_stack_elasticsearch_install_failed_task | default('') }}"
+              error: "{{ fe_elk_stack_elasticsearch_install_error | default('') }}"
+              check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+          fe_validation_executions: 1
+          fe_validation_succeeded: "{{ 1 if fe_elk_stack_elasticsearch_install_status | default('') == 'succeeded' else 0 }}"
+          fe_validation_failed: "{{ 0 if fe_elk_stack_elasticsearch_install_status | default('') == 'succeeded' else 1 }}"
+          fe_validation_duration_seconds: "{{ fe_elk_stack_elasticsearch_install_duration_seconds | default(0) | int }}"
+          fe_validation_failed_components: >-
+            {{ [] if fe_elk_stack_elasticsearch_install_status | default('') == 'succeeded' else ['elk_stack/elasticsearch_install'] }}
+        aggregate: true
+        per_host: false
+      tags:
+        - always
+
+    - name: "elk_stack/elasticsearch_install | Always | Mark the validation statistics as published"
+      ansible.builtin.set_fact:
+        fe_elk_stack_elasticsearch_install_stats_published: true
+      tags:
+        - always

@@ -2,195 +2,378 @@
 # tasks file for ise_audit__config_changes
 # Cisco ISE Configuration Change Auditing and Compliance Tracking
 
-- name: Validate ISE connection parameters
-  ansible.builtin.assert:
-    that:
-      - ise_hostname is defined
-      - ise_username is defined
-      - ise_password is defined
-      - ise_verify_ssl is defined
-    fail_msg: "Required ISE connection parameters not defined"
-    quiet: true
-  tags:
-    - validation
-    - prerequisites
+# ---------------------------------------------------------------------------
+# Fourth Estate preflight / postflight validation harness
+#
+# The task file body below is wrapped in an Ansible block/rescue/always structure:
+#
+#   block   preflight validation runs first, then the original task file body, then
+#           postflight validation. Any failure transfers control to rescue.
+#   rescue  records which task failed and why, then re-raises so a failure is
+#           never silently swallowed. Set fe_validation_continue_on_error=true
+#           to record the failure and keep going instead.
+#   always  computes the run duration and publishes the outcome through
+#           ansible.builtin.set_stats, so a wrapping playbook, AWX/AAP or CI can
+#           consume the result without scraping log output.
+#
+# Published stats (see docs/VALIDATION_AND_STATS.md):
+#   fe_validation_results['cisco/ise_audit__config_changes']  per-component record
+#   fe_validation_executions / _succeeded / _failed / _duration_seconds
+#   fe_validation_failed_components
+#
+# Add component-specific preflight checks without editing this file by setting
+#   fe_cisco_ise_audit__config_changes_required_vars: [var_one, var_two]
+# ---------------------------------------------------------------------------
 
-- name: Ensure artifacts directory exists
-  ansible.builtin.file:
-    path: "{{ ise_artifacts_dir }}"
-    state: directory
-    mode: "0750"
+- name: "cisco/ise_audit__config_changes | Initialize validation state"
+  ansible.builtin.set_fact:
+    fe_cisco_ise_audit__config_changes_start_epoch: "{{ now(fmt='%s') | int }}"
+    fe_cisco_ise_audit__config_changes_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+    fe_cisco_ise_audit__config_changes_status: "running"
+    fe_cisco_ise_audit__config_changes_preflight_passed: false
+    fe_cisco_ise_audit__config_changes_postflight_passed: false
+    fe_cisco_ise_audit__config_changes_failed_task: ""
+    fe_cisco_ise_audit__config_changes_error: ""
+    fe_cisco_ise_audit__config_changes_stats_published: false
   tags:
     - always
 
-- name: Get ISE deployment information
-  cisco.ise.node_deployment_info:
-    ise_hostname: "{{ ise_hostname }}"
-    ise_username: "{{ ise_username }}"
-    ise_password: "{{ ise_password }}"
-    ise_verify: "{{ ise_verify_ssl }}"
-  no_log: true
-  register: ise_deployment_info
-  tags:
-    - discovery
-    - audit
+- name: "cisco/ise_audit__config_changes | Guarded execution with preflight and postflight validation"
+  block:
 
-- name: Retrieve configuration change audit logs
-  ansible.builtin.uri:
-    url: "https://{{ ise_hostname }}/admin/API/mnt/Session/AuditLogs"
-    method: GET
-    user: "{{ ise_username }}"
-    password: "{{ ise_password }}"
-    force_basic_auth: true
-    validate_certs: "{{ ise_verify_ssl }}"
-    headers:
-      Accept: "application/json"
-      Content-Type: "application/json"
-    body_format: json
-    body:
-      startDate: "{{ audit_start_date }}"
-      endDate: "{{ audit_end_date }}"
-      configChangeCategory: "{{ audit_change_categories }}"
-  no_log: true
-  register: config_change_logs
-  when: ise_enable_api_audit | bool
-  tags:
-    - audit
-    - logs
+    # ----------------------------- preflight --------------------
 
-- name: Parse configuration change events
-  ansible.builtin.set_fact:
-    parsed_config_changes: "{{ config_change_logs.json | default({}) }}"
-  when:
-    - config_change_logs is defined
-    - config_change_logs.json is defined
-  tags:
-    - audit
-    - parsing
+    - name: "cisco/ise_audit__config_changes | Preflight | Verify the control node meets the minimum ansible-core version"
+      ansible.builtin.assert:
+        that:
+          - ansible_version.full is version(fe_validation_min_ansible_version | default('2.12'), '>=')
+        fail_msg: >-
+          cisco/ise_audit__config_changes: requires ansible-core
+          {{ fe_validation_min_ansible_version | default('2.12') }} or newer,
+          found {{ ansible_version.full }}.
+        success_msg: >-
+          cisco/ise_audit__config_changes: ansible-core {{ ansible_version.full }} satisfies the minimum.
+        quiet: true
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: Generate configuration change CSV report
-  ansible.builtin.template:
-    src: config_changes.csv.j2
-    dest: "{{ ise_artifacts_dir }}/ise_config_changes_{{ ansible_date_time.epoch }}.csv"
-    mode: "0640"
-  tags:
-    - reporting
-    - audit
+    - name: "cisco/ise_audit__config_changes | Preflight | Verify every declared required variable is defined"
+      ansible.builtin.assert:
+        that:
+          - vars[item] is defined
+        fail_msg: "cisco/ise_audit__config_changes: required variable '{{ item }}' is not defined."
+        success_msg: "cisco/ise_audit__config_changes: required variable '{{ item }}' is defined."
+        quiet: true
+      loop: "{{ fe_cisco_ise_audit__config_changes_required_vars | default([]) }}"
+      loop_control:
+        label: "{{ item }}"
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: Generate configuration change JSON report
-  ansible.builtin.template:
-    src: config_changes.json.j2
-    dest: "{{ ise_artifacts_dir }}/ise_config_changes_{{ ansible_date_time.epoch }}.json"
-    mode: "0640"
-  tags:
-    - reporting
-    - audit
+    - name: "cisco/ise_audit__config_changes | Preflight | Record that preflight validation passed"
+      ansible.builtin.set_fact:
+        fe_cisco_ise_audit__config_changes_preflight_passed: true
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: Check for unauthorized configuration changes
-  ansible.builtin.set_fact:
-    unauthorized_changes: >-
-      {{
-        parsed_config_changes.changes | default([])
-        | selectattr('user', 'defined')
-        | rejectattr('user', 'in', authorized_admin_users)
-        | list
-      }}
-  when: parsed_config_changes is defined
-  tags:
-    - security
-    - compliance
+    # ----------------------------- execute ----------------------
 
-- name: Alert on unauthorized configuration changes
-  ansible.builtin.debug:
-    msg: "WARNING: Unauthorized configuration changes detected by users: {{ unauthorized_changes | map(attribute='user') | unique | list }}"
-  when:
-    - unauthorized_changes is defined
-    - unauthorized_changes | length > 0
-  tags:
-    - security
-    - alerting
+    - name: Validate ISE connection parameters
+      ansible.builtin.assert:
+        that:
+          - ise_hostname is defined
+          - ise_username is defined
+          - ise_password is defined
+          - ise_verify_ssl is defined
+        fail_msg: "Required ISE connection parameters not defined"
+        quiet: true
+      tags:
+        - validation
+        - prerequisites
 
-- name: Check for DISA STIG compliance violations
-  ansible.builtin.set_fact:
-    stig_violations: >-
-      {{
-        parsed_config_changes.changes | default([])
-        | selectattr('action', 'defined')
-        | selectattr('action', 'in', stig_restricted_actions)
-        | list
-      }}
-  when:
-    - enable_disa_stig_compliance | bool
-    - parsed_config_changes is defined
-  tags:
-    - compliance
-    - stig
+    - name: Ensure artifacts directory exists
+      ansible.builtin.file:
+        path: "{{ ise_artifacts_dir }}"
+        state: directory
+        mode: "0750"
+      tags:
+        - always
 
-- name: Generate DISA STIG compliance report
-  ansible.builtin.template:
-    src: stig_compliance_report.json.j2
-    dest: "{{ ise_artifacts_dir }}/ise_stig_compliance_{{ ansible_date_time.epoch }}.json"
-    mode: "0640"
-  when: enable_disa_stig_compliance | bool
-  tags:
-    - compliance
-    - stig
-    - reporting
+    - name: Get ISE deployment information
+      cisco.ise.node_deployment_info:
+        ise_hostname: "{{ ise_hostname }}"
+        ise_username: "{{ ise_username }}"
+        ise_password: "{{ ise_password }}"
+        ise_verify: "{{ ise_verify_ssl }}"
+      no_log: true
+      register: ise_deployment_info
+      tags:
+        - discovery
+        - audit
 
-- name: Export audit logs to SIEM
-  ansible.builtin.uri:
-    url: "{{ siem_endpoint }}/api/events"
-    method: POST
-    body_format: json
-    body:
-      source: "ise_audit"
-      hostname: "{{ ise_hostname }}"
-      events: "{{ parsed_config_changes.changes | default([]) }}"
-    headers:
-      Authorization: "Bearer {{ siem_api_token }}"
-      Content-Type: "application/json"
-    status_code: [200, 201, 202]
-  when:
-    - audit_siem_integration_enabled | bool
-    - parsed_config_changes is defined
-    - siem_endpoint is defined
-  ignore_errors: true
-  tags:
-    - siem
-    - integration
+    - name: Retrieve configuration change audit logs
+      ansible.builtin.uri:
+        url: "https://{{ ise_hostname }}/admin/API/mnt/Session/AuditLogs"
+        method: GET
+        user: "{{ ise_username }}"
+        password: "{{ ise_password }}"
+        force_basic_auth: true
+        validate_certs: "{{ ise_verify_ssl }}"
+        headers:
+          Accept: "application/json"
+          Content-Type: "application/json"
+        body_format: json
+        body:
+          startDate: "{{ audit_start_date }}"
+          endDate: "{{ audit_end_date }}"
+          configChangeCategory: "{{ audit_change_categories }}"
+      no_log: true
+      register: config_change_logs
+      when: ise_enable_api_audit | bool
+      tags:
+        - audit
+        - logs
 
-- name: Archive audit artifacts
-  community.general.archive:
-    path: "{{ ise_artifacts_dir }}/*{{ ansible_date_time.epoch }}*"
-    dest: "{{ audit_export_zip }}"
-    format: zip
-    mode: "0640"
-  tags:
-    - archive
-    - backup
+    - name: Parse configuration change events
+      ansible.builtin.set_fact:
+        parsed_config_changes: "{{ config_change_logs.json | default({}) }}"
+      when:
+        - config_change_logs is defined
+        - config_change_logs.json is defined
+      tags:
+        - audit
+        - parsing
 
-- name: Send audit report notification
-  community.general.mail:
-    host: "{{ smtp_host | default('localhost') }}"
-    port: "{{ smtp_port | default(25) }}"
-    to: "{{ audit_notification_email }}"
-    subject: "ISE Configuration Change Audit Report - {{ ansible_date_time.date }}"
-    body: |
-      ISE Configuration Change Audit Report
+    - name: Generate configuration change CSV report
+      ansible.builtin.template:
+        src: config_changes.csv.j2
+        dest: "{{ ise_artifacts_dir }}/ise_config_changes_{{ ansible_date_time.epoch }}.csv"
+        mode: "0640"
+      tags:
+        - reporting
+        - audit
 
-      ISE Deployment: {{ ise_hostname }}
-      Audit Period: {{ audit_start_date }} to {{ audit_end_date }}
-      Total Changes: {{ parsed_config_changes.changes | default([]) | length }}
-      Unauthorized Changes: {{ unauthorized_changes | default([]) | length }}
-      STIG Violations: {{ stig_violations | default([]) | length }}
+    - name: Generate configuration change JSON report
+      ansible.builtin.template:
+        src: config_changes.json.j2
+        dest: "{{ ise_artifacts_dir }}/ise_config_changes_{{ ansible_date_time.epoch }}.json"
+        mode: "0640"
+      tags:
+        - reporting
+        - audit
 
-      Report generated at: {{ ansible_date_time.iso8601 }}
-    attach:
-      - "{{ audit_export_zip }}"
-  when:
-    - audit_notify_on_completion | bool
-    - audit_notification_email is defined
-  ignore_errors: true
-  tags:
-    - notification
-    - reporting
+    - name: Check for unauthorized configuration changes
+      ansible.builtin.set_fact:
+        unauthorized_changes: >-
+          {{
+            parsed_config_changes.changes | default([])
+            | selectattr('user', 'defined')
+            | rejectattr('user', 'in', authorized_admin_users)
+            | list
+          }}
+      when: parsed_config_changes is defined
+      tags:
+        - security
+        - compliance
+
+    - name: Alert on unauthorized configuration changes
+      ansible.builtin.debug:
+        msg: "WARNING: Unauthorized configuration changes detected by users: {{ unauthorized_changes | map(attribute='user') | unique | list }}"
+      when:
+        - unauthorized_changes is defined
+        - unauthorized_changes | length > 0
+      tags:
+        - security
+        - alerting
+
+    - name: Check for DISA STIG compliance violations
+      ansible.builtin.set_fact:
+        stig_violations: >-
+          {{
+            parsed_config_changes.changes | default([])
+            | selectattr('action', 'defined')
+            | selectattr('action', 'in', stig_restricted_actions)
+            | list
+          }}
+      when:
+        - enable_disa_stig_compliance | bool
+        - parsed_config_changes is defined
+      tags:
+        - compliance
+        - stig
+
+    - name: Generate DISA STIG compliance report
+      ansible.builtin.template:
+        src: stig_compliance_report.json.j2
+        dest: "{{ ise_artifacts_dir }}/ise_stig_compliance_{{ ansible_date_time.epoch }}.json"
+        mode: "0640"
+      when: enable_disa_stig_compliance | bool
+      tags:
+        - compliance
+        - stig
+        - reporting
+
+    - name: Export audit logs to SIEM
+      ansible.builtin.uri:
+        url: "{{ siem_endpoint }}/api/events"
+        method: POST
+        body_format: json
+        body:
+          source: "ise_audit"
+          hostname: "{{ ise_hostname }}"
+          events: "{{ parsed_config_changes.changes | default([]) }}"
+        headers:
+          Authorization: "Bearer {{ siem_api_token }}"
+          Content-Type: "application/json"
+        status_code: [200, 201, 202]
+      when:
+        - audit_siem_integration_enabled | bool
+        - parsed_config_changes is defined
+        - siem_endpoint is defined
+      ignore_errors: true
+      tags:
+        - siem
+        - integration
+
+    - name: Archive audit artifacts
+      community.general.archive:
+        path: "{{ ise_artifacts_dir }}/*{{ ansible_date_time.epoch }}*"
+        dest: "{{ audit_export_zip }}"
+        format: zip
+        mode: "0640"
+      tags:
+        - archive
+        - backup
+
+    - name: Send audit report notification
+      community.general.mail:
+        host: "{{ smtp_host | default('localhost') }}"
+        port: "{{ smtp_port | default(25) }}"
+        to: "{{ audit_notification_email }}"
+        subject: "ISE Configuration Change Audit Report - {{ ansible_date_time.date }}"
+        body: |
+          ISE Configuration Change Audit Report
+
+          ISE Deployment: {{ ise_hostname }}
+          Audit Period: {{ audit_start_date }} to {{ audit_end_date }}
+          Total Changes: {{ parsed_config_changes.changes | default([]) | length }}
+          Unauthorized Changes: {{ unauthorized_changes | default([]) | length }}
+          STIG Violations: {{ stig_violations | default([]) | length }}
+
+          Report generated at: {{ ansible_date_time.iso8601 }}
+        attach:
+          - "{{ audit_export_zip }}"
+      when:
+        - audit_notify_on_completion | bool
+        - audit_notification_email is defined
+      ignore_errors: true
+      tags:
+        - notification
+        - reporting
+
+    # ----------------------------- postflight -------------------
+
+    - name: "cisco/ise_audit__config_changes | Postflight | Verify the guarded body ran after a passing preflight"
+      ansible.builtin.assert:
+        that:
+          - fe_cisco_ise_audit__config_changes_preflight_passed | bool
+          - fe_cisco_ise_audit__config_changes_status in ['running', 'succeeded']
+        fail_msg: >-
+          cisco/ise_audit__config_changes: postflight validation failed - preflight passed
+          ={{ fe_cisco_ise_audit__config_changes_preflight_passed | default(false) }},
+          status={{ fe_cisco_ise_audit__config_changes_status | default('unknown') }}.
+        success_msg: "cisco/ise_audit__config_changes: postflight validation passed."
+        quiet: true
+      tags:
+        - always
+        - postflight
+        - validation
+
+    - name: "cisco/ise_audit__config_changes | Postflight | Record the successful outcome"
+      ansible.builtin.set_fact:
+        fe_cisco_ise_audit__config_changes_postflight_passed: true
+        fe_cisco_ise_audit__config_changes_status: "succeeded"
+      tags:
+        - always
+        - postflight
+        - validation
+
+  rescue:
+
+    - name: "cisco/ise_audit__config_changes | Rescue | Capture the failing task and error detail"
+      ansible.builtin.set_fact:
+        fe_cisco_ise_audit__config_changes_status: "failed"
+        fe_cisco_ise_audit__config_changes_postflight_passed: false
+        fe_cisco_ise_audit__config_changes_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+        fe_cisco_ise_audit__config_changes_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+      tags:
+        - always
+        - rescue
+
+    - name: "cisco/ise_audit__config_changes | Rescue | Report the failure"
+      ansible.builtin.debug:
+        msg: >-
+          cisco/ise_audit__config_changes: FAILED at '{{ fe_cisco_ise_audit__config_changes_failed_task }}' on
+          {{ inventory_hostname }} - {{ fe_cisco_ise_audit__config_changes_error }}
+      tags:
+        - always
+        - rescue
+
+    - name: "cisco/ise_audit__config_changes | Rescue | Re-raise the failure unless the caller opted to continue"
+      ansible.builtin.fail:
+        msg: >-
+          cisco/ise_audit__config_changes failed at '{{ fe_cisco_ise_audit__config_changes_failed_task }}': {{ fe_cisco_ise_audit__config_changes_error }}
+      when: not (fe_validation_continue_on_error | default(false) | bool)
+      tags:
+        - always
+        - rescue
+
+  always:
+
+    - name: "cisco/ise_audit__config_changes | Always | Compute the execution duration"
+      ansible.builtin.set_fact:
+        fe_cisco_ise_audit__config_changes_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+        fe_cisco_ise_audit__config_changes_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_cisco_ise_audit__config_changes_start_epoch | default(0) | int) }}"
+      tags:
+        - always
+
+    - name: "cisco/ise_audit__config_changes | Always | Publish the validation result with set_stats"
+      ansible.builtin.set_stats:
+        data:
+          fe_validation_results:
+            "cisco/ise_audit__config_changes":
+              component: "cisco/ise_audit__config_changes"
+              type: "role"
+              platform: "cisco"
+              host: "{{ inventory_hostname }}"
+              status: "{{ fe_cisco_ise_audit__config_changes_status | default('unknown') }}"
+              preflight_passed: "{{ fe_cisco_ise_audit__config_changes_preflight_passed | default(false) | bool }}"
+              postflight_passed: "{{ fe_cisco_ise_audit__config_changes_postflight_passed | default(false) | bool }}"
+              started_at: "{{ fe_cisco_ise_audit__config_changes_started_at | default('') }}"
+              ended_at: "{{ fe_cisco_ise_audit__config_changes_ended_at | default('') }}"
+              duration_seconds: "{{ fe_cisco_ise_audit__config_changes_duration_seconds | default(0) | int }}"
+              failed_task: "{{ fe_cisco_ise_audit__config_changes_failed_task | default('') }}"
+              error: "{{ fe_cisco_ise_audit__config_changes_error | default('') }}"
+              check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+          fe_validation_executions: 1
+          fe_validation_succeeded: "{{ 1 if fe_cisco_ise_audit__config_changes_status | default('') == 'succeeded' else 0 }}"
+          fe_validation_failed: "{{ 0 if fe_cisco_ise_audit__config_changes_status | default('') == 'succeeded' else 1 }}"
+          fe_validation_duration_seconds: "{{ fe_cisco_ise_audit__config_changes_duration_seconds | default(0) | int }}"
+          fe_validation_failed_components: >-
+            {{ [] if fe_cisco_ise_audit__config_changes_status | default('') == 'succeeded' else ['cisco/ise_audit__config_changes'] }}
+        aggregate: true
+        per_host: false
+      tags:
+        - always
+
+    - name: "cisco/ise_audit__config_changes | Always | Mark the validation statistics as published"
+      ansible.builtin.set_fact:
+        fe_cisco_ise_audit__config_changes_stats_published: true
+      tags:
+        - always

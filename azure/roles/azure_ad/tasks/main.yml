@@ -2,167 +2,350 @@
 # tasks file for azure_ad - Azure AD Users and Groups Management
 # Fourth Estate Azure Government Cloud - FedRAMP High
 
-- name: Validate Azure Government Cloud configuration
-  ansible.builtin.assert:
-    that:
-      - azure_cloud_environment is defined
-      - azure_cloud_environment in ['AzureUSGovernment', 'AzureCloud']
-    fail_msg: "Azure cloud environment must be specified for Fourth Estate deployments"
+# ---------------------------------------------------------------------------
+# Fourth Estate preflight / postflight validation harness
+#
+# The task file body below is wrapped in an Ansible block/rescue/always structure:
+#
+#   block   preflight validation runs first, then the original task file body, then
+#           postflight validation. Any failure transfers control to rescue.
+#   rescue  records which task failed and why, then re-raises so a failure is
+#           never silently swallowed. Set fe_validation_continue_on_error=true
+#           to record the failure and keep going instead.
+#   always  computes the run duration and publishes the outcome through
+#           ansible.builtin.set_stats, so a wrapping playbook, AWX/AAP or CI can
+#           consume the result without scraping log output.
+#
+# Published stats (see docs/VALIDATION_AND_STATS.md):
+#   fe_validation_results['azure/azure_ad']  per-component record
+#   fe_validation_executions / _succeeded / _failed / _duration_seconds
+#   fe_validation_failed_components
+#
+# Add component-specific preflight checks without editing this file by setting
+#   fe_azure_azure_ad_required_vars: [var_one, var_two]
+# ---------------------------------------------------------------------------
 
-- name: Create Azure AD Groups
-  azure.azcollection.azure_rm_adgroup:
-    tenant: "{{ azure_tenant_id }}"
-    display_name: "{{ item.display_name }}"
-    mail_nickname: "{{ item.mail_nickname | default(item.display_name | lower | regex_replace('[^a-z0-9]', '')) }}"
-    description: "{{ item.description | default(omit) }}"
-    mail_enabled: "{{ item.mail_enabled | default(false) }}"
-    security_enabled: "{{ item.security_enabled | default(true) }}"
-    state: "{{ item.state | default('present') }}"
-    cloud_environment: "{{ azure_cloud_environment }}"
-  loop: "{{ azure_ad_groups }}"
-  when: azure_ad_groups is defined
-  register: ad_groups_result
-  notify:
-    - Log Azure AD changes
-    - Update Azure AD inventory
-
-- name: Create Azure AD Users
-  azure.azcollection.azure_rm_aduser:
-    tenant: "{{ azure_tenant_id }}"
-    user_principal_name: "{{ item.user_principal_name }}"
-    display_name: "{{ item.display_name }}"
-    mail_nickname: "{{ item.mail_nickname | default(item.user_principal_name.split('@')[0]) }}"
-    given_name: "{{ item.given_name | default(omit) }}"
-    surname: "{{ item.surname | default(omit) }}"
-    password: "{{ item.password | default(omit) }}"
-    account_enabled: "{{ item.account_enabled | default(true) }}"
-    force_change_password_next_sign_in: "{{ item.force_change_password | default(true) }}"
-    usage_location: "{{ item.usage_location | default('US') }}"
-    state: "{{ item.state | default('present') }}"
-    cloud_environment: "{{ azure_cloud_environment }}"
-  loop: "{{ azure_ad_users }}"
-  when: azure_ad_users is defined
-  register: ad_users_result
-  no_log: "{{ azure_ad_no_log | default(true) }}"
-  notify:
-    - Log Azure AD changes
-    - Update Azure AD inventory
-
-- name: Add users to groups
-  azure.azcollection.azure_rm_adgroup_member:
-    tenant: "{{ azure_tenant_id }}"
-    group: "{{ item.0.display_name }}"
-    member: "{{ item.1 }}"
-    state: present
-    cloud_environment: "{{ azure_cloud_environment }}"
-  loop: "{{ azure_ad_groups | subelements('members', skip_missing=True) }}"
-  when:
-    - azure_ad_groups is defined
-    - item.0.members is defined
-  register: group_membership_result
-  notify: Log Azure AD changes
-
-- name: Configure Azure AD security defaults
-  azure.azcollection.azure_rm_resource:
-    resource_group: "{{ azure_resource_group }}"
-    provider: Microsoft.Graph
-    resource_type: policies
-    resource_name: identitySecurityDefaultsEnforcementPolicy
-    api_version: "v1.0"
-    body:
-      isEnabled: "{{ azure_ad_security_defaults_enabled | default(true) }}"
-    state: present
-    cloud_environment: "{{ azure_cloud_environment }}"
-  when: azure_ad_manage_security_defaults | default(true)
-  register: security_defaults_result
-  notify: Log Azure AD changes
-
-- name: Configure password policies
-  azure.azcollection.azure_rm_resource:
-    resource_group: "{{ azure_resource_group }}"
-    provider: Microsoft.Graph
-    resource_type: domains
-    resource_name: "{{ azure_tenant_domain }}"
-    api_version: "v1.0"
-    body:
-      passwordValidityPeriodInDays: "{{ azure_ad_password_validity_days | default(90) }}"
-      passwordNotificationWindowInDays: "{{ azure_ad_password_notification_days | default(14) }}"
-    state: present
-    cloud_environment: "{{ azure_cloud_environment }}"
-  when: azure_ad_configure_password_policy | default(true)
-  register: password_policy_result
-  notify: Log Azure AD changes
-
-- name: Enable Azure AD audit logging
-  azure.azcollection.azure_rm_loganalyticssolution:
-    resource_group: "{{ azure_resource_group }}"
-    location: "{{ azure_region }}"
-    workspace_name: "{{ azure_log_analytics_workspace }}"
-    solution_name: AzureActiveDirectory
-    plan:
-      name: AzureActiveDirectory
-      publisher: Microsoft
-      product: OMSGallery/AzureActiveDirectory
-    state: present
-    cloud_environment: "{{ azure_cloud_environment }}"
-  when: azure_ad_enable_audit_logging | default(true)
-  register: audit_logging_result
-  notify: Log Azure AD changes
-
-- name: Configure Azure AD diagnostic settings
-  azure.azcollection.azure_rm_monitordiagnosticsetting:
-    name: "{{ azure_ad_diagnostic_setting_name | default('ad-diagnostics') }}"
-    resource_uri: "/providers/Microsoft.AADIAM/diagnosticSettings/{{ azure_ad_diagnostic_setting_name | default('ad-diagnostics') }}"
-    workspace_id: "{{ azure_log_analytics_workspace_id }}"
-    logs:
-      - category: AuditLogs
-        enabled: true
-        retention_policy:
-          enabled: true
-          days: "{{ azure_ad_audit_retention_days | default(365) }}"
-      - category: SignInLogs
-        enabled: true
-        retention_policy:
-          enabled: true
-          days: "{{ azure_ad_signin_retention_days | default(365) }}"
-      - category: NonInteractiveUserSignInLogs
-        enabled: true
-        retention_policy:
-          enabled: true
-          days: "{{ azure_ad_signin_retention_days | default(365) }}"
-      - category: ServicePrincipalSignInLogs
-        enabled: true
-        retention_policy:
-          enabled: true
-          days: "{{ azure_ad_signin_retention_days | default(365) }}"
-      - category: RiskyUsers
-        enabled: true
-        retention_policy:
-          enabled: true
-          days: "{{ azure_ad_risk_retention_days | default(365) }}"
-    state: present
-    cloud_environment: "{{ azure_cloud_environment }}"
-  when: azure_ad_configure_diagnostics | default(true)
-  register: diagnostics_result
-  notify: Log Azure AD changes
-
-- name: Tag Azure AD resources for cost management
+- name: "azure/azure_ad | Initialize validation state"
   ansible.builtin.set_fact:
-    azure_ad_resource_tags:
-      Environment: "{{ azure_environment | default('Production') }}"
-      CostCenter: "{{ azure_cost_center | default('4thEstate') }}"
-      Classification: "{{ azure_classification | default('SECRET') }}"
-      Compliance: "FedRAMP-High"
-      ManagedBy: "Ansible"
-      LastUpdated: "{{ ansible_date_time.iso8601 }}"
+    fe_azure_azure_ad_start_epoch: "{{ now(fmt='%s') | int }}"
+    fe_azure_azure_ad_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+    fe_azure_azure_ad_status: "running"
+    fe_azure_azure_ad_preflight_passed: false
+    fe_azure_azure_ad_postflight_passed: false
+    fe_azure_azure_ad_failed_task: ""
+    fe_azure_azure_ad_error: ""
+    fe_azure_azure_ad_stats_published: false
+  tags:
+    - always
 
-- name: Display Azure AD configuration summary
-  ansible.builtin.debug:
-    msg:
-      - "Azure AD Configuration Complete"
-      - "Groups created/updated: {{ (ad_groups_result.results | default([]) | selectattr('changed', 'equalto', true) | list | length) }}"
-      - "Users created/updated: {{ (ad_users_result.results | default([]) | selectattr('changed', 'equalto', true) | list | length) }}"
-      - "Security defaults enabled: {{ azure_ad_security_defaults_enabled | default(true) }}"
-      - "Audit logging enabled: {{ azure_ad_enable_audit_logging | default(true) }}"
-      - "Cloud environment: {{ azure_cloud_environment }}"
-  when: azure_ad_display_summary | default(true)
+- name: "azure/azure_ad | Guarded execution with preflight and postflight validation"
+  block:
+
+    # ----------------------------- preflight --------------------
+
+    - name: "azure/azure_ad | Preflight | Verify the control node meets the minimum ansible-core version"
+      ansible.builtin.assert:
+        that:
+          - ansible_version.full is version(fe_validation_min_ansible_version | default('2.12'), '>=')
+        fail_msg: >-
+          azure/azure_ad: requires ansible-core
+          {{ fe_validation_min_ansible_version | default('2.12') }} or newer,
+          found {{ ansible_version.full }}.
+        success_msg: >-
+          azure/azure_ad: ansible-core {{ ansible_version.full }} satisfies the minimum.
+        quiet: true
+      tags:
+        - always
+        - preflight
+        - validation
+
+    - name: "azure/azure_ad | Preflight | Verify every declared required variable is defined"
+      ansible.builtin.assert:
+        that:
+          - vars[item] is defined
+        fail_msg: "azure/azure_ad: required variable '{{ item }}' is not defined."
+        success_msg: "azure/azure_ad: required variable '{{ item }}' is defined."
+        quiet: true
+      loop: "{{ fe_azure_azure_ad_required_vars | default([]) }}"
+      loop_control:
+        label: "{{ item }}"
+      tags:
+        - always
+        - preflight
+        - validation
+
+    - name: "azure/azure_ad | Preflight | Record that preflight validation passed"
+      ansible.builtin.set_fact:
+        fe_azure_azure_ad_preflight_passed: true
+      tags:
+        - always
+        - preflight
+        - validation
+
+    # ----------------------------- execute ----------------------
+
+    - name: Validate Azure Government Cloud configuration
+      ansible.builtin.assert:
+        that:
+          - azure_cloud_environment is defined
+          - azure_cloud_environment in ['AzureUSGovernment', 'AzureCloud']
+        fail_msg: "Azure cloud environment must be specified for Fourth Estate deployments"
+
+    - name: Create Azure AD Groups
+      azure.azcollection.azure_rm_adgroup:
+        tenant: "{{ azure_tenant_id }}"
+        display_name: "{{ item.display_name }}"
+        mail_nickname: "{{ item.mail_nickname | default(item.display_name | lower | regex_replace('[^a-z0-9]', '')) }}"
+        description: "{{ item.description | default(omit) }}"
+        mail_enabled: "{{ item.mail_enabled | default(false) }}"
+        security_enabled: "{{ item.security_enabled | default(true) }}"
+        state: "{{ item.state | default('present') }}"
+        cloud_environment: "{{ azure_cloud_environment }}"
+      loop: "{{ azure_ad_groups }}"
+      when: azure_ad_groups is defined
+      register: ad_groups_result
+      notify:
+        - Log Azure AD changes
+        - Update Azure AD inventory
+
+    - name: Create Azure AD Users
+      azure.azcollection.azure_rm_aduser:
+        tenant: "{{ azure_tenant_id }}"
+        user_principal_name: "{{ item.user_principal_name }}"
+        display_name: "{{ item.display_name }}"
+        mail_nickname: "{{ item.mail_nickname | default(item.user_principal_name.split('@')[0]) }}"
+        given_name: "{{ item.given_name | default(omit) }}"
+        surname: "{{ item.surname | default(omit) }}"
+        password: "{{ item.password | default(omit) }}"
+        account_enabled: "{{ item.account_enabled | default(true) }}"
+        force_change_password_next_sign_in: "{{ item.force_change_password | default(true) }}"
+        usage_location: "{{ item.usage_location | default('US') }}"
+        state: "{{ item.state | default('present') }}"
+        cloud_environment: "{{ azure_cloud_environment }}"
+      loop: "{{ azure_ad_users }}"
+      when: azure_ad_users is defined
+      register: ad_users_result
+      no_log: "{{ azure_ad_no_log | default(true) }}"
+      notify:
+        - Log Azure AD changes
+        - Update Azure AD inventory
+
+    - name: Add users to groups
+      azure.azcollection.azure_rm_adgroup_member:
+        tenant: "{{ azure_tenant_id }}"
+        group: "{{ item.0.display_name }}"
+        member: "{{ item.1 }}"
+        state: present
+        cloud_environment: "{{ azure_cloud_environment }}"
+      loop: "{{ azure_ad_groups | subelements('members', skip_missing=True) }}"
+      when:
+        - azure_ad_groups is defined
+        - item.0.members is defined
+      register: group_membership_result
+      notify: Log Azure AD changes
+
+    - name: Configure Azure AD security defaults
+      azure.azcollection.azure_rm_resource:
+        resource_group: "{{ azure_resource_group }}"
+        provider: Microsoft.Graph
+        resource_type: policies
+        resource_name: identitySecurityDefaultsEnforcementPolicy
+        api_version: "v1.0"
+        body:
+          isEnabled: "{{ azure_ad_security_defaults_enabled | default(true) }}"
+        state: present
+        cloud_environment: "{{ azure_cloud_environment }}"
+      when: azure_ad_manage_security_defaults | default(true)
+      register: security_defaults_result
+      notify: Log Azure AD changes
+
+    - name: Configure password policies
+      azure.azcollection.azure_rm_resource:
+        resource_group: "{{ azure_resource_group }}"
+        provider: Microsoft.Graph
+        resource_type: domains
+        resource_name: "{{ azure_tenant_domain }}"
+        api_version: "v1.0"
+        body:
+          passwordValidityPeriodInDays: "{{ azure_ad_password_validity_days | default(90) }}"
+          passwordNotificationWindowInDays: "{{ azure_ad_password_notification_days | default(14) }}"
+        state: present
+        cloud_environment: "{{ azure_cloud_environment }}"
+      when: azure_ad_configure_password_policy | default(true)
+      register: password_policy_result
+      notify: Log Azure AD changes
+
+    - name: Enable Azure AD audit logging
+      azure.azcollection.azure_rm_loganalyticssolution:
+        resource_group: "{{ azure_resource_group }}"
+        location: "{{ azure_region }}"
+        workspace_name: "{{ azure_log_analytics_workspace }}"
+        solution_name: AzureActiveDirectory
+        plan:
+          name: AzureActiveDirectory
+          publisher: Microsoft
+          product: OMSGallery/AzureActiveDirectory
+        state: present
+        cloud_environment: "{{ azure_cloud_environment }}"
+      when: azure_ad_enable_audit_logging | default(true)
+      register: audit_logging_result
+      notify: Log Azure AD changes
+
+    - name: Configure Azure AD diagnostic settings
+      azure.azcollection.azure_rm_monitordiagnosticsetting:
+        name: "{{ azure_ad_diagnostic_setting_name | default('ad-diagnostics') }}"
+        resource_uri: "/providers/Microsoft.AADIAM/diagnosticSettings/{{ azure_ad_diagnostic_setting_name | default('ad-diagnostics') }}"
+        workspace_id: "{{ azure_log_analytics_workspace_id }}"
+        logs:
+          - category: AuditLogs
+            enabled: true
+            retention_policy:
+              enabled: true
+              days: "{{ azure_ad_audit_retention_days | default(365) }}"
+          - category: SignInLogs
+            enabled: true
+            retention_policy:
+              enabled: true
+              days: "{{ azure_ad_signin_retention_days | default(365) }}"
+          - category: NonInteractiveUserSignInLogs
+            enabled: true
+            retention_policy:
+              enabled: true
+              days: "{{ azure_ad_signin_retention_days | default(365) }}"
+          - category: ServicePrincipalSignInLogs
+            enabled: true
+            retention_policy:
+              enabled: true
+              days: "{{ azure_ad_signin_retention_days | default(365) }}"
+          - category: RiskyUsers
+            enabled: true
+            retention_policy:
+              enabled: true
+              days: "{{ azure_ad_risk_retention_days | default(365) }}"
+        state: present
+        cloud_environment: "{{ azure_cloud_environment }}"
+      when: azure_ad_configure_diagnostics | default(true)
+      register: diagnostics_result
+      notify: Log Azure AD changes
+
+    - name: Tag Azure AD resources for cost management
+      ansible.builtin.set_fact:
+        azure_ad_resource_tags:
+          Environment: "{{ azure_environment | default('Production') }}"
+          CostCenter: "{{ azure_cost_center | default('4thEstate') }}"
+          Classification: "{{ azure_classification | default('SECRET') }}"
+          Compliance: "FedRAMP-High"
+          ManagedBy: "Ansible"
+          LastUpdated: "{{ ansible_date_time.iso8601 }}"
+
+    - name: Display Azure AD configuration summary
+      ansible.builtin.debug:
+        msg:
+          - "Azure AD Configuration Complete"
+          - "Groups created/updated: {{ (ad_groups_result.results | default([]) | selectattr('changed', 'equalto', true) | list | length) }}"
+          - "Users created/updated: {{ (ad_users_result.results | default([]) | selectattr('changed', 'equalto', true) | list | length) }}"
+          - "Security defaults enabled: {{ azure_ad_security_defaults_enabled | default(true) }}"
+          - "Audit logging enabled: {{ azure_ad_enable_audit_logging | default(true) }}"
+          - "Cloud environment: {{ azure_cloud_environment }}"
+      when: azure_ad_display_summary | default(true)
+
+    # ----------------------------- postflight -------------------
+
+    - name: "azure/azure_ad | Postflight | Verify the guarded body ran after a passing preflight"
+      ansible.builtin.assert:
+        that:
+          - fe_azure_azure_ad_preflight_passed | bool
+          - fe_azure_azure_ad_status in ['running', 'succeeded']
+        fail_msg: >-
+          azure/azure_ad: postflight validation failed - preflight passed
+          ={{ fe_azure_azure_ad_preflight_passed | default(false) }},
+          status={{ fe_azure_azure_ad_status | default('unknown') }}.
+        success_msg: "azure/azure_ad: postflight validation passed."
+        quiet: true
+      tags:
+        - always
+        - postflight
+        - validation
+
+    - name: "azure/azure_ad | Postflight | Record the successful outcome"
+      ansible.builtin.set_fact:
+        fe_azure_azure_ad_postflight_passed: true
+        fe_azure_azure_ad_status: "succeeded"
+      tags:
+        - always
+        - postflight
+        - validation
+
+  rescue:
+
+    - name: "azure/azure_ad | Rescue | Capture the failing task and error detail"
+      ansible.builtin.set_fact:
+        fe_azure_azure_ad_status: "failed"
+        fe_azure_azure_ad_postflight_passed: false
+        fe_azure_azure_ad_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+        fe_azure_azure_ad_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+      tags:
+        - always
+        - rescue
+
+    - name: "azure/azure_ad | Rescue | Report the failure"
+      ansible.builtin.debug:
+        msg: >-
+          azure/azure_ad: FAILED at '{{ fe_azure_azure_ad_failed_task }}' on
+          {{ inventory_hostname }} - {{ fe_azure_azure_ad_error }}
+      tags:
+        - always
+        - rescue
+
+    - name: "azure/azure_ad | Rescue | Re-raise the failure unless the caller opted to continue"
+      ansible.builtin.fail:
+        msg: >-
+          azure/azure_ad failed at '{{ fe_azure_azure_ad_failed_task }}': {{ fe_azure_azure_ad_error }}
+      when: not (fe_validation_continue_on_error | default(false) | bool)
+      tags:
+        - always
+        - rescue
+
+  always:
+
+    - name: "azure/azure_ad | Always | Compute the execution duration"
+      ansible.builtin.set_fact:
+        fe_azure_azure_ad_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+        fe_azure_azure_ad_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_azure_azure_ad_start_epoch | default(0) | int) }}"
+      tags:
+        - always
+
+    - name: "azure/azure_ad | Always | Publish the validation result with set_stats"
+      ansible.builtin.set_stats:
+        data:
+          fe_validation_results:
+            "azure/azure_ad":
+              component: "azure/azure_ad"
+              type: "role"
+              platform: "azure"
+              host: "{{ inventory_hostname }}"
+              status: "{{ fe_azure_azure_ad_status | default('unknown') }}"
+              preflight_passed: "{{ fe_azure_azure_ad_preflight_passed | default(false) | bool }}"
+              postflight_passed: "{{ fe_azure_azure_ad_postflight_passed | default(false) | bool }}"
+              started_at: "{{ fe_azure_azure_ad_started_at | default('') }}"
+              ended_at: "{{ fe_azure_azure_ad_ended_at | default('') }}"
+              duration_seconds: "{{ fe_azure_azure_ad_duration_seconds | default(0) | int }}"
+              failed_task: "{{ fe_azure_azure_ad_failed_task | default('') }}"
+              error: "{{ fe_azure_azure_ad_error | default('') }}"
+              check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+          fe_validation_executions: 1
+          fe_validation_succeeded: "{{ 1 if fe_azure_azure_ad_status | default('') == 'succeeded' else 0 }}"
+          fe_validation_failed: "{{ 0 if fe_azure_azure_ad_status | default('') == 'succeeded' else 1 }}"
+          fe_validation_duration_seconds: "{{ fe_azure_azure_ad_duration_seconds | default(0) | int }}"
+          fe_validation_failed_components: >-
+            {{ [] if fe_azure_azure_ad_status | default('') == 'succeeded' else ['azure/azure_ad'] }}
+        aggregate: true
+        per_host: false
+      tags:
+        - always
+
+    - name: "azure/azure_ad | Always | Mark the validation statistics as published"
+      ansible.builtin.set_fact:
+        fe_azure_azure_ad_stats_published: true
+      tags:
+        - always

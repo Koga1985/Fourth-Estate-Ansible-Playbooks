@@ -1,88 +1,271 @@
 ---
 # Discover OT/ICS assets in industrial environments
 
-- name: Initiate asset discovery scan
-  ansible.builtin.uri:
-    url: "{{ dragos_base_url }}/api/assets/discovery/scan"
-    method: POST
-    headers:
-      Authorization: "Bearer {{ dragos_token }}"
-      Content-Type: "application/json"
-    body_format: json
-    body:
-      scan_type: "{{ discovery_scan_type }}"
-      network_ranges: "{{ discovery_network_ranges }}"
-      include_passive: "{{ include_passive_discovery }}"
-      include_active: "{{ include_active_discovery }}"
-      protocol_detection: true
-      deep_inspection: "{{ deep_asset_inspection }}"
-    status_code: [200, 201, 202]
-    validate_certs: "{{ dragos_verify_ssl }}"
-  when: not dry_run and trigger_discovery_scan
-  register: discovery_scan
+# ---------------------------------------------------------------------------
+# Fourth Estate preflight / postflight validation harness
+#
+# The task file body below is wrapped in an Ansible block/rescue/always structure:
+#
+#   block   preflight validation runs first, then the original task file body, then
+#           postflight validation. Any failure transfers control to rescue.
+#   rescue  records which task failed and why, then re-raises so a failure is
+#           never silently swallowed. Set fe_validation_continue_on_error=true
+#           to record the failure and keep going instead.
+#   always  computes the run duration and publishes the outcome through
+#           ansible.builtin.set_stats, so a wrapping playbook, AWX/AAP or CI can
+#           consume the result without scraping log output.
+#
+# Published stats (see docs/VALIDATION_AND_STATS.md):
+#   fe_validation_results['dragos/dragos_inventory_model/assets_discovery']  per-component record
+#   fe_validation_executions / _succeeded / _failed / _duration_seconds
+#   fe_validation_failed_components
+#
+# Add component-specific preflight checks without editing this file by setting
+#   fe_dragos_dragos_inventory_model_assets_discovery_required_vars: [var_one, var_two]
+# ---------------------------------------------------------------------------
 
-- name: Monitor discovery scan progress
-  ansible.builtin.uri:
-    url: "{{ dragos_base_url }}/api/assets/discovery/scan/{{ discovery_scan.json.scan_id }}/status"
-    method: GET
-    headers:
-      Authorization: "Bearer {{ dragos_token }}"
-    return_content: true
-    status_code: 200
-    validate_certs: "{{ dragos_verify_ssl }}"
-  register: scan_status
-  until: scan_status.json.status in ['completed', 'failed']
-  retries: "{{ discovery_max_retries }}"
-  delay: "{{ discovery_check_interval }}"
-  when: not dry_run and trigger_discovery_scan and wait_for_discovery
-
-- name: Retrieve discovered assets
-  ansible.builtin.uri:
-    url: "{{ dragos_base_url }}/api/assets?limit={{ page_size }}&offset={{ item }}"
-    method: GET
-    headers:
-      Authorization: "Bearer {{ dragos_token }}"
-    return_content: true
-    status_code: 200
-    validate_certs: "{{ dragos_verify_ssl }}"
-  loop: "{{ range(0, 10000, page_size) | list }}"
-  register: discovered_assets
-  until: discovered_assets.json.items | default(discovered_assets.json.data | default([])) | length == 0
-  when: item == 0 or (discovered_assets.results[-1].json.items | default(discovered_assets.results[-1].json.data | default([])) | length == page_size)
-
-- name: Aggregate discovered assets
+- name: "dragos/dragos_inventory_model/assets_discovery | Initialize validation state"
   ansible.builtin.set_fact:
-    all_discovered_assets: "{{ discovered_assets.results | map(attribute='json.items', default=discovered_assets.results | map(attribute='json.data')) | flatten }}"
+    fe_dragos_dragos_inventory_model_assets_discovery_start_epoch: "{{ now(fmt='%s') | int }}"
+    fe_dragos_dragos_inventory_model_assets_discovery_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+    fe_dragos_dragos_inventory_model_assets_discovery_status: "running"
+    fe_dragos_dragos_inventory_model_assets_discovery_preflight_passed: false
+    fe_dragos_dragos_inventory_model_assets_discovery_postflight_passed: false
+    fe_dragos_dragos_inventory_model_assets_discovery_failed_task: ""
+    fe_dragos_dragos_inventory_model_assets_discovery_error: ""
+    fe_dragos_dragos_inventory_model_assets_discovery_stats_published: false
+  tags:
+    - always
 
-- name: Categorize discovered assets by type
-  ansible.builtin.set_fact:
-    asset_types:
-      plcs: "{{ all_discovered_assets | selectattr('asset_type', 'equalto', 'PLC') | list }}"
-      hmis: "{{ all_discovered_assets | selectattr('asset_type', 'equalto', 'HMI') | list }}"
-      engineering_stations: "{{ all_discovered_assets | selectattr('asset_type', 'equalto', 'Engineering Station') | list }}"
-      historians: "{{ all_discovered_assets | selectattr('asset_type', 'equalto', 'Historian') | list }}"
-      rtus: "{{ all_discovered_assets | selectattr('asset_type', 'equalto', 'RTU') | list }}"
-      scada_servers: "{{ all_discovered_assets | selectattr('asset_type', 'equalto', 'SCADA Server') | list }}"
-      iot_devices: "{{ all_discovered_assets | selectattr('asset_type', 'equalto', 'IoT Device') | list }}"
-      network_devices: "{{ all_discovered_assets | selectattr('asset_type', 'equalto', 'Network Device') | list }}"
+- name: "dragos/dragos_inventory_model/assets_discovery | Guarded execution with preflight and postflight validation"
+  block:
 
-- name: Display discovery summary
-  ansible.builtin.debug:
-    msg: |
-      ===== Asset Discovery Summary =====
-      Total Assets Discovered: {{ all_discovered_assets | length }}
-      PLCs: {{ asset_types.plcs | length }}
-      HMIs: {{ asset_types.hmis | length }}
-      Engineering Stations: {{ asset_types.engineering_stations | length }}
-      Historians: {{ asset_types.historians | length }}
-      RTUs: {{ asset_types.rtus | length }}
-      SCADA Servers: {{ asset_types.scada_servers | length }}
-      IoT Devices: {{ asset_types.iot_devices | length }}
-      Network Devices: {{ asset_types.network_devices | length }}
-      ===================================
+    # ----------------------------- preflight --------------------
 
-- name: Save discovered assets
-  ansible.builtin.copy:
-    dest: "{{ artifacts_dir }}/discovered_assets_{{ ansible_date_time.iso8601_basic_short }}.json"
-    content: "{{ all_discovered_assets | to_nice_json }}"
-    mode: "0644"
+    - name: "dragos/dragos_inventory_model/assets_discovery | Preflight | Verify the control node meets the minimum ansible-core version"
+      ansible.builtin.assert:
+        that:
+          - ansible_version.full is version(fe_validation_min_ansible_version | default('2.12'), '>=')
+        fail_msg: >-
+          dragos/dragos_inventory_model/assets_discovery: requires ansible-core
+          {{ fe_validation_min_ansible_version | default('2.12') }} or newer,
+          found {{ ansible_version.full }}.
+        success_msg: >-
+          dragos/dragos_inventory_model/assets_discovery: ansible-core {{ ansible_version.full }} satisfies the minimum.
+        quiet: true
+      tags:
+        - always
+        - preflight
+        - validation
+
+    - name: "dragos/dragos_inventory_model/assets_discovery | Preflight | Verify every declared required variable is defined"
+      ansible.builtin.assert:
+        that:
+          - vars[item] is defined
+        fail_msg: "dragos/dragos_inventory_model/assets_discovery: required variable '{{ item }}' is not defined."
+        success_msg: "dragos/dragos_inventory_model/assets_discovery: required variable '{{ item }}' is defined."
+        quiet: true
+      loop: "{{ fe_dragos_dragos_inventory_model_assets_discovery_required_vars | default([]) }}"
+      loop_control:
+        label: "{{ item }}"
+      tags:
+        - always
+        - preflight
+        - validation
+
+    - name: "dragos/dragos_inventory_model/assets_discovery | Preflight | Record that preflight validation passed"
+      ansible.builtin.set_fact:
+        fe_dragos_dragos_inventory_model_assets_discovery_preflight_passed: true
+      tags:
+        - always
+        - preflight
+        - validation
+
+    # ----------------------------- execute ----------------------
+
+    - name: Initiate asset discovery scan
+      ansible.builtin.uri:
+        url: "{{ dragos_base_url }}/api/assets/discovery/scan"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ dragos_token }}"
+          Content-Type: "application/json"
+        body_format: json
+        body:
+          scan_type: "{{ discovery_scan_type }}"
+          network_ranges: "{{ discovery_network_ranges }}"
+          include_passive: "{{ include_passive_discovery }}"
+          include_active: "{{ include_active_discovery }}"
+          protocol_detection: true
+          deep_inspection: "{{ deep_asset_inspection }}"
+        status_code: [200, 201, 202]
+        validate_certs: "{{ dragos_verify_ssl }}"
+      when: not dry_run and trigger_discovery_scan
+      register: discovery_scan
+
+    - name: Monitor discovery scan progress
+      ansible.builtin.uri:
+        url: "{{ dragos_base_url }}/api/assets/discovery/scan/{{ discovery_scan.json.scan_id }}/status"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ dragos_token }}"
+        return_content: true
+        status_code: 200
+        validate_certs: "{{ dragos_verify_ssl }}"
+      register: scan_status
+      until: scan_status.json.status in ['completed', 'failed']
+      retries: "{{ discovery_max_retries }}"
+      delay: "{{ discovery_check_interval }}"
+      when: not dry_run and trigger_discovery_scan and wait_for_discovery
+
+    - name: Retrieve discovered assets
+      ansible.builtin.uri:
+        url: "{{ dragos_base_url }}/api/assets?limit={{ page_size }}&offset={{ item }}"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ dragos_token }}"
+        return_content: true
+        status_code: 200
+        validate_certs: "{{ dragos_verify_ssl }}"
+      loop: "{{ range(0, 10000, page_size) | list }}"
+      register: discovered_assets
+      until: discovered_assets.json.items | default(discovered_assets.json.data | default([])) | length == 0
+      when: item == 0 or (discovered_assets.results[-1].json.items | default(discovered_assets.results[-1].json.data | default([])) | length == page_size)
+
+    - name: Aggregate discovered assets
+      ansible.builtin.set_fact:
+        all_discovered_assets: "{{ discovered_assets.results | map(attribute='json.items', default=discovered_assets.results | map(attribute='json.data')) | flatten }}"
+
+    - name: Categorize discovered assets by type
+      ansible.builtin.set_fact:
+        asset_types:
+          plcs: "{{ all_discovered_assets | selectattr('asset_type', 'equalto', 'PLC') | list }}"
+          hmis: "{{ all_discovered_assets | selectattr('asset_type', 'equalto', 'HMI') | list }}"
+          engineering_stations: "{{ all_discovered_assets | selectattr('asset_type', 'equalto', 'Engineering Station') | list }}"
+          historians: "{{ all_discovered_assets | selectattr('asset_type', 'equalto', 'Historian') | list }}"
+          rtus: "{{ all_discovered_assets | selectattr('asset_type', 'equalto', 'RTU') | list }}"
+          scada_servers: "{{ all_discovered_assets | selectattr('asset_type', 'equalto', 'SCADA Server') | list }}"
+          iot_devices: "{{ all_discovered_assets | selectattr('asset_type', 'equalto', 'IoT Device') | list }}"
+          network_devices: "{{ all_discovered_assets | selectattr('asset_type', 'equalto', 'Network Device') | list }}"
+
+    - name: Display discovery summary
+      ansible.builtin.debug:
+        msg: |
+          ===== Asset Discovery Summary =====
+          Total Assets Discovered: {{ all_discovered_assets | length }}
+          PLCs: {{ asset_types.plcs | length }}
+          HMIs: {{ asset_types.hmis | length }}
+          Engineering Stations: {{ asset_types.engineering_stations | length }}
+          Historians: {{ asset_types.historians | length }}
+          RTUs: {{ asset_types.rtus | length }}
+          SCADA Servers: {{ asset_types.scada_servers | length }}
+          IoT Devices: {{ asset_types.iot_devices | length }}
+          Network Devices: {{ asset_types.network_devices | length }}
+          ===================================
+
+    - name: Save discovered assets
+      ansible.builtin.copy:
+        dest: "{{ artifacts_dir }}/discovered_assets_{{ ansible_date_time.iso8601_basic_short }}.json"
+        content: "{{ all_discovered_assets | to_nice_json }}"
+        mode: "0644"
+
+    # ----------------------------- postflight -------------------
+
+    - name: "dragos/dragos_inventory_model/assets_discovery | Postflight | Verify the guarded body ran after a passing preflight"
+      ansible.builtin.assert:
+        that:
+          - fe_dragos_dragos_inventory_model_assets_discovery_preflight_passed | bool
+          - fe_dragos_dragos_inventory_model_assets_discovery_status in ['running', 'succeeded']
+        fail_msg: >-
+          dragos/dragos_inventory_model/assets_discovery: postflight validation failed - preflight passed
+          ={{ fe_dragos_dragos_inventory_model_assets_discovery_preflight_passed | default(false) }},
+          status={{ fe_dragos_dragos_inventory_model_assets_discovery_status | default('unknown') }}.
+        success_msg: "dragos/dragos_inventory_model/assets_discovery: postflight validation passed."
+        quiet: true
+      tags:
+        - always
+        - postflight
+        - validation
+
+    - name: "dragos/dragos_inventory_model/assets_discovery | Postflight | Record the successful outcome"
+      ansible.builtin.set_fact:
+        fe_dragos_dragos_inventory_model_assets_discovery_postflight_passed: true
+        fe_dragos_dragos_inventory_model_assets_discovery_status: "succeeded"
+      tags:
+        - always
+        - postflight
+        - validation
+
+  rescue:
+
+    - name: "dragos/dragos_inventory_model/assets_discovery | Rescue | Capture the failing task and error detail"
+      ansible.builtin.set_fact:
+        fe_dragos_dragos_inventory_model_assets_discovery_status: "failed"
+        fe_dragos_dragos_inventory_model_assets_discovery_postflight_passed: false
+        fe_dragos_dragos_inventory_model_assets_discovery_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+        fe_dragos_dragos_inventory_model_assets_discovery_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+      tags:
+        - always
+        - rescue
+
+    - name: "dragos/dragos_inventory_model/assets_discovery | Rescue | Report the failure"
+      ansible.builtin.debug:
+        msg: >-
+          dragos/dragos_inventory_model/assets_discovery: FAILED at '{{ fe_dragos_dragos_inventory_model_assets_discovery_failed_task }}' on
+          {{ inventory_hostname }} - {{ fe_dragos_dragos_inventory_model_assets_discovery_error }}
+      tags:
+        - always
+        - rescue
+
+    - name: "dragos/dragos_inventory_model/assets_discovery | Rescue | Re-raise the failure unless the caller opted to continue"
+      ansible.builtin.fail:
+        msg: >-
+          dragos/dragos_inventory_model/assets_discovery failed at '{{ fe_dragos_dragos_inventory_model_assets_discovery_failed_task }}': {{ fe_dragos_dragos_inventory_model_assets_discovery_error }}
+      when: not (fe_validation_continue_on_error | default(false) | bool)
+      tags:
+        - always
+        - rescue
+
+  always:
+
+    - name: "dragos/dragos_inventory_model/assets_discovery | Always | Compute the execution duration"
+      ansible.builtin.set_fact:
+        fe_dragos_dragos_inventory_model_assets_discovery_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+        fe_dragos_dragos_inventory_model_assets_discovery_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_dragos_dragos_inventory_model_assets_discovery_start_epoch | default(0) | int) }}"
+      tags:
+        - always
+
+    - name: "dragos/dragos_inventory_model/assets_discovery | Always | Publish the validation result with set_stats"
+      ansible.builtin.set_stats:
+        data:
+          fe_validation_results:
+            "dragos/dragos_inventory_model/assets_discovery":
+              component: "dragos/dragos_inventory_model/assets_discovery"
+              type: "role-tasks"
+              platform: "dragos"
+              host: "{{ inventory_hostname }}"
+              status: "{{ fe_dragos_dragos_inventory_model_assets_discovery_status | default('unknown') }}"
+              preflight_passed: "{{ fe_dragos_dragos_inventory_model_assets_discovery_preflight_passed | default(false) | bool }}"
+              postflight_passed: "{{ fe_dragos_dragos_inventory_model_assets_discovery_postflight_passed | default(false) | bool }}"
+              started_at: "{{ fe_dragos_dragos_inventory_model_assets_discovery_started_at | default('') }}"
+              ended_at: "{{ fe_dragos_dragos_inventory_model_assets_discovery_ended_at | default('') }}"
+              duration_seconds: "{{ fe_dragos_dragos_inventory_model_assets_discovery_duration_seconds | default(0) | int }}"
+              failed_task: "{{ fe_dragos_dragos_inventory_model_assets_discovery_failed_task | default('') }}"
+              error: "{{ fe_dragos_dragos_inventory_model_assets_discovery_error | default('') }}"
+              check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+          fe_validation_executions: 1
+          fe_validation_succeeded: "{{ 1 if fe_dragos_dragos_inventory_model_assets_discovery_status | default('') == 'succeeded' else 0 }}"
+          fe_validation_failed: "{{ 0 if fe_dragos_dragos_inventory_model_assets_discovery_status | default('') == 'succeeded' else 1 }}"
+          fe_validation_duration_seconds: "{{ fe_dragos_dragos_inventory_model_assets_discovery_duration_seconds | default(0) | int }}"
+          fe_validation_failed_components: >-
+            {{ [] if fe_dragos_dragos_inventory_model_assets_discovery_status | default('') == 'succeeded' else ['dragos/dragos_inventory_model/assets_discovery'] }}
+        aggregate: true
+        per_host: false
+      tags:
+        - always
+
+    - name: "dragos/dragos_inventory_model/assets_discovery | Always | Mark the validation statistics as published"
+      ansible.builtin.set_fact:
+        fe_dragos_dragos_inventory_model_assets_discovery_stats_published: true
+      tags:
+        - always

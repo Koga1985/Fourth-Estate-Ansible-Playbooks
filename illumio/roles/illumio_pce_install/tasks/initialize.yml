@@ -1,195 +1,378 @@
 ---
 # PCE initialization tasks
 
-- name: Check if PCE is already initialized
-  uri:
-    url: "https://{{ illumio_pce_fqdn }}:{{ illumio_pce_port }}/api/v2/health"
-    method: GET
-    validate_certs: no
-    status_code: [200, 503]
-  register: pce_init_check
-  failed_when: false
+# ---------------------------------------------------------------------------
+# Fourth Estate preflight / postflight validation harness
+#
+# The task file body below is wrapped in an Ansible block/rescue/always structure:
+#
+#   block   preflight validation runs first, then the original task file body, then
+#           postflight validation. Any failure transfers control to rescue.
+#   rescue  records which task failed and why, then re-raises so a failure is
+#           never silently swallowed. Set fe_validation_continue_on_error=true
+#           to record the failure and keep going instead.
+#   always  computes the run duration and publishes the outcome through
+#           ansible.builtin.set_stats, so a wrapping playbook, AWX/AAP or CI can
+#           consume the result without scraping log output.
+#
+# Published stats (see docs/VALIDATION_AND_STATS.md):
+#   fe_validation_results['illumio/illumio_pce_install/initialize']  per-component record
+#   fe_validation_executions / _succeeded / _failed / _duration_seconds
+#   fe_validation_failed_components
+#
+# Add component-specific preflight checks without editing this file by setting
+#   fe_illumio_illumio_pce_install_initialize_required_vars: [var_one, var_two]
+# ---------------------------------------------------------------------------
 
-- name: Run PCE database initialization
-  command: /opt/illumio-pce/illumio-pce-db-management setup
-  become: yes
-  become_user: "{{ illumio_pce_user }}"
-  when: pce_init_check.status == 503
-  register: db_init_result
+- name: "illumio/illumio_pce_install/initialize | Initialize validation state"
+  ansible.builtin.set_fact:
+    fe_illumio_illumio_pce_install_initialize_start_epoch: "{{ now(fmt='%s') | int }}"
+    fe_illumio_illumio_pce_install_initialize_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+    fe_illumio_illumio_pce_install_initialize_status: "running"
+    fe_illumio_illumio_pce_install_initialize_preflight_passed: false
+    fe_illumio_illumio_pce_install_initialize_postflight_passed: false
+    fe_illumio_illumio_pce_install_initialize_failed_task: ""
+    fe_illumio_illumio_pce_install_initialize_error: ""
+    fe_illumio_illumio_pce_install_initialize_stats_published: false
+  tags:
+    - always
 
-- name: Display database initialization output
-  debug:
-    var: db_init_result.stdout_lines
-  when: db_init_result.changed | default(false)
+- name: "illumio/illumio_pce_install/initialize | Guarded execution with preflight and postflight validation"
+  block:
 
-- name: Start PCE services
-  systemd:
-    name: illumio-pce
-    state: started
+    # ----------------------------- preflight --------------------
 
-- name: Wait for PCE to become ready
-  uri:
-    url: "https://{{ illumio_pce_fqdn }}:{{ illumio_pce_port }}/api/v2/health"
-    method: GET
-    validate_certs: no
-    status_code: 200
-  register: pce_ready
-  until: pce_ready.status == 200
-  retries: 30
-  delay: 10
+    - name: "illumio/illumio_pce_install/initialize | Preflight | Verify the control node meets the minimum ansible-core version"
+      ansible.builtin.assert:
+        that:
+          - ansible_version.full is version(fe_validation_min_ansible_version | default('2.12'), '>=')
+        fail_msg: >-
+          illumio/illumio_pce_install/initialize: requires ansible-core
+          {{ fe_validation_min_ansible_version | default('2.12') }} or newer,
+          found {{ ansible_version.full }}.
+        success_msg: >-
+          illumio/illumio_pce_install/initialize: ansible-core {{ ansible_version.full }} satisfies the minimum.
+        quiet: true
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: Create initial organization
-  uri:
-    url: "https://{{ illumio_pce_fqdn }}:{{ illumio_pce_port }}/api/v2/orgs"
-    method: POST
-    user: "{{ illumio_pce_superuser }}"
-    password: "{{ illumio_pce_superuser_password }}"
-    force_basic_auth: yes
-    validate_certs: no
-    body_format: json
-    body:
-      name: "{{ illumio_pce_org_name }}"
-      description: "{{ illumio_pce_org_description | default('Primary organization for microsegmentation') }}"
-    status_code: [201, 409]
-  register: org_creation
-  no_log: true
+    - name: "illumio/illumio_pce_install/initialize | Preflight | Verify every declared required variable is defined"
+      ansible.builtin.assert:
+        that:
+          - vars[item] is defined
+        fail_msg: "illumio/illumio_pce_install/initialize: required variable '{{ item }}' is not defined."
+        success_msg: "illumio/illumio_pce_install/initialize: required variable '{{ item }}' is defined."
+        quiet: true
+      loop: "{{ fe_illumio_illumio_pce_install_initialize_required_vars | default([]) }}"
+      loop_control:
+        label: "{{ item }}"
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: Get organization ID
-  uri:
-    url: "https://{{ illumio_pce_fqdn }}:{{ illumio_pce_port }}/api/v2/orgs"
-    method: GET
-    user: "{{ illumio_pce_superuser }}"
-    password: "{{ illumio_pce_superuser_password }}"
-    force_basic_auth: yes
-    validate_certs: no
-    return_content: yes
-  register: orgs_list
-  no_log: true
+    - name: "illumio/illumio_pce_install/initialize | Preflight | Record that preflight validation passed"
+      ansible.builtin.set_fact:
+        fe_illumio_illumio_pce_install_initialize_preflight_passed: true
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: Set organization ID fact
-  set_fact:
-    illumio_org_id: "{{ (orgs_list.json | selectattr('name', 'equalto', illumio_pce_org_name) | list)[0].href.split('/')[-1] }}"
+    # ----------------------------- execute ----------------------
 
-- name: Create PCE admin user
-  uri:
-    url: "https://{{ illumio_pce_fqdn }}:{{ illumio_pce_port }}/api/v2/users"
-    method: POST
-    user: "{{ illumio_pce_superuser }}"
-    password: "{{ illumio_pce_superuser_password }}"
-    force_basic_auth: yes
-    validate_certs: no
-    body_format: json
-    body:
-      username: "{{ illumio_pce_admin_user }}"
-      full_name: "{{ illumio_pce_admin_fullname | default('PCE Administrator') }}"
-      email: "{{ illumio_pce_admin_email | default('admin@' + illumio_pce_fqdn) }}"
-      password: "{{ illumio_pce_admin_password }}"
-      type: "local"
-      auth_security_principal_id: null
-      org_id: "{{ illumio_org_id }}"
-    status_code: [201, 409]
-  register: admin_user_creation
-  no_log: true
+    - name: Check if PCE is already initialized
+      uri:
+        url: "https://{{ illumio_pce_fqdn }}:{{ illumio_pce_port }}/api/v2/health"
+        method: GET
+        validate_certs: no
+        status_code: [200, 503]
+      register: pce_init_check
+      failed_when: false
 
-- name: Assign admin role to user
-  uri:
-    url: "https://{{ illumio_pce_fqdn }}:{{ illumio_pce_port }}/api/v2/users/{{ illumio_pce_admin_user }}/roles"
-    method: POST
-    user: "{{ illumio_pce_superuser }}"
-    password: "{{ illumio_pce_superuser_password }}"
-    force_basic_auth: yes
-    validate_certs: no
-    body_format: json
-    body:
-      org_id: "{{ illumio_org_id }}"
-      role: "owner"
-    status_code: [201, 409]
-  no_log: true
+    - name: Run PCE database initialization
+      command: /opt/illumio-pce/illumio-pce-db-management setup
+      become: yes
+      become_user: "{{ illumio_pce_user }}"
+      when: pce_init_check.status == 503
+      register: db_init_result
 
-- name: Generate API key for admin user
-  uri:
-    url: "https://{{ illumio_pce_fqdn }}:{{ illumio_pce_port }}/api/v2/users/login"
-    method: POST
-    user: "{{ illumio_pce_admin_user }}"
-    password: "{{ illumio_pce_admin_password }}"
-    force_basic_auth: yes
-    validate_certs: no
-    body_format: json
-    body:
-      pce_fqdn: "{{ illumio_pce_fqdn }}"
-      org_id: "{{ illumio_org_id }}"
-    status_code: 200
-    return_content: yes
-  register: admin_login
-  no_log: true
+    - name: Display database initialization output
+      debug:
+        var: db_init_result.stdout_lines
+      when: db_init_result.changed | default(false)
 
-- name: Create API credentials file
-  copy:
-    content: |
-      # Illumio PCE API Credentials
-      # Generated: {{ ansible_date_time.iso8601 }}
+    - name: Start PCE services
+      systemd:
+        name: illumio-pce
+        state: started
 
-      PCE_HOST={{ illumio_pce_fqdn }}
-      PCE_PORT={{ illumio_pce_port }}
-      PCE_ORG_ID={{ illumio_org_id }}
-      API_KEY={{ admin_login.json.session_token }}
+    - name: Wait for PCE to become ready
+      uri:
+        url: "https://{{ illumio_pce_fqdn }}:{{ illumio_pce_port }}/api/v2/health"
+        method: GET
+        validate_certs: no
+        status_code: 200
+      register: pce_ready
+      until: pce_ready.status == 200
+      retries: 30
+      delay: 10
 
-      # For use with illumio-pce-cli:
-      # export $(grep -v '^#' /etc/illumio-pce/api-credentials.env | xargs)
-    dest: /etc/illumio-pce/api-credentials.env
-    owner: "{{ illumio_pce_user }}"
-    group: "{{ illumio_pce_group }}"
-    mode: '0600'
-  no_log: true
+    - name: Create initial organization
+      uri:
+        url: "https://{{ illumio_pce_fqdn }}:{{ illumio_pce_port }}/api/v2/orgs"
+        method: POST
+        user: "{{ illumio_pce_superuser }}"
+        password: "{{ illumio_pce_superuser_password }}"
+        force_basic_auth: yes
+        validate_certs: no
+        body_format: json
+        body:
+          name: "{{ illumio_pce_org_name }}"
+          description: "{{ illumio_pce_org_description | default('Primary organization for microsegmentation') }}"
+        status_code: [201, 409]
+      register: org_creation
+      no_log: true
 
-- name: Configure default label types
-  uri:
-    url: "https://{{ illumio_pce_fqdn }}:{{ illumio_pce_port }}/api/v2/orgs/{{ illumio_org_id }}/label_types"
-    method: GET
-    user: "{{ illumio_pce_admin_user }}"
-    password: "{{ illumio_pce_admin_password }}"
-    force_basic_auth: yes
-    validate_certs: no
-    return_content: yes
-  register: label_types
-  no_log: true
+    - name: Get organization ID
+      uri:
+        url: "https://{{ illumio_pce_fqdn }}:{{ illumio_pce_port }}/api/v2/orgs"
+        method: GET
+        user: "{{ illumio_pce_superuser }}"
+        password: "{{ illumio_pce_superuser_password }}"
+        force_basic_auth: yes
+        validate_certs: no
+        return_content: yes
+      register: orgs_list
+      no_log: true
 
-- name: Enable default label dimensions (Role, App, Env, Loc)
-  debug:
-    msg: "Default label dimensions already configured"
-  when: label_types.json | length >= 4
+    - name: Set organization ID fact
+      set_fact:
+        illumio_org_id: "{{ (orgs_list.json | selectattr('name', 'equalto', illumio_pce_org_name) | list)[0].href.split('/')[-1] }}"
 
-- name: Create PCE initialization report
-  copy:
-    content: |
-      Illumio PCE Initialization Report
-      ==================================
-      Date: {{ ansible_date_time.iso8601 }}
-      PCE FQDN: {{ illumio_pce_fqdn }}
-      PCE Version: {{ installed_pce_version.stdout | default('Unknown') }}
+    - name: Create PCE admin user
+      uri:
+        url: "https://{{ illumio_pce_fqdn }}:{{ illumio_pce_port }}/api/v2/users"
+        method: POST
+        user: "{{ illumio_pce_superuser }}"
+        password: "{{ illumio_pce_superuser_password }}"
+        force_basic_auth: yes
+        validate_certs: no
+        body_format: json
+        body:
+          username: "{{ illumio_pce_admin_user }}"
+          full_name: "{{ illumio_pce_admin_fullname | default('PCE Administrator') }}"
+          email: "{{ illumio_pce_admin_email | default('admin@' + illumio_pce_fqdn) }}"
+          password: "{{ illumio_pce_admin_password }}"
+          type: "local"
+          auth_security_principal_id: null
+          org_id: "{{ illumio_org_id }}"
+        status_code: [201, 409]
+      register: admin_user_creation
+      no_log: true
 
-      Organization:
-      - Name: {{ illumio_pce_org_name }}
-      - ID: {{ illumio_org_id }}
+    - name: Assign admin role to user
+      uri:
+        url: "https://{{ illumio_pce_fqdn }}:{{ illumio_pce_port }}/api/v2/users/{{ illumio_pce_admin_user }}/roles"
+        method: POST
+        user: "{{ illumio_pce_superuser }}"
+        password: "{{ illumio_pce_superuser_password }}"
+        force_basic_auth: yes
+        validate_certs: no
+        body_format: json
+        body:
+          org_id: "{{ illumio_org_id }}"
+          role: "owner"
+        status_code: [201, 409]
+      no_log: true
 
-      Admin User:
-      - Username: {{ illumio_pce_admin_user }}
-      - Email: {{ illumio_pce_admin_email | default('Not configured') }}
+    - name: Generate API key for admin user
+      uri:
+        url: "https://{{ illumio_pce_fqdn }}:{{ illumio_pce_port }}/api/v2/users/login"
+        method: POST
+        user: "{{ illumio_pce_admin_user }}"
+        password: "{{ illumio_pce_admin_password }}"
+        force_basic_auth: yes
+        validate_certs: no
+        body_format: json
+        body:
+          pce_fqdn: "{{ illumio_pce_fqdn }}"
+          org_id: "{{ illumio_org_id }}"
+        status_code: 200
+        return_content: yes
+      register: admin_login
+      no_log: true
 
-      Access URLs:
-      - Web Console: https://{{ illumio_pce_fqdn }}:{{ illumio_pce_port }}
-      - API Endpoint: https://{{ illumio_pce_fqdn }}:{{ illumio_pce_port }}/api/v2
+    - name: Create API credentials file
+      copy:
+        content: |
+          # Illumio PCE API Credentials
+          # Generated: {{ ansible_date_time.iso8601 }}
 
-      API Credentials: /etc/illumio-pce/api-credentials.env
+          PCE_HOST={{ illumio_pce_fqdn }}
+          PCE_PORT={{ illumio_pce_port }}
+          PCE_ORG_ID={{ illumio_org_id }}
+          API_KEY={{ admin_login.json.session_token }}
 
-      Next Steps:
-      1. Configure authentication (AD/LDAP or SAML)
-      2. Create additional users and assign roles
-      3. Install VENs on workloads
-      4. Create labels and assign to workloads
-      5. Design segmentation policies
-      6. Create rulesets
-      7. Test policies in illumination mode
-      8. Enforce policies
-    dest: /etc/illumio-pce/initialization-report.txt
-    mode: '0644'
+          # For use with illumio-pce-cli:
+          # export $(grep -v '^#' /etc/illumio-pce/api-credentials.env | xargs)
+        dest: /etc/illumio-pce/api-credentials.env
+        owner: "{{ illumio_pce_user }}"
+        group: "{{ illumio_pce_group }}"
+        mode: '0600'
+      no_log: true
+
+    - name: Configure default label types
+      uri:
+        url: "https://{{ illumio_pce_fqdn }}:{{ illumio_pce_port }}/api/v2/orgs/{{ illumio_org_id }}/label_types"
+        method: GET
+        user: "{{ illumio_pce_admin_user }}"
+        password: "{{ illumio_pce_admin_password }}"
+        force_basic_auth: yes
+        validate_certs: no
+        return_content: yes
+      register: label_types
+      no_log: true
+
+    - name: Enable default label dimensions (Role, App, Env, Loc)
+      debug:
+        msg: "Default label dimensions already configured"
+      when: label_types.json | length >= 4
+
+    - name: Create PCE initialization report
+      copy:
+        content: |
+          Illumio PCE Initialization Report
+          ==================================
+          Date: {{ ansible_date_time.iso8601 }}
+          PCE FQDN: {{ illumio_pce_fqdn }}
+          PCE Version: {{ installed_pce_version.stdout | default('Unknown') }}
+
+          Organization:
+          - Name: {{ illumio_pce_org_name }}
+          - ID: {{ illumio_org_id }}
+
+          Admin User:
+          - Username: {{ illumio_pce_admin_user }}
+          - Email: {{ illumio_pce_admin_email | default('Not configured') }}
+
+          Access URLs:
+          - Web Console: https://{{ illumio_pce_fqdn }}:{{ illumio_pce_port }}
+          - API Endpoint: https://{{ illumio_pce_fqdn }}:{{ illumio_pce_port }}/api/v2
+
+          API Credentials: /etc/illumio-pce/api-credentials.env
+
+          Next Steps:
+          1. Configure authentication (AD/LDAP or SAML)
+          2. Create additional users and assign roles
+          3. Install VENs on workloads
+          4. Create labels and assign to workloads
+          5. Design segmentation policies
+          6. Create rulesets
+          7. Test policies in illumination mode
+          8. Enforce policies
+        dest: /etc/illumio-pce/initialization-report.txt
+        mode: '0644'
+
+    # ----------------------------- postflight -------------------
+
+    - name: "illumio/illumio_pce_install/initialize | Postflight | Verify the guarded body ran after a passing preflight"
+      ansible.builtin.assert:
+        that:
+          - fe_illumio_illumio_pce_install_initialize_preflight_passed | bool
+          - fe_illumio_illumio_pce_install_initialize_status in ['running', 'succeeded']
+        fail_msg: >-
+          illumio/illumio_pce_install/initialize: postflight validation failed - preflight passed
+          ={{ fe_illumio_illumio_pce_install_initialize_preflight_passed | default(false) }},
+          status={{ fe_illumio_illumio_pce_install_initialize_status | default('unknown') }}.
+        success_msg: "illumio/illumio_pce_install/initialize: postflight validation passed."
+        quiet: true
+      tags:
+        - always
+        - postflight
+        - validation
+
+    - name: "illumio/illumio_pce_install/initialize | Postflight | Record the successful outcome"
+      ansible.builtin.set_fact:
+        fe_illumio_illumio_pce_install_initialize_postflight_passed: true
+        fe_illumio_illumio_pce_install_initialize_status: "succeeded"
+      tags:
+        - always
+        - postflight
+        - validation
+
+  rescue:
+
+    - name: "illumio/illumio_pce_install/initialize | Rescue | Capture the failing task and error detail"
+      ansible.builtin.set_fact:
+        fe_illumio_illumio_pce_install_initialize_status: "failed"
+        fe_illumio_illumio_pce_install_initialize_postflight_passed: false
+        fe_illumio_illumio_pce_install_initialize_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+        fe_illumio_illumio_pce_install_initialize_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+      tags:
+        - always
+        - rescue
+
+    - name: "illumio/illumio_pce_install/initialize | Rescue | Report the failure"
+      ansible.builtin.debug:
+        msg: >-
+          illumio/illumio_pce_install/initialize: FAILED at '{{ fe_illumio_illumio_pce_install_initialize_failed_task }}' on
+          {{ inventory_hostname }} - {{ fe_illumio_illumio_pce_install_initialize_error }}
+      tags:
+        - always
+        - rescue
+
+    - name: "illumio/illumio_pce_install/initialize | Rescue | Re-raise the failure unless the caller opted to continue"
+      ansible.builtin.fail:
+        msg: >-
+          illumio/illumio_pce_install/initialize failed at '{{ fe_illumio_illumio_pce_install_initialize_failed_task }}': {{ fe_illumio_illumio_pce_install_initialize_error }}
+      when: not (fe_validation_continue_on_error | default(false) | bool)
+      tags:
+        - always
+        - rescue
+
+  always:
+
+    - name: "illumio/illumio_pce_install/initialize | Always | Compute the execution duration"
+      ansible.builtin.set_fact:
+        fe_illumio_illumio_pce_install_initialize_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+        fe_illumio_illumio_pce_install_initialize_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_illumio_illumio_pce_install_initialize_start_epoch | default(0) | int) }}"
+      tags:
+        - always
+
+    - name: "illumio/illumio_pce_install/initialize | Always | Publish the validation result with set_stats"
+      ansible.builtin.set_stats:
+        data:
+          fe_validation_results:
+            "illumio/illumio_pce_install/initialize":
+              component: "illumio/illumio_pce_install/initialize"
+              type: "role-tasks"
+              platform: "illumio"
+              host: "{{ inventory_hostname }}"
+              status: "{{ fe_illumio_illumio_pce_install_initialize_status | default('unknown') }}"
+              preflight_passed: "{{ fe_illumio_illumio_pce_install_initialize_preflight_passed | default(false) | bool }}"
+              postflight_passed: "{{ fe_illumio_illumio_pce_install_initialize_postflight_passed | default(false) | bool }}"
+              started_at: "{{ fe_illumio_illumio_pce_install_initialize_started_at | default('') }}"
+              ended_at: "{{ fe_illumio_illumio_pce_install_initialize_ended_at | default('') }}"
+              duration_seconds: "{{ fe_illumio_illumio_pce_install_initialize_duration_seconds | default(0) | int }}"
+              failed_task: "{{ fe_illumio_illumio_pce_install_initialize_failed_task | default('') }}"
+              error: "{{ fe_illumio_illumio_pce_install_initialize_error | default('') }}"
+              check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+          fe_validation_executions: 1
+          fe_validation_succeeded: "{{ 1 if fe_illumio_illumio_pce_install_initialize_status | default('') == 'succeeded' else 0 }}"
+          fe_validation_failed: "{{ 0 if fe_illumio_illumio_pce_install_initialize_status | default('') == 'succeeded' else 1 }}"
+          fe_validation_duration_seconds: "{{ fe_illumio_illumio_pce_install_initialize_duration_seconds | default(0) | int }}"
+          fe_validation_failed_components: >-
+            {{ [] if fe_illumio_illumio_pce_install_initialize_status | default('') == 'succeeded' else ['illumio/illumio_pce_install/initialize'] }}
+        aggregate: true
+        per_host: false
+      tags:
+        - always
+
+    - name: "illumio/illumio_pce_install/initialize | Always | Mark the validation statistics as published"
+      ansible.builtin.set_fact:
+        fe_illumio_illumio_pce_install_initialize_stats_published: true
+      tags:
+        - always

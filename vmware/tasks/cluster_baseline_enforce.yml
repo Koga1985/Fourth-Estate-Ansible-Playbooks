@@ -30,119 +30,302 @@
 # Optional:
 #   create_cluster_if_missing: false   # create cluster if it doesn't exist
 
-- name: Assert required inputs
-  ansible.builtin.assert:
-    that:
-      - vcenter_hostname | length > 0
-      - vcenter_username | length > 0
-      - vcenter_password | length > 0
-      - vcenter_datacenter | length > 0
-      - cluster_name | length > 0
-    fail_msg: "vCenter creds + vcenter_datacenter + cluster_name are required."
+# ---------------------------------------------------------------------------
+# Fourth Estate preflight / postflight validation harness
+#
+# The task file body below is wrapped in an Ansible block/rescue/always structure:
+#
+#   block   preflight validation runs first, then the original task file body, then
+#           postflight validation. Any failure transfers control to rescue.
+#   rescue  records which task failed and why, then re-raises so a failure is
+#           never silently swallowed. Set fe_validation_continue_on_error=true
+#           to record the failure and keep going instead.
+#   always  computes the run duration and publishes the outcome through
+#           ansible.builtin.set_stats, so a wrapping playbook, AWX/AAP or CI can
+#           consume the result without scraping log output.
+#
+# Published stats (see docs/VALIDATION_AND_STATS.md):
+#   fe_validation_results['vmware/cluster_baseline_enforce']  per-component record
+#   fe_validation_executions / _succeeded / _failed / _duration_seconds
+#   fe_validation_failed_components
+#
+# Add component-specific preflight checks without editing this file by setting
+#   fe_vmware_cluster_baseline_enforce_required_vars: [var_one, var_two]
+# ---------------------------------------------------------------------------
 
-- name: Set sane defaults
+- name: "vmware/cluster_baseline_enforce | Initialize validation state"
   ansible.builtin.set_fact:
-    vcenter_validate_certs: "{{ vcenter_validate_certs | default(false) }}"
-    create_cluster_if_missing: "{{ create_cluster_if_missing | default(false) }}"
-    drs:
-      enabled: "{{ (drs is defined and drs.enabled is defined) | ternary(drs.enabled, true) }}"
-      mode: "{{ (drs is defined and drs.mode is defined) | ternary(drs.mode, 'fullyAutomated') }}"
-      vmotion_rate: "{{ (drs is defined and drs.vmotion_rate is defined) | ternary(drs.vmotion_rate, 3) }}"
-    ha: "{{ ha | default({
-           'enabled': true,
-           'admission_control': {'policy':'percentage','cpu_failover_percent':25,'mem_failover_percent':25},
-           'host_isolation_response': 'restartHost',
-           'vm_monitoring': 'vmAndAppMonitoring',
-           'default_vm_restart_priority': 'medium'
-         }) }}"
-    evc: "{{ evc | default({'mode':'disabled'}) }}"
+    fe_vmware_cluster_baseline_enforce_start_epoch: "{{ now(fmt='%s') | int }}"
+    fe_vmware_cluster_baseline_enforce_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+    fe_vmware_cluster_baseline_enforce_status: "running"
+    fe_vmware_cluster_baseline_enforce_preflight_passed: false
+    fe_vmware_cluster_baseline_enforce_postflight_passed: false
+    fe_vmware_cluster_baseline_enforce_failed_task: ""
+    fe_vmware_cluster_baseline_enforce_error: ""
+    fe_vmware_cluster_baseline_enforce_stats_published: false
+  tags:
+    - always
 
-##############################################################################
-# Ensure/optionally create the cluster shell (without changing DRS/HA here)
-##############################################################################
-- name: Optionally create cluster if missing
-  community.vmware.vmware_cluster:
-    hostname: "{{ vcenter_hostname }}"
-    username: "{{ vcenter_username }}"
-    password: "{{ vcenter_password }}"
-    validate_certs: "{{ vcenter_validate_certs }}"
-    datacenter_name: "{{ vcenter_datacenter }}"
-    cluster_name: "{{ cluster_name }}"
-    state: present
-  no_log: true
-  when: create_cluster_if_missing | bool
-  delegate_to: localhost
+- name: "vmware/cluster_baseline_enforce | Guarded execution with preflight and postflight validation"
+  block:
 
-##############################################################################
-# DRS baseline
-##############################################################################
-- name: Enforce DRS baseline
-  community.vmware.vmware_cluster_drs:
-    hostname: "{{ vcenter_hostname }}"
-    username: "{{ vcenter_username }}"
-    password: "{{ vcenter_password }}"
-    validate_certs: "{{ vcenter_validate_certs }}"
-    datacenter_name: "{{ vcenter_datacenter }}"
-    cluster_name: "{{ cluster_name }}"
-    enable: "{{ drs.enabled }}"
-    mode: "{{ drs.mode }}"                # fullyAutomated|partiallyAutomated|manual
-    vmotion_rate: "{{ drs.vmotion_rate }}" # 1..5
-  no_log: true
-  delegate_to: localhost
+    # ----------------------------- preflight --------------------
 
-##############################################################################
-# HA baseline (admission control, isolation response, VM monitoring, restart)
-##############################################################################
-# Map our simple policy names into module inputs
-- name: Build HA options for module
-  ansible.builtin.set_fact:
-    _ha_enable: "{{ ha.enabled | default(true) }}"
-    _ha_policy: "{{ ha.admission_control.policy | default('percentage') }}"
-    _ha_cpu_pct: "{{ ha.admission_control.cpu_failover_percent | default(25) }}"
-    _ha_mem_pct: "{{ ha.admission_control.mem_failover_percent | default(25) }}"
-    _ha_isolation: "{{ ha.host_isolation_response | default('restartHost') }}"
-    _ha_vm_monitoring: "{{ ha.vm_monitoring | default('vmAndAppMonitoring') }}"
-    _ha_vm_restart_priority: "{{ ha.default_vm_restart_priority | default('medium') }}"
+    - name: "vmware/cluster_baseline_enforce | Preflight | Verify the control node meets the minimum ansible-core version"
+      ansible.builtin.assert:
+        that:
+          - ansible_version.full is version(fe_validation_min_ansible_version | default('2.12'), '>=')
+        fail_msg: >-
+          vmware/cluster_baseline_enforce: requires ansible-core
+          {{ fe_validation_min_ansible_version | default('2.12') }} or newer,
+          found {{ ansible_version.full }}.
+        success_msg: >-
+          vmware/cluster_baseline_enforce: ansible-core {{ ansible_version.full }} satisfies the minimum.
+        quiet: true
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: Enforce HA baseline
-  community.vmware.vmware_cluster_ha:
-    hostname: "{{ vcenter_hostname }}"
-    username: "{{ vcenter_username }}"
-    password: "{{ vcenter_password }}"
-    validate_certs: "{{ vcenter_validate_certs }}"
-    datacenter_name: "{{ vcenter_datacenter }}"
-    cluster_name: "{{ cluster_name }}"
-    enable: "{{ _ha_enable }}"
-    admission_control:
-      policy: "{{ _ha_policy }}"              # percentage|slots|disabled
-      cpu_failover_percent: "{{ _ha_cpu_pct }}"
-      mem_failover_percent: "{{ _ha_mem_pct }}"
-    host_isolation_response: "{{ _ha_isolation }}"    # restartHost|powerOff|shutdown|disabled
-    vm_monitoring: "{{ _ha_vm_monitoring }}"          # vmMonitoringOnly|vmAndAppMonitoring|disabled
-    default_vm_restart_priority: "{{ _ha_vm_restart_priority }}" # low..highest (adjust to your vSphere)
-  no_log: true
-  delegate_to: localhost
+    - name: "vmware/cluster_baseline_enforce | Preflight | Verify every declared required variable is defined"
+      ansible.builtin.assert:
+        that:
+          - vars[item] is defined
+        fail_msg: "vmware/cluster_baseline_enforce: required variable '{{ item }}' is not defined."
+        success_msg: "vmware/cluster_baseline_enforce: required variable '{{ item }}' is defined."
+        quiet: true
+      loop: "{{ fe_vmware_cluster_baseline_enforce_required_vars | default([]) }}"
+      loop_control:
+        label: "{{ item }}"
+      tags:
+        - always
+        - preflight
+        - validation
 
-##############################################################################
-# EVC baseline
-##############################################################################
-- name: Enforce EVC mode
-  community.vmware.vmware_evc_mode:
-    hostname: "{{ vcenter_hostname }}"
-    username: "{{ vcenter_username }}"
-    password: "{{ vcenter_password }}"
-    validate_certs: "{{ vcenter_validate_certs }}"
-    datacenter_name: "{{ vcenter_datacenter }}"
-    cluster_name: "{{ cluster_name }}"
-    evc_mode: "{{ evc.mode }}"            # e.g., intel-broadwell | amd-zen2 | disabled
-    state: "{{ (evc.mode | lower) == 'disabled' | ternary('disabled','present') }}"
-  no_log: true
-  delegate_to: localhost
+    - name: "vmware/cluster_baseline_enforce | Preflight | Record that preflight validation passed"
+      ansible.builtin.set_fact:
+        fe_vmware_cluster_baseline_enforce_preflight_passed: true
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: Summary
-  ansible.builtin.debug:
-    msg:
-      cluster: "{{ cluster_name }}"
-      drs: "{{ drs }}"
-      ha: "{{ ha }}"
-      evc: "{{ evc }}"
+    # ----------------------------- execute ----------------------
+
+    - name: Assert required inputs
+      ansible.builtin.assert:
+        that:
+          - vcenter_hostname | length > 0
+          - vcenter_username | length > 0
+          - vcenter_password | length > 0
+          - vcenter_datacenter | length > 0
+          - cluster_name | length > 0
+        fail_msg: "vCenter creds + vcenter_datacenter + cluster_name are required."
+
+    - name: Set sane defaults
+      ansible.builtin.set_fact:
+        vcenter_validate_certs: "{{ vcenter_validate_certs | default(false) }}"
+        create_cluster_if_missing: "{{ create_cluster_if_missing | default(false) }}"
+        drs:
+          enabled: "{{ (drs is defined and drs.enabled is defined) | ternary(drs.enabled, true) }}"
+          mode: "{{ (drs is defined and drs.mode is defined) | ternary(drs.mode, 'fullyAutomated') }}"
+          vmotion_rate: "{{ (drs is defined and drs.vmotion_rate is defined) | ternary(drs.vmotion_rate, 3) }}"
+        ha: "{{ ha | default({
+               'enabled': true,
+               'admission_control': {'policy':'percentage','cpu_failover_percent':25,'mem_failover_percent':25},
+               'host_isolation_response': 'restartHost',
+               'vm_monitoring': 'vmAndAppMonitoring',
+               'default_vm_restart_priority': 'medium'
+             }) }}"
+        evc: "{{ evc | default({'mode':'disabled'}) }}"
+
+    ##############################################################################
+    # Ensure/optionally create the cluster shell (without changing DRS/HA here)
+    ##############################################################################
+    - name: Optionally create cluster if missing
+      community.vmware.vmware_cluster:
+        hostname: "{{ vcenter_hostname }}"
+        username: "{{ vcenter_username }}"
+        password: "{{ vcenter_password }}"
+        validate_certs: "{{ vcenter_validate_certs }}"
+        datacenter_name: "{{ vcenter_datacenter }}"
+        cluster_name: "{{ cluster_name }}"
+        state: present
+      no_log: true
+      when: create_cluster_if_missing | bool
+      delegate_to: localhost
+
+    ##############################################################################
+    # DRS baseline
+    ##############################################################################
+    - name: Enforce DRS baseline
+      community.vmware.vmware_cluster_drs:
+        hostname: "{{ vcenter_hostname }}"
+        username: "{{ vcenter_username }}"
+        password: "{{ vcenter_password }}"
+        validate_certs: "{{ vcenter_validate_certs }}"
+        datacenter_name: "{{ vcenter_datacenter }}"
+        cluster_name: "{{ cluster_name }}"
+        enable: "{{ drs.enabled }}"
+        mode: "{{ drs.mode }}"                # fullyAutomated|partiallyAutomated|manual
+        vmotion_rate: "{{ drs.vmotion_rate }}" # 1..5
+      no_log: true
+      delegate_to: localhost
+
+    ##############################################################################
+    # HA baseline (admission control, isolation response, VM monitoring, restart)
+    ##############################################################################
+    # Map our simple policy names into module inputs
+    - name: Build HA options for module
+      ansible.builtin.set_fact:
+        _ha_enable: "{{ ha.enabled | default(true) }}"
+        _ha_policy: "{{ ha.admission_control.policy | default('percentage') }}"
+        _ha_cpu_pct: "{{ ha.admission_control.cpu_failover_percent | default(25) }}"
+        _ha_mem_pct: "{{ ha.admission_control.mem_failover_percent | default(25) }}"
+        _ha_isolation: "{{ ha.host_isolation_response | default('restartHost') }}"
+        _ha_vm_monitoring: "{{ ha.vm_monitoring | default('vmAndAppMonitoring') }}"
+        _ha_vm_restart_priority: "{{ ha.default_vm_restart_priority | default('medium') }}"
+
+    - name: Enforce HA baseline
+      community.vmware.vmware_cluster_ha:
+        hostname: "{{ vcenter_hostname }}"
+        username: "{{ vcenter_username }}"
+        password: "{{ vcenter_password }}"
+        validate_certs: "{{ vcenter_validate_certs }}"
+        datacenter_name: "{{ vcenter_datacenter }}"
+        cluster_name: "{{ cluster_name }}"
+        enable: "{{ _ha_enable }}"
+        admission_control:
+          policy: "{{ _ha_policy }}"              # percentage|slots|disabled
+          cpu_failover_percent: "{{ _ha_cpu_pct }}"
+          mem_failover_percent: "{{ _ha_mem_pct }}"
+        host_isolation_response: "{{ _ha_isolation }}"    # restartHost|powerOff|shutdown|disabled
+        vm_monitoring: "{{ _ha_vm_monitoring }}"          # vmMonitoringOnly|vmAndAppMonitoring|disabled
+        default_vm_restart_priority: "{{ _ha_vm_restart_priority }}" # low..highest (adjust to your vSphere)
+      no_log: true
+      delegate_to: localhost
+
+    ##############################################################################
+    # EVC baseline
+    ##############################################################################
+    - name: Enforce EVC mode
+      community.vmware.vmware_evc_mode:
+        hostname: "{{ vcenter_hostname }}"
+        username: "{{ vcenter_username }}"
+        password: "{{ vcenter_password }}"
+        validate_certs: "{{ vcenter_validate_certs }}"
+        datacenter_name: "{{ vcenter_datacenter }}"
+        cluster_name: "{{ cluster_name }}"
+        evc_mode: "{{ evc.mode }}"            # e.g., intel-broadwell | amd-zen2 | disabled
+        state: "{{ (evc.mode | lower) == 'disabled' | ternary('disabled','present') }}"
+      no_log: true
+      delegate_to: localhost
+
+    - name: Summary
+      ansible.builtin.debug:
+        msg:
+          cluster: "{{ cluster_name }}"
+          drs: "{{ drs }}"
+          ha: "{{ ha }}"
+          evc: "{{ evc }}"
+
+    # ----------------------------- postflight -------------------
+
+    - name: "vmware/cluster_baseline_enforce | Postflight | Verify the guarded body ran after a passing preflight"
+      ansible.builtin.assert:
+        that:
+          - fe_vmware_cluster_baseline_enforce_preflight_passed | bool
+          - fe_vmware_cluster_baseline_enforce_status in ['running', 'succeeded']
+        fail_msg: >-
+          vmware/cluster_baseline_enforce: postflight validation failed - preflight passed
+          ={{ fe_vmware_cluster_baseline_enforce_preflight_passed | default(false) }},
+          status={{ fe_vmware_cluster_baseline_enforce_status | default('unknown') }}.
+        success_msg: "vmware/cluster_baseline_enforce: postflight validation passed."
+        quiet: true
+      tags:
+        - always
+        - postflight
+        - validation
+
+    - name: "vmware/cluster_baseline_enforce | Postflight | Record the successful outcome"
+      ansible.builtin.set_fact:
+        fe_vmware_cluster_baseline_enforce_postflight_passed: true
+        fe_vmware_cluster_baseline_enforce_status: "succeeded"
+      tags:
+        - always
+        - postflight
+        - validation
+
+  rescue:
+
+    - name: "vmware/cluster_baseline_enforce | Rescue | Capture the failing task and error detail"
+      ansible.builtin.set_fact:
+        fe_vmware_cluster_baseline_enforce_status: "failed"
+        fe_vmware_cluster_baseline_enforce_postflight_passed: false
+        fe_vmware_cluster_baseline_enforce_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+        fe_vmware_cluster_baseline_enforce_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+      tags:
+        - always
+        - rescue
+
+    - name: "vmware/cluster_baseline_enforce | Rescue | Report the failure"
+      ansible.builtin.debug:
+        msg: >-
+          vmware/cluster_baseline_enforce: FAILED at '{{ fe_vmware_cluster_baseline_enforce_failed_task }}' on
+          {{ inventory_hostname }} - {{ fe_vmware_cluster_baseline_enforce_error }}
+      tags:
+        - always
+        - rescue
+
+    - name: "vmware/cluster_baseline_enforce | Rescue | Re-raise the failure unless the caller opted to continue"
+      ansible.builtin.fail:
+        msg: >-
+          vmware/cluster_baseline_enforce failed at '{{ fe_vmware_cluster_baseline_enforce_failed_task }}': {{ fe_vmware_cluster_baseline_enforce_error }}
+      when: not (fe_validation_continue_on_error | default(false) | bool)
+      tags:
+        - always
+        - rescue
+
+  always:
+
+    - name: "vmware/cluster_baseline_enforce | Always | Compute the execution duration"
+      ansible.builtin.set_fact:
+        fe_vmware_cluster_baseline_enforce_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+        fe_vmware_cluster_baseline_enforce_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_vmware_cluster_baseline_enforce_start_epoch | default(0) | int) }}"
+      tags:
+        - always
+
+    - name: "vmware/cluster_baseline_enforce | Always | Publish the validation result with set_stats"
+      ansible.builtin.set_stats:
+        data:
+          fe_validation_results:
+            "vmware/cluster_baseline_enforce":
+              component: "vmware/cluster_baseline_enforce"
+              type: "tasks"
+              platform: "vmware"
+              host: "{{ inventory_hostname }}"
+              status: "{{ fe_vmware_cluster_baseline_enforce_status | default('unknown') }}"
+              preflight_passed: "{{ fe_vmware_cluster_baseline_enforce_preflight_passed | default(false) | bool }}"
+              postflight_passed: "{{ fe_vmware_cluster_baseline_enforce_postflight_passed | default(false) | bool }}"
+              started_at: "{{ fe_vmware_cluster_baseline_enforce_started_at | default('') }}"
+              ended_at: "{{ fe_vmware_cluster_baseline_enforce_ended_at | default('') }}"
+              duration_seconds: "{{ fe_vmware_cluster_baseline_enforce_duration_seconds | default(0) | int }}"
+              failed_task: "{{ fe_vmware_cluster_baseline_enforce_failed_task | default('') }}"
+              error: "{{ fe_vmware_cluster_baseline_enforce_error | default('') }}"
+              check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+          fe_validation_executions: 1
+          fe_validation_succeeded: "{{ 1 if fe_vmware_cluster_baseline_enforce_status | default('') == 'succeeded' else 0 }}"
+          fe_validation_failed: "{{ 0 if fe_vmware_cluster_baseline_enforce_status | default('') == 'succeeded' else 1 }}"
+          fe_validation_duration_seconds: "{{ fe_vmware_cluster_baseline_enforce_duration_seconds | default(0) | int }}"
+          fe_validation_failed_components: >-
+            {{ [] if fe_vmware_cluster_baseline_enforce_status | default('') == 'succeeded' else ['vmware/cluster_baseline_enforce'] }}
+        aggregate: true
+        per_host: false
+      tags:
+        - always
+
+    - name: "vmware/cluster_baseline_enforce | Always | Mark the validation statistics as published"
+      ansible.builtin.set_fact:
+        fe_vmware_cluster_baseline_enforce_stats_published: true
+      tags:
+        - always

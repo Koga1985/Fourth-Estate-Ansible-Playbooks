@@ -2,30 +2,213 @@
 # tasks file: streaming.yml for sdwan_monitoring
 # Configure model-driven streaming telemetry
 
-- name: Configure streaming telemetry profile
-  ansible.builtin.uri:
-    url: "https://{{ sdwan_vmanage_host }}:{{ sdwan_vmanage_port }}/dataservice/settings/configuration/streaming"
-    method: POST
-    headers:
-      Cookie: "{{ sdwan_session_cookie }}"
-      X-XSRF-TOKEN: "{{ sdwan_csrf_token }}"
-      Content-Type: "application/json"
-    body_format: json
-    body:
-      "{{ item }}"
-    validate_certs: "{{ sdwan_vmanage_verify_ssl }}"
-    timeout: "{{ sdwan_vmanage_timeout }}"
-    status_code: [200, 201, 409]
-  loop: "{{ sdwan_streaming_profiles }}"
-  when: apply_changes | bool and sdwan_streaming_enabled | bool
-  register: sdwan_streaming_result
-  tags: [sdwan, monitoring, telemetry, streaming, phase20]
+# ---------------------------------------------------------------------------
+# Fourth Estate preflight / postflight validation harness
+#
+# The task file body below is wrapped in an Ansible block/rescue/always structure:
+#
+#   block   preflight validation runs first, then the original task file body, then
+#           postflight validation. Any failure transfers control to rescue.
+#   rescue  records which task failed and why, then re-raises so a failure is
+#           never silently swallowed. Set fe_validation_continue_on_error=true
+#           to record the failure and keep going instead.
+#   always  computes the run duration and publishes the outcome through
+#           ansible.builtin.set_stats, so a wrapping playbook, AWX/AAP or CI can
+#           consume the result without scraping log output.
+#
+# Published stats (see docs/VALIDATION_AND_STATS.md):
+#   fe_validation_results['cisco/sdwan_monitoring/streaming']  per-component record
+#   fe_validation_executions / _succeeded / _failed / _duration_seconds
+#   fe_validation_failed_components
+#
+# Add component-specific preflight checks without editing this file by setting
+#   fe_cisco_sdwan_monitoring_streaming_required_vars: [var_one, var_two]
+# ---------------------------------------------------------------------------
 
-- name: Display streaming telemetry status
-  ansible.builtin.debug:
-    msg:
-      - "Streaming telemetry:"
-      - "  Enabled: {{ sdwan_streaming_enabled }}"
-      - "  Profiles: {{ sdwan_streaming_profiles | length }}"
-      - "  Status: {{ apply_changes | ternary('APPLIED', 'CHECK ONLY') }}"
-  tags: [sdwan, monitoring, telemetry, streaming, phase20]
+- name: "cisco/sdwan_monitoring/streaming | Initialize validation state"
+  ansible.builtin.set_fact:
+    fe_cisco_sdwan_monitoring_streaming_start_epoch: "{{ now(fmt='%s') | int }}"
+    fe_cisco_sdwan_monitoring_streaming_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+    fe_cisco_sdwan_monitoring_streaming_status: "running"
+    fe_cisco_sdwan_monitoring_streaming_preflight_passed: false
+    fe_cisco_sdwan_monitoring_streaming_postflight_passed: false
+    fe_cisco_sdwan_monitoring_streaming_failed_task: ""
+    fe_cisco_sdwan_monitoring_streaming_error: ""
+    fe_cisco_sdwan_monitoring_streaming_stats_published: false
+  tags:
+    - always
+
+- name: "cisco/sdwan_monitoring/streaming | Guarded execution with preflight and postflight validation"
+  block:
+
+    # ----------------------------- preflight --------------------
+
+    - name: "cisco/sdwan_monitoring/streaming | Preflight | Verify the control node meets the minimum ansible-core version"
+      ansible.builtin.assert:
+        that:
+          - ansible_version.full is version(fe_validation_min_ansible_version | default('2.12'), '>=')
+        fail_msg: >-
+          cisco/sdwan_monitoring/streaming: requires ansible-core
+          {{ fe_validation_min_ansible_version | default('2.12') }} or newer,
+          found {{ ansible_version.full }}.
+        success_msg: >-
+          cisco/sdwan_monitoring/streaming: ansible-core {{ ansible_version.full }} satisfies the minimum.
+        quiet: true
+      tags:
+        - always
+        - preflight
+        - validation
+
+    - name: "cisco/sdwan_monitoring/streaming | Preflight | Verify every declared required variable is defined"
+      ansible.builtin.assert:
+        that:
+          - vars[item] is defined
+        fail_msg: "cisco/sdwan_monitoring/streaming: required variable '{{ item }}' is not defined."
+        success_msg: "cisco/sdwan_monitoring/streaming: required variable '{{ item }}' is defined."
+        quiet: true
+      loop: "{{ fe_cisco_sdwan_monitoring_streaming_required_vars | default([]) }}"
+      loop_control:
+        label: "{{ item }}"
+      tags:
+        - always
+        - preflight
+        - validation
+
+    - name: "cisco/sdwan_monitoring/streaming | Preflight | Record that preflight validation passed"
+      ansible.builtin.set_fact:
+        fe_cisco_sdwan_monitoring_streaming_preflight_passed: true
+      tags:
+        - always
+        - preflight
+        - validation
+
+    # ----------------------------- execute ----------------------
+
+    - name: Configure streaming telemetry profile
+      ansible.builtin.uri:
+        url: "https://{{ sdwan_vmanage_host }}:{{ sdwan_vmanage_port }}/dataservice/settings/configuration/streaming"
+        method: POST
+        headers:
+          Cookie: "{{ sdwan_session_cookie }}"
+          X-XSRF-TOKEN: "{{ sdwan_csrf_token }}"
+          Content-Type: "application/json"
+        body_format: json
+        body:
+          "{{ item }}"
+        validate_certs: "{{ sdwan_vmanage_verify_ssl }}"
+        timeout: "{{ sdwan_vmanage_timeout }}"
+        status_code: [200, 201, 409]
+      loop: "{{ sdwan_streaming_profiles }}"
+      when: apply_changes | bool and sdwan_streaming_enabled | bool
+      register: sdwan_streaming_result
+      tags: [sdwan, monitoring, telemetry, streaming, phase20]
+
+    - name: Display streaming telemetry status
+      ansible.builtin.debug:
+        msg:
+          - "Streaming telemetry:"
+          - "  Enabled: {{ sdwan_streaming_enabled }}"
+          - "  Profiles: {{ sdwan_streaming_profiles | length }}"
+          - "  Status: {{ apply_changes | ternary('APPLIED', 'CHECK ONLY') }}"
+      tags: [sdwan, monitoring, telemetry, streaming, phase20]
+
+    # ----------------------------- postflight -------------------
+
+    - name: "cisco/sdwan_monitoring/streaming | Postflight | Verify the guarded body ran after a passing preflight"
+      ansible.builtin.assert:
+        that:
+          - fe_cisco_sdwan_monitoring_streaming_preflight_passed | bool
+          - fe_cisco_sdwan_monitoring_streaming_status in ['running', 'succeeded']
+        fail_msg: >-
+          cisco/sdwan_monitoring/streaming: postflight validation failed - preflight passed
+          ={{ fe_cisco_sdwan_monitoring_streaming_preflight_passed | default(false) }},
+          status={{ fe_cisco_sdwan_monitoring_streaming_status | default('unknown') }}.
+        success_msg: "cisco/sdwan_monitoring/streaming: postflight validation passed."
+        quiet: true
+      tags:
+        - always
+        - postflight
+        - validation
+
+    - name: "cisco/sdwan_monitoring/streaming | Postflight | Record the successful outcome"
+      ansible.builtin.set_fact:
+        fe_cisco_sdwan_monitoring_streaming_postflight_passed: true
+        fe_cisco_sdwan_monitoring_streaming_status: "succeeded"
+      tags:
+        - always
+        - postflight
+        - validation
+
+  rescue:
+
+    - name: "cisco/sdwan_monitoring/streaming | Rescue | Capture the failing task and error detail"
+      ansible.builtin.set_fact:
+        fe_cisco_sdwan_monitoring_streaming_status: "failed"
+        fe_cisco_sdwan_monitoring_streaming_postflight_passed: false
+        fe_cisco_sdwan_monitoring_streaming_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+        fe_cisco_sdwan_monitoring_streaming_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+      tags:
+        - always
+        - rescue
+
+    - name: "cisco/sdwan_monitoring/streaming | Rescue | Report the failure"
+      ansible.builtin.debug:
+        msg: >-
+          cisco/sdwan_monitoring/streaming: FAILED at '{{ fe_cisco_sdwan_monitoring_streaming_failed_task }}' on
+          {{ inventory_hostname }} - {{ fe_cisco_sdwan_monitoring_streaming_error }}
+      tags:
+        - always
+        - rescue
+
+    - name: "cisco/sdwan_monitoring/streaming | Rescue | Re-raise the failure unless the caller opted to continue"
+      ansible.builtin.fail:
+        msg: >-
+          cisco/sdwan_monitoring/streaming failed at '{{ fe_cisco_sdwan_monitoring_streaming_failed_task }}': {{ fe_cisco_sdwan_monitoring_streaming_error }}
+      when: not (fe_validation_continue_on_error | default(false) | bool)
+      tags:
+        - always
+        - rescue
+
+  always:
+
+    - name: "cisco/sdwan_monitoring/streaming | Always | Compute the execution duration"
+      ansible.builtin.set_fact:
+        fe_cisco_sdwan_monitoring_streaming_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+        fe_cisco_sdwan_monitoring_streaming_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_cisco_sdwan_monitoring_streaming_start_epoch | default(0) | int) }}"
+      tags:
+        - always
+
+    - name: "cisco/sdwan_monitoring/streaming | Always | Publish the validation result with set_stats"
+      ansible.builtin.set_stats:
+        data:
+          fe_validation_results:
+            "cisco/sdwan_monitoring/streaming":
+              component: "cisco/sdwan_monitoring/streaming"
+              type: "role-tasks"
+              platform: "cisco"
+              host: "{{ inventory_hostname }}"
+              status: "{{ fe_cisco_sdwan_monitoring_streaming_status | default('unknown') }}"
+              preflight_passed: "{{ fe_cisco_sdwan_monitoring_streaming_preflight_passed | default(false) | bool }}"
+              postflight_passed: "{{ fe_cisco_sdwan_monitoring_streaming_postflight_passed | default(false) | bool }}"
+              started_at: "{{ fe_cisco_sdwan_monitoring_streaming_started_at | default('') }}"
+              ended_at: "{{ fe_cisco_sdwan_monitoring_streaming_ended_at | default('') }}"
+              duration_seconds: "{{ fe_cisco_sdwan_monitoring_streaming_duration_seconds | default(0) | int }}"
+              failed_task: "{{ fe_cisco_sdwan_monitoring_streaming_failed_task | default('') }}"
+              error: "{{ fe_cisco_sdwan_monitoring_streaming_error | default('') }}"
+              check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+          fe_validation_executions: 1
+          fe_validation_succeeded: "{{ 1 if fe_cisco_sdwan_monitoring_streaming_status | default('') == 'succeeded' else 0 }}"
+          fe_validation_failed: "{{ 0 if fe_cisco_sdwan_monitoring_streaming_status | default('') == 'succeeded' else 1 }}"
+          fe_validation_duration_seconds: "{{ fe_cisco_sdwan_monitoring_streaming_duration_seconds | default(0) | int }}"
+          fe_validation_failed_components: >-
+            {{ [] if fe_cisco_sdwan_monitoring_streaming_status | default('') == 'succeeded' else ['cisco/sdwan_monitoring/streaming'] }}
+        aggregate: true
+        per_host: false
+      tags:
+        - always
+
+    - name: "cisco/sdwan_monitoring/streaming | Always | Mark the validation statistics as published"
+      ansible.builtin.set_fact:
+        fe_cisco_sdwan_monitoring_streaming_stats_published: true
+      tags:
+        - always

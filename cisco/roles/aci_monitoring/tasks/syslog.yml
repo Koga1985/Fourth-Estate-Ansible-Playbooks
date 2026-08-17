@@ -2,215 +2,398 @@
 # tasks file for aci_monitoring - Syslog Configuration
 # Configures syslog policy, remote destinations, local file logging, severity levels, and format
 
-- name: PHASE 5 - Configure syslog policy on ACI fabric
-  cisco.aci.aci_rest:
-    host: "{{ aci_host }}"
-    username: "{{ aci_username }}"
-    password: "{{ aci_password }}"
-    validate_certs: "{{ aci_verify_ssl }}"
-    use_proxy: "{{ aci_use_proxy }}"
-    path: /api/mo/uni/fabric/slgroup-FourthEstate-Syslog.json
-    method: "{{ 'post' if apply_changes | bool else 'get' }}"
-    content:
-      syslogGroup:
-        attributes:
-          dn: uni/fabric/slgroup-FourthEstate-Syslog
-          name: "FourthEstate-Syslog"
-          descr: "Fourth Estate ACI Syslog Policy - centralized logging"
-          format: "aci"
-          includeMilliSeconds: "{{ 'yes' if aci_syslog_include_ms | bool else 'no' }}"
-          showMilliSeconds: "{{ 'yes' if aci_syslog_include_ms | bool else 'no' }}"
-  no_log: true
-  register: syslog_policy_result
-  tags:
-    - aci
-    - monitoring
-    - syslog
-    - logging
-    - phase5
+# ---------------------------------------------------------------------------
+# Fourth Estate preflight / postflight validation harness
+#
+# The task file body below is wrapped in an Ansible block/rescue/always structure:
+#
+#   block   preflight validation runs first, then the original task file body, then
+#           postflight validation. Any failure transfers control to rescue.
+#   rescue  records which task failed and why, then re-raises so a failure is
+#           never silently swallowed. Set fe_validation_continue_on_error=true
+#           to record the failure and keep going instead.
+#   always  computes the run duration and publishes the outcome through
+#           ansible.builtin.set_stats, so a wrapping playbook, AWX/AAP or CI can
+#           consume the result without scraping log output.
+#
+# Published stats (see docs/VALIDATION_AND_STATS.md):
+#   fe_validation_results['cisco/aci_monitoring/syslog']  per-component record
+#   fe_validation_executions / _succeeded / _failed / _duration_seconds
+#   fe_validation_failed_components
+#
+# Add component-specific preflight checks without editing this file by setting
+#   fe_cisco_aci_monitoring_syslog_required_vars: [var_one, var_two]
+# ---------------------------------------------------------------------------
 
-- name: PHASE 5 - Configure syslog remote destinations
-  cisco.aci.aci_rest:
-    host: "{{ aci_host }}"
-    username: "{{ aci_username }}"
-    password: "{{ aci_password }}"
-    validate_certs: "{{ aci_verify_ssl }}"
-    use_proxy: "{{ aci_use_proxy }}"
-    path: "/api/mo/uni/fabric/slgroup-FourthEstate-Syslog/rdst-{{ item.host }}.json"
-    method: "{{ 'post' if apply_changes | bool else 'get' }}"
-    content:
-      syslogRemoteDest:
-        attributes:
-          dn: "uni/fabric/slgroup-FourthEstate-Syslog/rdst-{{ item.host }}"
-          host: "{{ item.host }}"
-          port: "{{ item.port | default(514) }}"
-          severity: "{{ item.severity | default('warnings') }}"
-          facility: "{{ item.facility | default('local7') }}"
-          transport: "{{ item.transport | default('udp') }}"
-          adminState: "enabled"
-          forwardingFacility: "{{ item.facility | default('local7') }}"
-          descr: "{{ item.description | default('Syslog remote destination - Fourth Estate') }}"
-  no_log: true
-  loop: "{{ aci_syslog_destinations }}"
-  loop_control:
-    label: "{{ item.host }}:{{ item.port | default(514) }}"
-  register: syslog_remote_dest_result
+- name: "cisco/aci_monitoring/syslog | Initialize validation state"
+  ansible.builtin.set_fact:
+    fe_cisco_aci_monitoring_syslog_start_epoch: "{{ now(fmt='%s') | int }}"
+    fe_cisco_aci_monitoring_syslog_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+    fe_cisco_aci_monitoring_syslog_status: "running"
+    fe_cisco_aci_monitoring_syslog_preflight_passed: false
+    fe_cisco_aci_monitoring_syslog_postflight_passed: false
+    fe_cisco_aci_monitoring_syslog_failed_task: ""
+    fe_cisco_aci_monitoring_syslog_error: ""
+    fe_cisco_aci_monitoring_syslog_stats_published: false
   tags:
-    - aci
-    - monitoring
-    - syslog
-    - logging
-    - phase5
+    - always
 
-- name: PHASE 5 - Configure syslog local file destination
-  cisco.aci.aci_rest:
-    host: "{{ aci_host }}"
-    username: "{{ aci_username }}"
-    password: "{{ aci_password }}"
-    validate_certs: "{{ aci_verify_ssl }}"
-    use_proxy: "{{ aci_use_proxy }}"
-    path: /api/mo/uni/fabric/slgroup-FourthEstate-Syslog/ldst.json
-    method: "{{ 'post' if apply_changes | bool else 'get' }}"
-    content:
-      syslogLocalDest:
-        attributes:
-          dn: uni/fabric/slgroup-FourthEstate-Syslog/ldst
-          adminState: "enabled"
-          severity: "{{ aci_syslog_local_severity }}"
-          descr: "Fourth Estate ACI local syslog file destination"
-  no_log: true
-  register: syslog_local_dest_result
-  tags:
-    - aci
-    - monitoring
-    - syslog
-    - logging
-    - phase5
+- name: "cisco/aci_monitoring/syslog | Guarded execution with preflight and postflight validation"
+  block:
 
-- name: PHASE 5 - Configure syslog console destination (critical events only)
-  cisco.aci.aci_rest:
-    host: "{{ aci_host }}"
-    username: "{{ aci_username }}"
-    password: "{{ aci_password }}"
-    validate_certs: "{{ aci_verify_ssl }}"
-    use_proxy: "{{ aci_use_proxy }}"
-    path: /api/mo/uni/fabric/slgroup-FourthEstate-Syslog/cdst.json
-    method: "{{ 'post' if apply_changes | bool else 'get' }}"
-    content:
-      syslogConsoleDest:
-        attributes:
-          dn: uni/fabric/slgroup-FourthEstate-Syslog/cdst
-          adminState: "enabled"
-          severity: "critical"
-          descr: "Fourth Estate ACI console syslog - critical only"
-  no_log: true
-  register: syslog_console_dest_result
-  tags:
-    - aci
-    - monitoring
-    - syslog
-    - logging
-    - phase5
+    # ----------------------------- preflight --------------------
 
-- name: PHASE 5 - Configure syslog severity level source bindings
-  cisco.aci.aci_rest:
-    host: "{{ aci_host }}"
-    username: "{{ aci_username }}"
-    password: "{{ aci_password }}"
-    validate_certs: "{{ aci_verify_ssl }}"
-    use_proxy: "{{ aci_use_proxy }}"
-    path: /api/mo/uni/fabric/moncommon/slsrc-FourthEstate-Syslog.json
-    method: "{{ 'post' if apply_changes | bool else 'get' }}"
-    content:
-      syslogSrc:
-        attributes:
-          dn: uni/fabric/moncommon/slsrc-FourthEstate-Syslog
-          name: "FourthEstate-Syslog"
-          incl: "all"
-          minSev: "warnings"
-          descr: "Fourth Estate syslog source - fabric-wide events"
-        children:
-          - syslogRsDestGroup:
-              attributes:
-                tnSyslogGroupName: "FourthEstate-Syslog"
-  no_log: true
-  register: syslog_source_result
-  tags:
-    - aci
-    - monitoring
-    - syslog
-    - logging
-    - phase5
+    - name: "cisco/aci_monitoring/syslog | Preflight | Verify the control node meets the minimum ansible-core version"
+      ansible.builtin.assert:
+        that:
+          - ansible_version.full is version(fe_validation_min_ansible_version | default('2.12'), '>=')
+        fail_msg: >-
+          cisco/aci_monitoring/syslog: requires ansible-core
+          {{ fe_validation_min_ansible_version | default('2.12') }} or newer,
+          found {{ ansible_version.full }}.
+        success_msg: >-
+          cisco/aci_monitoring/syslog: ansible-core {{ ansible_version.full }} satisfies the minimum.
+        quiet: true
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: PHASE 5 - Configure syslog format to include timestamps and username
-  cisco.aci.aci_rest:
-    host: "{{ aci_host }}"
-    username: "{{ aci_username }}"
-    password: "{{ aci_password }}"
-    validate_certs: "{{ aci_verify_ssl }}"
-    use_proxy: "{{ aci_use_proxy }}"
-    path: /api/mo/uni/fabric/slgroup-FourthEstate-Syslog.json
-    method: "{{ 'post' if apply_changes | bool else 'get' }}"
-    content:
-      syslogGroup:
-        attributes:
-          dn: uni/fabric/slgroup-FourthEstate-Syslog
-          name: "FourthEstate-Syslog"
-          format: "aci"
-          includeMilliSeconds: "{{ 'yes' if aci_syslog_include_ms | bool else 'no' }}"
-  no_log: true
-  register: syslog_format_result
-  tags:
-    - aci
-    - monitoring
-    - syslog
-    - logging
-    - phase5
+    - name: "cisco/aci_monitoring/syslog | Preflight | Verify every declared required variable is defined"
+      ansible.builtin.assert:
+        that:
+          - vars[item] is defined
+        fail_msg: "cisco/aci_monitoring/syslog: required variable '{{ item }}' is not defined."
+        success_msg: "cisco/aci_monitoring/syslog: required variable '{{ item }}' is defined."
+        quiet: true
+      loop: "{{ fe_cisco_aci_monitoring_syslog_required_vars | default([]) }}"
+      loop_control:
+        label: "{{ item }}"
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: PHASE 5 - Bind syslog policy to fabric monitoring policy
-  cisco.aci.aci_rest:
-    host: "{{ aci_host }}"
-    username: "{{ aci_username }}"
-    password: "{{ aci_password }}"
-    validate_certs: "{{ aci_verify_ssl }}"
-    use_proxy: "{{ aci_use_proxy }}"
-    path: /api/mo/uni/fabric/moncommon.json
-    method: "{{ 'post' if apply_changes | bool else 'get' }}"
-    content:
-      monCommonPol:
-        attributes:
-          dn: uni/fabric/moncommon
-          name: "default"
-  no_log: true
-  register: syslog_bind_result
-  tags:
-    - aci
-    - monitoring
-    - syslog
-    - logging
-    - phase5
+    - name: "cisco/aci_monitoring/syslog | Preflight | Record that preflight validation passed"
+      ansible.builtin.set_fact:
+        fe_cisco_aci_monitoring_syslog_preflight_passed: true
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: PHASE 5 - Save syslog configuration artifact
-  ansible.builtin.copy:
-    dest: "{{ artifacts_dir }}/aci_syslog_config.json"
-    mode: "0640"
-    content: "{{ syslog_artifact | to_nice_json }}"
-  vars:
-    syslog_artifact:
-      timestamp: "{{ ansible_date_time.iso8601 }}"
-      apic_host: "{{ aci_host }}"
-      apply_changes: "{{ apply_changes | bool }}"
-      syslog_enabled: "{{ aci_syslog_enabled | bool }}"
-      syslog_policy: "FourthEstate-Syslog"
-      remote_destination_count: "{{ aci_syslog_destinations | length }}"
-      remote_destinations: "{{ aci_syslog_destinations | map(attribute='host') | list }}"
-      local_severity: "{{ aci_syslog_local_severity }}"
-      include_milliseconds: "{{ aci_syslog_include_ms | bool }}"
-      policy_result_count: "{{ syslog_policy_result.imdata | default([]) | length }}"
-      compliance_note: "Syslog to centralized SIEM - NIST 800-53 AU-2, AU-3, AU-9, SI-4"
-  tags:
-    - aci
-    - monitoring
-    - syslog
-    - logging
-    - phase5
+    # ----------------------------- execute ----------------------
+
+    - name: PHASE 5 - Configure syslog policy on ACI fabric
+      cisco.aci.aci_rest:
+        host: "{{ aci_host }}"
+        username: "{{ aci_username }}"
+        password: "{{ aci_password }}"
+        validate_certs: "{{ aci_verify_ssl }}"
+        use_proxy: "{{ aci_use_proxy }}"
+        path: /api/mo/uni/fabric/slgroup-FourthEstate-Syslog.json
+        method: "{{ 'post' if apply_changes | bool else 'get' }}"
+        content:
+          syslogGroup:
+            attributes:
+              dn: uni/fabric/slgroup-FourthEstate-Syslog
+              name: "FourthEstate-Syslog"
+              descr: "Fourth Estate ACI Syslog Policy - centralized logging"
+              format: "aci"
+              includeMilliSeconds: "{{ 'yes' if aci_syslog_include_ms | bool else 'no' }}"
+              showMilliSeconds: "{{ 'yes' if aci_syslog_include_ms | bool else 'no' }}"
+      no_log: true
+      register: syslog_policy_result
+      tags:
+        - aci
+        - monitoring
+        - syslog
+        - logging
+        - phase5
+
+    - name: PHASE 5 - Configure syslog remote destinations
+      cisco.aci.aci_rest:
+        host: "{{ aci_host }}"
+        username: "{{ aci_username }}"
+        password: "{{ aci_password }}"
+        validate_certs: "{{ aci_verify_ssl }}"
+        use_proxy: "{{ aci_use_proxy }}"
+        path: "/api/mo/uni/fabric/slgroup-FourthEstate-Syslog/rdst-{{ item.host }}.json"
+        method: "{{ 'post' if apply_changes | bool else 'get' }}"
+        content:
+          syslogRemoteDest:
+            attributes:
+              dn: "uni/fabric/slgroup-FourthEstate-Syslog/rdst-{{ item.host }}"
+              host: "{{ item.host }}"
+              port: "{{ item.port | default(514) }}"
+              severity: "{{ item.severity | default('warnings') }}"
+              facility: "{{ item.facility | default('local7') }}"
+              transport: "{{ item.transport | default('udp') }}"
+              adminState: "enabled"
+              forwardingFacility: "{{ item.facility | default('local7') }}"
+              descr: "{{ item.description | default('Syslog remote destination - Fourth Estate') }}"
+      no_log: true
+      loop: "{{ aci_syslog_destinations }}"
+      loop_control:
+        label: "{{ item.host }}:{{ item.port | default(514) }}"
+      register: syslog_remote_dest_result
+      tags:
+        - aci
+        - monitoring
+        - syslog
+        - logging
+        - phase5
+
+    - name: PHASE 5 - Configure syslog local file destination
+      cisco.aci.aci_rest:
+        host: "{{ aci_host }}"
+        username: "{{ aci_username }}"
+        password: "{{ aci_password }}"
+        validate_certs: "{{ aci_verify_ssl }}"
+        use_proxy: "{{ aci_use_proxy }}"
+        path: /api/mo/uni/fabric/slgroup-FourthEstate-Syslog/ldst.json
+        method: "{{ 'post' if apply_changes | bool else 'get' }}"
+        content:
+          syslogLocalDest:
+            attributes:
+              dn: uni/fabric/slgroup-FourthEstate-Syslog/ldst
+              adminState: "enabled"
+              severity: "{{ aci_syslog_local_severity }}"
+              descr: "Fourth Estate ACI local syslog file destination"
+      no_log: true
+      register: syslog_local_dest_result
+      tags:
+        - aci
+        - monitoring
+        - syslog
+        - logging
+        - phase5
+
+    - name: PHASE 5 - Configure syslog console destination (critical events only)
+      cisco.aci.aci_rest:
+        host: "{{ aci_host }}"
+        username: "{{ aci_username }}"
+        password: "{{ aci_password }}"
+        validate_certs: "{{ aci_verify_ssl }}"
+        use_proxy: "{{ aci_use_proxy }}"
+        path: /api/mo/uni/fabric/slgroup-FourthEstate-Syslog/cdst.json
+        method: "{{ 'post' if apply_changes | bool else 'get' }}"
+        content:
+          syslogConsoleDest:
+            attributes:
+              dn: uni/fabric/slgroup-FourthEstate-Syslog/cdst
+              adminState: "enabled"
+              severity: "critical"
+              descr: "Fourth Estate ACI console syslog - critical only"
+      no_log: true
+      register: syslog_console_dest_result
+      tags:
+        - aci
+        - monitoring
+        - syslog
+        - logging
+        - phase5
+
+    - name: PHASE 5 - Configure syslog severity level source bindings
+      cisco.aci.aci_rest:
+        host: "{{ aci_host }}"
+        username: "{{ aci_username }}"
+        password: "{{ aci_password }}"
+        validate_certs: "{{ aci_verify_ssl }}"
+        use_proxy: "{{ aci_use_proxy }}"
+        path: /api/mo/uni/fabric/moncommon/slsrc-FourthEstate-Syslog.json
+        method: "{{ 'post' if apply_changes | bool else 'get' }}"
+        content:
+          syslogSrc:
+            attributes:
+              dn: uni/fabric/moncommon/slsrc-FourthEstate-Syslog
+              name: "FourthEstate-Syslog"
+              incl: "all"
+              minSev: "warnings"
+              descr: "Fourth Estate syslog source - fabric-wide events"
+            children:
+              - syslogRsDestGroup:
+                  attributes:
+                    tnSyslogGroupName: "FourthEstate-Syslog"
+      no_log: true
+      register: syslog_source_result
+      tags:
+        - aci
+        - monitoring
+        - syslog
+        - logging
+        - phase5
+
+    - name: PHASE 5 - Configure syslog format to include timestamps and username
+      cisco.aci.aci_rest:
+        host: "{{ aci_host }}"
+        username: "{{ aci_username }}"
+        password: "{{ aci_password }}"
+        validate_certs: "{{ aci_verify_ssl }}"
+        use_proxy: "{{ aci_use_proxy }}"
+        path: /api/mo/uni/fabric/slgroup-FourthEstate-Syslog.json
+        method: "{{ 'post' if apply_changes | bool else 'get' }}"
+        content:
+          syslogGroup:
+            attributes:
+              dn: uni/fabric/slgroup-FourthEstate-Syslog
+              name: "FourthEstate-Syslog"
+              format: "aci"
+              includeMilliSeconds: "{{ 'yes' if aci_syslog_include_ms | bool else 'no' }}"
+      no_log: true
+      register: syslog_format_result
+      tags:
+        - aci
+        - monitoring
+        - syslog
+        - logging
+        - phase5
+
+    - name: PHASE 5 - Bind syslog policy to fabric monitoring policy
+      cisco.aci.aci_rest:
+        host: "{{ aci_host }}"
+        username: "{{ aci_username }}"
+        password: "{{ aci_password }}"
+        validate_certs: "{{ aci_verify_ssl }}"
+        use_proxy: "{{ aci_use_proxy }}"
+        path: /api/mo/uni/fabric/moncommon.json
+        method: "{{ 'post' if apply_changes | bool else 'get' }}"
+        content:
+          monCommonPol:
+            attributes:
+              dn: uni/fabric/moncommon
+              name: "default"
+      no_log: true
+      register: syslog_bind_result
+      tags:
+        - aci
+        - monitoring
+        - syslog
+        - logging
+        - phase5
+
+    - name: PHASE 5 - Save syslog configuration artifact
+      ansible.builtin.copy:
+        dest: "{{ artifacts_dir }}/aci_syslog_config.json"
+        mode: "0640"
+        content: "{{ syslog_artifact | to_nice_json }}"
+      vars:
+        syslog_artifact:
+          timestamp: "{{ ansible_date_time.iso8601 }}"
+          apic_host: "{{ aci_host }}"
+          apply_changes: "{{ apply_changes | bool }}"
+          syslog_enabled: "{{ aci_syslog_enabled | bool }}"
+          syslog_policy: "FourthEstate-Syslog"
+          remote_destination_count: "{{ aci_syslog_destinations | length }}"
+          remote_destinations: "{{ aci_syslog_destinations | map(attribute='host') | list }}"
+          local_severity: "{{ aci_syslog_local_severity }}"
+          include_milliseconds: "{{ aci_syslog_include_ms | bool }}"
+          policy_result_count: "{{ syslog_policy_result.imdata | default([]) | length }}"
+          compliance_note: "Syslog to centralized SIEM - NIST 800-53 AU-2, AU-3, AU-9, SI-4"
+      tags:
+        - aci
+        - monitoring
+        - syslog
+        - logging
+        - phase5
+
+    # ----------------------------- postflight -------------------
+
+    - name: "cisco/aci_monitoring/syslog | Postflight | Verify the guarded body ran after a passing preflight"
+      ansible.builtin.assert:
+        that:
+          - fe_cisco_aci_monitoring_syslog_preflight_passed | bool
+          - fe_cisco_aci_monitoring_syslog_status in ['running', 'succeeded']
+        fail_msg: >-
+          cisco/aci_monitoring/syslog: postflight validation failed - preflight passed
+          ={{ fe_cisco_aci_monitoring_syslog_preflight_passed | default(false) }},
+          status={{ fe_cisco_aci_monitoring_syslog_status | default('unknown') }}.
+        success_msg: "cisco/aci_monitoring/syslog: postflight validation passed."
+        quiet: true
+      tags:
+        - always
+        - postflight
+        - validation
+
+    - name: "cisco/aci_monitoring/syslog | Postflight | Record the successful outcome"
+      ansible.builtin.set_fact:
+        fe_cisco_aci_monitoring_syslog_postflight_passed: true
+        fe_cisco_aci_monitoring_syslog_status: "succeeded"
+      tags:
+        - always
+        - postflight
+        - validation
+
+  rescue:
+
+    - name: "cisco/aci_monitoring/syslog | Rescue | Capture the failing task and error detail"
+      ansible.builtin.set_fact:
+        fe_cisco_aci_monitoring_syslog_status: "failed"
+        fe_cisco_aci_monitoring_syslog_postflight_passed: false
+        fe_cisco_aci_monitoring_syslog_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+        fe_cisco_aci_monitoring_syslog_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+      tags:
+        - always
+        - rescue
+
+    - name: "cisco/aci_monitoring/syslog | Rescue | Report the failure"
+      ansible.builtin.debug:
+        msg: >-
+          cisco/aci_monitoring/syslog: FAILED at '{{ fe_cisco_aci_monitoring_syslog_failed_task }}' on
+          {{ inventory_hostname }} - {{ fe_cisco_aci_monitoring_syslog_error }}
+      tags:
+        - always
+        - rescue
+
+    - name: "cisco/aci_monitoring/syslog | Rescue | Re-raise the failure unless the caller opted to continue"
+      ansible.builtin.fail:
+        msg: >-
+          cisco/aci_monitoring/syslog failed at '{{ fe_cisco_aci_monitoring_syslog_failed_task }}': {{ fe_cisco_aci_monitoring_syslog_error }}
+      when: not (fe_validation_continue_on_error | default(false) | bool)
+      tags:
+        - always
+        - rescue
+
+  always:
+
+    - name: "cisco/aci_monitoring/syslog | Always | Compute the execution duration"
+      ansible.builtin.set_fact:
+        fe_cisco_aci_monitoring_syslog_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+        fe_cisco_aci_monitoring_syslog_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_cisco_aci_monitoring_syslog_start_epoch | default(0) | int) }}"
+      tags:
+        - always
+
+    - name: "cisco/aci_monitoring/syslog | Always | Publish the validation result with set_stats"
+      ansible.builtin.set_stats:
+        data:
+          fe_validation_results:
+            "cisco/aci_monitoring/syslog":
+              component: "cisco/aci_monitoring/syslog"
+              type: "role-tasks"
+              platform: "cisco"
+              host: "{{ inventory_hostname }}"
+              status: "{{ fe_cisco_aci_monitoring_syslog_status | default('unknown') }}"
+              preflight_passed: "{{ fe_cisco_aci_monitoring_syslog_preflight_passed | default(false) | bool }}"
+              postflight_passed: "{{ fe_cisco_aci_monitoring_syslog_postflight_passed | default(false) | bool }}"
+              started_at: "{{ fe_cisco_aci_monitoring_syslog_started_at | default('') }}"
+              ended_at: "{{ fe_cisco_aci_monitoring_syslog_ended_at | default('') }}"
+              duration_seconds: "{{ fe_cisco_aci_monitoring_syslog_duration_seconds | default(0) | int }}"
+              failed_task: "{{ fe_cisco_aci_monitoring_syslog_failed_task | default('') }}"
+              error: "{{ fe_cisco_aci_monitoring_syslog_error | default('') }}"
+              check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+          fe_validation_executions: 1
+          fe_validation_succeeded: "{{ 1 if fe_cisco_aci_monitoring_syslog_status | default('') == 'succeeded' else 0 }}"
+          fe_validation_failed: "{{ 0 if fe_cisco_aci_monitoring_syslog_status | default('') == 'succeeded' else 1 }}"
+          fe_validation_duration_seconds: "{{ fe_cisco_aci_monitoring_syslog_duration_seconds | default(0) | int }}"
+          fe_validation_failed_components: >-
+            {{ [] if fe_cisco_aci_monitoring_syslog_status | default('') == 'succeeded' else ['cisco/aci_monitoring/syslog'] }}
+        aggregate: true
+        per_host: false
+      tags:
+        - always
+
+    - name: "cisco/aci_monitoring/syslog | Always | Mark the validation statistics as published"
+      ansible.builtin.set_fact:
+        fe_cisco_aci_monitoring_syslog_stats_published: true
+      tags:
+        - always

@@ -2,37 +2,220 @@
 # Reusable task: Create VAST view (filesystem/volume)
 # Usage: include this task with required variables
 
-- name: Validate required variables for view creation
-  ansible.builtin.assert:
-    that:
-      - vast_mgmt_host is defined
-      - vast_mgmt_user is defined
-      - vast_mgmt_password is defined
-      - view_name is defined
-      - view_path is defined
-    fail_msg: "Required variables for view creation are missing"
+# ---------------------------------------------------------------------------
+# Fourth Estate preflight / postflight validation harness
+#
+# The task file body below is wrapped in an Ansible block/rescue/always structure:
+#
+#   block   preflight validation runs first, then the original task file body, then
+#           postflight validation. Any failure transfers control to rescue.
+#   rescue  records which task failed and why, then re-raises so a failure is
+#           never silently swallowed. Set fe_validation_continue_on_error=true
+#           to record the failure and keep going instead.
+#   always  computes the run duration and publishes the outcome through
+#           ansible.builtin.set_stats, so a wrapping playbook, AWX/AAP or CI can
+#           consume the result without scraping log output.
+#
+# Published stats (see docs/VALIDATION_AND_STATS.md):
+#   fe_validation_results['vast/create_view']  per-component record
+#   fe_validation_executions / _succeeded / _failed / _duration_seconds
+#   fe_validation_failed_components
+#
+# Add component-specific preflight checks without editing this file by setting
+#   fe_vast_create_view_required_vars: [var_one, var_two]
+# ---------------------------------------------------------------------------
 
-- name: Create VAST view
-  ansible.builtin.uri:
-    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port | default(443) }}/api/{{ vast_api_version | default('v1') }}/views"
-    method: POST
-    user: "{{ vast_mgmt_user }}"
-    password: "{{ vast_mgmt_password }}"
-    force_basic_auth: true
-    validate_certs: "{{ vast_verify_ssl | default(true) }}"
-    body_format: json
-    body:
-      name: "{{ view_name }}"
-      path: "{{ view_path }}"
-      protocols: "{{ view_protocols | default(['nfs', 'smb']) }}"
-      quota_size_gb: "{{ view_quota_gb | default(0) }}"
-      snapshot_enabled: "{{ view_snapshot_enabled | default(true) }}"
-    status_code: [200, 201, 409]
-  no_log: true
-  delegate_to: localhost
-  register: view_creation_result
+- name: "vast/create_view | Initialize validation state"
+  ansible.builtin.set_fact:
+    fe_vast_create_view_start_epoch: "{{ now(fmt='%s') | int }}"
+    fe_vast_create_view_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+    fe_vast_create_view_status: "running"
+    fe_vast_create_view_preflight_passed: false
+    fe_vast_create_view_postflight_passed: false
+    fe_vast_create_view_failed_task: ""
+    fe_vast_create_view_error: ""
+    fe_vast_create_view_stats_published: false
+  tags:
+    - always
 
-- name: Display view creation result
-  ansible.builtin.debug:
-    msg: "View '{{ view_name }}' created successfully"
-  when: view_creation_result.status in [200, 201]
+- name: "vast/create_view | Guarded execution with preflight and postflight validation"
+  block:
+
+    # ----------------------------- preflight --------------------
+
+    - name: "vast/create_view | Preflight | Verify the control node meets the minimum ansible-core version"
+      ansible.builtin.assert:
+        that:
+          - ansible_version.full is version(fe_validation_min_ansible_version | default('2.12'), '>=')
+        fail_msg: >-
+          vast/create_view: requires ansible-core
+          {{ fe_validation_min_ansible_version | default('2.12') }} or newer,
+          found {{ ansible_version.full }}.
+        success_msg: >-
+          vast/create_view: ansible-core {{ ansible_version.full }} satisfies the minimum.
+        quiet: true
+      tags:
+        - always
+        - preflight
+        - validation
+
+    - name: "vast/create_view | Preflight | Verify every declared required variable is defined"
+      ansible.builtin.assert:
+        that:
+          - vars[item] is defined
+        fail_msg: "vast/create_view: required variable '{{ item }}' is not defined."
+        success_msg: "vast/create_view: required variable '{{ item }}' is defined."
+        quiet: true
+      loop: "{{ fe_vast_create_view_required_vars | default([]) }}"
+      loop_control:
+        label: "{{ item }}"
+      tags:
+        - always
+        - preflight
+        - validation
+
+    - name: "vast/create_view | Preflight | Record that preflight validation passed"
+      ansible.builtin.set_fact:
+        fe_vast_create_view_preflight_passed: true
+      tags:
+        - always
+        - preflight
+        - validation
+
+    # ----------------------------- execute ----------------------
+
+    - name: Validate required variables for view creation
+      ansible.builtin.assert:
+        that:
+          - vast_mgmt_host is defined
+          - vast_mgmt_user is defined
+          - vast_mgmt_password is defined
+          - view_name is defined
+          - view_path is defined
+        fail_msg: "Required variables for view creation are missing"
+
+    - name: Create VAST view
+      ansible.builtin.uri:
+        url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port | default(443) }}/api/{{ vast_api_version | default('v1') }}/views"
+        method: POST
+        user: "{{ vast_mgmt_user }}"
+        password: "{{ vast_mgmt_password }}"
+        force_basic_auth: true
+        validate_certs: "{{ vast_verify_ssl | default(true) }}"
+        body_format: json
+        body:
+          name: "{{ view_name }}"
+          path: "{{ view_path }}"
+          protocols: "{{ view_protocols | default(['nfs', 'smb']) }}"
+          quota_size_gb: "{{ view_quota_gb | default(0) }}"
+          snapshot_enabled: "{{ view_snapshot_enabled | default(true) }}"
+        status_code: [200, 201, 409]
+      no_log: true
+      delegate_to: localhost
+      register: view_creation_result
+
+    - name: Display view creation result
+      ansible.builtin.debug:
+        msg: "View '{{ view_name }}' created successfully"
+      when: view_creation_result.status in [200, 201]
+
+    # ----------------------------- postflight -------------------
+
+    - name: "vast/create_view | Postflight | Verify the guarded body ran after a passing preflight"
+      ansible.builtin.assert:
+        that:
+          - fe_vast_create_view_preflight_passed | bool
+          - fe_vast_create_view_status in ['running', 'succeeded']
+        fail_msg: >-
+          vast/create_view: postflight validation failed - preflight passed
+          ={{ fe_vast_create_view_preflight_passed | default(false) }},
+          status={{ fe_vast_create_view_status | default('unknown') }}.
+        success_msg: "vast/create_view: postflight validation passed."
+        quiet: true
+      tags:
+        - always
+        - postflight
+        - validation
+
+    - name: "vast/create_view | Postflight | Record the successful outcome"
+      ansible.builtin.set_fact:
+        fe_vast_create_view_postflight_passed: true
+        fe_vast_create_view_status: "succeeded"
+      tags:
+        - always
+        - postflight
+        - validation
+
+  rescue:
+
+    - name: "vast/create_view | Rescue | Capture the failing task and error detail"
+      ansible.builtin.set_fact:
+        fe_vast_create_view_status: "failed"
+        fe_vast_create_view_postflight_passed: false
+        fe_vast_create_view_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+        fe_vast_create_view_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+      tags:
+        - always
+        - rescue
+
+    - name: "vast/create_view | Rescue | Report the failure"
+      ansible.builtin.debug:
+        msg: >-
+          vast/create_view: FAILED at '{{ fe_vast_create_view_failed_task }}' on
+          {{ inventory_hostname }} - {{ fe_vast_create_view_error }}
+      tags:
+        - always
+        - rescue
+
+    - name: "vast/create_view | Rescue | Re-raise the failure unless the caller opted to continue"
+      ansible.builtin.fail:
+        msg: >-
+          vast/create_view failed at '{{ fe_vast_create_view_failed_task }}': {{ fe_vast_create_view_error }}
+      when: not (fe_validation_continue_on_error | default(false) | bool)
+      tags:
+        - always
+        - rescue
+
+  always:
+
+    - name: "vast/create_view | Always | Compute the execution duration"
+      ansible.builtin.set_fact:
+        fe_vast_create_view_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+        fe_vast_create_view_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_vast_create_view_start_epoch | default(0) | int) }}"
+      tags:
+        - always
+
+    - name: "vast/create_view | Always | Publish the validation result with set_stats"
+      ansible.builtin.set_stats:
+        data:
+          fe_validation_results:
+            "vast/create_view":
+              component: "vast/create_view"
+              type: "tasks"
+              platform: "vast"
+              host: "{{ inventory_hostname }}"
+              status: "{{ fe_vast_create_view_status | default('unknown') }}"
+              preflight_passed: "{{ fe_vast_create_view_preflight_passed | default(false) | bool }}"
+              postflight_passed: "{{ fe_vast_create_view_postflight_passed | default(false) | bool }}"
+              started_at: "{{ fe_vast_create_view_started_at | default('') }}"
+              ended_at: "{{ fe_vast_create_view_ended_at | default('') }}"
+              duration_seconds: "{{ fe_vast_create_view_duration_seconds | default(0) | int }}"
+              failed_task: "{{ fe_vast_create_view_failed_task | default('') }}"
+              error: "{{ fe_vast_create_view_error | default('') }}"
+              check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+          fe_validation_executions: 1
+          fe_validation_succeeded: "{{ 1 if fe_vast_create_view_status | default('') == 'succeeded' else 0 }}"
+          fe_validation_failed: "{{ 0 if fe_vast_create_view_status | default('') == 'succeeded' else 1 }}"
+          fe_validation_duration_seconds: "{{ fe_vast_create_view_duration_seconds | default(0) | int }}"
+          fe_validation_failed_components: >-
+            {{ [] if fe_vast_create_view_status | default('') == 'succeeded' else ['vast/create_view'] }}
+        aggregate: true
+        per_host: false
+      tags:
+        - always
+
+    - name: "vast/create_view | Always | Mark the validation statistics as published"
+      ansible.builtin.set_fact:
+        fe_vast_create_view_stats_published: true
+      tags:
+        - always

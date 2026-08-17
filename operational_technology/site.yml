@@ -14,6 +14,23 @@
 #   - compliance: Compliance checks
 #   - patching: Windows HMI patching
 
+# ---------------------------------------------------------------------------
+# Fourth Estate preflight / postflight validation harness
+#
+# Every play below carries a block/rescue/always validation wrapper:
+#
+#   pre_tasks   preflight validation. On failure it records the reason,
+#               publishes the outcome with set_stats and aborts the play
+#               before any role or task runs.
+#   tasks       the original task list, wrapped so a failure is captured
+#               (which task, which error) and then re-raised.
+#   post_tasks  postflight validation, then the run record is published with
+#               ansible.builtin.set_stats.
+#
+# Set fe_validation_continue_on_error=true to record failures and keep going.
+# See docs/VALIDATION_AND_STATS.md for the published stats schema.
+# ---------------------------------------------------------------------------
+
 - name: OT Infrastructure - Pre-Flight Checks
   hosts: localhost
   connection: local
@@ -21,17 +38,350 @@
   any_errors_fatal: true
 
   tasks:
-    - name: Check for emergency freeze
-      ansible.builtin.fail:
-        msg: "EMERGENCY FREEZE ACTIVE - All OT changes are halted. Set ot_emergency_freeze=false to proceed."
-      when: ot_emergency_freeze | default(false) | bool
-      tags: ['always']
+    - name: "operational_technology/site#play1 | Guarded execution with rescue and always handling"
+      block:
 
-    - name: Verify change window
-      ansible.builtin.include_role:
-        name: ot_change_window_guard
-      when: ot_change_window_enabled | default(true) | bool
-      tags: ['always']
+        - name: Check for emergency freeze
+          ansible.builtin.fail:
+            msg: "EMERGENCY FREEZE ACTIVE - All OT changes are halted. Set ot_emergency_freeze=false to proceed."
+          when: ot_emergency_freeze | default(false) | bool
+          tags: ['always']
+
+        - name: Verify change window
+          ansible.builtin.include_role:
+            name: ot_change_window_guard
+          when: ot_change_window_enabled | default(true) | bool
+          tags: ['always']
+
+      rescue:
+
+        - name: "operational_technology/site#play1 | Rescue | Capture the failing task and error detail"
+          ansible.builtin.set_fact:
+            fe_operational_technology_site_play1_status: "failed"
+            fe_operational_technology_site_play1_postflight_passed: false
+            fe_operational_technology_site_play1_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+            fe_operational_technology_site_play1_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+          tags:
+            - always
+            - rescue
+
+        - name: "operational_technology/site#play1 | Rescue | Report the failure"
+          ansible.builtin.debug:
+            msg: >-
+              operational_technology/site#play1: FAILED at '{{ fe_operational_technology_site_play1_failed_task }}' on
+              {{ inventory_hostname }} - {{ fe_operational_technology_site_play1_error }}
+          tags:
+            - always
+            - rescue
+
+        - name: "operational_technology/site#play1 | Rescue | Re-raise the failure unless the caller opted to continue"
+          ansible.builtin.fail:
+            msg: >-
+              operational_technology/site#play1 failed at '{{ fe_operational_technology_site_play1_failed_task }}': {{ fe_operational_technology_site_play1_error }}
+          when: not (fe_validation_continue_on_error | default(false) | bool)
+          tags:
+            - always
+            - rescue
+
+      always:
+
+        - name: "operational_technology/site#play1 | Always | Compute the execution duration"
+          ansible.builtin.set_fact:
+            fe_operational_technology_site_play1_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+            fe_operational_technology_site_play1_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_operational_technology_site_play1_start_epoch | default(0) | int) }}"
+          tags:
+            - always
+
+        - name: "operational_technology/site#play1 | Always | Publish the validation result with set_stats"
+          ansible.builtin.set_stats:
+            data:
+              fe_validation_results:
+                "operational_technology/site#play1":
+                  component: "operational_technology/site#play1"
+                  type: "playbook"
+                  platform: "operational_technology"
+                  host: "{{ inventory_hostname }}"
+                  status: "{{ fe_operational_technology_site_play1_status | default('unknown') }}"
+                  preflight_passed: "{{ fe_operational_technology_site_play1_preflight_passed | default(false) | bool }}"
+                  postflight_passed: "{{ fe_operational_technology_site_play1_postflight_passed | default(false) | bool }}"
+                  started_at: "{{ fe_operational_technology_site_play1_started_at | default('') }}"
+                  ended_at: "{{ fe_operational_technology_site_play1_ended_at | default('') }}"
+                  duration_seconds: "{{ fe_operational_technology_site_play1_duration_seconds | default(0) | int }}"
+                  failed_task: "{{ fe_operational_technology_site_play1_failed_task | default('') }}"
+                  error: "{{ fe_operational_technology_site_play1_error | default('') }}"
+                  check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+              fe_validation_executions: 1
+              fe_validation_succeeded: "{{ 1 if fe_operational_technology_site_play1_status | default('') == 'succeeded' else 0 }}"
+              fe_validation_failed: "{{ 0 if fe_operational_technology_site_play1_status | default('') == 'succeeded' else 1 }}"
+              fe_validation_duration_seconds: "{{ fe_operational_technology_site_play1_duration_seconds | default(0) | int }}"
+              fe_validation_failed_components: >-
+                {{ [] if fe_operational_technology_site_play1_status | default('') == 'succeeded' else ['operational_technology/site#play1'] }}
+            aggregate: true
+            per_host: false
+          when:
+            - fe_operational_technology_site_play1_status | default('') == 'failed'
+            - not (fe_operational_technology_site_play1_stats_published | default(false) | bool)
+          tags:
+            - always
+
+        - name: "operational_technology/site#play1 | Always | Mark the validation statistics as published"
+          ansible.builtin.set_fact:
+            fe_operational_technology_site_play1_stats_published: true
+          when:
+            - fe_operational_technology_site_play1_status | default('') == 'failed'
+          tags:
+            - always
+  pre_tasks:
+    - name: "operational_technology/site#play1 | Preflight validation"
+      tags:
+        - always
+        - preflight
+        - validation
+      block:
+
+        - name: "operational_technology/site#play1 | Initialize validation state"
+          ansible.builtin.set_fact:
+            fe_operational_technology_site_play1_start_epoch: "{{ now(fmt='%s') | int }}"
+            fe_operational_technology_site_play1_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+            fe_operational_technology_site_play1_status: "running"
+            fe_operational_technology_site_play1_preflight_passed: false
+            fe_operational_technology_site_play1_postflight_passed: false
+            fe_operational_technology_site_play1_failed_task: ""
+            fe_operational_technology_site_play1_error: ""
+            fe_operational_technology_site_play1_stats_published: false
+          tags:
+            - always
+
+        - name: "operational_technology/site#play1 | Preflight | Verify the control node meets the minimum ansible-core version"
+          ansible.builtin.assert:
+            that:
+              - ansible_version.full is version(fe_validation_min_ansible_version | default('2.12'), '>=')
+            fail_msg: >-
+              operational_technology/site#play1: requires ansible-core
+              {{ fe_validation_min_ansible_version | default('2.12') }} or newer,
+              found {{ ansible_version.full }}.
+            success_msg: >-
+              operational_technology/site#play1: ansible-core {{ ansible_version.full }} satisfies the minimum.
+            quiet: true
+          tags:
+            - always
+            - preflight
+            - validation
+
+        - name: "operational_technology/site#play1 | Preflight | Verify every declared required variable is defined"
+          ansible.builtin.assert:
+            that:
+              - vars[item] is defined
+            fail_msg: "operational_technology/site#play1: required variable '{{ item }}' is not defined."
+            success_msg: "operational_technology/site#play1: required variable '{{ item }}' is defined."
+            quiet: true
+          loop: "{{ fe_operational_technology_site_play1_required_vars | default([]) }}"
+          loop_control:
+            label: "{{ item }}"
+          tags:
+            - always
+            - preflight
+            - validation
+
+        - name: "operational_technology/site#play1 | Preflight | Record that preflight validation passed"
+          ansible.builtin.set_fact:
+            fe_operational_technology_site_play1_preflight_passed: true
+          tags:
+            - always
+            - preflight
+            - validation
+
+      rescue:
+
+        - name: "operational_technology/site#play1 | Rescue | Capture the failing task and error detail"
+          ansible.builtin.set_fact:
+            fe_operational_technology_site_play1_status: "preflight_failed"
+            fe_operational_technology_site_play1_postflight_passed: false
+            fe_operational_technology_site_play1_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+            fe_operational_technology_site_play1_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+          tags:
+            - always
+            - rescue
+
+        - name: "operational_technology/site#play1 | Rescue | Report the failure"
+          ansible.builtin.debug:
+            msg: >-
+              operational_technology/site#play1: FAILED at '{{ fe_operational_technology_site_play1_failed_task }}' on
+              {{ inventory_hostname }} - {{ fe_operational_technology_site_play1_error }}
+          tags:
+            - always
+            - rescue
+
+        - name: "operational_technology/site#play1 | Always | Publish the validation result with set_stats"
+          ansible.builtin.set_stats:
+            data:
+              fe_validation_results:
+                "operational_technology/site#play1":
+                  component: "operational_technology/site#play1"
+                  type: "playbook"
+                  platform: "operational_technology"
+                  host: "{{ inventory_hostname }}"
+                  status: "{{ fe_operational_technology_site_play1_status | default('unknown') }}"
+                  preflight_passed: "{{ fe_operational_technology_site_play1_preflight_passed | default(false) | bool }}"
+                  postflight_passed: "{{ fe_operational_technology_site_play1_postflight_passed | default(false) | bool }}"
+                  started_at: "{{ fe_operational_technology_site_play1_started_at | default('') }}"
+                  ended_at: "{{ fe_operational_technology_site_play1_ended_at | default('') }}"
+                  duration_seconds: "{{ fe_operational_technology_site_play1_duration_seconds | default(0) | int }}"
+                  failed_task: "{{ fe_operational_technology_site_play1_failed_task | default('') }}"
+                  error: "{{ fe_operational_technology_site_play1_error | default('') }}"
+                  check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+              fe_validation_executions: 1
+              fe_validation_succeeded: "{{ 1 if fe_operational_technology_site_play1_status | default('') == 'succeeded' else 0 }}"
+              fe_validation_failed: "{{ 0 if fe_operational_technology_site_play1_status | default('') == 'succeeded' else 1 }}"
+              fe_validation_duration_seconds: "{{ fe_operational_technology_site_play1_duration_seconds | default(0) | int }}"
+              fe_validation_failed_components: >-
+                {{ [] if fe_operational_technology_site_play1_status | default('') == 'succeeded' else ['operational_technology/site#play1'] }}
+            aggregate: true
+            per_host: false
+          tags:
+            - always
+
+        - name: "operational_technology/site#play1 | Always | Mark the validation statistics as published"
+          ansible.builtin.set_fact:
+            fe_operational_technology_site_play1_stats_published: true
+          tags:
+            - always
+
+        - name: "operational_technology/site#play1 | Rescue | Re-raise the failure unless the caller opted to continue"
+          ansible.builtin.fail:
+            msg: >-
+              operational_technology/site#play1 failed at '{{ fe_operational_technology_site_play1_failed_task }}': {{ fe_operational_technology_site_play1_error }}
+          when: not (fe_validation_continue_on_error | default(false) | bool)
+          tags:
+            - always
+            - rescue
+
+      always:
+
+        - name: "operational_technology/site#play1 | Always | Report the preflight outcome"
+          ansible.builtin.debug:
+            msg: >-
+              operational_technology/site#play1: preflight
+              {{ 'passed' if fe_operational_technology_site_play1_preflight_passed | default(false) | bool else 'FAILED' }}
+              on {{ inventory_hostname }}.
+          tags:
+            - always
+  post_tasks:
+    - name: "operational_technology/site#play1 | Postflight validation"
+      tags:
+        - always
+        - postflight
+        - validation
+      block:
+
+        - name: "operational_technology/site#play1 | Postflight | Verify the guarded body ran after a passing preflight"
+          ansible.builtin.assert:
+            that:
+              - fe_operational_technology_site_play1_preflight_passed | bool
+              - fe_operational_technology_site_play1_status in ['running', 'succeeded']
+            fail_msg: >-
+              operational_technology/site#play1: postflight validation failed - preflight passed
+              ={{ fe_operational_technology_site_play1_preflight_passed | default(false) }},
+              status={{ fe_operational_technology_site_play1_status | default('unknown') }}.
+            success_msg: "operational_technology/site#play1: postflight validation passed."
+            quiet: true
+          tags:
+            - always
+            - postflight
+            - validation
+
+        - name: "operational_technology/site#play1 | Postflight | Record the successful outcome"
+          ansible.builtin.set_fact:
+            fe_operational_technology_site_play1_postflight_passed: true
+            fe_operational_technology_site_play1_status: "succeeded"
+          tags:
+            - always
+            - postflight
+            - validation
+
+      rescue:
+
+        - name: "operational_technology/site#play1 | Rescue | Capture the failing task and error detail"
+          ansible.builtin.set_fact:
+            fe_operational_technology_site_play1_status: "failed"
+            fe_operational_technology_site_play1_postflight_passed: false
+            fe_operational_technology_site_play1_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+            fe_operational_technology_site_play1_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+          tags:
+            - always
+            - rescue
+
+        - name: "operational_technology/site#play1 | Rescue | Report the failure"
+          ansible.builtin.debug:
+            msg: >-
+              operational_technology/site#play1: FAILED at '{{ fe_operational_technology_site_play1_failed_task }}' on
+              {{ inventory_hostname }} - {{ fe_operational_technology_site_play1_error }}
+          tags:
+            - always
+            - rescue
+
+        - name: "operational_technology/site#play1 | Rescue | Re-raise the failure unless the caller opted to continue"
+          ansible.builtin.fail:
+            msg: >-
+              operational_technology/site#play1 failed at '{{ fe_operational_technology_site_play1_failed_task }}': {{ fe_operational_technology_site_play1_error }}
+          when: not (fe_validation_continue_on_error | default(false) | bool)
+          tags:
+            - always
+            - rescue
+
+      always:
+
+        - name: "operational_technology/site#play1 | Always | Compute the execution duration"
+          ansible.builtin.set_fact:
+            fe_operational_technology_site_play1_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+            fe_operational_technology_site_play1_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_operational_technology_site_play1_start_epoch | default(0) | int) }}"
+          tags:
+            - always
+
+        - name: "operational_technology/site#play1 | Always | Publish the validation result with set_stats"
+          ansible.builtin.set_stats:
+            data:
+              fe_validation_results:
+                "operational_technology/site#play1":
+                  component: "operational_technology/site#play1"
+                  type: "playbook"
+                  platform: "operational_technology"
+                  host: "{{ inventory_hostname }}"
+                  status: "{{ fe_operational_technology_site_play1_status | default('unknown') }}"
+                  preflight_passed: "{{ fe_operational_technology_site_play1_preflight_passed | default(false) | bool }}"
+                  postflight_passed: "{{ fe_operational_technology_site_play1_postflight_passed | default(false) | bool }}"
+                  started_at: "{{ fe_operational_technology_site_play1_started_at | default('') }}"
+                  ended_at: "{{ fe_operational_technology_site_play1_ended_at | default('') }}"
+                  duration_seconds: "{{ fe_operational_technology_site_play1_duration_seconds | default(0) | int }}"
+                  failed_task: "{{ fe_operational_technology_site_play1_failed_task | default('') }}"
+                  error: "{{ fe_operational_technology_site_play1_error | default('') }}"
+                  check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+              fe_validation_executions: 1
+              fe_validation_succeeded: "{{ 1 if fe_operational_technology_site_play1_status | default('') == 'succeeded' else 0 }}"
+              fe_validation_failed: "{{ 0 if fe_operational_technology_site_play1_status | default('') == 'succeeded' else 1 }}"
+              fe_validation_duration_seconds: "{{ fe_operational_technology_site_play1_duration_seconds | default(0) | int }}"
+              fe_validation_failed_components: >-
+                {{ [] if fe_operational_technology_site_play1_status | default('') == 'succeeded' else ['operational_technology/site#play1'] }}
+            aggregate: true
+            per_host: false
+          when:
+            - not (fe_operational_technology_site_play1_stats_published | default(false) | bool)
+          tags:
+            - always
+
+        - name: "operational_technology/site#play1 | Always | Mark the validation statistics as published"
+          ansible.builtin.set_fact:
+            fe_operational_technology_site_play1_stats_published: true
+          tags:
+            - always
+
+        - name: "operational_technology/site#play1 | Always | Report the run summary"
+          ansible.builtin.debug:
+            msg: >-
+              operational_technology/site#play1: {{ fe_operational_technology_site_play1_status | default('unknown') }} in
+              {{ fe_operational_technology_site_play1_duration_seconds | default(0) }}s on {{ inventory_hostname }}.
+          tags:
+            - always
 
 
 - name: OT Zone Model & Inventory
@@ -49,41 +399,374 @@
     # =========================================
     # Phase 1: Zone Model
     # =========================================
-    - name: Phase 1 - Zone Model Definition
-      ansible.builtin.include_role:
-        name: ot_zone_model
-      when: deploy_zone_model | bool
-      tags: ['zones', 'phase1']
+    - name: "operational_technology/site#play2 | Guarded execution with rescue and always handling"
+      block:
 
-    # =========================================
-    # Phase 2: Asset Inventory
-    # =========================================
-    - name: Phase 2 - Inventory Model
-      ansible.builtin.include_role:
-        name: ot_inventory_model
-      when: deploy_inventory | bool
-      tags: ['inventory', 'phase2']
+        - name: Phase 1 - Zone Model Definition
+          ansible.builtin.include_role:
+            name: ot_zone_model
+          when: deploy_zone_model | bool
+          tags: ['zones', 'phase1']
 
-    - name: Phase 2 - Asset Lifecycle
-      ansible.builtin.include_role:
-        name: ot_asset_lifecycle
-      when: deploy_inventory | bool
-      tags: ['inventory', 'phase2']
+        # =========================================
+        # Phase 2: Asset Inventory
+        # =========================================
+        - name: Phase 2 - Inventory Model
+          ansible.builtin.include_role:
+            name: ot_inventory_model
+          when: deploy_inventory | bool
+          tags: ['inventory', 'phase2']
 
-    - name: Phase 2 - Firmware Register
-      ansible.builtin.include_role:
-        name: ot_firmware_register
-      when: deploy_inventory | bool
-      tags: ['inventory', 'firmware', 'phase2']
+        - name: Phase 2 - Asset Lifecycle
+          ansible.builtin.include_role:
+            name: ot_asset_lifecycle
+          when: deploy_inventory | bool
+          tags: ['inventory', 'phase2']
 
-    # =========================================
-    # Phase 3: Network Topology
-    # =========================================
-    - name: Phase 3 - Topology Baseline
-      ansible.builtin.include_role:
-        name: ot_topology_baseline
-      when: deploy_topology | bool
-      tags: ['topology', 'phase3']
+        - name: Phase 2 - Firmware Register
+          ansible.builtin.include_role:
+            name: ot_firmware_register
+          when: deploy_inventory | bool
+          tags: ['inventory', 'firmware', 'phase2']
+
+        # =========================================
+        # Phase 3: Network Topology
+        # =========================================
+        - name: Phase 3 - Topology Baseline
+          ansible.builtin.include_role:
+            name: ot_topology_baseline
+          when: deploy_topology | bool
+          tags: ['topology', 'phase3']
+
+      rescue:
+
+        - name: "operational_technology/site#play2 | Rescue | Capture the failing task and error detail"
+          ansible.builtin.set_fact:
+            fe_operational_technology_site_play2_status: "failed"
+            fe_operational_technology_site_play2_postflight_passed: false
+            fe_operational_technology_site_play2_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+            fe_operational_technology_site_play2_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+          tags:
+            - always
+            - rescue
+
+        - name: "operational_technology/site#play2 | Rescue | Report the failure"
+          ansible.builtin.debug:
+            msg: >-
+              operational_technology/site#play2: FAILED at '{{ fe_operational_technology_site_play2_failed_task }}' on
+              {{ inventory_hostname }} - {{ fe_operational_technology_site_play2_error }}
+          tags:
+            - always
+            - rescue
+
+        - name: "operational_technology/site#play2 | Rescue | Re-raise the failure unless the caller opted to continue"
+          ansible.builtin.fail:
+            msg: >-
+              operational_technology/site#play2 failed at '{{ fe_operational_technology_site_play2_failed_task }}': {{ fe_operational_technology_site_play2_error }}
+          when: not (fe_validation_continue_on_error | default(false) | bool)
+          tags:
+            - always
+            - rescue
+
+      always:
+
+        - name: "operational_technology/site#play2 | Always | Compute the execution duration"
+          ansible.builtin.set_fact:
+            fe_operational_technology_site_play2_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+            fe_operational_technology_site_play2_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_operational_technology_site_play2_start_epoch | default(0) | int) }}"
+          tags:
+            - always
+
+        - name: "operational_technology/site#play2 | Always | Publish the validation result with set_stats"
+          ansible.builtin.set_stats:
+            data:
+              fe_validation_results:
+                "operational_technology/site#play2":
+                  component: "operational_technology/site#play2"
+                  type: "playbook"
+                  platform: "operational_technology"
+                  host: "{{ inventory_hostname }}"
+                  status: "{{ fe_operational_technology_site_play2_status | default('unknown') }}"
+                  preflight_passed: "{{ fe_operational_technology_site_play2_preflight_passed | default(false) | bool }}"
+                  postflight_passed: "{{ fe_operational_technology_site_play2_postflight_passed | default(false) | bool }}"
+                  started_at: "{{ fe_operational_technology_site_play2_started_at | default('') }}"
+                  ended_at: "{{ fe_operational_technology_site_play2_ended_at | default('') }}"
+                  duration_seconds: "{{ fe_operational_technology_site_play2_duration_seconds | default(0) | int }}"
+                  failed_task: "{{ fe_operational_technology_site_play2_failed_task | default('') }}"
+                  error: "{{ fe_operational_technology_site_play2_error | default('') }}"
+                  check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+              fe_validation_executions: 1
+              fe_validation_succeeded: "{{ 1 if fe_operational_technology_site_play2_status | default('') == 'succeeded' else 0 }}"
+              fe_validation_failed: "{{ 0 if fe_operational_technology_site_play2_status | default('') == 'succeeded' else 1 }}"
+              fe_validation_duration_seconds: "{{ fe_operational_technology_site_play2_duration_seconds | default(0) | int }}"
+              fe_validation_failed_components: >-
+                {{ [] if fe_operational_technology_site_play2_status | default('') == 'succeeded' else ['operational_technology/site#play2'] }}
+            aggregate: true
+            per_host: false
+          when:
+            - fe_operational_technology_site_play2_status | default('') == 'failed'
+            - not (fe_operational_technology_site_play2_stats_published | default(false) | bool)
+          tags:
+            - always
+
+        - name: "operational_technology/site#play2 | Always | Mark the validation statistics as published"
+          ansible.builtin.set_fact:
+            fe_operational_technology_site_play2_stats_published: true
+          when:
+            - fe_operational_technology_site_play2_status | default('') == 'failed'
+          tags:
+            - always
+  pre_tasks:
+    - name: "operational_technology/site#play2 | Preflight validation"
+      tags:
+        - always
+        - preflight
+        - validation
+      block:
+
+        - name: "operational_technology/site#play2 | Initialize validation state"
+          ansible.builtin.set_fact:
+            fe_operational_technology_site_play2_start_epoch: "{{ now(fmt='%s') | int }}"
+            fe_operational_technology_site_play2_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+            fe_operational_technology_site_play2_status: "running"
+            fe_operational_technology_site_play2_preflight_passed: false
+            fe_operational_technology_site_play2_postflight_passed: false
+            fe_operational_technology_site_play2_failed_task: ""
+            fe_operational_technology_site_play2_error: ""
+            fe_operational_technology_site_play2_stats_published: false
+          tags:
+            - always
+
+        - name: "operational_technology/site#play2 | Preflight | Verify the control node meets the minimum ansible-core version"
+          ansible.builtin.assert:
+            that:
+              - ansible_version.full is version(fe_validation_min_ansible_version | default('2.12'), '>=')
+            fail_msg: >-
+              operational_technology/site#play2: requires ansible-core
+              {{ fe_validation_min_ansible_version | default('2.12') }} or newer,
+              found {{ ansible_version.full }}.
+            success_msg: >-
+              operational_technology/site#play2: ansible-core {{ ansible_version.full }} satisfies the minimum.
+            quiet: true
+          tags:
+            - always
+            - preflight
+            - validation
+
+        - name: "operational_technology/site#play2 | Preflight | Verify every declared required variable is defined"
+          ansible.builtin.assert:
+            that:
+              - vars[item] is defined
+            fail_msg: "operational_technology/site#play2: required variable '{{ item }}' is not defined."
+            success_msg: "operational_technology/site#play2: required variable '{{ item }}' is defined."
+            quiet: true
+          loop: "{{ fe_operational_technology_site_play2_required_vars | default([]) }}"
+          loop_control:
+            label: "{{ item }}"
+          tags:
+            - always
+            - preflight
+            - validation
+
+        - name: "operational_technology/site#play2 | Preflight | Record that preflight validation passed"
+          ansible.builtin.set_fact:
+            fe_operational_technology_site_play2_preflight_passed: true
+          tags:
+            - always
+            - preflight
+            - validation
+
+      rescue:
+
+        - name: "operational_technology/site#play2 | Rescue | Capture the failing task and error detail"
+          ansible.builtin.set_fact:
+            fe_operational_technology_site_play2_status: "preflight_failed"
+            fe_operational_technology_site_play2_postflight_passed: false
+            fe_operational_technology_site_play2_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+            fe_operational_technology_site_play2_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+          tags:
+            - always
+            - rescue
+
+        - name: "operational_technology/site#play2 | Rescue | Report the failure"
+          ansible.builtin.debug:
+            msg: >-
+              operational_technology/site#play2: FAILED at '{{ fe_operational_technology_site_play2_failed_task }}' on
+              {{ inventory_hostname }} - {{ fe_operational_technology_site_play2_error }}
+          tags:
+            - always
+            - rescue
+
+        - name: "operational_technology/site#play2 | Always | Publish the validation result with set_stats"
+          ansible.builtin.set_stats:
+            data:
+              fe_validation_results:
+                "operational_technology/site#play2":
+                  component: "operational_technology/site#play2"
+                  type: "playbook"
+                  platform: "operational_technology"
+                  host: "{{ inventory_hostname }}"
+                  status: "{{ fe_operational_technology_site_play2_status | default('unknown') }}"
+                  preflight_passed: "{{ fe_operational_technology_site_play2_preflight_passed | default(false) | bool }}"
+                  postflight_passed: "{{ fe_operational_technology_site_play2_postflight_passed | default(false) | bool }}"
+                  started_at: "{{ fe_operational_technology_site_play2_started_at | default('') }}"
+                  ended_at: "{{ fe_operational_technology_site_play2_ended_at | default('') }}"
+                  duration_seconds: "{{ fe_operational_technology_site_play2_duration_seconds | default(0) | int }}"
+                  failed_task: "{{ fe_operational_technology_site_play2_failed_task | default('') }}"
+                  error: "{{ fe_operational_technology_site_play2_error | default('') }}"
+                  check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+              fe_validation_executions: 1
+              fe_validation_succeeded: "{{ 1 if fe_operational_technology_site_play2_status | default('') == 'succeeded' else 0 }}"
+              fe_validation_failed: "{{ 0 if fe_operational_technology_site_play2_status | default('') == 'succeeded' else 1 }}"
+              fe_validation_duration_seconds: "{{ fe_operational_technology_site_play2_duration_seconds | default(0) | int }}"
+              fe_validation_failed_components: >-
+                {{ [] if fe_operational_technology_site_play2_status | default('') == 'succeeded' else ['operational_technology/site#play2'] }}
+            aggregate: true
+            per_host: false
+          tags:
+            - always
+
+        - name: "operational_technology/site#play2 | Always | Mark the validation statistics as published"
+          ansible.builtin.set_fact:
+            fe_operational_technology_site_play2_stats_published: true
+          tags:
+            - always
+
+        - name: "operational_technology/site#play2 | Rescue | Re-raise the failure unless the caller opted to continue"
+          ansible.builtin.fail:
+            msg: >-
+              operational_technology/site#play2 failed at '{{ fe_operational_technology_site_play2_failed_task }}': {{ fe_operational_technology_site_play2_error }}
+          when: not (fe_validation_continue_on_error | default(false) | bool)
+          tags:
+            - always
+            - rescue
+
+      always:
+
+        - name: "operational_technology/site#play2 | Always | Report the preflight outcome"
+          ansible.builtin.debug:
+            msg: >-
+              operational_technology/site#play2: preflight
+              {{ 'passed' if fe_operational_technology_site_play2_preflight_passed | default(false) | bool else 'FAILED' }}
+              on {{ inventory_hostname }}.
+          tags:
+            - always
+  post_tasks:
+    - name: "operational_technology/site#play2 | Postflight validation"
+      tags:
+        - always
+        - postflight
+        - validation
+      block:
+
+        - name: "operational_technology/site#play2 | Postflight | Verify the guarded body ran after a passing preflight"
+          ansible.builtin.assert:
+            that:
+              - fe_operational_technology_site_play2_preflight_passed | bool
+              - fe_operational_technology_site_play2_status in ['running', 'succeeded']
+            fail_msg: >-
+              operational_technology/site#play2: postflight validation failed - preflight passed
+              ={{ fe_operational_technology_site_play2_preflight_passed | default(false) }},
+              status={{ fe_operational_technology_site_play2_status | default('unknown') }}.
+            success_msg: "operational_technology/site#play2: postflight validation passed."
+            quiet: true
+          tags:
+            - always
+            - postflight
+            - validation
+
+        - name: "operational_technology/site#play2 | Postflight | Record the successful outcome"
+          ansible.builtin.set_fact:
+            fe_operational_technology_site_play2_postflight_passed: true
+            fe_operational_technology_site_play2_status: "succeeded"
+          tags:
+            - always
+            - postflight
+            - validation
+
+      rescue:
+
+        - name: "operational_technology/site#play2 | Rescue | Capture the failing task and error detail"
+          ansible.builtin.set_fact:
+            fe_operational_technology_site_play2_status: "failed"
+            fe_operational_technology_site_play2_postflight_passed: false
+            fe_operational_technology_site_play2_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+            fe_operational_technology_site_play2_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+          tags:
+            - always
+            - rescue
+
+        - name: "operational_technology/site#play2 | Rescue | Report the failure"
+          ansible.builtin.debug:
+            msg: >-
+              operational_technology/site#play2: FAILED at '{{ fe_operational_technology_site_play2_failed_task }}' on
+              {{ inventory_hostname }} - {{ fe_operational_technology_site_play2_error }}
+          tags:
+            - always
+            - rescue
+
+        - name: "operational_technology/site#play2 | Rescue | Re-raise the failure unless the caller opted to continue"
+          ansible.builtin.fail:
+            msg: >-
+              operational_technology/site#play2 failed at '{{ fe_operational_technology_site_play2_failed_task }}': {{ fe_operational_technology_site_play2_error }}
+          when: not (fe_validation_continue_on_error | default(false) | bool)
+          tags:
+            - always
+            - rescue
+
+      always:
+
+        - name: "operational_technology/site#play2 | Always | Compute the execution duration"
+          ansible.builtin.set_fact:
+            fe_operational_technology_site_play2_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+            fe_operational_technology_site_play2_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_operational_technology_site_play2_start_epoch | default(0) | int) }}"
+          tags:
+            - always
+
+        - name: "operational_technology/site#play2 | Always | Publish the validation result with set_stats"
+          ansible.builtin.set_stats:
+            data:
+              fe_validation_results:
+                "operational_technology/site#play2":
+                  component: "operational_technology/site#play2"
+                  type: "playbook"
+                  platform: "operational_technology"
+                  host: "{{ inventory_hostname }}"
+                  status: "{{ fe_operational_technology_site_play2_status | default('unknown') }}"
+                  preflight_passed: "{{ fe_operational_technology_site_play2_preflight_passed | default(false) | bool }}"
+                  postflight_passed: "{{ fe_operational_technology_site_play2_postflight_passed | default(false) | bool }}"
+                  started_at: "{{ fe_operational_technology_site_play2_started_at | default('') }}"
+                  ended_at: "{{ fe_operational_technology_site_play2_ended_at | default('') }}"
+                  duration_seconds: "{{ fe_operational_technology_site_play2_duration_seconds | default(0) | int }}"
+                  failed_task: "{{ fe_operational_technology_site_play2_failed_task | default('') }}"
+                  error: "{{ fe_operational_technology_site_play2_error | default('') }}"
+                  check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+              fe_validation_executions: 1
+              fe_validation_succeeded: "{{ 1 if fe_operational_technology_site_play2_status | default('') == 'succeeded' else 0 }}"
+              fe_validation_failed: "{{ 0 if fe_operational_technology_site_play2_status | default('') == 'succeeded' else 1 }}"
+              fe_validation_duration_seconds: "{{ fe_operational_technology_site_play2_duration_seconds | default(0) | int }}"
+              fe_validation_failed_components: >-
+                {{ [] if fe_operational_technology_site_play2_status | default('') == 'succeeded' else ['operational_technology/site#play2'] }}
+            aggregate: true
+            per_host: false
+          when:
+            - not (fe_operational_technology_site_play2_stats_published | default(false) | bool)
+          tags:
+            - always
+
+        - name: "operational_technology/site#play2 | Always | Mark the validation statistics as published"
+          ansible.builtin.set_fact:
+            fe_operational_technology_site_play2_stats_published: true
+          tags:
+            - always
+
+        - name: "operational_technology/site#play2 | Always | Report the run summary"
+          ansible.builtin.debug:
+            msg: >-
+              operational_technology/site#play2: {{ fe_operational_technology_site_play2_status | default('unknown') }} in
+              {{ fe_operational_technology_site_play2_duration_seconds | default(0) }}s on {{ inventory_hostname }}.
+          tags:
+            - always
 
 
 - name: OT Network Infrastructure
@@ -99,17 +782,350 @@
     # =========================================
     # Phase 4: Network Operations
     # =========================================
-    - name: Phase 4 - Network Backup
-      ansible.builtin.include_role:
-        name: ot_network_backup
-      when: deploy_network_backup | bool
-      tags: ['network', 'backup', 'phase4']
+    - name: "operational_technology/site#play3 | Guarded execution with rescue and always handling"
+      block:
 
-    - name: Phase 4 - Time Sync Baseline
-      ansible.builtin.include_role:
-        name: ot_timesync_baseline
-      when: deploy_timesync | bool
-      tags: ['network', 'timesync', 'phase4']
+        - name: Phase 4 - Network Backup
+          ansible.builtin.include_role:
+            name: ot_network_backup
+          when: deploy_network_backup | bool
+          tags: ['network', 'backup', 'phase4']
+
+        - name: Phase 4 - Time Sync Baseline
+          ansible.builtin.include_role:
+            name: ot_timesync_baseline
+          when: deploy_timesync | bool
+          tags: ['network', 'timesync', 'phase4']
+
+      rescue:
+
+        - name: "operational_technology/site#play3 | Rescue | Capture the failing task and error detail"
+          ansible.builtin.set_fact:
+            fe_operational_technology_site_play3_status: "failed"
+            fe_operational_technology_site_play3_postflight_passed: false
+            fe_operational_technology_site_play3_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+            fe_operational_technology_site_play3_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+          tags:
+            - always
+            - rescue
+
+        - name: "operational_technology/site#play3 | Rescue | Report the failure"
+          ansible.builtin.debug:
+            msg: >-
+              operational_technology/site#play3: FAILED at '{{ fe_operational_technology_site_play3_failed_task }}' on
+              {{ inventory_hostname }} - {{ fe_operational_technology_site_play3_error }}
+          tags:
+            - always
+            - rescue
+
+        - name: "operational_technology/site#play3 | Rescue | Re-raise the failure unless the caller opted to continue"
+          ansible.builtin.fail:
+            msg: >-
+              operational_technology/site#play3 failed at '{{ fe_operational_technology_site_play3_failed_task }}': {{ fe_operational_technology_site_play3_error }}
+          when: not (fe_validation_continue_on_error | default(false) | bool)
+          tags:
+            - always
+            - rescue
+
+      always:
+
+        - name: "operational_technology/site#play3 | Always | Compute the execution duration"
+          ansible.builtin.set_fact:
+            fe_operational_technology_site_play3_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+            fe_operational_technology_site_play3_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_operational_technology_site_play3_start_epoch | default(0) | int) }}"
+          tags:
+            - always
+
+        - name: "operational_technology/site#play3 | Always | Publish the validation result with set_stats"
+          ansible.builtin.set_stats:
+            data:
+              fe_validation_results:
+                "operational_technology/site#play3":
+                  component: "operational_technology/site#play3"
+                  type: "playbook"
+                  platform: "operational_technology"
+                  host: "{{ inventory_hostname }}"
+                  status: "{{ fe_operational_technology_site_play3_status | default('unknown') }}"
+                  preflight_passed: "{{ fe_operational_technology_site_play3_preflight_passed | default(false) | bool }}"
+                  postflight_passed: "{{ fe_operational_technology_site_play3_postflight_passed | default(false) | bool }}"
+                  started_at: "{{ fe_operational_technology_site_play3_started_at | default('') }}"
+                  ended_at: "{{ fe_operational_technology_site_play3_ended_at | default('') }}"
+                  duration_seconds: "{{ fe_operational_technology_site_play3_duration_seconds | default(0) | int }}"
+                  failed_task: "{{ fe_operational_technology_site_play3_failed_task | default('') }}"
+                  error: "{{ fe_operational_technology_site_play3_error | default('') }}"
+                  check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+              fe_validation_executions: 1
+              fe_validation_succeeded: "{{ 1 if fe_operational_technology_site_play3_status | default('') == 'succeeded' else 0 }}"
+              fe_validation_failed: "{{ 0 if fe_operational_technology_site_play3_status | default('') == 'succeeded' else 1 }}"
+              fe_validation_duration_seconds: "{{ fe_operational_technology_site_play3_duration_seconds | default(0) | int }}"
+              fe_validation_failed_components: >-
+                {{ [] if fe_operational_technology_site_play3_status | default('') == 'succeeded' else ['operational_technology/site#play3'] }}
+            aggregate: true
+            per_host: false
+          when:
+            - fe_operational_technology_site_play3_status | default('') == 'failed'
+            - not (fe_operational_technology_site_play3_stats_published | default(false) | bool)
+          tags:
+            - always
+
+        - name: "operational_technology/site#play3 | Always | Mark the validation statistics as published"
+          ansible.builtin.set_fact:
+            fe_operational_technology_site_play3_stats_published: true
+          when:
+            - fe_operational_technology_site_play3_status | default('') == 'failed'
+          tags:
+            - always
+  pre_tasks:
+    - name: "operational_technology/site#play3 | Preflight validation"
+      tags:
+        - always
+        - preflight
+        - validation
+      block:
+
+        - name: "operational_technology/site#play3 | Initialize validation state"
+          ansible.builtin.set_fact:
+            fe_operational_technology_site_play3_start_epoch: "{{ now(fmt='%s') | int }}"
+            fe_operational_technology_site_play3_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+            fe_operational_technology_site_play3_status: "running"
+            fe_operational_technology_site_play3_preflight_passed: false
+            fe_operational_technology_site_play3_postflight_passed: false
+            fe_operational_technology_site_play3_failed_task: ""
+            fe_operational_technology_site_play3_error: ""
+            fe_operational_technology_site_play3_stats_published: false
+          tags:
+            - always
+
+        - name: "operational_technology/site#play3 | Preflight | Verify the control node meets the minimum ansible-core version"
+          ansible.builtin.assert:
+            that:
+              - ansible_version.full is version(fe_validation_min_ansible_version | default('2.12'), '>=')
+            fail_msg: >-
+              operational_technology/site#play3: requires ansible-core
+              {{ fe_validation_min_ansible_version | default('2.12') }} or newer,
+              found {{ ansible_version.full }}.
+            success_msg: >-
+              operational_technology/site#play3: ansible-core {{ ansible_version.full }} satisfies the minimum.
+            quiet: true
+          tags:
+            - always
+            - preflight
+            - validation
+
+        - name: "operational_technology/site#play3 | Preflight | Verify every declared required variable is defined"
+          ansible.builtin.assert:
+            that:
+              - vars[item] is defined
+            fail_msg: "operational_technology/site#play3: required variable '{{ item }}' is not defined."
+            success_msg: "operational_technology/site#play3: required variable '{{ item }}' is defined."
+            quiet: true
+          loop: "{{ fe_operational_technology_site_play3_required_vars | default([]) }}"
+          loop_control:
+            label: "{{ item }}"
+          tags:
+            - always
+            - preflight
+            - validation
+
+        - name: "operational_technology/site#play3 | Preflight | Record that preflight validation passed"
+          ansible.builtin.set_fact:
+            fe_operational_technology_site_play3_preflight_passed: true
+          tags:
+            - always
+            - preflight
+            - validation
+
+      rescue:
+
+        - name: "operational_technology/site#play3 | Rescue | Capture the failing task and error detail"
+          ansible.builtin.set_fact:
+            fe_operational_technology_site_play3_status: "preflight_failed"
+            fe_operational_technology_site_play3_postflight_passed: false
+            fe_operational_technology_site_play3_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+            fe_operational_technology_site_play3_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+          tags:
+            - always
+            - rescue
+
+        - name: "operational_technology/site#play3 | Rescue | Report the failure"
+          ansible.builtin.debug:
+            msg: >-
+              operational_technology/site#play3: FAILED at '{{ fe_operational_technology_site_play3_failed_task }}' on
+              {{ inventory_hostname }} - {{ fe_operational_technology_site_play3_error }}
+          tags:
+            - always
+            - rescue
+
+        - name: "operational_technology/site#play3 | Always | Publish the validation result with set_stats"
+          ansible.builtin.set_stats:
+            data:
+              fe_validation_results:
+                "operational_technology/site#play3":
+                  component: "operational_technology/site#play3"
+                  type: "playbook"
+                  platform: "operational_technology"
+                  host: "{{ inventory_hostname }}"
+                  status: "{{ fe_operational_technology_site_play3_status | default('unknown') }}"
+                  preflight_passed: "{{ fe_operational_technology_site_play3_preflight_passed | default(false) | bool }}"
+                  postflight_passed: "{{ fe_operational_technology_site_play3_postflight_passed | default(false) | bool }}"
+                  started_at: "{{ fe_operational_technology_site_play3_started_at | default('') }}"
+                  ended_at: "{{ fe_operational_technology_site_play3_ended_at | default('') }}"
+                  duration_seconds: "{{ fe_operational_technology_site_play3_duration_seconds | default(0) | int }}"
+                  failed_task: "{{ fe_operational_technology_site_play3_failed_task | default('') }}"
+                  error: "{{ fe_operational_technology_site_play3_error | default('') }}"
+                  check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+              fe_validation_executions: 1
+              fe_validation_succeeded: "{{ 1 if fe_operational_technology_site_play3_status | default('') == 'succeeded' else 0 }}"
+              fe_validation_failed: "{{ 0 if fe_operational_technology_site_play3_status | default('') == 'succeeded' else 1 }}"
+              fe_validation_duration_seconds: "{{ fe_operational_technology_site_play3_duration_seconds | default(0) | int }}"
+              fe_validation_failed_components: >-
+                {{ [] if fe_operational_technology_site_play3_status | default('') == 'succeeded' else ['operational_technology/site#play3'] }}
+            aggregate: true
+            per_host: false
+          tags:
+            - always
+
+        - name: "operational_technology/site#play3 | Always | Mark the validation statistics as published"
+          ansible.builtin.set_fact:
+            fe_operational_technology_site_play3_stats_published: true
+          tags:
+            - always
+
+        - name: "operational_technology/site#play3 | Rescue | Re-raise the failure unless the caller opted to continue"
+          ansible.builtin.fail:
+            msg: >-
+              operational_technology/site#play3 failed at '{{ fe_operational_technology_site_play3_failed_task }}': {{ fe_operational_technology_site_play3_error }}
+          when: not (fe_validation_continue_on_error | default(false) | bool)
+          tags:
+            - always
+            - rescue
+
+      always:
+
+        - name: "operational_technology/site#play3 | Always | Report the preflight outcome"
+          ansible.builtin.debug:
+            msg: >-
+              operational_technology/site#play3: preflight
+              {{ 'passed' if fe_operational_technology_site_play3_preflight_passed | default(false) | bool else 'FAILED' }}
+              on {{ inventory_hostname }}.
+          tags:
+            - always
+  post_tasks:
+    - name: "operational_technology/site#play3 | Postflight validation"
+      tags:
+        - always
+        - postflight
+        - validation
+      block:
+
+        - name: "operational_technology/site#play3 | Postflight | Verify the guarded body ran after a passing preflight"
+          ansible.builtin.assert:
+            that:
+              - fe_operational_technology_site_play3_preflight_passed | bool
+              - fe_operational_technology_site_play3_status in ['running', 'succeeded']
+            fail_msg: >-
+              operational_technology/site#play3: postflight validation failed - preflight passed
+              ={{ fe_operational_technology_site_play3_preflight_passed | default(false) }},
+              status={{ fe_operational_technology_site_play3_status | default('unknown') }}.
+            success_msg: "operational_technology/site#play3: postflight validation passed."
+            quiet: true
+          tags:
+            - always
+            - postflight
+            - validation
+
+        - name: "operational_technology/site#play3 | Postflight | Record the successful outcome"
+          ansible.builtin.set_fact:
+            fe_operational_technology_site_play3_postflight_passed: true
+            fe_operational_technology_site_play3_status: "succeeded"
+          tags:
+            - always
+            - postflight
+            - validation
+
+      rescue:
+
+        - name: "operational_technology/site#play3 | Rescue | Capture the failing task and error detail"
+          ansible.builtin.set_fact:
+            fe_operational_technology_site_play3_status: "failed"
+            fe_operational_technology_site_play3_postflight_passed: false
+            fe_operational_technology_site_play3_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+            fe_operational_technology_site_play3_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+          tags:
+            - always
+            - rescue
+
+        - name: "operational_technology/site#play3 | Rescue | Report the failure"
+          ansible.builtin.debug:
+            msg: >-
+              operational_technology/site#play3: FAILED at '{{ fe_operational_technology_site_play3_failed_task }}' on
+              {{ inventory_hostname }} - {{ fe_operational_technology_site_play3_error }}
+          tags:
+            - always
+            - rescue
+
+        - name: "operational_technology/site#play3 | Rescue | Re-raise the failure unless the caller opted to continue"
+          ansible.builtin.fail:
+            msg: >-
+              operational_technology/site#play3 failed at '{{ fe_operational_technology_site_play3_failed_task }}': {{ fe_operational_technology_site_play3_error }}
+          when: not (fe_validation_continue_on_error | default(false) | bool)
+          tags:
+            - always
+            - rescue
+
+      always:
+
+        - name: "operational_technology/site#play3 | Always | Compute the execution duration"
+          ansible.builtin.set_fact:
+            fe_operational_technology_site_play3_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+            fe_operational_technology_site_play3_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_operational_technology_site_play3_start_epoch | default(0) | int) }}"
+          tags:
+            - always
+
+        - name: "operational_technology/site#play3 | Always | Publish the validation result with set_stats"
+          ansible.builtin.set_stats:
+            data:
+              fe_validation_results:
+                "operational_technology/site#play3":
+                  component: "operational_technology/site#play3"
+                  type: "playbook"
+                  platform: "operational_technology"
+                  host: "{{ inventory_hostname }}"
+                  status: "{{ fe_operational_technology_site_play3_status | default('unknown') }}"
+                  preflight_passed: "{{ fe_operational_technology_site_play3_preflight_passed | default(false) | bool }}"
+                  postflight_passed: "{{ fe_operational_technology_site_play3_postflight_passed | default(false) | bool }}"
+                  started_at: "{{ fe_operational_technology_site_play3_started_at | default('') }}"
+                  ended_at: "{{ fe_operational_technology_site_play3_ended_at | default('') }}"
+                  duration_seconds: "{{ fe_operational_technology_site_play3_duration_seconds | default(0) | int }}"
+                  failed_task: "{{ fe_operational_technology_site_play3_failed_task | default('') }}"
+                  error: "{{ fe_operational_technology_site_play3_error | default('') }}"
+                  check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+              fe_validation_executions: 1
+              fe_validation_succeeded: "{{ 1 if fe_operational_technology_site_play3_status | default('') == 'succeeded' else 0 }}"
+              fe_validation_failed: "{{ 0 if fe_operational_technology_site_play3_status | default('') == 'succeeded' else 1 }}"
+              fe_validation_duration_seconds: "{{ fe_operational_technology_site_play3_duration_seconds | default(0) | int }}"
+              fe_validation_failed_components: >-
+                {{ [] if fe_operational_technology_site_play3_status | default('') == 'succeeded' else ['operational_technology/site#play3'] }}
+            aggregate: true
+            per_host: false
+          when:
+            - not (fe_operational_technology_site_play3_stats_published | default(false) | bool)
+          tags:
+            - always
+
+        - name: "operational_technology/site#play3 | Always | Mark the validation statistics as published"
+          ansible.builtin.set_fact:
+            fe_operational_technology_site_play3_stats_published: true
+          tags:
+            - always
+
+        - name: "operational_technology/site#play3 | Always | Report the run summary"
+          ansible.builtin.debug:
+            msg: >-
+              operational_technology/site#play3: {{ fe_operational_technology_site_play3_status | default('unknown') }} in
+              {{ fe_operational_technology_site_play3_duration_seconds | default(0) }}s on {{ inventory_hostname }}.
+          tags:
+            - always
 
 
 - name: OT Firewall Configuration
@@ -125,23 +1141,356 @@
     # =========================================
     # Phase 5: Firewall Operations
     # =========================================
-    - name: Phase 5 - Firewall Backup
-      ansible.builtin.include_role:
-        name: ot_firewall_backup
-      when: deploy_firewall_backup | bool
-      tags: ['firewall', 'backup', 'phase5']
+    - name: "operational_technology/site#play4 | Guarded execution with rescue and always handling"
+      block:
 
-    - name: Phase 5 - Firewall Policy (Palo Alto)
-      ansible.builtin.include_role:
-        name: ot_firewall_policy_panos
-      when: deploy_firewall_policy | bool and (vendor | default('') == 'paloalto')
-      tags: ['firewall', 'policy', 'phase5']
+        - name: Phase 5 - Firewall Backup
+          ansible.builtin.include_role:
+            name: ot_firewall_backup
+          when: deploy_firewall_backup | bool
+          tags: ['firewall', 'backup', 'phase5']
 
-    - name: Phase 5 - Firewall Policy (Check Point)
-      ansible.builtin.include_role:
-        name: ot_firewall_policy_checkpoint
-      when: deploy_firewall_policy | bool and (vendor | default('') == 'checkpoint')
-      tags: ['firewall', 'policy', 'phase5']
+        - name: Phase 5 - Firewall Policy (Palo Alto)
+          ansible.builtin.include_role:
+            name: ot_firewall_policy_panos
+          when: deploy_firewall_policy | bool and (vendor | default('') == 'paloalto')
+          tags: ['firewall', 'policy', 'phase5']
+
+        - name: Phase 5 - Firewall Policy (Check Point)
+          ansible.builtin.include_role:
+            name: ot_firewall_policy_checkpoint
+          when: deploy_firewall_policy | bool and (vendor | default('') == 'checkpoint')
+          tags: ['firewall', 'policy', 'phase5']
+
+      rescue:
+
+        - name: "operational_technology/site#play4 | Rescue | Capture the failing task and error detail"
+          ansible.builtin.set_fact:
+            fe_operational_technology_site_play4_status: "failed"
+            fe_operational_technology_site_play4_postflight_passed: false
+            fe_operational_technology_site_play4_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+            fe_operational_technology_site_play4_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+          tags:
+            - always
+            - rescue
+
+        - name: "operational_technology/site#play4 | Rescue | Report the failure"
+          ansible.builtin.debug:
+            msg: >-
+              operational_technology/site#play4: FAILED at '{{ fe_operational_technology_site_play4_failed_task }}' on
+              {{ inventory_hostname }} - {{ fe_operational_technology_site_play4_error }}
+          tags:
+            - always
+            - rescue
+
+        - name: "operational_technology/site#play4 | Rescue | Re-raise the failure unless the caller opted to continue"
+          ansible.builtin.fail:
+            msg: >-
+              operational_technology/site#play4 failed at '{{ fe_operational_technology_site_play4_failed_task }}': {{ fe_operational_technology_site_play4_error }}
+          when: not (fe_validation_continue_on_error | default(false) | bool)
+          tags:
+            - always
+            - rescue
+
+      always:
+
+        - name: "operational_technology/site#play4 | Always | Compute the execution duration"
+          ansible.builtin.set_fact:
+            fe_operational_technology_site_play4_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+            fe_operational_technology_site_play4_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_operational_technology_site_play4_start_epoch | default(0) | int) }}"
+          tags:
+            - always
+
+        - name: "operational_technology/site#play4 | Always | Publish the validation result with set_stats"
+          ansible.builtin.set_stats:
+            data:
+              fe_validation_results:
+                "operational_technology/site#play4":
+                  component: "operational_technology/site#play4"
+                  type: "playbook"
+                  platform: "operational_technology"
+                  host: "{{ inventory_hostname }}"
+                  status: "{{ fe_operational_technology_site_play4_status | default('unknown') }}"
+                  preflight_passed: "{{ fe_operational_technology_site_play4_preflight_passed | default(false) | bool }}"
+                  postflight_passed: "{{ fe_operational_technology_site_play4_postflight_passed | default(false) | bool }}"
+                  started_at: "{{ fe_operational_technology_site_play4_started_at | default('') }}"
+                  ended_at: "{{ fe_operational_technology_site_play4_ended_at | default('') }}"
+                  duration_seconds: "{{ fe_operational_technology_site_play4_duration_seconds | default(0) | int }}"
+                  failed_task: "{{ fe_operational_technology_site_play4_failed_task | default('') }}"
+                  error: "{{ fe_operational_technology_site_play4_error | default('') }}"
+                  check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+              fe_validation_executions: 1
+              fe_validation_succeeded: "{{ 1 if fe_operational_technology_site_play4_status | default('') == 'succeeded' else 0 }}"
+              fe_validation_failed: "{{ 0 if fe_operational_technology_site_play4_status | default('') == 'succeeded' else 1 }}"
+              fe_validation_duration_seconds: "{{ fe_operational_technology_site_play4_duration_seconds | default(0) | int }}"
+              fe_validation_failed_components: >-
+                {{ [] if fe_operational_technology_site_play4_status | default('') == 'succeeded' else ['operational_technology/site#play4'] }}
+            aggregate: true
+            per_host: false
+          when:
+            - fe_operational_technology_site_play4_status | default('') == 'failed'
+            - not (fe_operational_technology_site_play4_stats_published | default(false) | bool)
+          tags:
+            - always
+
+        - name: "operational_technology/site#play4 | Always | Mark the validation statistics as published"
+          ansible.builtin.set_fact:
+            fe_operational_technology_site_play4_stats_published: true
+          when:
+            - fe_operational_technology_site_play4_status | default('') == 'failed'
+          tags:
+            - always
+  pre_tasks:
+    - name: "operational_technology/site#play4 | Preflight validation"
+      tags:
+        - always
+        - preflight
+        - validation
+      block:
+
+        - name: "operational_technology/site#play4 | Initialize validation state"
+          ansible.builtin.set_fact:
+            fe_operational_technology_site_play4_start_epoch: "{{ now(fmt='%s') | int }}"
+            fe_operational_technology_site_play4_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+            fe_operational_technology_site_play4_status: "running"
+            fe_operational_technology_site_play4_preflight_passed: false
+            fe_operational_technology_site_play4_postflight_passed: false
+            fe_operational_technology_site_play4_failed_task: ""
+            fe_operational_technology_site_play4_error: ""
+            fe_operational_technology_site_play4_stats_published: false
+          tags:
+            - always
+
+        - name: "operational_technology/site#play4 | Preflight | Verify the control node meets the minimum ansible-core version"
+          ansible.builtin.assert:
+            that:
+              - ansible_version.full is version(fe_validation_min_ansible_version | default('2.12'), '>=')
+            fail_msg: >-
+              operational_technology/site#play4: requires ansible-core
+              {{ fe_validation_min_ansible_version | default('2.12') }} or newer,
+              found {{ ansible_version.full }}.
+            success_msg: >-
+              operational_technology/site#play4: ansible-core {{ ansible_version.full }} satisfies the minimum.
+            quiet: true
+          tags:
+            - always
+            - preflight
+            - validation
+
+        - name: "operational_technology/site#play4 | Preflight | Verify every declared required variable is defined"
+          ansible.builtin.assert:
+            that:
+              - vars[item] is defined
+            fail_msg: "operational_technology/site#play4: required variable '{{ item }}' is not defined."
+            success_msg: "operational_technology/site#play4: required variable '{{ item }}' is defined."
+            quiet: true
+          loop: "{{ fe_operational_technology_site_play4_required_vars | default([]) }}"
+          loop_control:
+            label: "{{ item }}"
+          tags:
+            - always
+            - preflight
+            - validation
+
+        - name: "operational_technology/site#play4 | Preflight | Record that preflight validation passed"
+          ansible.builtin.set_fact:
+            fe_operational_technology_site_play4_preflight_passed: true
+          tags:
+            - always
+            - preflight
+            - validation
+
+      rescue:
+
+        - name: "operational_technology/site#play4 | Rescue | Capture the failing task and error detail"
+          ansible.builtin.set_fact:
+            fe_operational_technology_site_play4_status: "preflight_failed"
+            fe_operational_technology_site_play4_postflight_passed: false
+            fe_operational_technology_site_play4_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+            fe_operational_technology_site_play4_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+          tags:
+            - always
+            - rescue
+
+        - name: "operational_technology/site#play4 | Rescue | Report the failure"
+          ansible.builtin.debug:
+            msg: >-
+              operational_technology/site#play4: FAILED at '{{ fe_operational_technology_site_play4_failed_task }}' on
+              {{ inventory_hostname }} - {{ fe_operational_technology_site_play4_error }}
+          tags:
+            - always
+            - rescue
+
+        - name: "operational_technology/site#play4 | Always | Publish the validation result with set_stats"
+          ansible.builtin.set_stats:
+            data:
+              fe_validation_results:
+                "operational_technology/site#play4":
+                  component: "operational_technology/site#play4"
+                  type: "playbook"
+                  platform: "operational_technology"
+                  host: "{{ inventory_hostname }}"
+                  status: "{{ fe_operational_technology_site_play4_status | default('unknown') }}"
+                  preflight_passed: "{{ fe_operational_technology_site_play4_preflight_passed | default(false) | bool }}"
+                  postflight_passed: "{{ fe_operational_technology_site_play4_postflight_passed | default(false) | bool }}"
+                  started_at: "{{ fe_operational_technology_site_play4_started_at | default('') }}"
+                  ended_at: "{{ fe_operational_technology_site_play4_ended_at | default('') }}"
+                  duration_seconds: "{{ fe_operational_technology_site_play4_duration_seconds | default(0) | int }}"
+                  failed_task: "{{ fe_operational_technology_site_play4_failed_task | default('') }}"
+                  error: "{{ fe_operational_technology_site_play4_error | default('') }}"
+                  check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+              fe_validation_executions: 1
+              fe_validation_succeeded: "{{ 1 if fe_operational_technology_site_play4_status | default('') == 'succeeded' else 0 }}"
+              fe_validation_failed: "{{ 0 if fe_operational_technology_site_play4_status | default('') == 'succeeded' else 1 }}"
+              fe_validation_duration_seconds: "{{ fe_operational_technology_site_play4_duration_seconds | default(0) | int }}"
+              fe_validation_failed_components: >-
+                {{ [] if fe_operational_technology_site_play4_status | default('') == 'succeeded' else ['operational_technology/site#play4'] }}
+            aggregate: true
+            per_host: false
+          tags:
+            - always
+
+        - name: "operational_technology/site#play4 | Always | Mark the validation statistics as published"
+          ansible.builtin.set_fact:
+            fe_operational_technology_site_play4_stats_published: true
+          tags:
+            - always
+
+        - name: "operational_technology/site#play4 | Rescue | Re-raise the failure unless the caller opted to continue"
+          ansible.builtin.fail:
+            msg: >-
+              operational_technology/site#play4 failed at '{{ fe_operational_technology_site_play4_failed_task }}': {{ fe_operational_technology_site_play4_error }}
+          when: not (fe_validation_continue_on_error | default(false) | bool)
+          tags:
+            - always
+            - rescue
+
+      always:
+
+        - name: "operational_technology/site#play4 | Always | Report the preflight outcome"
+          ansible.builtin.debug:
+            msg: >-
+              operational_technology/site#play4: preflight
+              {{ 'passed' if fe_operational_technology_site_play4_preflight_passed | default(false) | bool else 'FAILED' }}
+              on {{ inventory_hostname }}.
+          tags:
+            - always
+  post_tasks:
+    - name: "operational_technology/site#play4 | Postflight validation"
+      tags:
+        - always
+        - postflight
+        - validation
+      block:
+
+        - name: "operational_technology/site#play4 | Postflight | Verify the guarded body ran after a passing preflight"
+          ansible.builtin.assert:
+            that:
+              - fe_operational_technology_site_play4_preflight_passed | bool
+              - fe_operational_technology_site_play4_status in ['running', 'succeeded']
+            fail_msg: >-
+              operational_technology/site#play4: postflight validation failed - preflight passed
+              ={{ fe_operational_technology_site_play4_preflight_passed | default(false) }},
+              status={{ fe_operational_technology_site_play4_status | default('unknown') }}.
+            success_msg: "operational_technology/site#play4: postflight validation passed."
+            quiet: true
+          tags:
+            - always
+            - postflight
+            - validation
+
+        - name: "operational_technology/site#play4 | Postflight | Record the successful outcome"
+          ansible.builtin.set_fact:
+            fe_operational_technology_site_play4_postflight_passed: true
+            fe_operational_technology_site_play4_status: "succeeded"
+          tags:
+            - always
+            - postflight
+            - validation
+
+      rescue:
+
+        - name: "operational_technology/site#play4 | Rescue | Capture the failing task and error detail"
+          ansible.builtin.set_fact:
+            fe_operational_technology_site_play4_status: "failed"
+            fe_operational_technology_site_play4_postflight_passed: false
+            fe_operational_technology_site_play4_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+            fe_operational_technology_site_play4_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+          tags:
+            - always
+            - rescue
+
+        - name: "operational_technology/site#play4 | Rescue | Report the failure"
+          ansible.builtin.debug:
+            msg: >-
+              operational_technology/site#play4: FAILED at '{{ fe_operational_technology_site_play4_failed_task }}' on
+              {{ inventory_hostname }} - {{ fe_operational_technology_site_play4_error }}
+          tags:
+            - always
+            - rescue
+
+        - name: "operational_technology/site#play4 | Rescue | Re-raise the failure unless the caller opted to continue"
+          ansible.builtin.fail:
+            msg: >-
+              operational_technology/site#play4 failed at '{{ fe_operational_technology_site_play4_failed_task }}': {{ fe_operational_technology_site_play4_error }}
+          when: not (fe_validation_continue_on_error | default(false) | bool)
+          tags:
+            - always
+            - rescue
+
+      always:
+
+        - name: "operational_technology/site#play4 | Always | Compute the execution duration"
+          ansible.builtin.set_fact:
+            fe_operational_technology_site_play4_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+            fe_operational_technology_site_play4_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_operational_technology_site_play4_start_epoch | default(0) | int) }}"
+          tags:
+            - always
+
+        - name: "operational_technology/site#play4 | Always | Publish the validation result with set_stats"
+          ansible.builtin.set_stats:
+            data:
+              fe_validation_results:
+                "operational_technology/site#play4":
+                  component: "operational_technology/site#play4"
+                  type: "playbook"
+                  platform: "operational_technology"
+                  host: "{{ inventory_hostname }}"
+                  status: "{{ fe_operational_technology_site_play4_status | default('unknown') }}"
+                  preflight_passed: "{{ fe_operational_technology_site_play4_preflight_passed | default(false) | bool }}"
+                  postflight_passed: "{{ fe_operational_technology_site_play4_postflight_passed | default(false) | bool }}"
+                  started_at: "{{ fe_operational_technology_site_play4_started_at | default('') }}"
+                  ended_at: "{{ fe_operational_technology_site_play4_ended_at | default('') }}"
+                  duration_seconds: "{{ fe_operational_technology_site_play4_duration_seconds | default(0) | int }}"
+                  failed_task: "{{ fe_operational_technology_site_play4_failed_task | default('') }}"
+                  error: "{{ fe_operational_technology_site_play4_error | default('') }}"
+                  check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+              fe_validation_executions: 1
+              fe_validation_succeeded: "{{ 1 if fe_operational_technology_site_play4_status | default('') == 'succeeded' else 0 }}"
+              fe_validation_failed: "{{ 0 if fe_operational_technology_site_play4_status | default('') == 'succeeded' else 1 }}"
+              fe_validation_duration_seconds: "{{ fe_operational_technology_site_play4_duration_seconds | default(0) | int }}"
+              fe_validation_failed_components: >-
+                {{ [] if fe_operational_technology_site_play4_status | default('') == 'succeeded' else ['operational_technology/site#play4'] }}
+            aggregate: true
+            per_host: false
+          when:
+            - not (fe_operational_technology_site_play4_stats_published | default(false) | bool)
+          tags:
+            - always
+
+        - name: "operational_technology/site#play4 | Always | Mark the validation statistics as published"
+          ansible.builtin.set_fact:
+            fe_operational_technology_site_play4_stats_published: true
+          tags:
+            - always
+
+        - name: "operational_technology/site#play4 | Always | Report the run summary"
+          ansible.builtin.debug:
+            msg: >-
+              operational_technology/site#play4: {{ fe_operational_technology_site_play4_status | default('unknown') }} in
+              {{ fe_operational_technology_site_play4_duration_seconds | default(0) }}s on {{ inventory_hostname }}.
+          tags:
+            - always
 
 
 - name: OT Security Monitoring
@@ -159,23 +1508,356 @@
     # =========================================
     # Phase 6: Security Monitoring
     # =========================================
-    - name: Phase 6 - Sensor Operations
-      ansible.builtin.include_role:
-        name: ot_sensor_ops
-      when: deploy_sensors | bool
-      tags: ['security', 'sensors', 'phase6']
+    - name: "operational_technology/site#play5 | Guarded execution with rescue and always handling"
+      block:
 
-    - name: Phase 6 - IDPS Baseline
-      ansible.builtin.include_role:
-        name: ot_idps_baseline
-      when: deploy_idps | bool
-      tags: ['security', 'idps', 'phase6']
+        - name: Phase 6 - Sensor Operations
+          ansible.builtin.include_role:
+            name: ot_sensor_ops
+          when: deploy_sensors | bool
+          tags: ['security', 'sensors', 'phase6']
 
-    - name: Phase 6 - Logging Pipeline
-      ansible.builtin.include_role:
-        name: ot_logging_pipeline
-      when: deploy_logging | bool
-      tags: ['security', 'logging', 'phase6']
+        - name: Phase 6 - IDPS Baseline
+          ansible.builtin.include_role:
+            name: ot_idps_baseline
+          when: deploy_idps | bool
+          tags: ['security', 'idps', 'phase6']
+
+        - name: Phase 6 - Logging Pipeline
+          ansible.builtin.include_role:
+            name: ot_logging_pipeline
+          when: deploy_logging | bool
+          tags: ['security', 'logging', 'phase6']
+
+      rescue:
+
+        - name: "operational_technology/site#play5 | Rescue | Capture the failing task and error detail"
+          ansible.builtin.set_fact:
+            fe_operational_technology_site_play5_status: "failed"
+            fe_operational_technology_site_play5_postflight_passed: false
+            fe_operational_technology_site_play5_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+            fe_operational_technology_site_play5_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+          tags:
+            - always
+            - rescue
+
+        - name: "operational_technology/site#play5 | Rescue | Report the failure"
+          ansible.builtin.debug:
+            msg: >-
+              operational_technology/site#play5: FAILED at '{{ fe_operational_technology_site_play5_failed_task }}' on
+              {{ inventory_hostname }} - {{ fe_operational_technology_site_play5_error }}
+          tags:
+            - always
+            - rescue
+
+        - name: "operational_technology/site#play5 | Rescue | Re-raise the failure unless the caller opted to continue"
+          ansible.builtin.fail:
+            msg: >-
+              operational_technology/site#play5 failed at '{{ fe_operational_technology_site_play5_failed_task }}': {{ fe_operational_technology_site_play5_error }}
+          when: not (fe_validation_continue_on_error | default(false) | bool)
+          tags:
+            - always
+            - rescue
+
+      always:
+
+        - name: "operational_technology/site#play5 | Always | Compute the execution duration"
+          ansible.builtin.set_fact:
+            fe_operational_technology_site_play5_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+            fe_operational_technology_site_play5_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_operational_technology_site_play5_start_epoch | default(0) | int) }}"
+          tags:
+            - always
+
+        - name: "operational_technology/site#play5 | Always | Publish the validation result with set_stats"
+          ansible.builtin.set_stats:
+            data:
+              fe_validation_results:
+                "operational_technology/site#play5":
+                  component: "operational_technology/site#play5"
+                  type: "playbook"
+                  platform: "operational_technology"
+                  host: "{{ inventory_hostname }}"
+                  status: "{{ fe_operational_technology_site_play5_status | default('unknown') }}"
+                  preflight_passed: "{{ fe_operational_technology_site_play5_preflight_passed | default(false) | bool }}"
+                  postflight_passed: "{{ fe_operational_technology_site_play5_postflight_passed | default(false) | bool }}"
+                  started_at: "{{ fe_operational_technology_site_play5_started_at | default('') }}"
+                  ended_at: "{{ fe_operational_technology_site_play5_ended_at | default('') }}"
+                  duration_seconds: "{{ fe_operational_technology_site_play5_duration_seconds | default(0) | int }}"
+                  failed_task: "{{ fe_operational_technology_site_play5_failed_task | default('') }}"
+                  error: "{{ fe_operational_technology_site_play5_error | default('') }}"
+                  check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+              fe_validation_executions: 1
+              fe_validation_succeeded: "{{ 1 if fe_operational_technology_site_play5_status | default('') == 'succeeded' else 0 }}"
+              fe_validation_failed: "{{ 0 if fe_operational_technology_site_play5_status | default('') == 'succeeded' else 1 }}"
+              fe_validation_duration_seconds: "{{ fe_operational_technology_site_play5_duration_seconds | default(0) | int }}"
+              fe_validation_failed_components: >-
+                {{ [] if fe_operational_technology_site_play5_status | default('') == 'succeeded' else ['operational_technology/site#play5'] }}
+            aggregate: true
+            per_host: false
+          when:
+            - fe_operational_technology_site_play5_status | default('') == 'failed'
+            - not (fe_operational_technology_site_play5_stats_published | default(false) | bool)
+          tags:
+            - always
+
+        - name: "operational_technology/site#play5 | Always | Mark the validation statistics as published"
+          ansible.builtin.set_fact:
+            fe_operational_technology_site_play5_stats_published: true
+          when:
+            - fe_operational_technology_site_play5_status | default('') == 'failed'
+          tags:
+            - always
+  pre_tasks:
+    - name: "operational_technology/site#play5 | Preflight validation"
+      tags:
+        - always
+        - preflight
+        - validation
+      block:
+
+        - name: "operational_technology/site#play5 | Initialize validation state"
+          ansible.builtin.set_fact:
+            fe_operational_technology_site_play5_start_epoch: "{{ now(fmt='%s') | int }}"
+            fe_operational_technology_site_play5_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+            fe_operational_technology_site_play5_status: "running"
+            fe_operational_technology_site_play5_preflight_passed: false
+            fe_operational_technology_site_play5_postflight_passed: false
+            fe_operational_technology_site_play5_failed_task: ""
+            fe_operational_technology_site_play5_error: ""
+            fe_operational_technology_site_play5_stats_published: false
+          tags:
+            - always
+
+        - name: "operational_technology/site#play5 | Preflight | Verify the control node meets the minimum ansible-core version"
+          ansible.builtin.assert:
+            that:
+              - ansible_version.full is version(fe_validation_min_ansible_version | default('2.12'), '>=')
+            fail_msg: >-
+              operational_technology/site#play5: requires ansible-core
+              {{ fe_validation_min_ansible_version | default('2.12') }} or newer,
+              found {{ ansible_version.full }}.
+            success_msg: >-
+              operational_technology/site#play5: ansible-core {{ ansible_version.full }} satisfies the minimum.
+            quiet: true
+          tags:
+            - always
+            - preflight
+            - validation
+
+        - name: "operational_technology/site#play5 | Preflight | Verify every declared required variable is defined"
+          ansible.builtin.assert:
+            that:
+              - vars[item] is defined
+            fail_msg: "operational_technology/site#play5: required variable '{{ item }}' is not defined."
+            success_msg: "operational_technology/site#play5: required variable '{{ item }}' is defined."
+            quiet: true
+          loop: "{{ fe_operational_technology_site_play5_required_vars | default([]) }}"
+          loop_control:
+            label: "{{ item }}"
+          tags:
+            - always
+            - preflight
+            - validation
+
+        - name: "operational_technology/site#play5 | Preflight | Record that preflight validation passed"
+          ansible.builtin.set_fact:
+            fe_operational_technology_site_play5_preflight_passed: true
+          tags:
+            - always
+            - preflight
+            - validation
+
+      rescue:
+
+        - name: "operational_technology/site#play5 | Rescue | Capture the failing task and error detail"
+          ansible.builtin.set_fact:
+            fe_operational_technology_site_play5_status: "preflight_failed"
+            fe_operational_technology_site_play5_postflight_passed: false
+            fe_operational_technology_site_play5_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+            fe_operational_technology_site_play5_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+          tags:
+            - always
+            - rescue
+
+        - name: "operational_technology/site#play5 | Rescue | Report the failure"
+          ansible.builtin.debug:
+            msg: >-
+              operational_technology/site#play5: FAILED at '{{ fe_operational_technology_site_play5_failed_task }}' on
+              {{ inventory_hostname }} - {{ fe_operational_technology_site_play5_error }}
+          tags:
+            - always
+            - rescue
+
+        - name: "operational_technology/site#play5 | Always | Publish the validation result with set_stats"
+          ansible.builtin.set_stats:
+            data:
+              fe_validation_results:
+                "operational_technology/site#play5":
+                  component: "operational_technology/site#play5"
+                  type: "playbook"
+                  platform: "operational_technology"
+                  host: "{{ inventory_hostname }}"
+                  status: "{{ fe_operational_technology_site_play5_status | default('unknown') }}"
+                  preflight_passed: "{{ fe_operational_technology_site_play5_preflight_passed | default(false) | bool }}"
+                  postflight_passed: "{{ fe_operational_technology_site_play5_postflight_passed | default(false) | bool }}"
+                  started_at: "{{ fe_operational_technology_site_play5_started_at | default('') }}"
+                  ended_at: "{{ fe_operational_technology_site_play5_ended_at | default('') }}"
+                  duration_seconds: "{{ fe_operational_technology_site_play5_duration_seconds | default(0) | int }}"
+                  failed_task: "{{ fe_operational_technology_site_play5_failed_task | default('') }}"
+                  error: "{{ fe_operational_technology_site_play5_error | default('') }}"
+                  check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+              fe_validation_executions: 1
+              fe_validation_succeeded: "{{ 1 if fe_operational_technology_site_play5_status | default('') == 'succeeded' else 0 }}"
+              fe_validation_failed: "{{ 0 if fe_operational_technology_site_play5_status | default('') == 'succeeded' else 1 }}"
+              fe_validation_duration_seconds: "{{ fe_operational_technology_site_play5_duration_seconds | default(0) | int }}"
+              fe_validation_failed_components: >-
+                {{ [] if fe_operational_technology_site_play5_status | default('') == 'succeeded' else ['operational_technology/site#play5'] }}
+            aggregate: true
+            per_host: false
+          tags:
+            - always
+
+        - name: "operational_technology/site#play5 | Always | Mark the validation statistics as published"
+          ansible.builtin.set_fact:
+            fe_operational_technology_site_play5_stats_published: true
+          tags:
+            - always
+
+        - name: "operational_technology/site#play5 | Rescue | Re-raise the failure unless the caller opted to continue"
+          ansible.builtin.fail:
+            msg: >-
+              operational_technology/site#play5 failed at '{{ fe_operational_technology_site_play5_failed_task }}': {{ fe_operational_technology_site_play5_error }}
+          when: not (fe_validation_continue_on_error | default(false) | bool)
+          tags:
+            - always
+            - rescue
+
+      always:
+
+        - name: "operational_technology/site#play5 | Always | Report the preflight outcome"
+          ansible.builtin.debug:
+            msg: >-
+              operational_technology/site#play5: preflight
+              {{ 'passed' if fe_operational_technology_site_play5_preflight_passed | default(false) | bool else 'FAILED' }}
+              on {{ inventory_hostname }}.
+          tags:
+            - always
+  post_tasks:
+    - name: "operational_technology/site#play5 | Postflight validation"
+      tags:
+        - always
+        - postflight
+        - validation
+      block:
+
+        - name: "operational_technology/site#play5 | Postflight | Verify the guarded body ran after a passing preflight"
+          ansible.builtin.assert:
+            that:
+              - fe_operational_technology_site_play5_preflight_passed | bool
+              - fe_operational_technology_site_play5_status in ['running', 'succeeded']
+            fail_msg: >-
+              operational_technology/site#play5: postflight validation failed - preflight passed
+              ={{ fe_operational_technology_site_play5_preflight_passed | default(false) }},
+              status={{ fe_operational_technology_site_play5_status | default('unknown') }}.
+            success_msg: "operational_technology/site#play5: postflight validation passed."
+            quiet: true
+          tags:
+            - always
+            - postflight
+            - validation
+
+        - name: "operational_technology/site#play5 | Postflight | Record the successful outcome"
+          ansible.builtin.set_fact:
+            fe_operational_technology_site_play5_postflight_passed: true
+            fe_operational_technology_site_play5_status: "succeeded"
+          tags:
+            - always
+            - postflight
+            - validation
+
+      rescue:
+
+        - name: "operational_technology/site#play5 | Rescue | Capture the failing task and error detail"
+          ansible.builtin.set_fact:
+            fe_operational_technology_site_play5_status: "failed"
+            fe_operational_technology_site_play5_postflight_passed: false
+            fe_operational_technology_site_play5_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+            fe_operational_technology_site_play5_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+          tags:
+            - always
+            - rescue
+
+        - name: "operational_technology/site#play5 | Rescue | Report the failure"
+          ansible.builtin.debug:
+            msg: >-
+              operational_technology/site#play5: FAILED at '{{ fe_operational_technology_site_play5_failed_task }}' on
+              {{ inventory_hostname }} - {{ fe_operational_technology_site_play5_error }}
+          tags:
+            - always
+            - rescue
+
+        - name: "operational_technology/site#play5 | Rescue | Re-raise the failure unless the caller opted to continue"
+          ansible.builtin.fail:
+            msg: >-
+              operational_technology/site#play5 failed at '{{ fe_operational_technology_site_play5_failed_task }}': {{ fe_operational_technology_site_play5_error }}
+          when: not (fe_validation_continue_on_error | default(false) | bool)
+          tags:
+            - always
+            - rescue
+
+      always:
+
+        - name: "operational_technology/site#play5 | Always | Compute the execution duration"
+          ansible.builtin.set_fact:
+            fe_operational_technology_site_play5_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+            fe_operational_technology_site_play5_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_operational_technology_site_play5_start_epoch | default(0) | int) }}"
+          tags:
+            - always
+
+        - name: "operational_technology/site#play5 | Always | Publish the validation result with set_stats"
+          ansible.builtin.set_stats:
+            data:
+              fe_validation_results:
+                "operational_technology/site#play5":
+                  component: "operational_technology/site#play5"
+                  type: "playbook"
+                  platform: "operational_technology"
+                  host: "{{ inventory_hostname }}"
+                  status: "{{ fe_operational_technology_site_play5_status | default('unknown') }}"
+                  preflight_passed: "{{ fe_operational_technology_site_play5_preflight_passed | default(false) | bool }}"
+                  postflight_passed: "{{ fe_operational_technology_site_play5_postflight_passed | default(false) | bool }}"
+                  started_at: "{{ fe_operational_technology_site_play5_started_at | default('') }}"
+                  ended_at: "{{ fe_operational_technology_site_play5_ended_at | default('') }}"
+                  duration_seconds: "{{ fe_operational_technology_site_play5_duration_seconds | default(0) | int }}"
+                  failed_task: "{{ fe_operational_technology_site_play5_failed_task | default('') }}"
+                  error: "{{ fe_operational_technology_site_play5_error | default('') }}"
+                  check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+              fe_validation_executions: 1
+              fe_validation_succeeded: "{{ 1 if fe_operational_technology_site_play5_status | default('') == 'succeeded' else 0 }}"
+              fe_validation_failed: "{{ 0 if fe_operational_technology_site_play5_status | default('') == 'succeeded' else 1 }}"
+              fe_validation_duration_seconds: "{{ fe_operational_technology_site_play5_duration_seconds | default(0) | int }}"
+              fe_validation_failed_components: >-
+                {{ [] if fe_operational_technology_site_play5_status | default('') == 'succeeded' else ['operational_technology/site#play5'] }}
+            aggregate: true
+            per_host: false
+          when:
+            - not (fe_operational_technology_site_play5_stats_published | default(false) | bool)
+          tags:
+            - always
+
+        - name: "operational_technology/site#play5 | Always | Mark the validation statistics as published"
+          ansible.builtin.set_fact:
+            fe_operational_technology_site_play5_stats_published: true
+          tags:
+            - always
+
+        - name: "operational_technology/site#play5 | Always | Report the run summary"
+          ansible.builtin.debug:
+            msg: >-
+              operational_technology/site#play5: {{ fe_operational_technology_site_play5_status | default('unknown') }} in
+              {{ fe_operational_technology_site_play5_duration_seconds | default(0) }}s on {{ inventory_hostname }}.
+          tags:
+            - always
 
 
 - name: OT Windows Systems (HMI/Historians)
@@ -191,17 +1873,350 @@
     # =========================================
     # Phase 7: Windows Systems
     # =========================================
-    - name: Phase 7 - Windows HMI Patching
-      ansible.builtin.include_role:
-        name: ot_windows_hmi_patching
-      when: deploy_hmi_patching | bool
-      tags: ['windows', 'patching', 'phase7']
+    - name: "operational_technology/site#play6 | Guarded execution with rescue and always handling"
+      block:
 
-    - name: Phase 7 - SCADA/Historian Backup
-      ansible.builtin.include_role:
-        name: ot_scada_historians_backup
-      when: deploy_historian_backup | bool
-      tags: ['windows', 'backup', 'phase7']
+        - name: Phase 7 - Windows HMI Patching
+          ansible.builtin.include_role:
+            name: ot_windows_hmi_patching
+          when: deploy_hmi_patching | bool
+          tags: ['windows', 'patching', 'phase7']
+
+        - name: Phase 7 - SCADA/Historian Backup
+          ansible.builtin.include_role:
+            name: ot_scada_historians_backup
+          when: deploy_historian_backup | bool
+          tags: ['windows', 'backup', 'phase7']
+
+      rescue:
+
+        - name: "operational_technology/site#play6 | Rescue | Capture the failing task and error detail"
+          ansible.builtin.set_fact:
+            fe_operational_technology_site_play6_status: "failed"
+            fe_operational_technology_site_play6_postflight_passed: false
+            fe_operational_technology_site_play6_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+            fe_operational_technology_site_play6_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+          tags:
+            - always
+            - rescue
+
+        - name: "operational_technology/site#play6 | Rescue | Report the failure"
+          ansible.builtin.debug:
+            msg: >-
+              operational_technology/site#play6: FAILED at '{{ fe_operational_technology_site_play6_failed_task }}' on
+              {{ inventory_hostname }} - {{ fe_operational_technology_site_play6_error }}
+          tags:
+            - always
+            - rescue
+
+        - name: "operational_technology/site#play6 | Rescue | Re-raise the failure unless the caller opted to continue"
+          ansible.builtin.fail:
+            msg: >-
+              operational_technology/site#play6 failed at '{{ fe_operational_technology_site_play6_failed_task }}': {{ fe_operational_technology_site_play6_error }}
+          when: not (fe_validation_continue_on_error | default(false) | bool)
+          tags:
+            - always
+            - rescue
+
+      always:
+
+        - name: "operational_technology/site#play6 | Always | Compute the execution duration"
+          ansible.builtin.set_fact:
+            fe_operational_technology_site_play6_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+            fe_operational_technology_site_play6_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_operational_technology_site_play6_start_epoch | default(0) | int) }}"
+          tags:
+            - always
+
+        - name: "operational_technology/site#play6 | Always | Publish the validation result with set_stats"
+          ansible.builtin.set_stats:
+            data:
+              fe_validation_results:
+                "operational_technology/site#play6":
+                  component: "operational_technology/site#play6"
+                  type: "playbook"
+                  platform: "operational_technology"
+                  host: "{{ inventory_hostname }}"
+                  status: "{{ fe_operational_technology_site_play6_status | default('unknown') }}"
+                  preflight_passed: "{{ fe_operational_technology_site_play6_preflight_passed | default(false) | bool }}"
+                  postflight_passed: "{{ fe_operational_technology_site_play6_postflight_passed | default(false) | bool }}"
+                  started_at: "{{ fe_operational_technology_site_play6_started_at | default('') }}"
+                  ended_at: "{{ fe_operational_technology_site_play6_ended_at | default('') }}"
+                  duration_seconds: "{{ fe_operational_technology_site_play6_duration_seconds | default(0) | int }}"
+                  failed_task: "{{ fe_operational_technology_site_play6_failed_task | default('') }}"
+                  error: "{{ fe_operational_technology_site_play6_error | default('') }}"
+                  check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+              fe_validation_executions: 1
+              fe_validation_succeeded: "{{ 1 if fe_operational_technology_site_play6_status | default('') == 'succeeded' else 0 }}"
+              fe_validation_failed: "{{ 0 if fe_operational_technology_site_play6_status | default('') == 'succeeded' else 1 }}"
+              fe_validation_duration_seconds: "{{ fe_operational_technology_site_play6_duration_seconds | default(0) | int }}"
+              fe_validation_failed_components: >-
+                {{ [] if fe_operational_technology_site_play6_status | default('') == 'succeeded' else ['operational_technology/site#play6'] }}
+            aggregate: true
+            per_host: false
+          when:
+            - fe_operational_technology_site_play6_status | default('') == 'failed'
+            - not (fe_operational_technology_site_play6_stats_published | default(false) | bool)
+          tags:
+            - always
+
+        - name: "operational_technology/site#play6 | Always | Mark the validation statistics as published"
+          ansible.builtin.set_fact:
+            fe_operational_technology_site_play6_stats_published: true
+          when:
+            - fe_operational_technology_site_play6_status | default('') == 'failed'
+          tags:
+            - always
+  pre_tasks:
+    - name: "operational_technology/site#play6 | Preflight validation"
+      tags:
+        - always
+        - preflight
+        - validation
+      block:
+
+        - name: "operational_technology/site#play6 | Initialize validation state"
+          ansible.builtin.set_fact:
+            fe_operational_technology_site_play6_start_epoch: "{{ now(fmt='%s') | int }}"
+            fe_operational_technology_site_play6_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+            fe_operational_technology_site_play6_status: "running"
+            fe_operational_technology_site_play6_preflight_passed: false
+            fe_operational_technology_site_play6_postflight_passed: false
+            fe_operational_technology_site_play6_failed_task: ""
+            fe_operational_technology_site_play6_error: ""
+            fe_operational_technology_site_play6_stats_published: false
+          tags:
+            - always
+
+        - name: "operational_technology/site#play6 | Preflight | Verify the control node meets the minimum ansible-core version"
+          ansible.builtin.assert:
+            that:
+              - ansible_version.full is version(fe_validation_min_ansible_version | default('2.12'), '>=')
+            fail_msg: >-
+              operational_technology/site#play6: requires ansible-core
+              {{ fe_validation_min_ansible_version | default('2.12') }} or newer,
+              found {{ ansible_version.full }}.
+            success_msg: >-
+              operational_technology/site#play6: ansible-core {{ ansible_version.full }} satisfies the minimum.
+            quiet: true
+          tags:
+            - always
+            - preflight
+            - validation
+
+        - name: "operational_technology/site#play6 | Preflight | Verify every declared required variable is defined"
+          ansible.builtin.assert:
+            that:
+              - vars[item] is defined
+            fail_msg: "operational_technology/site#play6: required variable '{{ item }}' is not defined."
+            success_msg: "operational_technology/site#play6: required variable '{{ item }}' is defined."
+            quiet: true
+          loop: "{{ fe_operational_technology_site_play6_required_vars | default([]) }}"
+          loop_control:
+            label: "{{ item }}"
+          tags:
+            - always
+            - preflight
+            - validation
+
+        - name: "operational_technology/site#play6 | Preflight | Record that preflight validation passed"
+          ansible.builtin.set_fact:
+            fe_operational_technology_site_play6_preflight_passed: true
+          tags:
+            - always
+            - preflight
+            - validation
+
+      rescue:
+
+        - name: "operational_technology/site#play6 | Rescue | Capture the failing task and error detail"
+          ansible.builtin.set_fact:
+            fe_operational_technology_site_play6_status: "preflight_failed"
+            fe_operational_technology_site_play6_postflight_passed: false
+            fe_operational_technology_site_play6_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+            fe_operational_technology_site_play6_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+          tags:
+            - always
+            - rescue
+
+        - name: "operational_technology/site#play6 | Rescue | Report the failure"
+          ansible.builtin.debug:
+            msg: >-
+              operational_technology/site#play6: FAILED at '{{ fe_operational_technology_site_play6_failed_task }}' on
+              {{ inventory_hostname }} - {{ fe_operational_technology_site_play6_error }}
+          tags:
+            - always
+            - rescue
+
+        - name: "operational_technology/site#play6 | Always | Publish the validation result with set_stats"
+          ansible.builtin.set_stats:
+            data:
+              fe_validation_results:
+                "operational_technology/site#play6":
+                  component: "operational_technology/site#play6"
+                  type: "playbook"
+                  platform: "operational_technology"
+                  host: "{{ inventory_hostname }}"
+                  status: "{{ fe_operational_technology_site_play6_status | default('unknown') }}"
+                  preflight_passed: "{{ fe_operational_technology_site_play6_preflight_passed | default(false) | bool }}"
+                  postflight_passed: "{{ fe_operational_technology_site_play6_postflight_passed | default(false) | bool }}"
+                  started_at: "{{ fe_operational_technology_site_play6_started_at | default('') }}"
+                  ended_at: "{{ fe_operational_technology_site_play6_ended_at | default('') }}"
+                  duration_seconds: "{{ fe_operational_technology_site_play6_duration_seconds | default(0) | int }}"
+                  failed_task: "{{ fe_operational_technology_site_play6_failed_task | default('') }}"
+                  error: "{{ fe_operational_technology_site_play6_error | default('') }}"
+                  check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+              fe_validation_executions: 1
+              fe_validation_succeeded: "{{ 1 if fe_operational_technology_site_play6_status | default('') == 'succeeded' else 0 }}"
+              fe_validation_failed: "{{ 0 if fe_operational_technology_site_play6_status | default('') == 'succeeded' else 1 }}"
+              fe_validation_duration_seconds: "{{ fe_operational_technology_site_play6_duration_seconds | default(0) | int }}"
+              fe_validation_failed_components: >-
+                {{ [] if fe_operational_technology_site_play6_status | default('') == 'succeeded' else ['operational_technology/site#play6'] }}
+            aggregate: true
+            per_host: false
+          tags:
+            - always
+
+        - name: "operational_technology/site#play6 | Always | Mark the validation statistics as published"
+          ansible.builtin.set_fact:
+            fe_operational_technology_site_play6_stats_published: true
+          tags:
+            - always
+
+        - name: "operational_technology/site#play6 | Rescue | Re-raise the failure unless the caller opted to continue"
+          ansible.builtin.fail:
+            msg: >-
+              operational_technology/site#play6 failed at '{{ fe_operational_technology_site_play6_failed_task }}': {{ fe_operational_technology_site_play6_error }}
+          when: not (fe_validation_continue_on_error | default(false) | bool)
+          tags:
+            - always
+            - rescue
+
+      always:
+
+        - name: "operational_technology/site#play6 | Always | Report the preflight outcome"
+          ansible.builtin.debug:
+            msg: >-
+              operational_technology/site#play6: preflight
+              {{ 'passed' if fe_operational_technology_site_play6_preflight_passed | default(false) | bool else 'FAILED' }}
+              on {{ inventory_hostname }}.
+          tags:
+            - always
+  post_tasks:
+    - name: "operational_technology/site#play6 | Postflight validation"
+      tags:
+        - always
+        - postflight
+        - validation
+      block:
+
+        - name: "operational_technology/site#play6 | Postflight | Verify the guarded body ran after a passing preflight"
+          ansible.builtin.assert:
+            that:
+              - fe_operational_technology_site_play6_preflight_passed | bool
+              - fe_operational_technology_site_play6_status in ['running', 'succeeded']
+            fail_msg: >-
+              operational_technology/site#play6: postflight validation failed - preflight passed
+              ={{ fe_operational_technology_site_play6_preflight_passed | default(false) }},
+              status={{ fe_operational_technology_site_play6_status | default('unknown') }}.
+            success_msg: "operational_technology/site#play6: postflight validation passed."
+            quiet: true
+          tags:
+            - always
+            - postflight
+            - validation
+
+        - name: "operational_technology/site#play6 | Postflight | Record the successful outcome"
+          ansible.builtin.set_fact:
+            fe_operational_technology_site_play6_postflight_passed: true
+            fe_operational_technology_site_play6_status: "succeeded"
+          tags:
+            - always
+            - postflight
+            - validation
+
+      rescue:
+
+        - name: "operational_technology/site#play6 | Rescue | Capture the failing task and error detail"
+          ansible.builtin.set_fact:
+            fe_operational_technology_site_play6_status: "failed"
+            fe_operational_technology_site_play6_postflight_passed: false
+            fe_operational_technology_site_play6_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+            fe_operational_technology_site_play6_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+          tags:
+            - always
+            - rescue
+
+        - name: "operational_technology/site#play6 | Rescue | Report the failure"
+          ansible.builtin.debug:
+            msg: >-
+              operational_technology/site#play6: FAILED at '{{ fe_operational_technology_site_play6_failed_task }}' on
+              {{ inventory_hostname }} - {{ fe_operational_technology_site_play6_error }}
+          tags:
+            - always
+            - rescue
+
+        - name: "operational_technology/site#play6 | Rescue | Re-raise the failure unless the caller opted to continue"
+          ansible.builtin.fail:
+            msg: >-
+              operational_technology/site#play6 failed at '{{ fe_operational_technology_site_play6_failed_task }}': {{ fe_operational_technology_site_play6_error }}
+          when: not (fe_validation_continue_on_error | default(false) | bool)
+          tags:
+            - always
+            - rescue
+
+      always:
+
+        - name: "operational_technology/site#play6 | Always | Compute the execution duration"
+          ansible.builtin.set_fact:
+            fe_operational_technology_site_play6_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+            fe_operational_technology_site_play6_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_operational_technology_site_play6_start_epoch | default(0) | int) }}"
+          tags:
+            - always
+
+        - name: "operational_technology/site#play6 | Always | Publish the validation result with set_stats"
+          ansible.builtin.set_stats:
+            data:
+              fe_validation_results:
+                "operational_technology/site#play6":
+                  component: "operational_technology/site#play6"
+                  type: "playbook"
+                  platform: "operational_technology"
+                  host: "{{ inventory_hostname }}"
+                  status: "{{ fe_operational_technology_site_play6_status | default('unknown') }}"
+                  preflight_passed: "{{ fe_operational_technology_site_play6_preflight_passed | default(false) | bool }}"
+                  postflight_passed: "{{ fe_operational_technology_site_play6_postflight_passed | default(false) | bool }}"
+                  started_at: "{{ fe_operational_technology_site_play6_started_at | default('') }}"
+                  ended_at: "{{ fe_operational_technology_site_play6_ended_at | default('') }}"
+                  duration_seconds: "{{ fe_operational_technology_site_play6_duration_seconds | default(0) | int }}"
+                  failed_task: "{{ fe_operational_technology_site_play6_failed_task | default('') }}"
+                  error: "{{ fe_operational_technology_site_play6_error | default('') }}"
+                  check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+              fe_validation_executions: 1
+              fe_validation_succeeded: "{{ 1 if fe_operational_technology_site_play6_status | default('') == 'succeeded' else 0 }}"
+              fe_validation_failed: "{{ 0 if fe_operational_technology_site_play6_status | default('') == 'succeeded' else 1 }}"
+              fe_validation_duration_seconds: "{{ fe_operational_technology_site_play6_duration_seconds | default(0) | int }}"
+              fe_validation_failed_components: >-
+                {{ [] if fe_operational_technology_site_play6_status | default('') == 'succeeded' else ['operational_technology/site#play6'] }}
+            aggregate: true
+            per_host: false
+          when:
+            - not (fe_operational_technology_site_play6_stats_published | default(false) | bool)
+          tags:
+            - always
+
+        - name: "operational_technology/site#play6 | Always | Mark the validation statistics as published"
+          ansible.builtin.set_fact:
+            fe_operational_technology_site_play6_stats_published: true
+          tags:
+            - always
+
+        - name: "operational_technology/site#play6 | Always | Report the run summary"
+          ansible.builtin.debug:
+            msg: >-
+              operational_technology/site#play6: {{ fe_operational_technology_site_play6_status | default('unknown') }} in
+              {{ fe_operational_technology_site_play6_duration_seconds | default(0) }}s on {{ inventory_hostname }}.
+          tags:
+            - always
 
 
 - name: OT Remote Access & PKI
@@ -219,23 +2234,356 @@
     # =========================================
     # Phase 8: Access Control
     # =========================================
-    - name: Phase 8 - Remote Access Bastion
-      ansible.builtin.include_role:
-        name: ot_remote_access_bastion
-      when: deploy_bastion | bool and (device_type | default('') == 'bastion')
-      tags: ['access', 'bastion', 'phase8']
+    - name: "operational_technology/site#play7 | Guarded execution with rescue and always handling"
+      block:
 
-    - name: Phase 8 - PKI Trust
-      ansible.builtin.include_role:
-        name: ot_pki_trust
-      when: deploy_pki | bool
-      tags: ['access', 'pki', 'phase8']
+        - name: Phase 8 - Remote Access Bastion
+          ansible.builtin.include_role:
+            name: ot_remote_access_bastion
+          when: deploy_bastion | bool and (device_type | default('') == 'bastion')
+          tags: ['access', 'bastion', 'phase8']
 
-    - name: Phase 8 - NAC Visibility
-      ansible.builtin.include_role:
-        name: ot_nac_visibility
-      when: deploy_nac | bool
-      tags: ['access', 'nac', 'phase8']
+        - name: Phase 8 - PKI Trust
+          ansible.builtin.include_role:
+            name: ot_pki_trust
+          when: deploy_pki | bool
+          tags: ['access', 'pki', 'phase8']
+
+        - name: Phase 8 - NAC Visibility
+          ansible.builtin.include_role:
+            name: ot_nac_visibility
+          when: deploy_nac | bool
+          tags: ['access', 'nac', 'phase8']
+
+      rescue:
+
+        - name: "operational_technology/site#play7 | Rescue | Capture the failing task and error detail"
+          ansible.builtin.set_fact:
+            fe_operational_technology_site_play7_status: "failed"
+            fe_operational_technology_site_play7_postflight_passed: false
+            fe_operational_technology_site_play7_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+            fe_operational_technology_site_play7_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+          tags:
+            - always
+            - rescue
+
+        - name: "operational_technology/site#play7 | Rescue | Report the failure"
+          ansible.builtin.debug:
+            msg: >-
+              operational_technology/site#play7: FAILED at '{{ fe_operational_technology_site_play7_failed_task }}' on
+              {{ inventory_hostname }} - {{ fe_operational_technology_site_play7_error }}
+          tags:
+            - always
+            - rescue
+
+        - name: "operational_technology/site#play7 | Rescue | Re-raise the failure unless the caller opted to continue"
+          ansible.builtin.fail:
+            msg: >-
+              operational_technology/site#play7 failed at '{{ fe_operational_technology_site_play7_failed_task }}': {{ fe_operational_technology_site_play7_error }}
+          when: not (fe_validation_continue_on_error | default(false) | bool)
+          tags:
+            - always
+            - rescue
+
+      always:
+
+        - name: "operational_technology/site#play7 | Always | Compute the execution duration"
+          ansible.builtin.set_fact:
+            fe_operational_technology_site_play7_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+            fe_operational_technology_site_play7_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_operational_technology_site_play7_start_epoch | default(0) | int) }}"
+          tags:
+            - always
+
+        - name: "operational_technology/site#play7 | Always | Publish the validation result with set_stats"
+          ansible.builtin.set_stats:
+            data:
+              fe_validation_results:
+                "operational_technology/site#play7":
+                  component: "operational_technology/site#play7"
+                  type: "playbook"
+                  platform: "operational_technology"
+                  host: "{{ inventory_hostname }}"
+                  status: "{{ fe_operational_technology_site_play7_status | default('unknown') }}"
+                  preflight_passed: "{{ fe_operational_technology_site_play7_preflight_passed | default(false) | bool }}"
+                  postflight_passed: "{{ fe_operational_technology_site_play7_postflight_passed | default(false) | bool }}"
+                  started_at: "{{ fe_operational_technology_site_play7_started_at | default('') }}"
+                  ended_at: "{{ fe_operational_technology_site_play7_ended_at | default('') }}"
+                  duration_seconds: "{{ fe_operational_technology_site_play7_duration_seconds | default(0) | int }}"
+                  failed_task: "{{ fe_operational_technology_site_play7_failed_task | default('') }}"
+                  error: "{{ fe_operational_technology_site_play7_error | default('') }}"
+                  check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+              fe_validation_executions: 1
+              fe_validation_succeeded: "{{ 1 if fe_operational_technology_site_play7_status | default('') == 'succeeded' else 0 }}"
+              fe_validation_failed: "{{ 0 if fe_operational_technology_site_play7_status | default('') == 'succeeded' else 1 }}"
+              fe_validation_duration_seconds: "{{ fe_operational_technology_site_play7_duration_seconds | default(0) | int }}"
+              fe_validation_failed_components: >-
+                {{ [] if fe_operational_technology_site_play7_status | default('') == 'succeeded' else ['operational_technology/site#play7'] }}
+            aggregate: true
+            per_host: false
+          when:
+            - fe_operational_technology_site_play7_status | default('') == 'failed'
+            - not (fe_operational_technology_site_play7_stats_published | default(false) | bool)
+          tags:
+            - always
+
+        - name: "operational_technology/site#play7 | Always | Mark the validation statistics as published"
+          ansible.builtin.set_fact:
+            fe_operational_technology_site_play7_stats_published: true
+          when:
+            - fe_operational_technology_site_play7_status | default('') == 'failed'
+          tags:
+            - always
+  pre_tasks:
+    - name: "operational_technology/site#play7 | Preflight validation"
+      tags:
+        - always
+        - preflight
+        - validation
+      block:
+
+        - name: "operational_technology/site#play7 | Initialize validation state"
+          ansible.builtin.set_fact:
+            fe_operational_technology_site_play7_start_epoch: "{{ now(fmt='%s') | int }}"
+            fe_operational_technology_site_play7_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+            fe_operational_technology_site_play7_status: "running"
+            fe_operational_technology_site_play7_preflight_passed: false
+            fe_operational_technology_site_play7_postflight_passed: false
+            fe_operational_technology_site_play7_failed_task: ""
+            fe_operational_technology_site_play7_error: ""
+            fe_operational_technology_site_play7_stats_published: false
+          tags:
+            - always
+
+        - name: "operational_technology/site#play7 | Preflight | Verify the control node meets the minimum ansible-core version"
+          ansible.builtin.assert:
+            that:
+              - ansible_version.full is version(fe_validation_min_ansible_version | default('2.12'), '>=')
+            fail_msg: >-
+              operational_technology/site#play7: requires ansible-core
+              {{ fe_validation_min_ansible_version | default('2.12') }} or newer,
+              found {{ ansible_version.full }}.
+            success_msg: >-
+              operational_technology/site#play7: ansible-core {{ ansible_version.full }} satisfies the minimum.
+            quiet: true
+          tags:
+            - always
+            - preflight
+            - validation
+
+        - name: "operational_technology/site#play7 | Preflight | Verify every declared required variable is defined"
+          ansible.builtin.assert:
+            that:
+              - vars[item] is defined
+            fail_msg: "operational_technology/site#play7: required variable '{{ item }}' is not defined."
+            success_msg: "operational_technology/site#play7: required variable '{{ item }}' is defined."
+            quiet: true
+          loop: "{{ fe_operational_technology_site_play7_required_vars | default([]) }}"
+          loop_control:
+            label: "{{ item }}"
+          tags:
+            - always
+            - preflight
+            - validation
+
+        - name: "operational_technology/site#play7 | Preflight | Record that preflight validation passed"
+          ansible.builtin.set_fact:
+            fe_operational_technology_site_play7_preflight_passed: true
+          tags:
+            - always
+            - preflight
+            - validation
+
+      rescue:
+
+        - name: "operational_technology/site#play7 | Rescue | Capture the failing task and error detail"
+          ansible.builtin.set_fact:
+            fe_operational_technology_site_play7_status: "preflight_failed"
+            fe_operational_technology_site_play7_postflight_passed: false
+            fe_operational_technology_site_play7_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+            fe_operational_technology_site_play7_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+          tags:
+            - always
+            - rescue
+
+        - name: "operational_technology/site#play7 | Rescue | Report the failure"
+          ansible.builtin.debug:
+            msg: >-
+              operational_technology/site#play7: FAILED at '{{ fe_operational_technology_site_play7_failed_task }}' on
+              {{ inventory_hostname }} - {{ fe_operational_technology_site_play7_error }}
+          tags:
+            - always
+            - rescue
+
+        - name: "operational_technology/site#play7 | Always | Publish the validation result with set_stats"
+          ansible.builtin.set_stats:
+            data:
+              fe_validation_results:
+                "operational_technology/site#play7":
+                  component: "operational_technology/site#play7"
+                  type: "playbook"
+                  platform: "operational_technology"
+                  host: "{{ inventory_hostname }}"
+                  status: "{{ fe_operational_technology_site_play7_status | default('unknown') }}"
+                  preflight_passed: "{{ fe_operational_technology_site_play7_preflight_passed | default(false) | bool }}"
+                  postflight_passed: "{{ fe_operational_technology_site_play7_postflight_passed | default(false) | bool }}"
+                  started_at: "{{ fe_operational_technology_site_play7_started_at | default('') }}"
+                  ended_at: "{{ fe_operational_technology_site_play7_ended_at | default('') }}"
+                  duration_seconds: "{{ fe_operational_technology_site_play7_duration_seconds | default(0) | int }}"
+                  failed_task: "{{ fe_operational_technology_site_play7_failed_task | default('') }}"
+                  error: "{{ fe_operational_technology_site_play7_error | default('') }}"
+                  check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+              fe_validation_executions: 1
+              fe_validation_succeeded: "{{ 1 if fe_operational_technology_site_play7_status | default('') == 'succeeded' else 0 }}"
+              fe_validation_failed: "{{ 0 if fe_operational_technology_site_play7_status | default('') == 'succeeded' else 1 }}"
+              fe_validation_duration_seconds: "{{ fe_operational_technology_site_play7_duration_seconds | default(0) | int }}"
+              fe_validation_failed_components: >-
+                {{ [] if fe_operational_technology_site_play7_status | default('') == 'succeeded' else ['operational_technology/site#play7'] }}
+            aggregate: true
+            per_host: false
+          tags:
+            - always
+
+        - name: "operational_technology/site#play7 | Always | Mark the validation statistics as published"
+          ansible.builtin.set_fact:
+            fe_operational_technology_site_play7_stats_published: true
+          tags:
+            - always
+
+        - name: "operational_technology/site#play7 | Rescue | Re-raise the failure unless the caller opted to continue"
+          ansible.builtin.fail:
+            msg: >-
+              operational_technology/site#play7 failed at '{{ fe_operational_technology_site_play7_failed_task }}': {{ fe_operational_technology_site_play7_error }}
+          when: not (fe_validation_continue_on_error | default(false) | bool)
+          tags:
+            - always
+            - rescue
+
+      always:
+
+        - name: "operational_technology/site#play7 | Always | Report the preflight outcome"
+          ansible.builtin.debug:
+            msg: >-
+              operational_technology/site#play7: preflight
+              {{ 'passed' if fe_operational_technology_site_play7_preflight_passed | default(false) | bool else 'FAILED' }}
+              on {{ inventory_hostname }}.
+          tags:
+            - always
+  post_tasks:
+    - name: "operational_technology/site#play7 | Postflight validation"
+      tags:
+        - always
+        - postflight
+        - validation
+      block:
+
+        - name: "operational_technology/site#play7 | Postflight | Verify the guarded body ran after a passing preflight"
+          ansible.builtin.assert:
+            that:
+              - fe_operational_technology_site_play7_preflight_passed | bool
+              - fe_operational_technology_site_play7_status in ['running', 'succeeded']
+            fail_msg: >-
+              operational_technology/site#play7: postflight validation failed - preflight passed
+              ={{ fe_operational_technology_site_play7_preflight_passed | default(false) }},
+              status={{ fe_operational_technology_site_play7_status | default('unknown') }}.
+            success_msg: "operational_technology/site#play7: postflight validation passed."
+            quiet: true
+          tags:
+            - always
+            - postflight
+            - validation
+
+        - name: "operational_technology/site#play7 | Postflight | Record the successful outcome"
+          ansible.builtin.set_fact:
+            fe_operational_technology_site_play7_postflight_passed: true
+            fe_operational_technology_site_play7_status: "succeeded"
+          tags:
+            - always
+            - postflight
+            - validation
+
+      rescue:
+
+        - name: "operational_technology/site#play7 | Rescue | Capture the failing task and error detail"
+          ansible.builtin.set_fact:
+            fe_operational_technology_site_play7_status: "failed"
+            fe_operational_technology_site_play7_postflight_passed: false
+            fe_operational_technology_site_play7_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+            fe_operational_technology_site_play7_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+          tags:
+            - always
+            - rescue
+
+        - name: "operational_technology/site#play7 | Rescue | Report the failure"
+          ansible.builtin.debug:
+            msg: >-
+              operational_technology/site#play7: FAILED at '{{ fe_operational_technology_site_play7_failed_task }}' on
+              {{ inventory_hostname }} - {{ fe_operational_technology_site_play7_error }}
+          tags:
+            - always
+            - rescue
+
+        - name: "operational_technology/site#play7 | Rescue | Re-raise the failure unless the caller opted to continue"
+          ansible.builtin.fail:
+            msg: >-
+              operational_technology/site#play7 failed at '{{ fe_operational_technology_site_play7_failed_task }}': {{ fe_operational_technology_site_play7_error }}
+          when: not (fe_validation_continue_on_error | default(false) | bool)
+          tags:
+            - always
+            - rescue
+
+      always:
+
+        - name: "operational_technology/site#play7 | Always | Compute the execution duration"
+          ansible.builtin.set_fact:
+            fe_operational_technology_site_play7_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+            fe_operational_technology_site_play7_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_operational_technology_site_play7_start_epoch | default(0) | int) }}"
+          tags:
+            - always
+
+        - name: "operational_technology/site#play7 | Always | Publish the validation result with set_stats"
+          ansible.builtin.set_stats:
+            data:
+              fe_validation_results:
+                "operational_technology/site#play7":
+                  component: "operational_technology/site#play7"
+                  type: "playbook"
+                  platform: "operational_technology"
+                  host: "{{ inventory_hostname }}"
+                  status: "{{ fe_operational_technology_site_play7_status | default('unknown') }}"
+                  preflight_passed: "{{ fe_operational_technology_site_play7_preflight_passed | default(false) | bool }}"
+                  postflight_passed: "{{ fe_operational_technology_site_play7_postflight_passed | default(false) | bool }}"
+                  started_at: "{{ fe_operational_technology_site_play7_started_at | default('') }}"
+                  ended_at: "{{ fe_operational_technology_site_play7_ended_at | default('') }}"
+                  duration_seconds: "{{ fe_operational_technology_site_play7_duration_seconds | default(0) | int }}"
+                  failed_task: "{{ fe_operational_technology_site_play7_failed_task | default('') }}"
+                  error: "{{ fe_operational_technology_site_play7_error | default('') }}"
+                  check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+              fe_validation_executions: 1
+              fe_validation_succeeded: "{{ 1 if fe_operational_technology_site_play7_status | default('') == 'succeeded' else 0 }}"
+              fe_validation_failed: "{{ 0 if fe_operational_technology_site_play7_status | default('') == 'succeeded' else 1 }}"
+              fe_validation_duration_seconds: "{{ fe_operational_technology_site_play7_duration_seconds | default(0) | int }}"
+              fe_validation_failed_components: >-
+                {{ [] if fe_operational_technology_site_play7_status | default('') == 'succeeded' else ['operational_technology/site#play7'] }}
+            aggregate: true
+            per_host: false
+          when:
+            - not (fe_operational_technology_site_play7_stats_published | default(false) | bool)
+          tags:
+            - always
+
+        - name: "operational_technology/site#play7 | Always | Mark the validation statistics as published"
+          ansible.builtin.set_fact:
+            fe_operational_technology_site_play7_stats_published: true
+          tags:
+            - always
+
+        - name: "operational_technology/site#play7 | Always | Report the run summary"
+          ansible.builtin.debug:
+            msg: >-
+              operational_technology/site#play7: {{ fe_operational_technology_site_play7_status | default('unknown') }} in
+              {{ fe_operational_technology_site_play7_duration_seconds | default(0) }}s on {{ inventory_hostname }}.
+          tags:
+            - always
 
 
 - name: OT Compliance & Governance
@@ -254,35 +2602,368 @@
     # =========================================
     # Phase 9: Compliance
     # =========================================
-    - name: Phase 9 - Compliance Pack
-      ansible.builtin.include_role:
-        name: ot_compliance_pack
-      when: deploy_compliance | bool
-      tags: ['compliance', 'phase9']
+    - name: "operational_technology/site#play8 | Guarded execution with rescue and always handling"
+      block:
 
-    - name: Phase 9 - Allowlist Assist
-      ansible.builtin.include_role:
-        name: ot_allowlist_assist
-      when: deploy_allowlist | bool
-      tags: ['compliance', 'allowlist', 'phase9']
+        - name: Phase 9 - Compliance Pack
+          ansible.builtin.include_role:
+            name: ot_compliance_pack
+          when: deploy_compliance | bool
+          tags: ['compliance', 'phase9']
 
-    # =========================================
-    # Phase 10: Vulnerability Management
-    # =========================================
-    - name: Phase 10 - Vulnerability Pipeline
-      ansible.builtin.include_role:
-        name: ot_vuln_pipeline
-      when: deploy_vuln_pipeline | bool
-      tags: ['vulnerability', 'phase10']
+        - name: Phase 9 - Allowlist Assist
+          ansible.builtin.include_role:
+            name: ot_allowlist_assist
+          when: deploy_allowlist | bool
+          tags: ['compliance', 'allowlist', 'phase9']
 
-    # =========================================
-    # Phase 11: Metrics & Reporting
-    # =========================================
-    - name: Phase 11 - Metrics Reporting
-      ansible.builtin.include_role:
-        name: ot_metrics_reporting
-      when: deploy_metrics | bool
-      tags: ['metrics', 'reporting', 'phase11']
+        # =========================================
+        # Phase 10: Vulnerability Management
+        # =========================================
+        - name: Phase 10 - Vulnerability Pipeline
+          ansible.builtin.include_role:
+            name: ot_vuln_pipeline
+          when: deploy_vuln_pipeline | bool
+          tags: ['vulnerability', 'phase10']
+
+        # =========================================
+        # Phase 11: Metrics & Reporting
+        # =========================================
+        - name: Phase 11 - Metrics Reporting
+          ansible.builtin.include_role:
+            name: ot_metrics_reporting
+          when: deploy_metrics | bool
+          tags: ['metrics', 'reporting', 'phase11']
+
+      rescue:
+
+        - name: "operational_technology/site#play8 | Rescue | Capture the failing task and error detail"
+          ansible.builtin.set_fact:
+            fe_operational_technology_site_play8_status: "failed"
+            fe_operational_technology_site_play8_postflight_passed: false
+            fe_operational_technology_site_play8_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+            fe_operational_technology_site_play8_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+          tags:
+            - always
+            - rescue
+
+        - name: "operational_technology/site#play8 | Rescue | Report the failure"
+          ansible.builtin.debug:
+            msg: >-
+              operational_technology/site#play8: FAILED at '{{ fe_operational_technology_site_play8_failed_task }}' on
+              {{ inventory_hostname }} - {{ fe_operational_technology_site_play8_error }}
+          tags:
+            - always
+            - rescue
+
+        - name: "operational_technology/site#play8 | Rescue | Re-raise the failure unless the caller opted to continue"
+          ansible.builtin.fail:
+            msg: >-
+              operational_technology/site#play8 failed at '{{ fe_operational_technology_site_play8_failed_task }}': {{ fe_operational_technology_site_play8_error }}
+          when: not (fe_validation_continue_on_error | default(false) | bool)
+          tags:
+            - always
+            - rescue
+
+      always:
+
+        - name: "operational_technology/site#play8 | Always | Compute the execution duration"
+          ansible.builtin.set_fact:
+            fe_operational_technology_site_play8_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+            fe_operational_technology_site_play8_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_operational_technology_site_play8_start_epoch | default(0) | int) }}"
+          tags:
+            - always
+
+        - name: "operational_technology/site#play8 | Always | Publish the validation result with set_stats"
+          ansible.builtin.set_stats:
+            data:
+              fe_validation_results:
+                "operational_technology/site#play8":
+                  component: "operational_technology/site#play8"
+                  type: "playbook"
+                  platform: "operational_technology"
+                  host: "{{ inventory_hostname }}"
+                  status: "{{ fe_operational_technology_site_play8_status | default('unknown') }}"
+                  preflight_passed: "{{ fe_operational_technology_site_play8_preflight_passed | default(false) | bool }}"
+                  postflight_passed: "{{ fe_operational_technology_site_play8_postflight_passed | default(false) | bool }}"
+                  started_at: "{{ fe_operational_technology_site_play8_started_at | default('') }}"
+                  ended_at: "{{ fe_operational_technology_site_play8_ended_at | default('') }}"
+                  duration_seconds: "{{ fe_operational_technology_site_play8_duration_seconds | default(0) | int }}"
+                  failed_task: "{{ fe_operational_technology_site_play8_failed_task | default('') }}"
+                  error: "{{ fe_operational_technology_site_play8_error | default('') }}"
+                  check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+              fe_validation_executions: 1
+              fe_validation_succeeded: "{{ 1 if fe_operational_technology_site_play8_status | default('') == 'succeeded' else 0 }}"
+              fe_validation_failed: "{{ 0 if fe_operational_technology_site_play8_status | default('') == 'succeeded' else 1 }}"
+              fe_validation_duration_seconds: "{{ fe_operational_technology_site_play8_duration_seconds | default(0) | int }}"
+              fe_validation_failed_components: >-
+                {{ [] if fe_operational_technology_site_play8_status | default('') == 'succeeded' else ['operational_technology/site#play8'] }}
+            aggregate: true
+            per_host: false
+          when:
+            - fe_operational_technology_site_play8_status | default('') == 'failed'
+            - not (fe_operational_technology_site_play8_stats_published | default(false) | bool)
+          tags:
+            - always
+
+        - name: "operational_technology/site#play8 | Always | Mark the validation statistics as published"
+          ansible.builtin.set_fact:
+            fe_operational_technology_site_play8_stats_published: true
+          when:
+            - fe_operational_technology_site_play8_status | default('') == 'failed'
+          tags:
+            - always
+  pre_tasks:
+    - name: "operational_technology/site#play8 | Preflight validation"
+      tags:
+        - always
+        - preflight
+        - validation
+      block:
+
+        - name: "operational_technology/site#play8 | Initialize validation state"
+          ansible.builtin.set_fact:
+            fe_operational_technology_site_play8_start_epoch: "{{ now(fmt='%s') | int }}"
+            fe_operational_technology_site_play8_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+            fe_operational_technology_site_play8_status: "running"
+            fe_operational_technology_site_play8_preflight_passed: false
+            fe_operational_technology_site_play8_postflight_passed: false
+            fe_operational_technology_site_play8_failed_task: ""
+            fe_operational_technology_site_play8_error: ""
+            fe_operational_technology_site_play8_stats_published: false
+          tags:
+            - always
+
+        - name: "operational_technology/site#play8 | Preflight | Verify the control node meets the minimum ansible-core version"
+          ansible.builtin.assert:
+            that:
+              - ansible_version.full is version(fe_validation_min_ansible_version | default('2.12'), '>=')
+            fail_msg: >-
+              operational_technology/site#play8: requires ansible-core
+              {{ fe_validation_min_ansible_version | default('2.12') }} or newer,
+              found {{ ansible_version.full }}.
+            success_msg: >-
+              operational_technology/site#play8: ansible-core {{ ansible_version.full }} satisfies the minimum.
+            quiet: true
+          tags:
+            - always
+            - preflight
+            - validation
+
+        - name: "operational_technology/site#play8 | Preflight | Verify every declared required variable is defined"
+          ansible.builtin.assert:
+            that:
+              - vars[item] is defined
+            fail_msg: "operational_technology/site#play8: required variable '{{ item }}' is not defined."
+            success_msg: "operational_technology/site#play8: required variable '{{ item }}' is defined."
+            quiet: true
+          loop: "{{ fe_operational_technology_site_play8_required_vars | default([]) }}"
+          loop_control:
+            label: "{{ item }}"
+          tags:
+            - always
+            - preflight
+            - validation
+
+        - name: "operational_technology/site#play8 | Preflight | Record that preflight validation passed"
+          ansible.builtin.set_fact:
+            fe_operational_technology_site_play8_preflight_passed: true
+          tags:
+            - always
+            - preflight
+            - validation
+
+      rescue:
+
+        - name: "operational_technology/site#play8 | Rescue | Capture the failing task and error detail"
+          ansible.builtin.set_fact:
+            fe_operational_technology_site_play8_status: "preflight_failed"
+            fe_operational_technology_site_play8_postflight_passed: false
+            fe_operational_technology_site_play8_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+            fe_operational_technology_site_play8_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+          tags:
+            - always
+            - rescue
+
+        - name: "operational_technology/site#play8 | Rescue | Report the failure"
+          ansible.builtin.debug:
+            msg: >-
+              operational_technology/site#play8: FAILED at '{{ fe_operational_technology_site_play8_failed_task }}' on
+              {{ inventory_hostname }} - {{ fe_operational_technology_site_play8_error }}
+          tags:
+            - always
+            - rescue
+
+        - name: "operational_technology/site#play8 | Always | Publish the validation result with set_stats"
+          ansible.builtin.set_stats:
+            data:
+              fe_validation_results:
+                "operational_technology/site#play8":
+                  component: "operational_technology/site#play8"
+                  type: "playbook"
+                  platform: "operational_technology"
+                  host: "{{ inventory_hostname }}"
+                  status: "{{ fe_operational_technology_site_play8_status | default('unknown') }}"
+                  preflight_passed: "{{ fe_operational_technology_site_play8_preflight_passed | default(false) | bool }}"
+                  postflight_passed: "{{ fe_operational_technology_site_play8_postflight_passed | default(false) | bool }}"
+                  started_at: "{{ fe_operational_technology_site_play8_started_at | default('') }}"
+                  ended_at: "{{ fe_operational_technology_site_play8_ended_at | default('') }}"
+                  duration_seconds: "{{ fe_operational_technology_site_play8_duration_seconds | default(0) | int }}"
+                  failed_task: "{{ fe_operational_technology_site_play8_failed_task | default('') }}"
+                  error: "{{ fe_operational_technology_site_play8_error | default('') }}"
+                  check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+              fe_validation_executions: 1
+              fe_validation_succeeded: "{{ 1 if fe_operational_technology_site_play8_status | default('') == 'succeeded' else 0 }}"
+              fe_validation_failed: "{{ 0 if fe_operational_technology_site_play8_status | default('') == 'succeeded' else 1 }}"
+              fe_validation_duration_seconds: "{{ fe_operational_technology_site_play8_duration_seconds | default(0) | int }}"
+              fe_validation_failed_components: >-
+                {{ [] if fe_operational_technology_site_play8_status | default('') == 'succeeded' else ['operational_technology/site#play8'] }}
+            aggregate: true
+            per_host: false
+          tags:
+            - always
+
+        - name: "operational_technology/site#play8 | Always | Mark the validation statistics as published"
+          ansible.builtin.set_fact:
+            fe_operational_technology_site_play8_stats_published: true
+          tags:
+            - always
+
+        - name: "operational_technology/site#play8 | Rescue | Re-raise the failure unless the caller opted to continue"
+          ansible.builtin.fail:
+            msg: >-
+              operational_technology/site#play8 failed at '{{ fe_operational_technology_site_play8_failed_task }}': {{ fe_operational_technology_site_play8_error }}
+          when: not (fe_validation_continue_on_error | default(false) | bool)
+          tags:
+            - always
+            - rescue
+
+      always:
+
+        - name: "operational_technology/site#play8 | Always | Report the preflight outcome"
+          ansible.builtin.debug:
+            msg: >-
+              operational_technology/site#play8: preflight
+              {{ 'passed' if fe_operational_technology_site_play8_preflight_passed | default(false) | bool else 'FAILED' }}
+              on {{ inventory_hostname }}.
+          tags:
+            - always
+  post_tasks:
+    - name: "operational_technology/site#play8 | Postflight validation"
+      tags:
+        - always
+        - postflight
+        - validation
+      block:
+
+        - name: "operational_technology/site#play8 | Postflight | Verify the guarded body ran after a passing preflight"
+          ansible.builtin.assert:
+            that:
+              - fe_operational_technology_site_play8_preflight_passed | bool
+              - fe_operational_technology_site_play8_status in ['running', 'succeeded']
+            fail_msg: >-
+              operational_technology/site#play8: postflight validation failed - preflight passed
+              ={{ fe_operational_technology_site_play8_preflight_passed | default(false) }},
+              status={{ fe_operational_technology_site_play8_status | default('unknown') }}.
+            success_msg: "operational_technology/site#play8: postflight validation passed."
+            quiet: true
+          tags:
+            - always
+            - postflight
+            - validation
+
+        - name: "operational_technology/site#play8 | Postflight | Record the successful outcome"
+          ansible.builtin.set_fact:
+            fe_operational_technology_site_play8_postflight_passed: true
+            fe_operational_technology_site_play8_status: "succeeded"
+          tags:
+            - always
+            - postflight
+            - validation
+
+      rescue:
+
+        - name: "operational_technology/site#play8 | Rescue | Capture the failing task and error detail"
+          ansible.builtin.set_fact:
+            fe_operational_technology_site_play8_status: "failed"
+            fe_operational_technology_site_play8_postflight_passed: false
+            fe_operational_technology_site_play8_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+            fe_operational_technology_site_play8_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+          tags:
+            - always
+            - rescue
+
+        - name: "operational_technology/site#play8 | Rescue | Report the failure"
+          ansible.builtin.debug:
+            msg: >-
+              operational_technology/site#play8: FAILED at '{{ fe_operational_technology_site_play8_failed_task }}' on
+              {{ inventory_hostname }} - {{ fe_operational_technology_site_play8_error }}
+          tags:
+            - always
+            - rescue
+
+        - name: "operational_technology/site#play8 | Rescue | Re-raise the failure unless the caller opted to continue"
+          ansible.builtin.fail:
+            msg: >-
+              operational_technology/site#play8 failed at '{{ fe_operational_technology_site_play8_failed_task }}': {{ fe_operational_technology_site_play8_error }}
+          when: not (fe_validation_continue_on_error | default(false) | bool)
+          tags:
+            - always
+            - rescue
+
+      always:
+
+        - name: "operational_technology/site#play8 | Always | Compute the execution duration"
+          ansible.builtin.set_fact:
+            fe_operational_technology_site_play8_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+            fe_operational_technology_site_play8_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_operational_technology_site_play8_start_epoch | default(0) | int) }}"
+          tags:
+            - always
+
+        - name: "operational_technology/site#play8 | Always | Publish the validation result with set_stats"
+          ansible.builtin.set_stats:
+            data:
+              fe_validation_results:
+                "operational_technology/site#play8":
+                  component: "operational_technology/site#play8"
+                  type: "playbook"
+                  platform: "operational_technology"
+                  host: "{{ inventory_hostname }}"
+                  status: "{{ fe_operational_technology_site_play8_status | default('unknown') }}"
+                  preflight_passed: "{{ fe_operational_technology_site_play8_preflight_passed | default(false) | bool }}"
+                  postflight_passed: "{{ fe_operational_technology_site_play8_postflight_passed | default(false) | bool }}"
+                  started_at: "{{ fe_operational_technology_site_play8_started_at | default('') }}"
+                  ended_at: "{{ fe_operational_technology_site_play8_ended_at | default('') }}"
+                  duration_seconds: "{{ fe_operational_technology_site_play8_duration_seconds | default(0) | int }}"
+                  failed_task: "{{ fe_operational_technology_site_play8_failed_task | default('') }}"
+                  error: "{{ fe_operational_technology_site_play8_error | default('') }}"
+                  check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+              fe_validation_executions: 1
+              fe_validation_succeeded: "{{ 1 if fe_operational_technology_site_play8_status | default('') == 'succeeded' else 0 }}"
+              fe_validation_failed: "{{ 0 if fe_operational_technology_site_play8_status | default('') == 'succeeded' else 1 }}"
+              fe_validation_duration_seconds: "{{ fe_operational_technology_site_play8_duration_seconds | default(0) | int }}"
+              fe_validation_failed_components: >-
+                {{ [] if fe_operational_technology_site_play8_status | default('') == 'succeeded' else ['operational_technology/site#play8'] }}
+            aggregate: true
+            per_host: false
+          when:
+            - not (fe_operational_technology_site_play8_stats_published | default(false) | bool)
+          tags:
+            - always
+
+        - name: "operational_technology/site#play8 | Always | Mark the validation statistics as published"
+          ansible.builtin.set_fact:
+            fe_operational_technology_site_play8_stats_published: true
+          tags:
+            - always
+
+        - name: "operational_technology/site#play8 | Always | Report the run summary"
+          ansible.builtin.debug:
+            msg: >-
+              operational_technology/site#play8: {{ fe_operational_technology_site_play8_status | default('unknown') }} in
+              {{ fe_operational_technology_site_play8_duration_seconds | default(0) }}s on {{ inventory_hostname }}.
+          tags:
+            - always
 
 
 - name: Deployment Summary
@@ -291,15 +2972,348 @@
   any_errors_fatal: true
 
   tasks:
-    - name: Display deployment summary
-      ansible.builtin.debug:
-        msg:
-          - "=== OT Infrastructure Deployment Complete ==="
-          - "Compliance Framework: {{ ot_compliance_framework | default('IEC62443') }}"
-          - "Security Level: {{ ot_compliance_level | default('SL2') }}"
-          - "Zone Model: Purdue {{ ot_purdue_model_version | default('5') }}"
-          - "Emergency Freeze: {{ 'ACTIVE' if ot_emergency_freeze | default(false) else 'Inactive' }}"
-          - "Change Window Enforcement: {{ 'Enabled' if ot_change_window_enabled | default(true) else 'Disabled' }}"
-          - "Backup Enabled: {{ 'Yes' if ot_backup_enabled | default(true) else 'No' }}"
-          - "Audit Logging: {{ 'Enabled' if ot_audit_enabled | default(true) else 'Disabled' }}"
-      tags: ['always']
+    - name: "operational_technology/site#play9 | Guarded execution with rescue and always handling"
+      block:
+
+        - name: Display deployment summary
+          ansible.builtin.debug:
+            msg:
+              - "=== OT Infrastructure Deployment Complete ==="
+              - "Compliance Framework: {{ ot_compliance_framework | default('IEC62443') }}"
+              - "Security Level: {{ ot_compliance_level | default('SL2') }}"
+              - "Zone Model: Purdue {{ ot_purdue_model_version | default('5') }}"
+              - "Emergency Freeze: {{ 'ACTIVE' if ot_emergency_freeze | default(false) else 'Inactive' }}"
+              - "Change Window Enforcement: {{ 'Enabled' if ot_change_window_enabled | default(true) else 'Disabled' }}"
+              - "Backup Enabled: {{ 'Yes' if ot_backup_enabled | default(true) else 'No' }}"
+              - "Audit Logging: {{ 'Enabled' if ot_audit_enabled | default(true) else 'Disabled' }}"
+          tags: ['always']
+
+      rescue:
+
+        - name: "operational_technology/site#play9 | Rescue | Capture the failing task and error detail"
+          ansible.builtin.set_fact:
+            fe_operational_technology_site_play9_status: "failed"
+            fe_operational_technology_site_play9_postflight_passed: false
+            fe_operational_technology_site_play9_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+            fe_operational_technology_site_play9_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+          tags:
+            - always
+            - rescue
+
+        - name: "operational_technology/site#play9 | Rescue | Report the failure"
+          ansible.builtin.debug:
+            msg: >-
+              operational_technology/site#play9: FAILED at '{{ fe_operational_technology_site_play9_failed_task }}' on
+              {{ inventory_hostname }} - {{ fe_operational_technology_site_play9_error }}
+          tags:
+            - always
+            - rescue
+
+        - name: "operational_technology/site#play9 | Rescue | Re-raise the failure unless the caller opted to continue"
+          ansible.builtin.fail:
+            msg: >-
+              operational_technology/site#play9 failed at '{{ fe_operational_technology_site_play9_failed_task }}': {{ fe_operational_technology_site_play9_error }}
+          when: not (fe_validation_continue_on_error | default(false) | bool)
+          tags:
+            - always
+            - rescue
+
+      always:
+
+        - name: "operational_technology/site#play9 | Always | Compute the execution duration"
+          ansible.builtin.set_fact:
+            fe_operational_technology_site_play9_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+            fe_operational_technology_site_play9_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_operational_technology_site_play9_start_epoch | default(0) | int) }}"
+          tags:
+            - always
+
+        - name: "operational_technology/site#play9 | Always | Publish the validation result with set_stats"
+          ansible.builtin.set_stats:
+            data:
+              fe_validation_results:
+                "operational_technology/site#play9":
+                  component: "operational_technology/site#play9"
+                  type: "playbook"
+                  platform: "operational_technology"
+                  host: "{{ inventory_hostname }}"
+                  status: "{{ fe_operational_technology_site_play9_status | default('unknown') }}"
+                  preflight_passed: "{{ fe_operational_technology_site_play9_preflight_passed | default(false) | bool }}"
+                  postflight_passed: "{{ fe_operational_technology_site_play9_postflight_passed | default(false) | bool }}"
+                  started_at: "{{ fe_operational_technology_site_play9_started_at | default('') }}"
+                  ended_at: "{{ fe_operational_technology_site_play9_ended_at | default('') }}"
+                  duration_seconds: "{{ fe_operational_technology_site_play9_duration_seconds | default(0) | int }}"
+                  failed_task: "{{ fe_operational_technology_site_play9_failed_task | default('') }}"
+                  error: "{{ fe_operational_technology_site_play9_error | default('') }}"
+                  check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+              fe_validation_executions: 1
+              fe_validation_succeeded: "{{ 1 if fe_operational_technology_site_play9_status | default('') == 'succeeded' else 0 }}"
+              fe_validation_failed: "{{ 0 if fe_operational_technology_site_play9_status | default('') == 'succeeded' else 1 }}"
+              fe_validation_duration_seconds: "{{ fe_operational_technology_site_play9_duration_seconds | default(0) | int }}"
+              fe_validation_failed_components: >-
+                {{ [] if fe_operational_technology_site_play9_status | default('') == 'succeeded' else ['operational_technology/site#play9'] }}
+            aggregate: true
+            per_host: false
+          when:
+            - fe_operational_technology_site_play9_status | default('') == 'failed'
+            - not (fe_operational_technology_site_play9_stats_published | default(false) | bool)
+          tags:
+            - always
+
+        - name: "operational_technology/site#play9 | Always | Mark the validation statistics as published"
+          ansible.builtin.set_fact:
+            fe_operational_technology_site_play9_stats_published: true
+          when:
+            - fe_operational_technology_site_play9_status | default('') == 'failed'
+          tags:
+            - always
+  pre_tasks:
+    - name: "operational_technology/site#play9 | Preflight validation"
+      tags:
+        - always
+        - preflight
+        - validation
+      block:
+
+        - name: "operational_technology/site#play9 | Initialize validation state"
+          ansible.builtin.set_fact:
+            fe_operational_technology_site_play9_start_epoch: "{{ now(fmt='%s') | int }}"
+            fe_operational_technology_site_play9_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+            fe_operational_technology_site_play9_status: "running"
+            fe_operational_technology_site_play9_preflight_passed: false
+            fe_operational_technology_site_play9_postflight_passed: false
+            fe_operational_technology_site_play9_failed_task: ""
+            fe_operational_technology_site_play9_error: ""
+            fe_operational_technology_site_play9_stats_published: false
+          tags:
+            - always
+
+        - name: "operational_technology/site#play9 | Preflight | Verify the control node meets the minimum ansible-core version"
+          ansible.builtin.assert:
+            that:
+              - ansible_version.full is version(fe_validation_min_ansible_version | default('2.12'), '>=')
+            fail_msg: >-
+              operational_technology/site#play9: requires ansible-core
+              {{ fe_validation_min_ansible_version | default('2.12') }} or newer,
+              found {{ ansible_version.full }}.
+            success_msg: >-
+              operational_technology/site#play9: ansible-core {{ ansible_version.full }} satisfies the minimum.
+            quiet: true
+          tags:
+            - always
+            - preflight
+            - validation
+
+        - name: "operational_technology/site#play9 | Preflight | Verify every declared required variable is defined"
+          ansible.builtin.assert:
+            that:
+              - vars[item] is defined
+            fail_msg: "operational_technology/site#play9: required variable '{{ item }}' is not defined."
+            success_msg: "operational_technology/site#play9: required variable '{{ item }}' is defined."
+            quiet: true
+          loop: "{{ fe_operational_technology_site_play9_required_vars | default([]) }}"
+          loop_control:
+            label: "{{ item }}"
+          tags:
+            - always
+            - preflight
+            - validation
+
+        - name: "operational_technology/site#play9 | Preflight | Record that preflight validation passed"
+          ansible.builtin.set_fact:
+            fe_operational_technology_site_play9_preflight_passed: true
+          tags:
+            - always
+            - preflight
+            - validation
+
+      rescue:
+
+        - name: "operational_technology/site#play9 | Rescue | Capture the failing task and error detail"
+          ansible.builtin.set_fact:
+            fe_operational_technology_site_play9_status: "preflight_failed"
+            fe_operational_technology_site_play9_postflight_passed: false
+            fe_operational_technology_site_play9_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+            fe_operational_technology_site_play9_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+          tags:
+            - always
+            - rescue
+
+        - name: "operational_technology/site#play9 | Rescue | Report the failure"
+          ansible.builtin.debug:
+            msg: >-
+              operational_technology/site#play9: FAILED at '{{ fe_operational_technology_site_play9_failed_task }}' on
+              {{ inventory_hostname }} - {{ fe_operational_technology_site_play9_error }}
+          tags:
+            - always
+            - rescue
+
+        - name: "operational_technology/site#play9 | Always | Publish the validation result with set_stats"
+          ansible.builtin.set_stats:
+            data:
+              fe_validation_results:
+                "operational_technology/site#play9":
+                  component: "operational_technology/site#play9"
+                  type: "playbook"
+                  platform: "operational_technology"
+                  host: "{{ inventory_hostname }}"
+                  status: "{{ fe_operational_technology_site_play9_status | default('unknown') }}"
+                  preflight_passed: "{{ fe_operational_technology_site_play9_preflight_passed | default(false) | bool }}"
+                  postflight_passed: "{{ fe_operational_technology_site_play9_postflight_passed | default(false) | bool }}"
+                  started_at: "{{ fe_operational_technology_site_play9_started_at | default('') }}"
+                  ended_at: "{{ fe_operational_technology_site_play9_ended_at | default('') }}"
+                  duration_seconds: "{{ fe_operational_technology_site_play9_duration_seconds | default(0) | int }}"
+                  failed_task: "{{ fe_operational_technology_site_play9_failed_task | default('') }}"
+                  error: "{{ fe_operational_technology_site_play9_error | default('') }}"
+                  check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+              fe_validation_executions: 1
+              fe_validation_succeeded: "{{ 1 if fe_operational_technology_site_play9_status | default('') == 'succeeded' else 0 }}"
+              fe_validation_failed: "{{ 0 if fe_operational_technology_site_play9_status | default('') == 'succeeded' else 1 }}"
+              fe_validation_duration_seconds: "{{ fe_operational_technology_site_play9_duration_seconds | default(0) | int }}"
+              fe_validation_failed_components: >-
+                {{ [] if fe_operational_technology_site_play9_status | default('') == 'succeeded' else ['operational_technology/site#play9'] }}
+            aggregate: true
+            per_host: false
+          tags:
+            - always
+
+        - name: "operational_technology/site#play9 | Always | Mark the validation statistics as published"
+          ansible.builtin.set_fact:
+            fe_operational_technology_site_play9_stats_published: true
+          tags:
+            - always
+
+        - name: "operational_technology/site#play9 | Rescue | Re-raise the failure unless the caller opted to continue"
+          ansible.builtin.fail:
+            msg: >-
+              operational_technology/site#play9 failed at '{{ fe_operational_technology_site_play9_failed_task }}': {{ fe_operational_technology_site_play9_error }}
+          when: not (fe_validation_continue_on_error | default(false) | bool)
+          tags:
+            - always
+            - rescue
+
+      always:
+
+        - name: "operational_technology/site#play9 | Always | Report the preflight outcome"
+          ansible.builtin.debug:
+            msg: >-
+              operational_technology/site#play9: preflight
+              {{ 'passed' if fe_operational_technology_site_play9_preflight_passed | default(false) | bool else 'FAILED' }}
+              on {{ inventory_hostname }}.
+          tags:
+            - always
+  post_tasks:
+    - name: "operational_technology/site#play9 | Postflight validation"
+      tags:
+        - always
+        - postflight
+        - validation
+      block:
+
+        - name: "operational_technology/site#play9 | Postflight | Verify the guarded body ran after a passing preflight"
+          ansible.builtin.assert:
+            that:
+              - fe_operational_technology_site_play9_preflight_passed | bool
+              - fe_operational_technology_site_play9_status in ['running', 'succeeded']
+            fail_msg: >-
+              operational_technology/site#play9: postflight validation failed - preflight passed
+              ={{ fe_operational_technology_site_play9_preflight_passed | default(false) }},
+              status={{ fe_operational_technology_site_play9_status | default('unknown') }}.
+            success_msg: "operational_technology/site#play9: postflight validation passed."
+            quiet: true
+          tags:
+            - always
+            - postflight
+            - validation
+
+        - name: "operational_technology/site#play9 | Postflight | Record the successful outcome"
+          ansible.builtin.set_fact:
+            fe_operational_technology_site_play9_postflight_passed: true
+            fe_operational_technology_site_play9_status: "succeeded"
+          tags:
+            - always
+            - postflight
+            - validation
+
+      rescue:
+
+        - name: "operational_technology/site#play9 | Rescue | Capture the failing task and error detail"
+          ansible.builtin.set_fact:
+            fe_operational_technology_site_play9_status: "failed"
+            fe_operational_technology_site_play9_postflight_passed: false
+            fe_operational_technology_site_play9_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+            fe_operational_technology_site_play9_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+          tags:
+            - always
+            - rescue
+
+        - name: "operational_technology/site#play9 | Rescue | Report the failure"
+          ansible.builtin.debug:
+            msg: >-
+              operational_technology/site#play9: FAILED at '{{ fe_operational_technology_site_play9_failed_task }}' on
+              {{ inventory_hostname }} - {{ fe_operational_technology_site_play9_error }}
+          tags:
+            - always
+            - rescue
+
+        - name: "operational_technology/site#play9 | Rescue | Re-raise the failure unless the caller opted to continue"
+          ansible.builtin.fail:
+            msg: >-
+              operational_technology/site#play9 failed at '{{ fe_operational_technology_site_play9_failed_task }}': {{ fe_operational_technology_site_play9_error }}
+          when: not (fe_validation_continue_on_error | default(false) | bool)
+          tags:
+            - always
+            - rescue
+
+      always:
+
+        - name: "operational_technology/site#play9 | Always | Compute the execution duration"
+          ansible.builtin.set_fact:
+            fe_operational_technology_site_play9_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+            fe_operational_technology_site_play9_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_operational_technology_site_play9_start_epoch | default(0) | int) }}"
+          tags:
+            - always
+
+        - name: "operational_technology/site#play9 | Always | Publish the validation result with set_stats"
+          ansible.builtin.set_stats:
+            data:
+              fe_validation_results:
+                "operational_technology/site#play9":
+                  component: "operational_technology/site#play9"
+                  type: "playbook"
+                  platform: "operational_technology"
+                  host: "{{ inventory_hostname }}"
+                  status: "{{ fe_operational_technology_site_play9_status | default('unknown') }}"
+                  preflight_passed: "{{ fe_operational_technology_site_play9_preflight_passed | default(false) | bool }}"
+                  postflight_passed: "{{ fe_operational_technology_site_play9_postflight_passed | default(false) | bool }}"
+                  started_at: "{{ fe_operational_technology_site_play9_started_at | default('') }}"
+                  ended_at: "{{ fe_operational_technology_site_play9_ended_at | default('') }}"
+                  duration_seconds: "{{ fe_operational_technology_site_play9_duration_seconds | default(0) | int }}"
+                  failed_task: "{{ fe_operational_technology_site_play9_failed_task | default('') }}"
+                  error: "{{ fe_operational_technology_site_play9_error | default('') }}"
+                  check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+              fe_validation_executions: 1
+              fe_validation_succeeded: "{{ 1 if fe_operational_technology_site_play9_status | default('') == 'succeeded' else 0 }}"
+              fe_validation_failed: "{{ 0 if fe_operational_technology_site_play9_status | default('') == 'succeeded' else 1 }}"
+              fe_validation_duration_seconds: "{{ fe_operational_technology_site_play9_duration_seconds | default(0) | int }}"
+              fe_validation_failed_components: >-
+                {{ [] if fe_operational_technology_site_play9_status | default('') == 'succeeded' else ['operational_technology/site#play9'] }}
+            aggregate: true
+            per_host: false
+          when:
+            - not (fe_operational_technology_site_play9_stats_published | default(false) | bool)
+          tags:
+            - always
+
+        - name: "operational_technology/site#play9 | Always | Mark the validation statistics as published"
+          ansible.builtin.set_fact:
+            fe_operational_technology_site_play9_stats_published: true
+          tags:
+            - always
+
+        - name: "operational_technology/site#play9 | Always | Report the run summary"
+          ansible.builtin.debug:
+            msg: >-
+              operational_technology/site#play9: {{ fe_operational_technology_site_play9_status | default('unknown') }} in
+              {{ fe_operational_technology_site_play9_duration_seconds | default(0) }}s on {{ inventory_hostname }}.
+          tags:
+            - always

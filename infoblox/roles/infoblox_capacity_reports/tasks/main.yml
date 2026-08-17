@@ -1,293 +1,477 @@
 ---
-- name: Validate Infoblox connection vars
-  ansible.builtin.assert:
-    that:
-      - nios_host | length > 0
-      - nios_username | length > 0
-      - nios_password | length > 0
-    fail_msg: "Set nios_host / nios_username / nios_password."
 
-- name: Ensure report directory
-  ansible.builtin.file:
-    path: "{{ report_dir }}"
-    state: directory
-    mode: "0755"
+# ---------------------------------------------------------------------------
+# Fourth Estate preflight / postflight validation harness
+#
+# The task file body below is wrapped in an Ansible block/rescue/always structure:
+#
+#   block   preflight validation runs first, then the original task file body, then
+#           postflight validation. Any failure transfers control to rescue.
+#   rescue  records which task failed and why, then re-raises so a failure is
+#           never silently swallowed. Set fe_validation_continue_on_error=true
+#           to record the failure and keep going instead.
+#   always  computes the run duration and publishes the outcome through
+#           ansible.builtin.set_stats, so a wrapping playbook, AWX/AAP or CI can
+#           consume the result without scraping log output.
+#
+# Published stats (see docs/VALIDATION_AND_STATS.md):
+#   fe_validation_results['infoblox/infoblox_capacity_reports']  per-component record
+#   fe_validation_executions / _succeeded / _failed / _duration_seconds
+#   fe_validation_failed_components
+#
+# Add component-specific preflight checks without editing this file by setting
+#   fe_infoblox_infoblox_capacity_reports_required_vars: [var_one, var_two]
+# ---------------------------------------------------------------------------
 
-- name: Build WAPI base & creds
+- name: "infoblox/infoblox_capacity_reports | Initialize validation state"
   ansible.builtin.set_fact:
-    _wapi_base: "https://{{ nios_host }}/wapi/{{ nios_wapi_version }}"
-    _creds:
-      user: "{{ nios_username }}"
-      password: "{{ nios_password }}"
-      force_basic_auth: true
-      validate_certs: "{{ nios_validate_certs }}"
+    fe_infoblox_infoblox_capacity_reports_start_epoch: "{{ now(fmt='%s') | int }}"
+    fe_infoblox_infoblox_capacity_reports_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+    fe_infoblox_infoblox_capacity_reports_status: "running"
+    fe_infoblox_infoblox_capacity_reports_preflight_passed: false
+    fe_infoblox_infoblox_capacity_reports_postflight_passed: false
+    fe_infoblox_infoblox_capacity_reports_failed_task: ""
+    fe_infoblox_infoblox_capacity_reports_error: ""
+    fe_infoblox_infoblox_capacity_reports_stats_published: false
+  tags:
+    - always
 
-# Inventory
-  no_log: true
-- name: Get IPv4 networks (with EAs)
-  ansible.builtin.uri:
-    url: "{{ _wapi_base }}/network"
-    method: GET
-    return_content: true
-    status_code: [200]
-    params:
-      _return_as_object: 1
-      _max_results: 5000
-      "_return_fields+": "network,network_view,comment,extattrs"
-    url_username: "{{ _creds.user }}"
-    url_password: "{{ _creds.password }}"
-    force_basic_auth: "{{ _creds.force_basic_auth }}"
-    validate_certs: "{{ _creds.validate_certs }}"
-  register: networks_v4
+- name: "infoblox/infoblox_capacity_reports | Guarded execution with preflight and postflight validation"
+  block:
 
-- name: Get DHCP ranges (with utilization if supported)
-  ansible.builtin.uri:
-    url: "{{ _wapi_base }}/range"
-    method: GET
-    return_content: true
-    status_code: [200]
-    params:
-      _return_as_object: 1
-      _max_results: 5000
-      "_return_fields+": "network,start_addr,end_addr,view,comment,utilization,extattrs"
-    url_username: "{{ _creds.user }}"
-    url_password: "{{ _creds.password }}"
-    force_basic_auth: "{{ _creds.force_basic_auth }}"
-    validate_certs: "{{ _creds.validate_certs }}"
-  register: dhcp_ranges
-  failed_when: false
+    # ----------------------------- preflight --------------------
 
-- name: Get DNS members (for stats)
-  ansible.builtin.uri:
-    url: "{{ _wapi_base }}/member:dns"
-    method: GET
-    return_content: true
-    status_code: [200]
-    params: { _return_as_object: 1, _max_results: 5000, "_return_fields+": "name,host_name,enable_dns" }
-    url_username: "{{ _creds.user }}"
-    url_password: "{{ _creds.password }}"
-    force_basic_auth: "{{ _creds.force_basic_auth }}"
-    validate_certs: "{{ _creds.validate_certs }}"
-  register: dns_members
-  failed_when: false
+    - name: "infoblox/infoblox_capacity_reports | Preflight | Verify the control node meets the minimum ansible-core version"
+      ansible.builtin.assert:
+        that:
+          - ansible_version.full is version(fe_validation_min_ansible_version | default('2.12'), '>=')
+        fail_msg: >-
+          infoblox/infoblox_capacity_reports: requires ansible-core
+          {{ fe_validation_min_ansible_version | default('2.12') }} or newer,
+          found {{ ansible_version.full }}.
+        success_msg: >-
+          infoblox/infoblox_capacity_reports: ansible-core {{ ansible_version.full }} satisfies the minimum.
+        quiet: true
+      tags:
+        - always
+        - preflight
+        - validation
 
-# Address Utilization
-- name: Compute per-network utilization (best-effort via WAPI function)
-  vars:
-    net: "{{ item.network }}"
-    view: "{{ item.network_view }}"
-  ansible.builtin.uri:
-    url: "{{ _wapi_base }}/network?_function=get_utilization"
-    method: POST
-    headers: { Content-Type: "application/json" }
-    body_format: json
-    body:
-      network: "{{ net }}"
-      network_view: "{{ view }}"
-      utilization: "FULL"
-    status_code: [200,400]
-    url_username: "{{ _creds.user }}"
-    url_password: "{{ _creds.password }}"
-    force_basic_auth: "{{ _creds.force_basic_auth }}"
-    validate_certs: "{{ _creds.validate_certs }}"
-  loop: "{{ (networks_v4.json.result | default([])) }}"
-  loop_control: { label: "{{ item.network_view }}::{{ item.network }}" }
-  register: net_util
-  failed_when: false
+    - name: "infoblox/infoblox_capacity_reports | Preflight | Verify every declared required variable is defined"
+      ansible.builtin.assert:
+        that:
+          - vars[item] is defined
+        fail_msg: "infoblox/infoblox_capacity_reports: required variable '{{ item }}' is not defined."
+        success_msg: "infoblox/infoblox_capacity_reports: required variable '{{ item }}' is defined."
+        quiet: true
+      loop: "{{ fe_infoblox_infoblox_capacity_reports_required_vars | default([]) }}"
+      loop_control:
+        label: "{{ item }}"
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: Build flat rows for networks
-  ansible.builtin.set_fact:
-    _net_rows: >-
-      {%- set rows = [] -%}
-      {%- for idx, n in (networks_v4.json.result | default([])) | enumerate -%}
-        {%- set util = (net_util.results[idx].json | default({})) -%}
-        {%- set site = (n.extattrs[site_ea_key].value if (n.extattrs is defined and n.extattrs[site_ea_key] is defined) else '') -%}
-        {%- set used = (util.utilization | default({})).used | default(util.used | default(omit)) -%}
-        {%- set total = (util.utilization | default({})).total | default(util.total | default(omit)) -%}
-        {%- set free = (util.utilization | default({})).free | default(util.free | default(omit)) -%}
-        {%- set pct = ( (used | float(0)) / ((total | float(0)) if (total|float>0) else 1) * 100.0 ) | round(2) -%}
-        {%- set _ = rows.append({
-              "network": n.network,
-              "view": n.network_view,
-              "site": site,
-              "used": used | default(''),
-              "free": free | default(''),
-              "total": total | default(''),
-              "pct_used": pct,
-              "comment": n.comment | default('')
-            }) -%}
-      {%- endfor -%}
-      {{ rows }}
+    - name: "infoblox/infoblox_capacity_reports | Preflight | Record that preflight validation passed"
+      ansible.builtin.set_fact:
+        fe_infoblox_infoblox_capacity_reports_preflight_passed: true
+      tags:
+        - always
+        - preflight
+        - validation
 
-# Container aggregation (optional)
-- name: Aggregate by declared container CIDRs (optional)
-  ansible.builtin.set_fact:
-    _container_rows: >-
-      {%- set agg = {} -%}
-      {%- for c in group_by_container_cidrs -%}
-        {%- set _ = agg.update( { c: {"used":0,"free":0,"total":0,"pct_used":0,"net_count":0} } ) -%}
-      {%- endfor -%}
-      {%- for r in _net_rows -%}
-        {%- for c in group_by_container_cidrs -%}
-          {%- if r.network.startswith(c.split('/')[0]) -%}
-            {%- set bucket = agg[c] -%}
-            {%- set _ = bucket.update({
-                  "used": (bucket.used|int) + (r.used|int(0)),
-                  "free": (bucket.free|int) + (r.free|int(0)),
-                  "total": (bucket.total|int) + (r.total|int(0)),
-                  "net_count": (bucket.net_count|int) + 1
+    # ----------------------------- execute ----------------------
+
+    - name: Validate Infoblox connection vars
+      ansible.builtin.assert:
+        that:
+          - nios_host | length > 0
+          - nios_username | length > 0
+          - nios_password | length > 0
+        fail_msg: "Set nios_host / nios_username / nios_password."
+
+    - name: Ensure report directory
+      ansible.builtin.file:
+        path: "{{ report_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Build WAPI base & creds
+      ansible.builtin.set_fact:
+        _wapi_base: "https://{{ nios_host }}/wapi/{{ nios_wapi_version }}"
+        _creds:
+          user: "{{ nios_username }}"
+          password: "{{ nios_password }}"
+          force_basic_auth: true
+          validate_certs: "{{ nios_validate_certs }}"
+
+    # Inventory
+      no_log: true
+    - name: Get IPv4 networks (with EAs)
+      ansible.builtin.uri:
+        url: "{{ _wapi_base }}/network"
+        method: GET
+        return_content: true
+        status_code: [200]
+        params:
+          _return_as_object: 1
+          _max_results: 5000
+          "_return_fields+": "network,network_view,comment,extattrs"
+        url_username: "{{ _creds.user }}"
+        url_password: "{{ _creds.password }}"
+        force_basic_auth: "{{ _creds.force_basic_auth }}"
+        validate_certs: "{{ _creds.validate_certs }}"
+      register: networks_v4
+
+    - name: Get DHCP ranges (with utilization if supported)
+      ansible.builtin.uri:
+        url: "{{ _wapi_base }}/range"
+        method: GET
+        return_content: true
+        status_code: [200]
+        params:
+          _return_as_object: 1
+          _max_results: 5000
+          "_return_fields+": "network,start_addr,end_addr,view,comment,utilization,extattrs"
+        url_username: "{{ _creds.user }}"
+        url_password: "{{ _creds.password }}"
+        force_basic_auth: "{{ _creds.force_basic_auth }}"
+        validate_certs: "{{ _creds.validate_certs }}"
+      register: dhcp_ranges
+      failed_when: false
+
+    - name: Get DNS members (for stats)
+      ansible.builtin.uri:
+        url: "{{ _wapi_base }}/member:dns"
+        method: GET
+        return_content: true
+        status_code: [200]
+        params: { _return_as_object: 1, _max_results: 5000, "_return_fields+": "name,host_name,enable_dns" }
+        url_username: "{{ _creds.user }}"
+        url_password: "{{ _creds.password }}"
+        force_basic_auth: "{{ _creds.force_basic_auth }}"
+        validate_certs: "{{ _creds.validate_certs }}"
+      register: dns_members
+      failed_when: false
+
+    # Address Utilization
+    - name: Compute per-network utilization (best-effort via WAPI function)
+      vars:
+        net: "{{ item.network }}"
+        view: "{{ item.network_view }}"
+      ansible.builtin.uri:
+        url: "{{ _wapi_base }}/network?_function=get_utilization"
+        method: POST
+        headers: { Content-Type: "application/json" }
+        body_format: json
+        body:
+          network: "{{ net }}"
+          network_view: "{{ view }}"
+          utilization: "FULL"
+        status_code: [200,400]
+        url_username: "{{ _creds.user }}"
+        url_password: "{{ _creds.password }}"
+        force_basic_auth: "{{ _creds.force_basic_auth }}"
+        validate_certs: "{{ _creds.validate_certs }}"
+      loop: "{{ (networks_v4.json.result | default([])) }}"
+      loop_control: { label: "{{ item.network_view }}::{{ item.network }}" }
+      register: net_util
+      failed_when: false
+
+    - name: Build flat rows for networks
+      ansible.builtin.set_fact:
+        _net_rows: >-
+          {%- set rows = [] -%}
+          {%- for idx, n in (networks_v4.json.result | default([])) | enumerate -%}
+            {%- set util = (net_util.results[idx].json | default({})) -%}
+            {%- set site = (n.extattrs[site_ea_key].value if (n.extattrs is defined and n.extattrs[site_ea_key] is defined) else '') -%}
+            {%- set used = (util.utilization | default({})).used | default(util.used | default(omit)) -%}
+            {%- set total = (util.utilization | default({})).total | default(util.total | default(omit)) -%}
+            {%- set free = (util.utilization | default({})).free | default(util.free | default(omit)) -%}
+            {%- set pct = ( (used | float(0)) / ((total | float(0)) if (total|float>0) else 1) * 100.0 ) | round(2) -%}
+            {%- set _ = rows.append({
+                  "network": n.network,
+                  "view": n.network_view,
+                  "site": site,
+                  "used": used | default(''),
+                  "free": free | default(''),
+                  "total": total | default(''),
+                  "pct_used": pct,
+                  "comment": n.comment | default('')
                 }) -%}
-          {%- endif -%}
-        {%- endfor -%}
-      {%- endfor -%}
-      {%- for k,v in agg.items() -%}
-        {%- set _ = v.update({"pct_used": ( (v.used|float(0)) / ((v.total|float(0)) if (v.total|float(0)) > 0 else 1) * 100.0 ) | round(2) }) -%}
-      {%- endfor -%}
-      {{ agg }}
+          {%- endfor -%}
+          {{ rows }}
 
-- name: Aggregate by Site EA
-  ansible.builtin.set_fact:
-    _site_rows: >-
-      {%- set agg = {} -%}
-      {%- for r in _net_rows -%}
-        {%- set key = r.site | default('') -%}
-        {%- if key|length == 0 -%}{%- set key = 'UNSPECIFIED' -%}{%- endif -%}
-        {%- if key not in agg -%}{%- set _ = agg.update({ key: {"used":0,"free":0,"total":0,"pct_used":0,"net_count":0} }) -%}{%- endif -%}
-        {%- set b = agg[key] -%}
-        {%- set _ = b.update({
-              "used": (b.used|int) + (r.used|int(0)),
-              "free": (b.free|int) + (r.free|int(0)),
-              "total": (b.total|int) + (r.total|int(0)),
-              "net_count": (b.net_count|int) + 1
-            }) -%}
-      {%- endfor -%}
-      {%- for k,v in agg.items() -%}
-        {%- set _ = v.update({"pct_used": ( (v.used|float(0)) / ((v.total|float(0)) if (v.total|float(0)) > 0 else 1) * 100.0 ) | round(2) }) -%}
-      {%- endfor -%}
-      {{ agg }}
+    # Container aggregation (optional)
+    - name: Aggregate by declared container CIDRs (optional)
+      ansible.builtin.set_fact:
+        _container_rows: >-
+          {%- set agg = {} -%}
+          {%- for c in group_by_container_cidrs -%}
+            {%- set _ = agg.update( { c: {"used":0,"free":0,"total":0,"pct_used":0,"net_count":0} } ) -%}
+          {%- endfor -%}
+          {%- for r in _net_rows -%}
+            {%- for c in group_by_container_cidrs -%}
+              {%- if r.network.startswith(c.split('/')[0]) -%}
+                {%- set bucket = agg[c] -%}
+                {%- set _ = bucket.update({
+                      "used": (bucket.used|int) + (r.used|int(0)),
+                      "free": (bucket.free|int) + (r.free|int(0)),
+                      "total": (bucket.total|int) + (r.total|int(0)),
+                      "net_count": (bucket.net_count|int) + 1
+                    }) -%}
+              {%- endif -%}
+            {%- endfor -%}
+          {%- endfor -%}
+          {%- for k,v in agg.items() -%}
+            {%- set _ = v.update({"pct_used": ( (v.used|float(0)) / ((v.total|float(0)) if (v.total|float(0)) > 0 else 1) * 100.0 ) | round(2) }) -%}
+          {%- endfor -%}
+          {{ agg }}
 
-# DHCP utilization
-- name: Build DHCP range rows (utilization may be empty on some versions)
-  ansible.builtin.set_fact:
-    _dhcp_rows: >-
-      {%- set rows = [] -%}
-      {%- for r in (dhcp_ranges.json.result | default([])) -%}
-        {%- set util = r.utilization | default({}) -%}
-        {%- set used = util.used | default(omit) -%}
-        {%- set total = util.total | default(omit) -%}
-        {%- set pct = ( (used | float(0)) / ((total | float(0)) if (total|float(0)) > 0 else 1) * 100.0 ) | round(2) -%}
-        {%- set site = (r.extattrs[site_ea_key].value if (r.extattrs is defined and r.extattrs[site_ea_key] is defined) else '') -%}
-        {%- set _ = rows.append({
-              "network": r.network | default(''),
-              "range": r.start_addr ~ "-" ~ r.end_addr,
-              "view": r.view | default('default'),
-              "site": site,
-              "used": used | default(''),
-              "total": total | default(''),
-              "pct_used": pct,
-              "comment": r.comment | default('')
-            }) -%}
-      {%- endfor -%}
-      {{ rows }}
-  failed_when: false
+    - name: Aggregate by Site EA
+      ansible.builtin.set_fact:
+        _site_rows: >-
+          {%- set agg = {} -%}
+          {%- for r in _net_rows -%}
+            {%- set key = r.site | default('') -%}
+            {%- if key|length == 0 -%}{%- set key = 'UNSPECIFIED' -%}{%- endif -%}
+            {%- if key not in agg -%}{%- set _ = agg.update({ key: {"used":0,"free":0,"total":0,"pct_used":0,"net_count":0} }) -%}{%- endif -%}
+            {%- set b = agg[key] -%}
+            {%- set _ = b.update({
+                  "used": (b.used|int) + (r.used|int(0)),
+                  "free": (b.free|int) + (r.free|int(0)),
+                  "total": (b.total|int) + (r.total|int(0)),
+                  "net_count": (b.net_count|int) + 1
+                }) -%}
+          {%- endfor -%}
+          {%- for k,v in agg.items() -%}
+            {%- set _ = v.update({"pct_used": ( (v.used|float(0)) / ((v.total|float(0)) if (v.total|float(0)) > 0 else 1) * 100.0 ) | round(2) }) -%}
+          {%- endfor -%}
+          {{ agg }}
 
-# DNS stats
-- name: Query DNS stats per member (best-effort; API varies by NIOS)
-  vars:
-    mname: "{{ item.name | default(item.host_name | default('member')) }}"
-  ansible.builtin.uri:
-    url: "{{ _wapi_base }}/member:dns?_function=get_statistics"
-    method: POST
-    headers: { Content-Type: "application/json" }
-    body_format: json
-    body: { "member": "{{ mname }}", "view": "{{ dns_view }}" }
-    status_code: [200,400]
-    url_username: "{{ _creds.user }}"
-    url_password: "{{ _creds.password }}"
-    force_basic_auth: "{{ _creds.force_basic_auth }}"
-    validate_certs: "{{ _creds.validate_certs }}"
-  loop: "{{ (dns_members.json.result | default([])) }}"
-  loop_control: { label: "{{ item.name | default(item.host_name) }}" }
-  register: dns_stats
-  failed_when: false
+    # DHCP utilization
+    - name: Build DHCP range rows (utilization may be empty on some versions)
+      ansible.builtin.set_fact:
+        _dhcp_rows: >-
+          {%- set rows = [] -%}
+          {%- for r in (dhcp_ranges.json.result | default([])) -%}
+            {%- set util = r.utilization | default({}) -%}
+            {%- set used = util.used | default(omit) -%}
+            {%- set total = util.total | default(omit) -%}
+            {%- set pct = ( (used | float(0)) / ((total | float(0)) if (total|float(0)) > 0 else 1) * 100.0 ) | round(2) -%}
+            {%- set site = (r.extattrs[site_ea_key].value if (r.extattrs is defined and r.extattrs[site_ea_key] is defined) else '') -%}
+            {%- set _ = rows.append({
+                  "network": r.network | default(''),
+                  "range": r.start_addr ~ "-" ~ r.end_addr,
+                  "view": r.view | default('default'),
+                  "site": site,
+                  "used": used | default(''),
+                  "total": total | default(''),
+                  "pct_used": pct,
+                  "comment": r.comment | default('')
+                }) -%}
+          {%- endfor -%}
+          {{ rows }}
+      failed_when: false
 
-# Artifacts
-- name: Save raw JSON artifacts
-  ansible.builtin.copy:
-    dest: "{{ report_dir }}/capacity_raw.json"
-    mode: "0644"
-    content: >-
-      {{
-        {
-          "networks": (networks_v4.json.result | default([])),
-          "net_util": (net_util.results | default([]) | map(attribute='json') | list),
-          "dhcp_ranges": (dhcp_ranges.json.result | default([])),
-          "dns_members": (dns_members.json.result | default([])),
-          "dns_stats": (dns_stats.results | default([]) | map(attribute='json') | list)
-        } | to_nice_json
-      }}
+    # DNS stats
+    - name: Query DNS stats per member (best-effort; API varies by NIOS)
+      vars:
+        mname: "{{ item.name | default(item.host_name | default('member')) }}"
+      ansible.builtin.uri:
+        url: "{{ _wapi_base }}/member:dns?_function=get_statistics"
+        method: POST
+        headers: { Content-Type: "application/json" }
+        body_format: json
+        body: { "member": "{{ mname }}", "view": "{{ dns_view }}" }
+        status_code: [200,400]
+        url_username: "{{ _creds.user }}"
+        url_password: "{{ _creds.password }}"
+        force_basic_auth: "{{ _creds.force_basic_auth }}"
+        validate_certs: "{{ _creds.validate_certs }}"
+      loop: "{{ (dns_members.json.result | default([])) }}"
+      loop_control: { label: "{{ item.name | default(item.host_name) }}" }
+      register: dns_stats
+      failed_when: false
 
-- name: Save rollups (JSON)
-  ansible.builtin.copy:
-    dest: "{{ report_dir }}/capacity_rollup.json"
-    mode: "0644"
-    content: >-
-      {{
-        {
-          "per_network": _net_rows,
-          "by_site": _site_rows,
-          "by_container": _container_rows,
-          "dhcp_ranges": _dhcp_rows
-        } | to_nice_json
-      }}
+    # Artifacts
+    - name: Save raw JSON artifacts
+      ansible.builtin.copy:
+        dest: "{{ report_dir }}/capacity_raw.json"
+        mode: "0644"
+        content: >-
+          {{
+            {
+              "networks": (networks_v4.json.result | default([])),
+              "net_util": (net_util.results | default([]) | map(attribute='json') | list),
+              "dhcp_ranges": (dhcp_ranges.json.result | default([])),
+              "dns_members": (dns_members.json.result | default([])),
+              "dns_stats": (dns_stats.results | default([]) | map(attribute='json') | list)
+            } | to_nice_json
+          }}
 
-- name: Write per-network CSV
-  ansible.builtin.copy:
-    dest: "{{ report_dir }}/address_utilization_per_network.csv"
-    mode: "0644"
-    content: |-
-      network,view,site,used,free,total,pct_used,comment
-      {% for r in _net_rows -%}
-      {{ r.network }},{{ r.view }},{{ r.site }},{{ r.used }},{{ r.free }},{{ r.total }},{{ r.pct_used }},{{ (r.comment | replace(',', ' ')) }}
-      {% endfor %}
+    - name: Save rollups (JSON)
+      ansible.builtin.copy:
+        dest: "{{ report_dir }}/capacity_rollup.json"
+        mode: "0644"
+        content: >-
+          {{
+            {
+              "per_network": _net_rows,
+              "by_site": _site_rows,
+              "by_container": _container_rows,
+              "dhcp_ranges": _dhcp_rows
+            } | to_nice_json
+          }}
 
-- name: Write site rollup CSV
-  ansible.builtin.copy:
-    dest: "{{ report_dir }}/address_utilization_by_site.csv"
-    mode: "0644"
-    content: |-
-      site,used,free,total,pct_used,net_count
-      {% for k,v in _site_rows.items() -%}
-      {{ k }},{{ v.used }},{{ v.free }},{{ v.total }},{{ v.pct_used }},{{ v.net_count }}
-      {% endfor %}
+    - name: Write per-network CSV
+      ansible.builtin.copy:
+        dest: "{{ report_dir }}/address_utilization_per_network.csv"
+        mode: "0644"
+        content: |-
+          network,view,site,used,free,total,pct_used,comment
+          {% for r in _net_rows -%}
+          {{ r.network }},{{ r.view }},{{ r.site }},{{ r.used }},{{ r.free }},{{ r.total }},{{ r.pct_used }},{{ (r.comment | replace(',', ' ')) }}
+          {% endfor %}
 
-- name: Write container rollup CSV (optional)
-  when: group_by_container_cidrs | length > 0
-  ansible.builtin.copy:
-    dest: "{{ report_dir }}/address_utilization_by_container.csv"
-    mode: "0644"
-    content: |-
-      container_cidr,used,free,total,pct_used,net_count
-      {% for k,v in _container_rows.items() -%}
-      {{ k }},{{ v.used }},{{ v.free }},{{ v.total }},{{ v.pct_used }},{{ v.net_count }}
-      {% endfor %}
+    - name: Write site rollup CSV
+      ansible.builtin.copy:
+        dest: "{{ report_dir }}/address_utilization_by_site.csv"
+        mode: "0644"
+        content: |-
+          site,used,free,total,pct_used,net_count
+          {% for k,v in _site_rows.items() -%}
+          {{ k }},{{ v.used }},{{ v.free }},{{ v.total }},{{ v.pct_used }},{{ v.net_count }}
+          {% endfor %}
 
-- name: Write DHCP utilization CSV
-  ansible.builtin.copy:
-    dest: "{{ report_dir }}/dhcp_utilization.csv"
-    mode: "0644"
-    content: |-
-      network,range,view,site,used,total,pct_used,comment
-      {% for r in _dhcp_rows -%}
-      {{ r.network }},{{ r.range }},{{ r.view }},{{ r.site }},{{ r.used }},{{ r.total }},{{ r.pct_used }},{{ (r.comment | replace(',', ' ')) }}
-      {% endfor %}
+    - name: Write container rollup CSV (optional)
+      when: group_by_container_cidrs | length > 0
+      ansible.builtin.copy:
+        dest: "{{ report_dir }}/address_utilization_by_container.csv"
+        mode: "0644"
+        content: |-
+          container_cidr,used,free,total,pct_used,net_count
+          {% for k,v in _container_rows.items() -%}
+          {{ k }},{{ v.used }},{{ v.free }},{{ v.total }},{{ v.pct_used }},{{ v.net_count }}
+          {% endfor %}
 
-- name: Summary
-  ansible.builtin.debug:
-    msg:
-      - "Wrote JSON: {{ report_dir }}/capacity_raw.json"
-      - "Wrote JSON: {{ report_dir }}/capacity_rollup.json"
-      - "Wrote CSV:  {{ report_dir }}/address_utilization_per_network.csv"
-      - "Wrote CSV:  {{ report_dir }}/address_utilization_by_site.csv"
-      - "Wrote CSV:  {{ report_dir }}/address_utilization_by_container.csv (if requested)"
-      - "Wrote CSV:  {{ report_dir }}/dhcp_utilization.csv"
+    - name: Write DHCP utilization CSV
+      ansible.builtin.copy:
+        dest: "{{ report_dir }}/dhcp_utilization.csv"
+        mode: "0644"
+        content: |-
+          network,range,view,site,used,total,pct_used,comment
+          {% for r in _dhcp_rows -%}
+          {{ r.network }},{{ r.range }},{{ r.view }},{{ r.site }},{{ r.used }},{{ r.total }},{{ r.pct_used }},{{ (r.comment | replace(',', ' ')) }}
+          {% endfor %}
+
+    - name: Summary
+      ansible.builtin.debug:
+        msg:
+          - "Wrote JSON: {{ report_dir }}/capacity_raw.json"
+          - "Wrote JSON: {{ report_dir }}/capacity_rollup.json"
+          - "Wrote CSV:  {{ report_dir }}/address_utilization_per_network.csv"
+          - "Wrote CSV:  {{ report_dir }}/address_utilization_by_site.csv"
+          - "Wrote CSV:  {{ report_dir }}/address_utilization_by_container.csv (if requested)"
+          - "Wrote CSV:  {{ report_dir }}/dhcp_utilization.csv"
+
+    # ----------------------------- postflight -------------------
+
+    - name: "infoblox/infoblox_capacity_reports | Postflight | Verify the guarded body ran after a passing preflight"
+      ansible.builtin.assert:
+        that:
+          - fe_infoblox_infoblox_capacity_reports_preflight_passed | bool
+          - fe_infoblox_infoblox_capacity_reports_status in ['running', 'succeeded']
+        fail_msg: >-
+          infoblox/infoblox_capacity_reports: postflight validation failed - preflight passed
+          ={{ fe_infoblox_infoblox_capacity_reports_preflight_passed | default(false) }},
+          status={{ fe_infoblox_infoblox_capacity_reports_status | default('unknown') }}.
+        success_msg: "infoblox/infoblox_capacity_reports: postflight validation passed."
+        quiet: true
+      tags:
+        - always
+        - postflight
+        - validation
+
+    - name: "infoblox/infoblox_capacity_reports | Postflight | Record the successful outcome"
+      ansible.builtin.set_fact:
+        fe_infoblox_infoblox_capacity_reports_postflight_passed: true
+        fe_infoblox_infoblox_capacity_reports_status: "succeeded"
+      tags:
+        - always
+        - postflight
+        - validation
+
+  rescue:
+
+    - name: "infoblox/infoblox_capacity_reports | Rescue | Capture the failing task and error detail"
+      ansible.builtin.set_fact:
+        fe_infoblox_infoblox_capacity_reports_status: "failed"
+        fe_infoblox_infoblox_capacity_reports_postflight_passed: false
+        fe_infoblox_infoblox_capacity_reports_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+        fe_infoblox_infoblox_capacity_reports_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+      tags:
+        - always
+        - rescue
+
+    - name: "infoblox/infoblox_capacity_reports | Rescue | Report the failure"
+      ansible.builtin.debug:
+        msg: >-
+          infoblox/infoblox_capacity_reports: FAILED at '{{ fe_infoblox_infoblox_capacity_reports_failed_task }}' on
+          {{ inventory_hostname }} - {{ fe_infoblox_infoblox_capacity_reports_error }}
+      tags:
+        - always
+        - rescue
+
+    - name: "infoblox/infoblox_capacity_reports | Rescue | Re-raise the failure unless the caller opted to continue"
+      ansible.builtin.fail:
+        msg: >-
+          infoblox/infoblox_capacity_reports failed at '{{ fe_infoblox_infoblox_capacity_reports_failed_task }}': {{ fe_infoblox_infoblox_capacity_reports_error }}
+      when: not (fe_validation_continue_on_error | default(false) | bool)
+      tags:
+        - always
+        - rescue
+
+  always:
+
+    - name: "infoblox/infoblox_capacity_reports | Always | Compute the execution duration"
+      ansible.builtin.set_fact:
+        fe_infoblox_infoblox_capacity_reports_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+        fe_infoblox_infoblox_capacity_reports_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_infoblox_infoblox_capacity_reports_start_epoch | default(0) | int) }}"
+      tags:
+        - always
+
+    - name: "infoblox/infoblox_capacity_reports | Always | Publish the validation result with set_stats"
+      ansible.builtin.set_stats:
+        data:
+          fe_validation_results:
+            "infoblox/infoblox_capacity_reports":
+              component: "infoblox/infoblox_capacity_reports"
+              type: "role"
+              platform: "infoblox"
+              host: "{{ inventory_hostname }}"
+              status: "{{ fe_infoblox_infoblox_capacity_reports_status | default('unknown') }}"
+              preflight_passed: "{{ fe_infoblox_infoblox_capacity_reports_preflight_passed | default(false) | bool }}"
+              postflight_passed: "{{ fe_infoblox_infoblox_capacity_reports_postflight_passed | default(false) | bool }}"
+              started_at: "{{ fe_infoblox_infoblox_capacity_reports_started_at | default('') }}"
+              ended_at: "{{ fe_infoblox_infoblox_capacity_reports_ended_at | default('') }}"
+              duration_seconds: "{{ fe_infoblox_infoblox_capacity_reports_duration_seconds | default(0) | int }}"
+              failed_task: "{{ fe_infoblox_infoblox_capacity_reports_failed_task | default('') }}"
+              error: "{{ fe_infoblox_infoblox_capacity_reports_error | default('') }}"
+              check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+          fe_validation_executions: 1
+          fe_validation_succeeded: "{{ 1 if fe_infoblox_infoblox_capacity_reports_status | default('') == 'succeeded' else 0 }}"
+          fe_validation_failed: "{{ 0 if fe_infoblox_infoblox_capacity_reports_status | default('') == 'succeeded' else 1 }}"
+          fe_validation_duration_seconds: "{{ fe_infoblox_infoblox_capacity_reports_duration_seconds | default(0) | int }}"
+          fe_validation_failed_components: >-
+            {{ [] if fe_infoblox_infoblox_capacity_reports_status | default('') == 'succeeded' else ['infoblox/infoblox_capacity_reports'] }}
+        aggregate: true
+        per_host: false
+      tags:
+        - always
+
+    - name: "infoblox/infoblox_capacity_reports | Always | Mark the validation statistics as published"
+      ansible.builtin.set_fact:
+        fe_infoblox_infoblox_capacity_reports_stats_published: true
+      tags:
+        - always

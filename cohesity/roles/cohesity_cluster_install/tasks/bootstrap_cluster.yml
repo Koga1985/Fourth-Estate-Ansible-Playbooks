@@ -1,137 +1,320 @@
 ---
 # Bootstrap Cohesity cluster
 
-- name: Check if cluster is already bootstrapped
-  ansible.builtin.uri:
-    url: "{{ cohesity_api_protocol }}://{{ cohesity_cluster_vips[0] }}/irisservices/api/v1/public/basicClusterInfo"
-    method: GET
-    validate_certs: "{{ cohesity_api_verify_ssl }}"
-    status_code: [200, 404, -1]
-  register: cluster_check
-  ignore_errors: yes
-  delegate_to: localhost
+# ---------------------------------------------------------------------------
+# Fourth Estate preflight / postflight validation harness
+#
+# The task file body below is wrapped in an Ansible block/rescue/always structure:
+#
+#   block   preflight validation runs first, then the original task file body, then
+#           postflight validation. Any failure transfers control to rescue.
+#   rescue  records which task failed and why, then re-raises so a failure is
+#           never silently swallowed. Set fe_validation_continue_on_error=true
+#           to record the failure and keep going instead.
+#   always  computes the run duration and publishes the outcome through
+#           ansible.builtin.set_stats, so a wrapping playbook, AWX/AAP or CI can
+#           consume the result without scraping log output.
+#
+# Published stats (see docs/VALIDATION_AND_STATS.md):
+#   fe_validation_results['cohesity/cohesity_cluster_install/bootstrap_cluster']  per-component record
+#   fe_validation_executions / _succeeded / _failed / _duration_seconds
+#   fe_validation_failed_components
+#
+# Add component-specific preflight checks without editing this file by setting
+#   fe_cohesity_cohesity_cluster_install_bootstrap_cluster_required_vars: [var_one, var_two]
+# ---------------------------------------------------------------------------
 
-- name: Skip bootstrap if cluster already exists
-  ansible.builtin.debug:
-    msg: "Cluster already bootstrapped, skipping cluster creation"
-  when: cluster_check.status == 200
+- name: "cohesity/cohesity_cluster_install/bootstrap_cluster | Initialize validation state"
+  ansible.builtin.set_fact:
+    fe_cohesity_cohesity_cluster_install_bootstrap_cluster_start_epoch: "{{ now(fmt='%s') | int }}"
+    fe_cohesity_cohesity_cluster_install_bootstrap_cluster_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+    fe_cohesity_cohesity_cluster_install_bootstrap_cluster_status: "running"
+    fe_cohesity_cohesity_cluster_install_bootstrap_cluster_preflight_passed: false
+    fe_cohesity_cohesity_cluster_install_bootstrap_cluster_postflight_passed: false
+    fe_cohesity_cohesity_cluster_install_bootstrap_cluster_failed_task: ""
+    fe_cohesity_cohesity_cluster_install_bootstrap_cluster_error: ""
+    fe_cohesity_cohesity_cluster_install_bootstrap_cluster_stats_published: false
+  tags:
+    - always
 
-- name: Bootstrap cluster from first node
-  when: cluster_check.status != 200
+- name: "cohesity/cohesity_cluster_install/bootstrap_cluster | Guarded execution with preflight and postflight validation"
   block:
-    - name: Prepare cluster bootstrap configuration
+
+    # ----------------------------- preflight --------------------
+
+    - name: "cohesity/cohesity_cluster_install/bootstrap_cluster | Preflight | Verify the control node meets the minimum ansible-core version"
+      ansible.builtin.assert:
+        that:
+          - ansible_version.full is version(fe_validation_min_ansible_version | default('2.12'), '>=')
+        fail_msg: >-
+          cohesity/cohesity_cluster_install/bootstrap_cluster: requires ansible-core
+          {{ fe_validation_min_ansible_version | default('2.12') }} or newer,
+          found {{ ansible_version.full }}.
+        success_msg: >-
+          cohesity/cohesity_cluster_install/bootstrap_cluster: ansible-core {{ ansible_version.full }} satisfies the minimum.
+        quiet: true
+      tags:
+        - always
+        - preflight
+        - validation
+
+    - name: "cohesity/cohesity_cluster_install/bootstrap_cluster | Preflight | Verify every declared required variable is defined"
+      ansible.builtin.assert:
+        that:
+          - vars[item] is defined
+        fail_msg: "cohesity/cohesity_cluster_install/bootstrap_cluster: required variable '{{ item }}' is not defined."
+        success_msg: "cohesity/cohesity_cluster_install/bootstrap_cluster: required variable '{{ item }}' is defined."
+        quiet: true
+      loop: "{{ fe_cohesity_cohesity_cluster_install_bootstrap_cluster_required_vars | default([]) }}"
+      loop_control:
+        label: "{{ item }}"
+      tags:
+        - always
+        - preflight
+        - validation
+
+    - name: "cohesity/cohesity_cluster_install/bootstrap_cluster | Preflight | Record that preflight validation passed"
       ansible.builtin.set_fact:
-        cluster_bootstrap_config:
-          clusterName: "{{ cohesity_cluster_name }}"
-          nodes:
-            "{{ cohesity_nodes | map(attribute='ip_address') | list }}"
-          vips: "{{ cohesity_cluster_vips }}"
-          gateway: "{{ cohesity_cluster_gateway }}"
-          subnetMask: "{{ cohesity_cluster_subnet_mask }}"
-          dnsServers: "{{ cohesity_cluster_dns_servers }}"
-          ntpServers: "{{ cohesity_cluster_ntp_servers }}"
-          clusterDomain: "{{ cohesity_cluster_domain }}"
-          networkConfig:
-            dataVlanId: "{{ cohesity_network_config.data_vlan_id }}"
-            managementVlanId: "{{ cohesity_network_config.management_vlan_id }}"
-            mtuBytes: "{{ cohesity_network_config.mtu_size }}"
-          enableEncryption: "{{ cohesity_encryption_enabled }}"
-          enableFipsMode: "{{ cohesity_fips_mode_enabled }}"
-          metadata:
-            faultToleranceLevel: "{{ cohesity_disk_config.metadata_fault_tolerance }}"
-          data:
-            faultToleranceLevel: "{{ cohesity_disk_config.data_fault_tolerance }}"
+        fe_cohesity_cohesity_cluster_install_bootstrap_cluster_preflight_passed: true
+      tags:
+        - always
+        - preflight
+        - validation
 
-    - name: Generate cluster bootstrap script
-      ansible.builtin.template:
-        src: cluster-bootstrap.sh.j2
-        dest: /tmp/cluster-bootstrap.sh
-        mode: '0700'
-      delegate_to: localhost
+    # ----------------------------- execute ----------------------
 
-    - name: Copy bootstrap script to first node
-      ansible.builtin.copy:
-        src: /tmp/cluster-bootstrap.sh
-        dest: /tmp/cluster-bootstrap.sh
-        mode: '0700'
-      delegate_to: "{{ cohesity_nodes[0].ip_address }}"
-
-    - name: Execute cluster bootstrap on first node
-      ansible.builtin.shell: |
-        /tmp/cluster-bootstrap.sh
-      register: bootstrap_result
-      delegate_to: "{{ cohesity_nodes[0].ip_address }}"
-      async: 1800
-      poll: 0
-
-    - name: Wait for bootstrap to complete
-      ansible.builtin.async_status:
-        jid: "{{ bootstrap_result.ansible_job_id }}"
-      register: bootstrap_job
-      until: bootstrap_job.finished
-      retries: 60
-      delay: 30
-      delegate_to: "{{ cohesity_nodes[0].ip_address }}"
-
-    - name: Display bootstrap output
-      ansible.builtin.debug:
-        var: bootstrap_job.stdout_lines
-      when: bootstrap_job.stdout_lines is defined
-
-    - name: Wait for cluster VIP to become active
-      ansible.builtin.wait_for:
-        host: "{{ cohesity_cluster_vips[0] }}"
-        port: 443
-        state: started
-        delay: 60
-        timeout: "{{ cohesity_cluster_bootstrap_wait_time }}"
-
-    - name: Verify cluster is accessible via VIP
+    - name: Check if cluster is already bootstrapped
       ansible.builtin.uri:
         url: "{{ cohesity_api_protocol }}://{{ cohesity_cluster_vips[0] }}/irisservices/api/v1/public/basicClusterInfo"
         method: GET
         validate_certs: "{{ cohesity_api_verify_ssl }}"
-        status_code: 200
-        timeout: "{{ cohesity_api_timeout }}"
-      register: cluster_info
-      until: cluster_info.status == 200
-      retries: 30
-      delay: "{{ cohesity_cluster_bootstrap_check_interval }}"
+        status_code: [200, 404, -1]
+      register: cluster_check
+      ignore_errors: yes
+      delegate_to: localhost
 
-    - name: Display cluster information
+    - name: Skip bootstrap if cluster already exists
+      ansible.builtin.debug:
+        msg: "Cluster already bootstrapped, skipping cluster creation"
+      when: cluster_check.status == 200
+
+    - name: Bootstrap cluster from first node
+      when: cluster_check.status != 200
+      block:
+        - name: Prepare cluster bootstrap configuration
+          ansible.builtin.set_fact:
+            cluster_bootstrap_config:
+              clusterName: "{{ cohesity_cluster_name }}"
+              nodes:
+                "{{ cohesity_nodes | map(attribute='ip_address') | list }}"
+              vips: "{{ cohesity_cluster_vips }}"
+              gateway: "{{ cohesity_cluster_gateway }}"
+              subnetMask: "{{ cohesity_cluster_subnet_mask }}"
+              dnsServers: "{{ cohesity_cluster_dns_servers }}"
+              ntpServers: "{{ cohesity_cluster_ntp_servers }}"
+              clusterDomain: "{{ cohesity_cluster_domain }}"
+              networkConfig:
+                dataVlanId: "{{ cohesity_network_config.data_vlan_id }}"
+                managementVlanId: "{{ cohesity_network_config.management_vlan_id }}"
+                mtuBytes: "{{ cohesity_network_config.mtu_size }}"
+              enableEncryption: "{{ cohesity_encryption_enabled }}"
+              enableFipsMode: "{{ cohesity_fips_mode_enabled }}"
+              metadata:
+                faultToleranceLevel: "{{ cohesity_disk_config.metadata_fault_tolerance }}"
+              data:
+                faultToleranceLevel: "{{ cohesity_disk_config.data_fault_tolerance }}"
+
+        - name: Generate cluster bootstrap script
+          ansible.builtin.template:
+            src: cluster-bootstrap.sh.j2
+            dest: /tmp/cluster-bootstrap.sh
+            mode: '0700'
+          delegate_to: localhost
+
+        - name: Copy bootstrap script to first node
+          ansible.builtin.copy:
+            src: /tmp/cluster-bootstrap.sh
+            dest: /tmp/cluster-bootstrap.sh
+            mode: '0700'
+          delegate_to: "{{ cohesity_nodes[0].ip_address }}"
+
+        - name: Execute cluster bootstrap on first node
+          ansible.builtin.shell: |
+            /tmp/cluster-bootstrap.sh
+          register: bootstrap_result
+          delegate_to: "{{ cohesity_nodes[0].ip_address }}"
+          async: 1800
+          poll: 0
+
+        - name: Wait for bootstrap to complete
+          ansible.builtin.async_status:
+            jid: "{{ bootstrap_result.ansible_job_id }}"
+          register: bootstrap_job
+          until: bootstrap_job.finished
+          retries: 60
+          delay: 30
+          delegate_to: "{{ cohesity_nodes[0].ip_address }}"
+
+        - name: Display bootstrap output
+          ansible.builtin.debug:
+            var: bootstrap_job.stdout_lines
+          when: bootstrap_job.stdout_lines is defined
+
+        - name: Wait for cluster VIP to become active
+          ansible.builtin.wait_for:
+            host: "{{ cohesity_cluster_vips[0] }}"
+            port: 443
+            state: started
+            delay: 60
+            timeout: "{{ cohesity_cluster_bootstrap_wait_time }}"
+
+        - name: Verify cluster is accessible via VIP
+          ansible.builtin.uri:
+            url: "{{ cohesity_api_protocol }}://{{ cohesity_cluster_vips[0] }}/irisservices/api/v1/public/basicClusterInfo"
+            method: GET
+            validate_certs: "{{ cohesity_api_verify_ssl }}"
+            status_code: 200
+            timeout: "{{ cohesity_api_timeout }}"
+          register: cluster_info
+          until: cluster_info.status == 200
+          retries: 30
+          delay: "{{ cohesity_cluster_bootstrap_check_interval }}"
+
+        - name: Display cluster information
+          ansible.builtin.debug:
+            msg:
+              - "Cluster Name: {{ cluster_info.json.clusterName | default('N/A') }}"
+              - "Cluster ID: {{ cluster_info.json.clusterId | default('N/A') }}"
+              - "Cluster Software Version: {{ cluster_info.json.clusterSoftwareVersion | default('N/A') }}"
+              - "Node Count: {{ cluster_info.json.nodeCount | default('N/A') }}"
+          when: cluster_info.json is defined
+
+    - name: Verify all nodes are part of cluster
+      ansible.builtin.uri:
+        url: "{{ cohesity_api_protocol }}://{{ cohesity_cluster_vips[0] }}/irisservices/api/v1/public/nodes"
+        method: GET
+        user: "{{ cohesity_admin_username }}"
+        password: "{{ cohesity_admin_password }}"
+        force_basic_auth: yes
+        validate_certs: "{{ cohesity_api_verify_ssl }}"
+        status_code: 200
+      no_log: true
+      register: cluster_nodes
+
+    - name: Validate node count
+      ansible.builtin.assert:
+        that:
+          - cluster_nodes.json | length == cohesity_nodes | length
+        fail_msg: "Expected {{ cohesity_nodes | length }} nodes, found {{ cluster_nodes.json | length }}"
+        success_msg: "All {{ cohesity_nodes | length }} nodes successfully joined the cluster"
+
+    - name: Display cluster bootstrap summary
       ansible.builtin.debug:
         msg:
-          - "Cluster Name: {{ cluster_info.json.clusterName | default('N/A') }}"
-          - "Cluster ID: {{ cluster_info.json.clusterId | default('N/A') }}"
-          - "Cluster Software Version: {{ cluster_info.json.clusterSoftwareVersion | default('N/A') }}"
-          - "Node Count: {{ cluster_info.json.nodeCount | default('N/A') }}"
-      when: cluster_info.json is defined
+          - "=========================================="
+          - "Cluster Bootstrap Complete"
+          - "Cluster Name: {{ cohesity_cluster_name }}"
+          - "Cluster VIP: {{ cohesity_cluster_vips[0] }}"
+          - "Nodes: {{ cohesity_nodes | length }}"
+          - "=========================================="
 
-- name: Verify all nodes are part of cluster
-  ansible.builtin.uri:
-    url: "{{ cohesity_api_protocol }}://{{ cohesity_cluster_vips[0] }}/irisservices/api/v1/public/nodes"
-    method: GET
-    user: "{{ cohesity_admin_username }}"
-    password: "{{ cohesity_admin_password }}"
-    force_basic_auth: yes
-    validate_certs: "{{ cohesity_api_verify_ssl }}"
-    status_code: 200
-  no_log: true
-  register: cluster_nodes
+    # ----------------------------- postflight -------------------
 
-- name: Validate node count
-  ansible.builtin.assert:
-    that:
-      - cluster_nodes.json | length == cohesity_nodes | length
-    fail_msg: "Expected {{ cohesity_nodes | length }} nodes, found {{ cluster_nodes.json | length }}"
-    success_msg: "All {{ cohesity_nodes | length }} nodes successfully joined the cluster"
+    - name: "cohesity/cohesity_cluster_install/bootstrap_cluster | Postflight | Verify the guarded body ran after a passing preflight"
+      ansible.builtin.assert:
+        that:
+          - fe_cohesity_cohesity_cluster_install_bootstrap_cluster_preflight_passed | bool
+          - fe_cohesity_cohesity_cluster_install_bootstrap_cluster_status in ['running', 'succeeded']
+        fail_msg: >-
+          cohesity/cohesity_cluster_install/bootstrap_cluster: postflight validation failed - preflight passed
+          ={{ fe_cohesity_cohesity_cluster_install_bootstrap_cluster_preflight_passed | default(false) }},
+          status={{ fe_cohesity_cohesity_cluster_install_bootstrap_cluster_status | default('unknown') }}.
+        success_msg: "cohesity/cohesity_cluster_install/bootstrap_cluster: postflight validation passed."
+        quiet: true
+      tags:
+        - always
+        - postflight
+        - validation
 
-- name: Display cluster bootstrap summary
-  ansible.builtin.debug:
-    msg:
-      - "=========================================="
-      - "Cluster Bootstrap Complete"
-      - "Cluster Name: {{ cohesity_cluster_name }}"
-      - "Cluster VIP: {{ cohesity_cluster_vips[0] }}"
-      - "Nodes: {{ cohesity_nodes | length }}"
-      - "=========================================="
+    - name: "cohesity/cohesity_cluster_install/bootstrap_cluster | Postflight | Record the successful outcome"
+      ansible.builtin.set_fact:
+        fe_cohesity_cohesity_cluster_install_bootstrap_cluster_postflight_passed: true
+        fe_cohesity_cohesity_cluster_install_bootstrap_cluster_status: "succeeded"
+      tags:
+        - always
+        - postflight
+        - validation
+
+  rescue:
+
+    - name: "cohesity/cohesity_cluster_install/bootstrap_cluster | Rescue | Capture the failing task and error detail"
+      ansible.builtin.set_fact:
+        fe_cohesity_cohesity_cluster_install_bootstrap_cluster_status: "failed"
+        fe_cohesity_cohesity_cluster_install_bootstrap_cluster_postflight_passed: false
+        fe_cohesity_cohesity_cluster_install_bootstrap_cluster_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+        fe_cohesity_cohesity_cluster_install_bootstrap_cluster_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+      tags:
+        - always
+        - rescue
+
+    - name: "cohesity/cohesity_cluster_install/bootstrap_cluster | Rescue | Report the failure"
+      ansible.builtin.debug:
+        msg: >-
+          cohesity/cohesity_cluster_install/bootstrap_cluster: FAILED at '{{ fe_cohesity_cohesity_cluster_install_bootstrap_cluster_failed_task }}' on
+          {{ inventory_hostname }} - {{ fe_cohesity_cohesity_cluster_install_bootstrap_cluster_error }}
+      tags:
+        - always
+        - rescue
+
+    - name: "cohesity/cohesity_cluster_install/bootstrap_cluster | Rescue | Re-raise the failure unless the caller opted to continue"
+      ansible.builtin.fail:
+        msg: >-
+          cohesity/cohesity_cluster_install/bootstrap_cluster failed at '{{ fe_cohesity_cohesity_cluster_install_bootstrap_cluster_failed_task }}': {{ fe_cohesity_cohesity_cluster_install_bootstrap_cluster_error }}
+      when: not (fe_validation_continue_on_error | default(false) | bool)
+      tags:
+        - always
+        - rescue
+
+  always:
+
+    - name: "cohesity/cohesity_cluster_install/bootstrap_cluster | Always | Compute the execution duration"
+      ansible.builtin.set_fact:
+        fe_cohesity_cohesity_cluster_install_bootstrap_cluster_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+        fe_cohesity_cohesity_cluster_install_bootstrap_cluster_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_cohesity_cohesity_cluster_install_bootstrap_cluster_start_epoch | default(0) | int) }}"
+      tags:
+        - always
+
+    - name: "cohesity/cohesity_cluster_install/bootstrap_cluster | Always | Publish the validation result with set_stats"
+      ansible.builtin.set_stats:
+        data:
+          fe_validation_results:
+            "cohesity/cohesity_cluster_install/bootstrap_cluster":
+              component: "cohesity/cohesity_cluster_install/bootstrap_cluster"
+              type: "role-tasks"
+              platform: "cohesity"
+              host: "{{ inventory_hostname }}"
+              status: "{{ fe_cohesity_cohesity_cluster_install_bootstrap_cluster_status | default('unknown') }}"
+              preflight_passed: "{{ fe_cohesity_cohesity_cluster_install_bootstrap_cluster_preflight_passed | default(false) | bool }}"
+              postflight_passed: "{{ fe_cohesity_cohesity_cluster_install_bootstrap_cluster_postflight_passed | default(false) | bool }}"
+              started_at: "{{ fe_cohesity_cohesity_cluster_install_bootstrap_cluster_started_at | default('') }}"
+              ended_at: "{{ fe_cohesity_cohesity_cluster_install_bootstrap_cluster_ended_at | default('') }}"
+              duration_seconds: "{{ fe_cohesity_cohesity_cluster_install_bootstrap_cluster_duration_seconds | default(0) | int }}"
+              failed_task: "{{ fe_cohesity_cohesity_cluster_install_bootstrap_cluster_failed_task | default('') }}"
+              error: "{{ fe_cohesity_cohesity_cluster_install_bootstrap_cluster_error | default('') }}"
+              check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+          fe_validation_executions: 1
+          fe_validation_succeeded: "{{ 1 if fe_cohesity_cohesity_cluster_install_bootstrap_cluster_status | default('') == 'succeeded' else 0 }}"
+          fe_validation_failed: "{{ 0 if fe_cohesity_cohesity_cluster_install_bootstrap_cluster_status | default('') == 'succeeded' else 1 }}"
+          fe_validation_duration_seconds: "{{ fe_cohesity_cohesity_cluster_install_bootstrap_cluster_duration_seconds | default(0) | int }}"
+          fe_validation_failed_components: >-
+            {{ [] if fe_cohesity_cohesity_cluster_install_bootstrap_cluster_status | default('') == 'succeeded' else ['cohesity/cohesity_cluster_install/bootstrap_cluster'] }}
+        aggregate: true
+        per_host: false
+      tags:
+        - always
+
+    - name: "cohesity/cohesity_cluster_install/bootstrap_cluster | Always | Mark the validation statistics as published"
+      ansible.builtin.set_fact:
+        fe_cohesity_cohesity_cluster_install_bootstrap_cluster_stats_published: true
+      tags:
+        - always

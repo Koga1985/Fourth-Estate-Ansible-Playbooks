@@ -1,131 +1,314 @@
 ---
 # Firewall configuration for PCE
 
-- name: Install firewalld
-  package:
-    name: firewalld
-    state: present
-  when: not illumio_pce_use_iptables | bool
+# ---------------------------------------------------------------------------
+# Fourth Estate preflight / postflight validation harness
+#
+# The task file body below is wrapped in an Ansible block/rescue/always structure:
+#
+#   block   preflight validation runs first, then the original task file body, then
+#           postflight validation. Any failure transfers control to rescue.
+#   rescue  records which task failed and why, then re-raises so a failure is
+#           never silently swallowed. Set fe_validation_continue_on_error=true
+#           to record the failure and keep going instead.
+#   always  computes the run duration and publishes the outcome through
+#           ansible.builtin.set_stats, so a wrapping playbook, AWX/AAP or CI can
+#           consume the result without scraping log output.
+#
+# Published stats (see docs/VALIDATION_AND_STATS.md):
+#   fe_validation_results['illumio/illumio_pce_install/firewall']  per-component record
+#   fe_validation_executions / _succeeded / _failed / _duration_seconds
+#   fe_validation_failed_components
+#
+# Add component-specific preflight checks without editing this file by setting
+#   fe_illumio_illumio_pce_install_firewall_required_vars: [var_one, var_two]
+# ---------------------------------------------------------------------------
 
-- name: Start and enable firewalld
-  systemd:
-    name: firewalld
-    enabled: yes
-    state: started
-  when: not illumio_pce_use_iptables | bool
+- name: "illumio/illumio_pce_install/firewall | Initialize validation state"
+  ansible.builtin.set_fact:
+    fe_illumio_illumio_pce_install_firewall_start_epoch: "{{ now(fmt='%s') | int }}"
+    fe_illumio_illumio_pce_install_firewall_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+    fe_illumio_illumio_pce_install_firewall_status: "running"
+    fe_illumio_illumio_pce_install_firewall_preflight_passed: false
+    fe_illumio_illumio_pce_install_firewall_postflight_passed: false
+    fe_illumio_illumio_pce_install_firewall_failed_task: ""
+    fe_illumio_illumio_pce_install_firewall_error: ""
+    fe_illumio_illumio_pce_install_firewall_stats_published: false
+  tags:
+    - always
 
-- name: Configure firewalld for PCE
-  firewalld:
-    port: "{{ item.port }}"
-    permanent: yes
-    state: enabled
-    immediate: yes
-  loop:
-    - { port: "8443/tcp", desc: "PCE Web Console" }
-    - { port: "443/tcp", desc: "PCE API (HTTPS)" }
-    - { port: "8444/tcp", desc: "PCE Service Core" }
-    - { port: "8445/tcp", desc: "Event Service" }
-    - { port: "8446/tcp", desc: "PCE Management" }
-  when: not illumio_pce_use_iptables | bool
-
-- name: Allow SSH for management
-  firewalld:
-    service: ssh
-    permanent: yes
-    state: enabled
-    immediate: yes
-  when: not illumio_pce_use_iptables | bool
-
-- name: Configure iptables rules (if using iptables)
+- name: "illumio/illumio_pce_install/firewall | Guarded execution with preflight and postflight validation"
   block:
-    - name: Install iptables-services
+
+    # ----------------------------- preflight --------------------
+
+    - name: "illumio/illumio_pce_install/firewall | Preflight | Verify the control node meets the minimum ansible-core version"
+      ansible.builtin.assert:
+        that:
+          - ansible_version.full is version(fe_validation_min_ansible_version | default('2.12'), '>=')
+        fail_msg: >-
+          illumio/illumio_pce_install/firewall: requires ansible-core
+          {{ fe_validation_min_ansible_version | default('2.12') }} or newer,
+          found {{ ansible_version.full }}.
+        success_msg: >-
+          illumio/illumio_pce_install/firewall: ansible-core {{ ansible_version.full }} satisfies the minimum.
+        quiet: true
+      tags:
+        - always
+        - preflight
+        - validation
+
+    - name: "illumio/illumio_pce_install/firewall | Preflight | Verify every declared required variable is defined"
+      ansible.builtin.assert:
+        that:
+          - vars[item] is defined
+        fail_msg: "illumio/illumio_pce_install/firewall: required variable '{{ item }}' is not defined."
+        success_msg: "illumio/illumio_pce_install/firewall: required variable '{{ item }}' is defined."
+        quiet: true
+      loop: "{{ fe_illumio_illumio_pce_install_firewall_required_vars | default([]) }}"
+      loop_control:
+        label: "{{ item }}"
+      tags:
+        - always
+        - preflight
+        - validation
+
+    - name: "illumio/illumio_pce_install/firewall | Preflight | Record that preflight validation passed"
+      ansible.builtin.set_fact:
+        fe_illumio_illumio_pce_install_firewall_preflight_passed: true
+      tags:
+        - always
+        - preflight
+        - validation
+
+    # ----------------------------- execute ----------------------
+
+    - name: Install firewalld
       package:
-        name: iptables-services
+        name: firewalld
         state: present
+      when: not illumio_pce_use_iptables | bool
 
-    - name: Create iptables rules for PCE
-      iptables:
-        chain: INPUT
-        protocol: tcp
-        destination_port: "{{ item }}"
-        jump: ACCEPT
-        comment: "Illumio PCE port {{ item }}"
-      loop:
-        - 8443
-        - 443
-        - 8444
-        - 8445
-        - 8446
-        - 22
-
-    - name: Allow established connections
-      iptables:
-        chain: INPUT
-        ctstate: ESTABLISHED,RELATED
-        jump: ACCEPT
-
-    - name: Allow loopback traffic
-      iptables:
-        chain: INPUT
-        in_interface: lo
-        jump: ACCEPT
-
-    - name: Save iptables rules
-      command: service iptables save
-      changed_when: true
-
-    - name: Enable and start iptables
+    - name: Start and enable firewalld
       systemd:
-        name: iptables
+        name: firewalld
         enabled: yes
         state: started
+      when: not illumio_pce_use_iptables | bool
 
-  when: illumio_pce_use_iptables | bool
+    - name: Configure firewalld for PCE
+      firewalld:
+        port: "{{ item.port }}"
+        permanent: yes
+        state: enabled
+        immediate: yes
+      loop:
+        - { port: "8443/tcp", desc: "PCE Web Console" }
+        - { port: "443/tcp", desc: "PCE API (HTTPS)" }
+        - { port: "8444/tcp", desc: "PCE Service Core" }
+        - { port: "8445/tcp", desc: "Event Service" }
+        - { port: "8446/tcp", desc: "PCE Management" }
+      when: not illumio_pce_use_iptables | bool
 
-- name: Configure source IP restrictions (if defined)
-  firewalld:
-    rich_rule: 'rule family="ipv4" source address="{{ item.source }}" port protocol="tcp" port="{{ item.port }}" accept'
-    permanent: yes
-    state: enabled
-    immediate: yes
-  loop: "{{ illumio_pce_firewall_rules }}"
-  when:
-    - not illumio_pce_use_iptables | bool
-    - illumio_pce_firewall_rules is defined
+    - name: Allow SSH for management
+      firewalld:
+        service: ssh
+        permanent: yes
+        state: enabled
+        immediate: yes
+      when: not illumio_pce_use_iptables | bool
 
-- name: Create firewall rule documentation
-  copy:
-    content: |
-      Illumio PCE Firewall Rules
-      ==========================
+    - name: Configure iptables rules (if using iptables)
+      block:
+        - name: Install iptables-services
+          package:
+            name: iptables-services
+            state: present
 
-      Required Inbound Ports:
-      - TCP 8443: PCE Web Console (HTTPS)
-      - TCP 443: PCE REST API (HTTPS)
-      - TCP 8444: PCE Service Core
-      - TCP 8445: Event Service
-      - TCP 8446: PCE Management
+        - name: Create iptables rules for PCE
+          iptables:
+            chain: INPUT
+            protocol: tcp
+            destination_port: "{{ item }}"
+            jump: ACCEPT
+            comment: "Illumio PCE port {{ item }}"
+          loop:
+            - 8443
+            - 443
+            - 8444
+            - 8445
+            - 8446
+            - 22
 
-      VEN Communication:
-      - VENs connect to PCE on port 8443 (can be customized)
-      - VENs communicate using TLS 1.2+
+        - name: Allow established connections
+          iptables:
+            chain: INPUT
+            ctstate: ESTABLISHED,RELATED
+            jump: ACCEPT
 
-      Database (if co-located):
-      - TCP 5432: PostgreSQL (localhost only)
+        - name: Allow loopback traffic
+          iptables:
+            chain: INPUT
+            in_interface: lo
+            jump: ACCEPT
 
-      Cluster Communication (HA mode):
-      - TCP 2379: etcd client
-      - TCP 2380: etcd peer
-      - TCP 7946: Gossip protocol
-      - UDP 7946: Gossip protocol
+        - name: Save iptables rules
+          command: service iptables save
+          changed_when: true
 
-      Management:
-      - TCP 22: SSH (restrict to management network)
+        - name: Enable and start iptables
+          systemd:
+            name: iptables
+            enabled: yes
+            state: started
 
-      Outbound:
-      - Allow all outbound for VEN communication
-      - Allow outbound SMTP if email alerts configured
-      - Allow outbound syslog if log forwarding configured
+      when: illumio_pce_use_iptables | bool
 
-    dest: /etc/illumio-pce/firewall-rules.txt
-    mode: '0644'
+    - name: Configure source IP restrictions (if defined)
+      firewalld:
+        rich_rule: 'rule family="ipv4" source address="{{ item.source }}" port protocol="tcp" port="{{ item.port }}" accept'
+        permanent: yes
+        state: enabled
+        immediate: yes
+      loop: "{{ illumio_pce_firewall_rules }}"
+      when:
+        - not illumio_pce_use_iptables | bool
+        - illumio_pce_firewall_rules is defined
+
+    - name: Create firewall rule documentation
+      copy:
+        content: |
+          Illumio PCE Firewall Rules
+          ==========================
+
+          Required Inbound Ports:
+          - TCP 8443: PCE Web Console (HTTPS)
+          - TCP 443: PCE REST API (HTTPS)
+          - TCP 8444: PCE Service Core
+          - TCP 8445: Event Service
+          - TCP 8446: PCE Management
+
+          VEN Communication:
+          - VENs connect to PCE on port 8443 (can be customized)
+          - VENs communicate using TLS 1.2+
+
+          Database (if co-located):
+          - TCP 5432: PostgreSQL (localhost only)
+
+          Cluster Communication (HA mode):
+          - TCP 2379: etcd client
+          - TCP 2380: etcd peer
+          - TCP 7946: Gossip protocol
+          - UDP 7946: Gossip protocol
+
+          Management:
+          - TCP 22: SSH (restrict to management network)
+
+          Outbound:
+          - Allow all outbound for VEN communication
+          - Allow outbound SMTP if email alerts configured
+          - Allow outbound syslog if log forwarding configured
+
+        dest: /etc/illumio-pce/firewall-rules.txt
+        mode: '0644'
+
+    # ----------------------------- postflight -------------------
+
+    - name: "illumio/illumio_pce_install/firewall | Postflight | Verify the guarded body ran after a passing preflight"
+      ansible.builtin.assert:
+        that:
+          - fe_illumio_illumio_pce_install_firewall_preflight_passed | bool
+          - fe_illumio_illumio_pce_install_firewall_status in ['running', 'succeeded']
+        fail_msg: >-
+          illumio/illumio_pce_install/firewall: postflight validation failed - preflight passed
+          ={{ fe_illumio_illumio_pce_install_firewall_preflight_passed | default(false) }},
+          status={{ fe_illumio_illumio_pce_install_firewall_status | default('unknown') }}.
+        success_msg: "illumio/illumio_pce_install/firewall: postflight validation passed."
+        quiet: true
+      tags:
+        - always
+        - postflight
+        - validation
+
+    - name: "illumio/illumio_pce_install/firewall | Postflight | Record the successful outcome"
+      ansible.builtin.set_fact:
+        fe_illumio_illumio_pce_install_firewall_postflight_passed: true
+        fe_illumio_illumio_pce_install_firewall_status: "succeeded"
+      tags:
+        - always
+        - postflight
+        - validation
+
+  rescue:
+
+    - name: "illumio/illumio_pce_install/firewall | Rescue | Capture the failing task and error detail"
+      ansible.builtin.set_fact:
+        fe_illumio_illumio_pce_install_firewall_status: "failed"
+        fe_illumio_illumio_pce_install_firewall_postflight_passed: false
+        fe_illumio_illumio_pce_install_firewall_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+        fe_illumio_illumio_pce_install_firewall_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+      tags:
+        - always
+        - rescue
+
+    - name: "illumio/illumio_pce_install/firewall | Rescue | Report the failure"
+      ansible.builtin.debug:
+        msg: >-
+          illumio/illumio_pce_install/firewall: FAILED at '{{ fe_illumio_illumio_pce_install_firewall_failed_task }}' on
+          {{ inventory_hostname }} - {{ fe_illumio_illumio_pce_install_firewall_error }}
+      tags:
+        - always
+        - rescue
+
+    - name: "illumio/illumio_pce_install/firewall | Rescue | Re-raise the failure unless the caller opted to continue"
+      ansible.builtin.fail:
+        msg: >-
+          illumio/illumio_pce_install/firewall failed at '{{ fe_illumio_illumio_pce_install_firewall_failed_task }}': {{ fe_illumio_illumio_pce_install_firewall_error }}
+      when: not (fe_validation_continue_on_error | default(false) | bool)
+      tags:
+        - always
+        - rescue
+
+  always:
+
+    - name: "illumio/illumio_pce_install/firewall | Always | Compute the execution duration"
+      ansible.builtin.set_fact:
+        fe_illumio_illumio_pce_install_firewall_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+        fe_illumio_illumio_pce_install_firewall_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_illumio_illumio_pce_install_firewall_start_epoch | default(0) | int) }}"
+      tags:
+        - always
+
+    - name: "illumio/illumio_pce_install/firewall | Always | Publish the validation result with set_stats"
+      ansible.builtin.set_stats:
+        data:
+          fe_validation_results:
+            "illumio/illumio_pce_install/firewall":
+              component: "illumio/illumio_pce_install/firewall"
+              type: "role-tasks"
+              platform: "illumio"
+              host: "{{ inventory_hostname }}"
+              status: "{{ fe_illumio_illumio_pce_install_firewall_status | default('unknown') }}"
+              preflight_passed: "{{ fe_illumio_illumio_pce_install_firewall_preflight_passed | default(false) | bool }}"
+              postflight_passed: "{{ fe_illumio_illumio_pce_install_firewall_postflight_passed | default(false) | bool }}"
+              started_at: "{{ fe_illumio_illumio_pce_install_firewall_started_at | default('') }}"
+              ended_at: "{{ fe_illumio_illumio_pce_install_firewall_ended_at | default('') }}"
+              duration_seconds: "{{ fe_illumio_illumio_pce_install_firewall_duration_seconds | default(0) | int }}"
+              failed_task: "{{ fe_illumio_illumio_pce_install_firewall_failed_task | default('') }}"
+              error: "{{ fe_illumio_illumio_pce_install_firewall_error | default('') }}"
+              check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+          fe_validation_executions: 1
+          fe_validation_succeeded: "{{ 1 if fe_illumio_illumio_pce_install_firewall_status | default('') == 'succeeded' else 0 }}"
+          fe_validation_failed: "{{ 0 if fe_illumio_illumio_pce_install_firewall_status | default('') == 'succeeded' else 1 }}"
+          fe_validation_duration_seconds: "{{ fe_illumio_illumio_pce_install_firewall_duration_seconds | default(0) | int }}"
+          fe_validation_failed_components: >-
+            {{ [] if fe_illumio_illumio_pce_install_firewall_status | default('') == 'succeeded' else ['illumio/illumio_pce_install/firewall'] }}
+        aggregate: true
+        per_host: false
+      tags:
+        - always
+
+    - name: "illumio/illumio_pce_install/firewall | Always | Mark the validation statistics as published"
+      ansible.builtin.set_fact:
+        fe_illumio_illumio_pce_install_firewall_stats_published: true
+      tags:
+        - always

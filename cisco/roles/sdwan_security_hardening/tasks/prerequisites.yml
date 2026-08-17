@@ -2,138 +2,321 @@
 # tasks file: prerequisites.yml for sdwan_security_hardening
 # Validates connectivity and required variables before applying STIG controls
 
-- name: Validate required connection variables are defined
-  ansible.builtin.assert:
-    that:
-      - sdwan_vmanage_host is defined and sdwan_vmanage_host | length > 0
-      - sdwan_vmanage_username is defined and sdwan_vmanage_username | length > 0
-      - sdwan_vmanage_password is defined and sdwan_vmanage_password | length > 0
-    fail_msg: >-
-      Required SD-WAN vManage connection variables are not defined.
-      Set sdwan_vmanage_host, sdwan_vmanage_username, and sdwan_vmanage_password
-      (use vault_sdwan_* references in defaults/main.yml).
-    success_msg: "SD-WAN connection variables validated"
-  tags: [always, prerequisites, validation]
+# ---------------------------------------------------------------------------
+# Fourth Estate preflight / postflight validation harness
+#
+# The task file body below is wrapped in an Ansible block/rescue/always structure:
+#
+#   block   preflight validation runs first, then the original task file body, then
+#           postflight validation. Any failure transfers control to rescue.
+#   rescue  records which task failed and why, then re-raises so a failure is
+#           never silently swallowed. Set fe_validation_continue_on_error=true
+#           to record the failure and keep going instead.
+#   always  computes the run duration and publishes the outcome through
+#           ansible.builtin.set_stats, so a wrapping playbook, AWX/AAP or CI can
+#           consume the result without scraping log output.
+#
+# Published stats (see docs/VALIDATION_AND_STATS.md):
+#   fe_validation_results['cisco/sdwan_security_hardening/prerequisites']  per-component record
+#   fe_validation_executions / _succeeded / _failed / _duration_seconds
+#   fe_validation_failed_components
+#
+# Add component-specific preflight checks without editing this file by setting
+#   fe_cisco_sdwan_security_hardening_prerequisites_required_vars: [var_one, var_two]
+# ---------------------------------------------------------------------------
 
-- name: Validate TACACS+ server list when auth method is tacacs
-  ansible.builtin.assert:
-    that:
-      - sdwan_tacacs_servers | length > 0
-    fail_msg: >-
-      sdwan_auth_method is 'tacacs' but sdwan_tacacs_servers list is empty.
-      Define at least one TACACS+ server or change sdwan_auth_method.
-    success_msg: "TACACS+ server list validated"
-  when: sdwan_auth_method == "tacacs"
-  tags: [always, prerequisites, validation]
-
-- name: Validate RADIUS server list when auth method is radius
-  ansible.builtin.assert:
-    that:
-      - sdwan_radius_servers | length > 0
-    fail_msg: >-
-      sdwan_auth_method is 'radius' but sdwan_radius_servers list is empty.
-      Define at least one RADIUS server or change sdwan_auth_method.
-    success_msg: "RADIUS server list validated"
-  when: sdwan_auth_method == "radius"
-  tags: [always, prerequisites, validation]
-
-- name: Validate SNMPv3 configuration when SNMP is enabled
-  ansible.builtin.assert:
-    that:
-      - sdwan_snmp_v3_users | length > 0
-    fail_msg: >-
-      sdwan_snmp_v3_enabled is true but sdwan_snmp_v3_users list is empty.
-      Define at least one SNMPv3 user with authPriv security level.
-    success_msg: "SNMPv3 user list validated"
-  when: sdwan_snmp_v3_enabled | bool
-  tags: [always, prerequisites, validation]
-
-- name: Validate syslog destination list
-  ansible.builtin.assert:
-    that:
-      - sdwan_syslog_destinations | length > 0
-    fail_msg: >-
-      sdwan_syslog_enabled is true but sdwan_syslog_destinations is empty.
-      Define at least one remote syslog server for STIG AU-2 compliance.
-    success_msg: "Syslog destination list validated"
-  when: sdwan_syslog_enabled | bool
-  tags: [always, prerequisites, validation]
-
-- name: Create artifacts directory
-  ansible.builtin.file:
-    path: "{{ sdwan_artifacts_dir }}"
-    state: directory
-    mode: '0750'
-  tags: [always, prerequisites]
-
-- name: Display dry-run warning when apply_changes is false
-  ansible.builtin.debug:
-    msg: |
-      ════════════════════════════════════════════════════════════════
-      DRY RUN MODE — No changes will be applied to SD-WAN fabric
-      ════════════════════════════════════════════════════════════════
-      Set apply_changes: true (or -e apply_changes=true) to apply.
-      All tasks will run in check/query mode only.
-      ════════════════════════════════════════════════════════════════
-  when: not apply_changes | bool
-  tags: [always, prerequisites]
-
-- name: Authenticate to vManage and retrieve session token
-  ansible.builtin.uri:
-    url: "https://{{ sdwan_vmanage_host }}:{{ sdwan_vmanage_port }}/j_security_check"
-    method: POST
-    body_format: form-urlencoded
-    body:
-      j_username: "{{ sdwan_vmanage_username }}"
-      j_password: "{{ sdwan_vmanage_password }}"
-    validate_certs: "{{ sdwan_vmanage_verify_ssl }}"
-    status_code: [200, 302]
-    timeout: "{{ sdwan_vmanage_timeout }}"
-  register: sdwan_auth_result
-  no_log: true
-  check_mode: false
-  tags: [always, prerequisites]
-
-- name: Extract vManage session cookie
+- name: "cisco/sdwan_security_hardening/prerequisites | Initialize validation state"
   ansible.builtin.set_fact:
-    sdwan_session_cookie: "{{ sdwan_auth_result.cookies_string }}"
-  no_log: true
-  tags: [always, prerequisites]
+    fe_cisco_sdwan_security_hardening_prerequisites_start_epoch: "{{ now(fmt='%s') | int }}"
+    fe_cisco_sdwan_security_hardening_prerequisites_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+    fe_cisco_sdwan_security_hardening_prerequisites_status: "running"
+    fe_cisco_sdwan_security_hardening_prerequisites_preflight_passed: false
+    fe_cisco_sdwan_security_hardening_prerequisites_postflight_passed: false
+    fe_cisco_sdwan_security_hardening_prerequisites_failed_task: ""
+    fe_cisco_sdwan_security_hardening_prerequisites_error: ""
+    fe_cisco_sdwan_security_hardening_prerequisites_stats_published: false
+  tags:
+    - always
 
-- name: Get vManage CSRF token
-  ansible.builtin.uri:
-    url: "https://{{ sdwan_vmanage_host }}:{{ sdwan_vmanage_port }}/dataservice/client/token"
-    method: GET
-    headers:
-      Cookie: "{{ sdwan_session_cookie }}"
-    validate_certs: "{{ sdwan_vmanage_verify_ssl }}"
-    timeout: "{{ sdwan_vmanage_timeout }}"
-  register: sdwan_csrf_result
-  check_mode: false
-  tags: [always, prerequisites]
+- name: "cisco/sdwan_security_hardening/prerequisites | Guarded execution with preflight and postflight validation"
+  block:
 
-- name: Set vManage CSRF token fact
-  ansible.builtin.set_fact:
-    sdwan_csrf_token: "{{ sdwan_csrf_result.json }}"
-  tags: [always, prerequisites]
+    # ----------------------------- preflight --------------------
 
-- name: Verify vManage connectivity - get system status
-  ansible.builtin.uri:
-    url: "https://{{ sdwan_vmanage_host }}:{{ sdwan_vmanage_port }}/dataservice/system/device/controllers"
-    method: GET
-    headers:
-      Cookie: "{{ sdwan_session_cookie }}"
-      X-XSRF-TOKEN: "{{ sdwan_csrf_token }}"
-    validate_certs: "{{ sdwan_vmanage_verify_ssl }}"
-    timeout: "{{ sdwan_vmanage_timeout }}"
-  register: sdwan_controller_status
-  check_mode: false
-  tags: [always, prerequisites]
+    - name: "cisco/sdwan_security_hardening/prerequisites | Preflight | Verify the control node meets the minimum ansible-core version"
+      ansible.builtin.assert:
+        that:
+          - ansible_version.full is version(fe_validation_min_ansible_version | default('2.12'), '>=')
+        fail_msg: >-
+          cisco/sdwan_security_hardening/prerequisites: requires ansible-core
+          {{ fe_validation_min_ansible_version | default('2.12') }} or newer,
+          found {{ ansible_version.full }}.
+        success_msg: >-
+          cisco/sdwan_security_hardening/prerequisites: ansible-core {{ ansible_version.full }} satisfies the minimum.
+        quiet: true
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: Assert vManage API is reachable
-  ansible.builtin.assert:
-    that:
-      - sdwan_controller_status.status == 200
-    fail_msg: "vManage API returned status {{ sdwan_controller_status.status }}. Check connectivity and credentials."
-    success_msg: "vManage API is reachable and authenticated"
-  tags: [always, prerequisites]
+    - name: "cisco/sdwan_security_hardening/prerequisites | Preflight | Verify every declared required variable is defined"
+      ansible.builtin.assert:
+        that:
+          - vars[item] is defined
+        fail_msg: "cisco/sdwan_security_hardening/prerequisites: required variable '{{ item }}' is not defined."
+        success_msg: "cisco/sdwan_security_hardening/prerequisites: required variable '{{ item }}' is defined."
+        quiet: true
+      loop: "{{ fe_cisco_sdwan_security_hardening_prerequisites_required_vars | default([]) }}"
+      loop_control:
+        label: "{{ item }}"
+      tags:
+        - always
+        - preflight
+        - validation
+
+    - name: "cisco/sdwan_security_hardening/prerequisites | Preflight | Record that preflight validation passed"
+      ansible.builtin.set_fact:
+        fe_cisco_sdwan_security_hardening_prerequisites_preflight_passed: true
+      tags:
+        - always
+        - preflight
+        - validation
+
+    # ----------------------------- execute ----------------------
+
+    - name: Validate required connection variables are defined
+      ansible.builtin.assert:
+        that:
+          - sdwan_vmanage_host is defined and sdwan_vmanage_host | length > 0
+          - sdwan_vmanage_username is defined and sdwan_vmanage_username | length > 0
+          - sdwan_vmanage_password is defined and sdwan_vmanage_password | length > 0
+        fail_msg: >-
+          Required SD-WAN vManage connection variables are not defined.
+          Set sdwan_vmanage_host, sdwan_vmanage_username, and sdwan_vmanage_password
+          (use vault_sdwan_* references in defaults/main.yml).
+        success_msg: "SD-WAN connection variables validated"
+      tags: [always, prerequisites, validation]
+
+    - name: Validate TACACS+ server list when auth method is tacacs
+      ansible.builtin.assert:
+        that:
+          - sdwan_tacacs_servers | length > 0
+        fail_msg: >-
+          sdwan_auth_method is 'tacacs' but sdwan_tacacs_servers list is empty.
+          Define at least one TACACS+ server or change sdwan_auth_method.
+        success_msg: "TACACS+ server list validated"
+      when: sdwan_auth_method == "tacacs"
+      tags: [always, prerequisites, validation]
+
+    - name: Validate RADIUS server list when auth method is radius
+      ansible.builtin.assert:
+        that:
+          - sdwan_radius_servers | length > 0
+        fail_msg: >-
+          sdwan_auth_method is 'radius' but sdwan_radius_servers list is empty.
+          Define at least one RADIUS server or change sdwan_auth_method.
+        success_msg: "RADIUS server list validated"
+      when: sdwan_auth_method == "radius"
+      tags: [always, prerequisites, validation]
+
+    - name: Validate SNMPv3 configuration when SNMP is enabled
+      ansible.builtin.assert:
+        that:
+          - sdwan_snmp_v3_users | length > 0
+        fail_msg: >-
+          sdwan_snmp_v3_enabled is true but sdwan_snmp_v3_users list is empty.
+          Define at least one SNMPv3 user with authPriv security level.
+        success_msg: "SNMPv3 user list validated"
+      when: sdwan_snmp_v3_enabled | bool
+      tags: [always, prerequisites, validation]
+
+    - name: Validate syslog destination list
+      ansible.builtin.assert:
+        that:
+          - sdwan_syslog_destinations | length > 0
+        fail_msg: >-
+          sdwan_syslog_enabled is true but sdwan_syslog_destinations is empty.
+          Define at least one remote syslog server for STIG AU-2 compliance.
+        success_msg: "Syslog destination list validated"
+      when: sdwan_syslog_enabled | bool
+      tags: [always, prerequisites, validation]
+
+    - name: Create artifacts directory
+      ansible.builtin.file:
+        path: "{{ sdwan_artifacts_dir }}"
+        state: directory
+        mode: '0750'
+      tags: [always, prerequisites]
+
+    - name: Display dry-run warning when apply_changes is false
+      ansible.builtin.debug:
+        msg: |
+          ════════════════════════════════════════════════════════════════
+          DRY RUN MODE — No changes will be applied to SD-WAN fabric
+          ════════════════════════════════════════════════════════════════
+          Set apply_changes: true (or -e apply_changes=true) to apply.
+          All tasks will run in check/query mode only.
+          ════════════════════════════════════════════════════════════════
+      when: not apply_changes | bool
+      tags: [always, prerequisites]
+
+    - name: Authenticate to vManage and retrieve session token
+      ansible.builtin.uri:
+        url: "https://{{ sdwan_vmanage_host }}:{{ sdwan_vmanage_port }}/j_security_check"
+        method: POST
+        body_format: form-urlencoded
+        body:
+          j_username: "{{ sdwan_vmanage_username }}"
+          j_password: "{{ sdwan_vmanage_password }}"
+        validate_certs: "{{ sdwan_vmanage_verify_ssl }}"
+        status_code: [200, 302]
+        timeout: "{{ sdwan_vmanage_timeout }}"
+      register: sdwan_auth_result
+      no_log: true
+      check_mode: false
+      tags: [always, prerequisites]
+
+    - name: Extract vManage session cookie
+      ansible.builtin.set_fact:
+        sdwan_session_cookie: "{{ sdwan_auth_result.cookies_string }}"
+      no_log: true
+      tags: [always, prerequisites]
+
+    - name: Get vManage CSRF token
+      ansible.builtin.uri:
+        url: "https://{{ sdwan_vmanage_host }}:{{ sdwan_vmanage_port }}/dataservice/client/token"
+        method: GET
+        headers:
+          Cookie: "{{ sdwan_session_cookie }}"
+        validate_certs: "{{ sdwan_vmanage_verify_ssl }}"
+        timeout: "{{ sdwan_vmanage_timeout }}"
+      register: sdwan_csrf_result
+      check_mode: false
+      tags: [always, prerequisites]
+
+    - name: Set vManage CSRF token fact
+      ansible.builtin.set_fact:
+        sdwan_csrf_token: "{{ sdwan_csrf_result.json }}"
+      tags: [always, prerequisites]
+
+    - name: Verify vManage connectivity - get system status
+      ansible.builtin.uri:
+        url: "https://{{ sdwan_vmanage_host }}:{{ sdwan_vmanage_port }}/dataservice/system/device/controllers"
+        method: GET
+        headers:
+          Cookie: "{{ sdwan_session_cookie }}"
+          X-XSRF-TOKEN: "{{ sdwan_csrf_token }}"
+        validate_certs: "{{ sdwan_vmanage_verify_ssl }}"
+        timeout: "{{ sdwan_vmanage_timeout }}"
+      register: sdwan_controller_status
+      check_mode: false
+      tags: [always, prerequisites]
+
+    - name: Assert vManage API is reachable
+      ansible.builtin.assert:
+        that:
+          - sdwan_controller_status.status == 200
+        fail_msg: "vManage API returned status {{ sdwan_controller_status.status }}. Check connectivity and credentials."
+        success_msg: "vManage API is reachable and authenticated"
+      tags: [always, prerequisites]
+
+    # ----------------------------- postflight -------------------
+
+    - name: "cisco/sdwan_security_hardening/prerequisites | Postflight | Verify the guarded body ran after a passing preflight"
+      ansible.builtin.assert:
+        that:
+          - fe_cisco_sdwan_security_hardening_prerequisites_preflight_passed | bool
+          - fe_cisco_sdwan_security_hardening_prerequisites_status in ['running', 'succeeded']
+        fail_msg: >-
+          cisco/sdwan_security_hardening/prerequisites: postflight validation failed - preflight passed
+          ={{ fe_cisco_sdwan_security_hardening_prerequisites_preflight_passed | default(false) }},
+          status={{ fe_cisco_sdwan_security_hardening_prerequisites_status | default('unknown') }}.
+        success_msg: "cisco/sdwan_security_hardening/prerequisites: postflight validation passed."
+        quiet: true
+      tags:
+        - always
+        - postflight
+        - validation
+
+    - name: "cisco/sdwan_security_hardening/prerequisites | Postflight | Record the successful outcome"
+      ansible.builtin.set_fact:
+        fe_cisco_sdwan_security_hardening_prerequisites_postflight_passed: true
+        fe_cisco_sdwan_security_hardening_prerequisites_status: "succeeded"
+      tags:
+        - always
+        - postflight
+        - validation
+
+  rescue:
+
+    - name: "cisco/sdwan_security_hardening/prerequisites | Rescue | Capture the failing task and error detail"
+      ansible.builtin.set_fact:
+        fe_cisco_sdwan_security_hardening_prerequisites_status: "failed"
+        fe_cisco_sdwan_security_hardening_prerequisites_postflight_passed: false
+        fe_cisco_sdwan_security_hardening_prerequisites_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+        fe_cisco_sdwan_security_hardening_prerequisites_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+      tags:
+        - always
+        - rescue
+
+    - name: "cisco/sdwan_security_hardening/prerequisites | Rescue | Report the failure"
+      ansible.builtin.debug:
+        msg: >-
+          cisco/sdwan_security_hardening/prerequisites: FAILED at '{{ fe_cisco_sdwan_security_hardening_prerequisites_failed_task }}' on
+          {{ inventory_hostname }} - {{ fe_cisco_sdwan_security_hardening_prerequisites_error }}
+      tags:
+        - always
+        - rescue
+
+    - name: "cisco/sdwan_security_hardening/prerequisites | Rescue | Re-raise the failure unless the caller opted to continue"
+      ansible.builtin.fail:
+        msg: >-
+          cisco/sdwan_security_hardening/prerequisites failed at '{{ fe_cisco_sdwan_security_hardening_prerequisites_failed_task }}': {{ fe_cisco_sdwan_security_hardening_prerequisites_error }}
+      when: not (fe_validation_continue_on_error | default(false) | bool)
+      tags:
+        - always
+        - rescue
+
+  always:
+
+    - name: "cisco/sdwan_security_hardening/prerequisites | Always | Compute the execution duration"
+      ansible.builtin.set_fact:
+        fe_cisco_sdwan_security_hardening_prerequisites_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+        fe_cisco_sdwan_security_hardening_prerequisites_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_cisco_sdwan_security_hardening_prerequisites_start_epoch | default(0) | int) }}"
+      tags:
+        - always
+
+    - name: "cisco/sdwan_security_hardening/prerequisites | Always | Publish the validation result with set_stats"
+      ansible.builtin.set_stats:
+        data:
+          fe_validation_results:
+            "cisco/sdwan_security_hardening/prerequisites":
+              component: "cisco/sdwan_security_hardening/prerequisites"
+              type: "role-tasks"
+              platform: "cisco"
+              host: "{{ inventory_hostname }}"
+              status: "{{ fe_cisco_sdwan_security_hardening_prerequisites_status | default('unknown') }}"
+              preflight_passed: "{{ fe_cisco_sdwan_security_hardening_prerequisites_preflight_passed | default(false) | bool }}"
+              postflight_passed: "{{ fe_cisco_sdwan_security_hardening_prerequisites_postflight_passed | default(false) | bool }}"
+              started_at: "{{ fe_cisco_sdwan_security_hardening_prerequisites_started_at | default('') }}"
+              ended_at: "{{ fe_cisco_sdwan_security_hardening_prerequisites_ended_at | default('') }}"
+              duration_seconds: "{{ fe_cisco_sdwan_security_hardening_prerequisites_duration_seconds | default(0) | int }}"
+              failed_task: "{{ fe_cisco_sdwan_security_hardening_prerequisites_failed_task | default('') }}"
+              error: "{{ fe_cisco_sdwan_security_hardening_prerequisites_error | default('') }}"
+              check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+          fe_validation_executions: 1
+          fe_validation_succeeded: "{{ 1 if fe_cisco_sdwan_security_hardening_prerequisites_status | default('') == 'succeeded' else 0 }}"
+          fe_validation_failed: "{{ 0 if fe_cisco_sdwan_security_hardening_prerequisites_status | default('') == 'succeeded' else 1 }}"
+          fe_validation_duration_seconds: "{{ fe_cisco_sdwan_security_hardening_prerequisites_duration_seconds | default(0) | int }}"
+          fe_validation_failed_components: >-
+            {{ [] if fe_cisco_sdwan_security_hardening_prerequisites_status | default('') == 'succeeded' else ['cisco/sdwan_security_hardening/prerequisites'] }}
+        aggregate: true
+        per_host: false
+      tags:
+        - always
+
+    - name: "cisco/sdwan_security_hardening/prerequisites | Always | Mark the validation statistics as published"
+      ansible.builtin.set_fact:
+        fe_cisco_sdwan_security_hardening_prerequisites_stats_published: true
+      tags:
+        - always

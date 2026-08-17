@@ -1,186 +1,370 @@
 ---
-- name: Validate basics
-  ansible.builtin.assert:
-    that:
-      - esxi_hostname | length > 0
-      - esxi_username | length > 0
-    fail_msg: "esxi_hostname and esxi credentials are required."
 
-- name: Validate vCenter variables when esxi_mode is vcenter
-  ansible.builtin.assert:
-    that:
-      - vcenter_hostname | length > 0
-      - vcenter_username | length > 0
-      - vcenter_password | length > 0
-      - vcenter_datacenter | length > 0
-    fail_msg: "vcenter_* variables and vcenter_datacenter are required for esxi_mode=vcenter."
-  when: esxi_mode == 'vcenter'
+# ---------------------------------------------------------------------------
+# Fourth Estate preflight / postflight validation harness
+#
+# The task file body below is wrapped in an Ansible block/rescue/always structure:
+#
+#   block   preflight validation runs first, then the original task file body, then
+#           postflight validation. Any failure transfers control to rescue.
+#   rescue  records which task failed and why, then re-raises so a failure is
+#           never silently swallowed. Set fe_validation_continue_on_error=true
+#           to record the failure and keep going instead.
+#   always  computes the run duration and publishes the outcome through
+#           ansible.builtin.set_stats, so a wrapping playbook, AWX/AAP or CI can
+#           consume the result without scraping log output.
+#
+# Published stats (see docs/VALIDATION_AND_STATS.md):
+#   fe_validation_results['vmware/vsphere_esxi_config']  per-component record
+#   fe_validation_executions / _succeeded / _failed / _duration_seconds
+#   fe_validation_failed_components
+#
+# Add component-specific preflight checks without editing this file by setting
+#   fe_vmware_vsphere_esxi_config_required_vars: [var_one, var_two]
+# ---------------------------------------------------------------------------
 
-# Build connection context for modules
-- name: Set API connection context
+- name: "vmware/vsphere_esxi_config | Initialize validation state"
   ansible.builtin.set_fact:
-    _api_hostname: "{{ (esxi_mode == 'vcenter') | ternary(vcenter_hostname, esxi_hostname) }}"
-    _api_username: "{{ (esxi_mode == 'vcenter') | ternary(vcenter_username, esxi_username) }}"
-    _api_password: "{{ (esxi_mode == 'vcenter') | ternary(vcenter_password, esxi_password) }}"
-    _api_validate: "{{ (esxi_mode == 'vcenter') | ternary(vcenter_validate_certs, esxi_validate_certs) }}"
+    fe_vmware_vsphere_esxi_config_start_epoch: "{{ now(fmt='%s') | int }}"
+    fe_vmware_vsphere_esxi_config_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+    fe_vmware_vsphere_esxi_config_status: "running"
+    fe_vmware_vsphere_esxi_config_preflight_passed: false
+    fe_vmware_vsphere_esxi_config_postflight_passed: false
+    fe_vmware_vsphere_esxi_config_failed_task: ""
+    fe_vmware_vsphere_esxi_config_error: ""
+    fe_vmware_vsphere_esxi_config_stats_published: false
+  tags:
+    - always
 
-- name: Put host in maintenance mode (idempotent)
-  community.vmware.vmware_maintenancemode:
-    hostname: "{{ _api_hostname }}"
-    username: "{{ _api_username }}"
-    password: "{{ _api_password }}"
-    validate_certs: "{{ _api_validate }}"
-    esxi_hostname: "{{ esxi_hostname if esxi_mode == 'vcenter' else omit }}"
-    state: present
-  no_log: true
-  delegate_to: localhost
+- name: "vmware/vsphere_esxi_config | Guarded execution with preflight and postflight validation"
+  block:
 
-# Optional: add/register host to vCenter (only when esxi_mode=vcenter)
-- name: Add ESXi host to vCenter (Datacenter/Cluster)
-  community.vmware.vmware_host:
-    hostname: "{{ vcenter_hostname }}"
-    username: "{{ vcenter_username }}"
-    password: "{{ vcenter_password }}"
-    validate_certs: "{{ vcenter_validate_certs }}"
-    datacenter: "{{ vcenter_datacenter }}"
-    cluster: "{{ vcenter_cluster | default(omit) }}"
-    folder: "{{ vcenter_folder | default(omit) }}"
-    esxi_hostname: "{{ esxi_hostname }}"
-    esxi_username: "{{ esxi_username }}"
-    esxi_password: "{{ esxi_password }}"
-    state: present
-  no_log: true
-  when: esxi_mode == 'vcenter'
-  delegate_to: localhost
+    # ----------------------------- preflight --------------------
 
-# Acceptance level
-- name: Set acceptance level
-  community.vmware.vmware_host_acceptance:
-    hostname: "{{ _api_hostname }}"
-    username: "{{ _api_username }}"
-    password: "{{ _api_password }}"
-    validate_certs: "{{ _api_validate }}"
-    esxi_hostname: "{{ esxi_hostname if esxi_mode == 'vcenter' else omit }}"
-    acceptance_level: "{{ esxi_acceptance_level }}"
-  no_log: true
-  delegate_to: localhost
+    - name: "vmware/vsphere_esxi_config | Preflight | Verify the control node meets the minimum ansible-core version"
+      ansible.builtin.assert:
+        that:
+          - ansible_version.full is version(fe_validation_min_ansible_version | default('2.12'), '>=')
+        fail_msg: >-
+          vmware/vsphere_esxi_config: requires ansible-core
+          {{ fe_validation_min_ansible_version | default('2.12') }} or newer,
+          found {{ ansible_version.full }}.
+        success_msg: >-
+          vmware/vsphere_esxi_config: ansible-core {{ ansible_version.full }} satisfies the minimum.
+        quiet: true
+      tags:
+        - always
+        - preflight
+        - validation
 
-# DNS
-- name: Configure DNS settings
-  community.vmware.vmware_host_dns:
-    hostname: "{{ _api_hostname }}"
-    username: "{{ _api_username }}"
-    password: "{{ _api_password }}"
-    validate_certs: "{{ _api_validate }}"
-    esxi_hostname: "{{ esxi_hostname if esxi_mode == 'vcenter' else omit }}"
-    domain: "{{ esxi_dns_domain | default(omit) }}"
-    dns_servers: "{{ esxi_dns_servers | default(omit) }}"
-    host_name: "{{ esxi_hostname_fqdn | default(omit) }}"
-    state: present
-  no_log: true
-  when: (esxi_dns_servers | length) > 0 or (esxi_dns_domain | length) > 0 or (esxi_hostname_fqdn | length) > 0
-  delegate_to: localhost
+    - name: "vmware/vsphere_esxi_config | Preflight | Verify every declared required variable is defined"
+      ansible.builtin.assert:
+        that:
+          - vars[item] is defined
+        fail_msg: "vmware/vsphere_esxi_config: required variable '{{ item }}' is not defined."
+        success_msg: "vmware/vsphere_esxi_config: required variable '{{ item }}' is defined."
+        quiet: true
+      loop: "{{ fe_vmware_vsphere_esxi_config_required_vars | default([]) }}"
+      loop_control:
+        label: "{{ item }}"
+      tags:
+        - always
+        - preflight
+        - validation
 
-# NTP
-- name: Configure NTP servers
-  community.vmware.vmware_host_ntp:
-    hostname: "{{ _api_hostname }}"
-    username: "{{ _api_username }}"
-    password: "{{ _api_password }}"
-    validate_certs: "{{ _api_validate }}"
-    esxi_hostname: "{{ esxi_hostname if esxi_mode == 'vcenter' else omit }}"
-    ntp_servers: "{{ esxi_ntp_servers }}"
-    state: present
-  no_log: true
-  when: (esxi_ntp_servers | length) > 0
-  delegate_to: localhost
+    - name: "vmware/vsphere_esxi_config | Preflight | Record that preflight validation passed"
+      ansible.builtin.set_fact:
+        fe_vmware_vsphere_esxi_config_preflight_passed: true
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: Ensure ntpd service policy/state
-  community.vmware.vmware_host_service_manager:
-    hostname: "{{ _api_hostname }}"
-    username: "{{ _api_username }}"
-    password: "{{ _api_password }}"
-    validate_certs: "{{ _api_validate }}"
-    esxi_hostname: "{{ esxi_hostname if esxi_mode == 'vcenter' else omit }}"
-    service_name: "ntpd"
-    service_policy: "{{ (esxi_ntp_start_policy | default('on')) }}"
-    state: "{{ (esxi_ntp_start_policy == 'on') | ternary('on','off') }}"
-  no_log: true
-  when: (esxi_ntp_servers | length) > 0
-  delegate_to: localhost
+    # ----------------------------- execute ----------------------
 
-# Syslog
-- name: Configure remote syslog
-  community.vmware.vmware_host_syslog:
-    hostname: "{{ _api_hostname }}"
-    username: "{{ _api_username }}"
-    password: "{{ _api_password }}"
-    validate_certs: "{{ _api_validate }}"
-    esxi_hostname: "{{ esxi_hostname if esxi_mode == 'vcenter' else omit }}"
-    syslog_config:
-      loghost: "{{ esxi_syslog_remote }}"
-    state: present
-  no_log: true
-  when: esxi_syslog_remote | length > 0
-  delegate_to: localhost
+    - name: Validate basics
+      ansible.builtin.assert:
+        that:
+          - esxi_hostname | length > 0
+          - esxi_username | length > 0
+        fail_msg: "esxi_hostname and esxi credentials are required."
 
-# Services
-- name: Configure service policies
-  community.vmware.vmware_host_service_manager:
-    hostname: "{{ _api_hostname }}"
-    username: "{{ _api_username }}"
-    password: "{{ _api_password }}"
-    validate_certs: "{{ _api_validate }}"
-    esxi_hostname: "{{ esxi_hostname if esxi_mode == 'vcenter' else omit }}"
-    service_name: "{{ item.name }}"
-    service_policy: "{{ item.policy | default('on') }}"
-    state: "{{ (item.policy | default('on')) in ['on','automatic'] | ternary('on','off') }}"
-  no_log: true
-  loop: "{{ esxi_services }}"
-  delegate_to: localhost
+    - name: Validate vCenter variables when esxi_mode is vcenter
+      ansible.builtin.assert:
+        that:
+          - vcenter_hostname | length > 0
+          - vcenter_username | length > 0
+          - vcenter_password | length > 0
+          - vcenter_datacenter | length > 0
+        fail_msg: "vcenter_* variables and vcenter_datacenter are required for esxi_mode=vcenter."
+      when: esxi_mode == 'vcenter'
 
-# Networking
-- name: Ensure vSwitches exist
-  community.vmware.vmware_host_vswitch:
-    hostname: "{{ _api_hostname }}"
-    username: "{{ _api_username }}"
-    password: "{{ _api_password }}"
-    validate_certs: "{{ _api_validate }}"
-    esxi_hostname: "{{ esxi_hostname if esxi_mode == 'vcenter' else omit }}"
-    switch_name: "{{ item.name }}"
-    mtu: "{{ item.mtu | default(1500) }}"
-    nics: "{{ item.nics | default(omit) }}"
-    state: present
-  no_log: true
-  loop: "{{ esxi_vswitches }}"
-  when: esxi_vswitches | length > 0
-  delegate_to: localhost
+    # Build connection context for modules
+    - name: Set API connection context
+      ansible.builtin.set_fact:
+        _api_hostname: "{{ (esxi_mode == 'vcenter') | ternary(vcenter_hostname, esxi_hostname) }}"
+        _api_username: "{{ (esxi_mode == 'vcenter') | ternary(vcenter_username, esxi_username) }}"
+        _api_password: "{{ (esxi_mode == 'vcenter') | ternary(vcenter_password, esxi_password) }}"
+        _api_validate: "{{ (esxi_mode == 'vcenter') | ternary(vcenter_validate_certs, esxi_validate_certs) }}"
 
-- name: Ensure Portgroups exist
-  community.vmware.vmware_host_portgroup:
-    hostname: "{{ _api_hostname }}"
-    username: "{{ _api_username }}"
-    password: "{{ _api_password }}"
-    validate_certs: "{{ _api_validate }}"
-    esxi_hostname: "{{ esxi_hostname if esxi_mode == 'vcenter' else omit }}"
-    switch_name: "{{ item.vswitch }}"
-    portgroup_name: "{{ item.name }}"
-    vlan_id: "{{ item.vlan_id | default(0) }}"
-    allow_promiscuous: "{{ item.allow_promiscuous | default(False) }}"
-    state: present
-  no_log: true
-  loop: "{{ esxi_portgroups }}"
-  when: esxi_portgroups | length > 0
-  delegate_to: localhost
+    - name: Put host in maintenance mode (idempotent)
+      community.vmware.vmware_maintenancemode:
+        hostname: "{{ _api_hostname }}"
+        username: "{{ _api_username }}"
+        password: "{{ _api_password }}"
+        validate_certs: "{{ _api_validate }}"
+        esxi_hostname: "{{ esxi_hostname if esxi_mode == 'vcenter' else omit }}"
+        state: present
+      no_log: true
+      delegate_to: localhost
 
-- name: Exit maintenance mode (if requested)
-  community.vmware.vmware_maintenancemode:
-    hostname: "{{ _api_hostname }}"
-    username: "{{ _api_username }}"
-    password: "{{ _api_password }}"
-    validate_certs: "{{ _api_validate }}"
-    esxi_hostname: "{{ esxi_hostname if esxi_mode == 'vcenter' else omit }}"
-    state: absent
-  no_log: true
-  when: exit_maintenance_mode | bool
-  delegate_to: localhost
+    # Optional: add/register host to vCenter (only when esxi_mode=vcenter)
+    - name: Add ESXi host to vCenter (Datacenter/Cluster)
+      community.vmware.vmware_host:
+        hostname: "{{ vcenter_hostname }}"
+        username: "{{ vcenter_username }}"
+        password: "{{ vcenter_password }}"
+        validate_certs: "{{ vcenter_validate_certs }}"
+        datacenter: "{{ vcenter_datacenter }}"
+        cluster: "{{ vcenter_cluster | default(omit) }}"
+        folder: "{{ vcenter_folder | default(omit) }}"
+        esxi_hostname: "{{ esxi_hostname }}"
+        esxi_username: "{{ esxi_username }}"
+        esxi_password: "{{ esxi_password }}"
+        state: present
+      no_log: true
+      when: esxi_mode == 'vcenter'
+      delegate_to: localhost
+
+    # Acceptance level
+    - name: Set acceptance level
+      community.vmware.vmware_host_acceptance:
+        hostname: "{{ _api_hostname }}"
+        username: "{{ _api_username }}"
+        password: "{{ _api_password }}"
+        validate_certs: "{{ _api_validate }}"
+        esxi_hostname: "{{ esxi_hostname if esxi_mode == 'vcenter' else omit }}"
+        acceptance_level: "{{ esxi_acceptance_level }}"
+      no_log: true
+      delegate_to: localhost
+
+    # DNS
+    - name: Configure DNS settings
+      community.vmware.vmware_host_dns:
+        hostname: "{{ _api_hostname }}"
+        username: "{{ _api_username }}"
+        password: "{{ _api_password }}"
+        validate_certs: "{{ _api_validate }}"
+        esxi_hostname: "{{ esxi_hostname if esxi_mode == 'vcenter' else omit }}"
+        domain: "{{ esxi_dns_domain | default(omit) }}"
+        dns_servers: "{{ esxi_dns_servers | default(omit) }}"
+        host_name: "{{ esxi_hostname_fqdn | default(omit) }}"
+        state: present
+      no_log: true
+      when: (esxi_dns_servers | length) > 0 or (esxi_dns_domain | length) > 0 or (esxi_hostname_fqdn | length) > 0
+      delegate_to: localhost
+
+    # NTP
+    - name: Configure NTP servers
+      community.vmware.vmware_host_ntp:
+        hostname: "{{ _api_hostname }}"
+        username: "{{ _api_username }}"
+        password: "{{ _api_password }}"
+        validate_certs: "{{ _api_validate }}"
+        esxi_hostname: "{{ esxi_hostname if esxi_mode == 'vcenter' else omit }}"
+        ntp_servers: "{{ esxi_ntp_servers }}"
+        state: present
+      no_log: true
+      when: (esxi_ntp_servers | length) > 0
+      delegate_to: localhost
+
+    - name: Ensure ntpd service policy/state
+      community.vmware.vmware_host_service_manager:
+        hostname: "{{ _api_hostname }}"
+        username: "{{ _api_username }}"
+        password: "{{ _api_password }}"
+        validate_certs: "{{ _api_validate }}"
+        esxi_hostname: "{{ esxi_hostname if esxi_mode == 'vcenter' else omit }}"
+        service_name: "ntpd"
+        service_policy: "{{ (esxi_ntp_start_policy | default('on')) }}"
+        state: "{{ (esxi_ntp_start_policy == 'on') | ternary('on','off') }}"
+      no_log: true
+      when: (esxi_ntp_servers | length) > 0
+      delegate_to: localhost
+
+    # Syslog
+    - name: Configure remote syslog
+      community.vmware.vmware_host_syslog:
+        hostname: "{{ _api_hostname }}"
+        username: "{{ _api_username }}"
+        password: "{{ _api_password }}"
+        validate_certs: "{{ _api_validate }}"
+        esxi_hostname: "{{ esxi_hostname if esxi_mode == 'vcenter' else omit }}"
+        syslog_config:
+          loghost: "{{ esxi_syslog_remote }}"
+        state: present
+      no_log: true
+      when: esxi_syslog_remote | length > 0
+      delegate_to: localhost
+
+    # Services
+    - name: Configure service policies
+      community.vmware.vmware_host_service_manager:
+        hostname: "{{ _api_hostname }}"
+        username: "{{ _api_username }}"
+        password: "{{ _api_password }}"
+        validate_certs: "{{ _api_validate }}"
+        esxi_hostname: "{{ esxi_hostname if esxi_mode == 'vcenter' else omit }}"
+        service_name: "{{ item.name }}"
+        service_policy: "{{ item.policy | default('on') }}"
+        state: "{{ (item.policy | default('on')) in ['on','automatic'] | ternary('on','off') }}"
+      no_log: true
+      loop: "{{ esxi_services }}"
+      delegate_to: localhost
+
+    # Networking
+    - name: Ensure vSwitches exist
+      community.vmware.vmware_host_vswitch:
+        hostname: "{{ _api_hostname }}"
+        username: "{{ _api_username }}"
+        password: "{{ _api_password }}"
+        validate_certs: "{{ _api_validate }}"
+        esxi_hostname: "{{ esxi_hostname if esxi_mode == 'vcenter' else omit }}"
+        switch_name: "{{ item.name }}"
+        mtu: "{{ item.mtu | default(1500) }}"
+        nics: "{{ item.nics | default(omit) }}"
+        state: present
+      no_log: true
+      loop: "{{ esxi_vswitches }}"
+      when: esxi_vswitches | length > 0
+      delegate_to: localhost
+
+    - name: Ensure Portgroups exist
+      community.vmware.vmware_host_portgroup:
+        hostname: "{{ _api_hostname }}"
+        username: "{{ _api_username }}"
+        password: "{{ _api_password }}"
+        validate_certs: "{{ _api_validate }}"
+        esxi_hostname: "{{ esxi_hostname if esxi_mode == 'vcenter' else omit }}"
+        switch_name: "{{ item.vswitch }}"
+        portgroup_name: "{{ item.name }}"
+        vlan_id: "{{ item.vlan_id | default(0) }}"
+        allow_promiscuous: "{{ item.allow_promiscuous | default(False) }}"
+        state: present
+      no_log: true
+      loop: "{{ esxi_portgroups }}"
+      when: esxi_portgroups | length > 0
+      delegate_to: localhost
+
+    - name: Exit maintenance mode (if requested)
+      community.vmware.vmware_maintenancemode:
+        hostname: "{{ _api_hostname }}"
+        username: "{{ _api_username }}"
+        password: "{{ _api_password }}"
+        validate_certs: "{{ _api_validate }}"
+        esxi_hostname: "{{ esxi_hostname if esxi_mode == 'vcenter' else omit }}"
+        state: absent
+      no_log: true
+      when: exit_maintenance_mode | bool
+      delegate_to: localhost
+
+    # ----------------------------- postflight -------------------
+
+    - name: "vmware/vsphere_esxi_config | Postflight | Verify the guarded body ran after a passing preflight"
+      ansible.builtin.assert:
+        that:
+          - fe_vmware_vsphere_esxi_config_preflight_passed | bool
+          - fe_vmware_vsphere_esxi_config_status in ['running', 'succeeded']
+        fail_msg: >-
+          vmware/vsphere_esxi_config: postflight validation failed - preflight passed
+          ={{ fe_vmware_vsphere_esxi_config_preflight_passed | default(false) }},
+          status={{ fe_vmware_vsphere_esxi_config_status | default('unknown') }}.
+        success_msg: "vmware/vsphere_esxi_config: postflight validation passed."
+        quiet: true
+      tags:
+        - always
+        - postflight
+        - validation
+
+    - name: "vmware/vsphere_esxi_config | Postflight | Record the successful outcome"
+      ansible.builtin.set_fact:
+        fe_vmware_vsphere_esxi_config_postflight_passed: true
+        fe_vmware_vsphere_esxi_config_status: "succeeded"
+      tags:
+        - always
+        - postflight
+        - validation
+
+  rescue:
+
+    - name: "vmware/vsphere_esxi_config | Rescue | Capture the failing task and error detail"
+      ansible.builtin.set_fact:
+        fe_vmware_vsphere_esxi_config_status: "failed"
+        fe_vmware_vsphere_esxi_config_postflight_passed: false
+        fe_vmware_vsphere_esxi_config_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+        fe_vmware_vsphere_esxi_config_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+      tags:
+        - always
+        - rescue
+
+    - name: "vmware/vsphere_esxi_config | Rescue | Report the failure"
+      ansible.builtin.debug:
+        msg: >-
+          vmware/vsphere_esxi_config: FAILED at '{{ fe_vmware_vsphere_esxi_config_failed_task }}' on
+          {{ inventory_hostname }} - {{ fe_vmware_vsphere_esxi_config_error }}
+      tags:
+        - always
+        - rescue
+
+    - name: "vmware/vsphere_esxi_config | Rescue | Re-raise the failure unless the caller opted to continue"
+      ansible.builtin.fail:
+        msg: >-
+          vmware/vsphere_esxi_config failed at '{{ fe_vmware_vsphere_esxi_config_failed_task }}': {{ fe_vmware_vsphere_esxi_config_error }}
+      when: not (fe_validation_continue_on_error | default(false) | bool)
+      tags:
+        - always
+        - rescue
+
+  always:
+
+    - name: "vmware/vsphere_esxi_config | Always | Compute the execution duration"
+      ansible.builtin.set_fact:
+        fe_vmware_vsphere_esxi_config_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+        fe_vmware_vsphere_esxi_config_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_vmware_vsphere_esxi_config_start_epoch | default(0) | int) }}"
+      tags:
+        - always
+
+    - name: "vmware/vsphere_esxi_config | Always | Publish the validation result with set_stats"
+      ansible.builtin.set_stats:
+        data:
+          fe_validation_results:
+            "vmware/vsphere_esxi_config":
+              component: "vmware/vsphere_esxi_config"
+              type: "role"
+              platform: "vmware"
+              host: "{{ inventory_hostname }}"
+              status: "{{ fe_vmware_vsphere_esxi_config_status | default('unknown') }}"
+              preflight_passed: "{{ fe_vmware_vsphere_esxi_config_preflight_passed | default(false) | bool }}"
+              postflight_passed: "{{ fe_vmware_vsphere_esxi_config_postflight_passed | default(false) | bool }}"
+              started_at: "{{ fe_vmware_vsphere_esxi_config_started_at | default('') }}"
+              ended_at: "{{ fe_vmware_vsphere_esxi_config_ended_at | default('') }}"
+              duration_seconds: "{{ fe_vmware_vsphere_esxi_config_duration_seconds | default(0) | int }}"
+              failed_task: "{{ fe_vmware_vsphere_esxi_config_failed_task | default('') }}"
+              error: "{{ fe_vmware_vsphere_esxi_config_error | default('') }}"
+              check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+          fe_validation_executions: 1
+          fe_validation_succeeded: "{{ 1 if fe_vmware_vsphere_esxi_config_status | default('') == 'succeeded' else 0 }}"
+          fe_validation_failed: "{{ 0 if fe_vmware_vsphere_esxi_config_status | default('') == 'succeeded' else 1 }}"
+          fe_validation_duration_seconds: "{{ fe_vmware_vsphere_esxi_config_duration_seconds | default(0) | int }}"
+          fe_validation_failed_components: >-
+            {{ [] if fe_vmware_vsphere_esxi_config_status | default('') == 'succeeded' else ['vmware/vsphere_esxi_config'] }}
+        aggregate: true
+        per_host: false
+      tags:
+        - always
+
+    - name: "vmware/vsphere_esxi_config | Always | Mark the validation statistics as published"
+      ansible.builtin.set_fact:
+        fe_vmware_vsphere_esxi_config_stats_published: true
+      tags:
+        - always

@@ -3,53 +3,236 @@
 # In dry-run mode `changed: true` means the control is NOT yet compliant
 # (the playbook would have changed it). In enforce mode it means remediated.
 
-- name: Assemble per-control result map
+# ---------------------------------------------------------------------------
+# Fourth Estate preflight / postflight validation harness
+#
+# The task file body below is wrapped in an Ansible block/rescue/always structure:
+#
+#   block   preflight validation runs first, then the original task file body, then
+#           postflight validation. Any failure transfers control to rescue.
+#   rescue  records which task failed and why, then re-raises so a failure is
+#           never silently swallowed. Set fe_validation_continue_on_error=true
+#           to record the failure and keep going instead.
+#   always  computes the run duration and publishes the outcome through
+#           ansible.builtin.set_stats, so a wrapping playbook, AWX/AAP or CI can
+#           consume the result without scraping log output.
+#
+# Published stats (see docs/VALIDATION_AND_STATS.md):
+#   fe_validation_results['cisco/cisco_ios_xe_l2_stig/compliance_report']  per-component record
+#   fe_validation_executions / _succeeded / _failed / _duration_seconds
+#   fe_validation_failed_components
+#
+# Add component-specific preflight checks without editing this file by setting
+#   fe_cisco_cisco_ios_xe_l2_stig_compliance_report_required_vars: [var_one, var_two]
+# ---------------------------------------------------------------------------
+
+- name: "cisco/cisco_ios_xe_l2_stig/compliance_report | Initialize validation state"
   ansible.builtin.set_fact:
-    l2_stig_results:
-      meta:
-        host: "{{ inventory_hostname }}"
-        timestamp: "{{ ansible_date_time.iso8601 | default(lookup('pipe', 'date -u +%Y-%m-%dT%H:%M:%SZ')) }}"
-        benchmark: "{{ stig_benchmark }}"
-        version: "{{ stig_version }}"
-        mode: "{{ 'enforce' if apply_changes | bool else 'dry-run' }}"
-        compliance_frameworks: "{{ compliance_frameworks }}"
-      controls:
-        - { id: "CISC-L2-000010", title: "Root Guard on edge ports", would_change: "{{ stp_rootguard.changed | default(false) }}" }
-        - { id: "CISC-L2-000020", title: "BPDU Guard / port security on edge ports", would_change: "{{ (stp_bpduguard.changed | default(false)) or (port_security.changed | default(false)) }}" }
-        - { id: "CISC-L2-000030", title: "STP Loop Guard default", would_change: "{{ stp_loopguard.changed | default(false) }}" }
-        - { id: "CISC-L2-000050", title: "DHCP snooping on user VLANs", would_change: "{{ dhcp_snoop_vlans.changed | default(false) }}" }
-        - { id: "CISC-L2-000060", title: "IP Source Guard on access ports", would_change: "{{ ip_source_guard.changed | default(false) }}" }
-        - { id: "CISC-L2-000070", title: "Dynamic ARP Inspection on user VLANs", would_change: "{{ dai_vlans.changed | default(false) }}" }
-        - { id: "CISC-L2-000080", title: "Storm control on access ports", would_change: "{{ storm_control.changed | default(false) }}" }
-        - { id: "CISC-L2-000090", title: "DTP disabled (nonegotiate)", would_change: "{{ trunk_harden.changed | default(false) }}" }
-        - { id: "CISC-L2-000120", title: "Disabled ports parked in unused VLAN", would_change: "{{ unused_ports.changed | default(false) }}" }
-        - { id: "CISC-L2-000160", title: "Native VLAN moved off default", would_change: "{{ trunk_harden.changed | default(false) }}" }
-        - { id: "CISC-L2-000220", title: "Rapid-PVST spanning-tree mode", would_change: "{{ stp_mode.changed | default(false) }}" }
-        - { id: "CISC-L2-000230", title: "UDLD enabled", would_change: "{{ stp_udld.changed | default(false) }}" }
-        - { id: "CISC-ND-000010", title: "DoD login banner", would_change: "{{ ndm_banner.changed | default(false) }}" }
-        - { id: "CISC-ND-000160", title: "AAA / TACACS+ authentication", would_change: "{{ (ndm_aaa.changed | default(false)) or (ndm_aaa_methods.changed | default(false)) }}" }
-        - { id: "CISC-ND-000280", title: "EXEC idle timeout on console/VTY", would_change: "{{ (ndm_vty.changed | default(false)) or (ndm_con.changed | default(false)) }}" }
-        - { id: "CISC-ND-000470", title: "Authenticated NTP", would_change: "{{ ndm_ntp.changed | default(false) }}" }
-        - { id: "CISC-ND-000090", title: "Syslog logging configured", would_change: "{{ ndm_logging.changed | default(false) }}" }
-        - { id: "CISC-ND-000150", title: "SNMPv3 only", would_change: "{{ ndm_snmp.changed | default(false) }}" }
-        - { id: "CISC-ND-001000", title: "SSH hardened", would_change: "{{ ndm_ssh.changed | default(false) }}" }
-        - { id: "CISC-ND-001310", title: "Telnet disabled (SSH only)", would_change: "{{ ndm_vty.changed | default(false) }}" }
-        - { id: "CISC-ND-001440", title: "Unused management services disabled", would_change: "{{ ndm_services.changed | default(false) }}" }
-  tags: [report]
+    fe_cisco_cisco_ios_xe_l2_stig_compliance_report_start_epoch: "{{ now(fmt='%s') | int }}"
+    fe_cisco_cisco_ios_xe_l2_stig_compliance_report_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+    fe_cisco_cisco_ios_xe_l2_stig_compliance_report_status: "running"
+    fe_cisco_cisco_ios_xe_l2_stig_compliance_report_preflight_passed: false
+    fe_cisco_cisco_ios_xe_l2_stig_compliance_report_postflight_passed: false
+    fe_cisco_cisco_ios_xe_l2_stig_compliance_report_failed_task: ""
+    fe_cisco_cisco_ios_xe_l2_stig_compliance_report_error: ""
+    fe_cisco_cisco_ios_xe_l2_stig_compliance_report_stats_published: false
+  tags:
+    - always
 
-- name: Write JSON compliance artifact
-  ansible.builtin.copy:
-    dest: "{{ artifacts_dir }}/{{ inventory_hostname }}_ios_xe_l2_stig.json"
-    mode: "0640"
-    content: "{{ l2_stig_results | to_nice_json }}"
-  delegate_to: localhost
-  tags: [report]
+- name: "cisco/cisco_ios_xe_l2_stig/compliance_report | Guarded execution with preflight and postflight validation"
+  block:
 
-- name: Summarize compliance state
-  ansible.builtin.debug:
-    msg: >-
-      {{ inventory_hostname }}: {{ l2_stig_results.controls | selectattr('would_change') | list | length }}
-      of {{ l2_stig_results.controls | length }} controls
-      {{ 'still need remediation (dry-run)' if not (apply_changes | bool) else 'were remediated' }}.
-      Artifact: {{ artifacts_dir }}/{{ inventory_hostname }}_ios_xe_l2_stig.json
-  tags: [report]
+    # ----------------------------- preflight --------------------
+
+    - name: "cisco/cisco_ios_xe_l2_stig/compliance_report | Preflight | Verify the control node meets the minimum ansible-core version"
+      ansible.builtin.assert:
+        that:
+          - ansible_version.full is version(fe_validation_min_ansible_version | default('2.12'), '>=')
+        fail_msg: >-
+          cisco/cisco_ios_xe_l2_stig/compliance_report: requires ansible-core
+          {{ fe_validation_min_ansible_version | default('2.12') }} or newer,
+          found {{ ansible_version.full }}.
+        success_msg: >-
+          cisco/cisco_ios_xe_l2_stig/compliance_report: ansible-core {{ ansible_version.full }} satisfies the minimum.
+        quiet: true
+      tags:
+        - always
+        - preflight
+        - validation
+
+    - name: "cisco/cisco_ios_xe_l2_stig/compliance_report | Preflight | Verify every declared required variable is defined"
+      ansible.builtin.assert:
+        that:
+          - vars[item] is defined
+        fail_msg: "cisco/cisco_ios_xe_l2_stig/compliance_report: required variable '{{ item }}' is not defined."
+        success_msg: "cisco/cisco_ios_xe_l2_stig/compliance_report: required variable '{{ item }}' is defined."
+        quiet: true
+      loop: "{{ fe_cisco_cisco_ios_xe_l2_stig_compliance_report_required_vars | default([]) }}"
+      loop_control:
+        label: "{{ item }}"
+      tags:
+        - always
+        - preflight
+        - validation
+
+    - name: "cisco/cisco_ios_xe_l2_stig/compliance_report | Preflight | Record that preflight validation passed"
+      ansible.builtin.set_fact:
+        fe_cisco_cisco_ios_xe_l2_stig_compliance_report_preflight_passed: true
+      tags:
+        - always
+        - preflight
+        - validation
+
+    # ----------------------------- execute ----------------------
+
+    - name: Assemble per-control result map
+      ansible.builtin.set_fact:
+        l2_stig_results:
+          meta:
+            host: "{{ inventory_hostname }}"
+            timestamp: "{{ ansible_date_time.iso8601 | default(lookup('pipe', 'date -u +%Y-%m-%dT%H:%M:%SZ')) }}"
+            benchmark: "{{ stig_benchmark }}"
+            version: "{{ stig_version }}"
+            mode: "{{ 'enforce' if apply_changes | bool else 'dry-run' }}"
+            compliance_frameworks: "{{ compliance_frameworks }}"
+          controls:
+            - { id: "CISC-L2-000010", title: "Root Guard on edge ports", would_change: "{{ stp_rootguard.changed | default(false) }}" }
+            - { id: "CISC-L2-000020", title: "BPDU Guard / port security on edge ports", would_change: "{{ (stp_bpduguard.changed | default(false)) or (port_security.changed | default(false)) }}" }
+            - { id: "CISC-L2-000030", title: "STP Loop Guard default", would_change: "{{ stp_loopguard.changed | default(false) }}" }
+            - { id: "CISC-L2-000050", title: "DHCP snooping on user VLANs", would_change: "{{ dhcp_snoop_vlans.changed | default(false) }}" }
+            - { id: "CISC-L2-000060", title: "IP Source Guard on access ports", would_change: "{{ ip_source_guard.changed | default(false) }}" }
+            - { id: "CISC-L2-000070", title: "Dynamic ARP Inspection on user VLANs", would_change: "{{ dai_vlans.changed | default(false) }}" }
+            - { id: "CISC-L2-000080", title: "Storm control on access ports", would_change: "{{ storm_control.changed | default(false) }}" }
+            - { id: "CISC-L2-000090", title: "DTP disabled (nonegotiate)", would_change: "{{ trunk_harden.changed | default(false) }}" }
+            - { id: "CISC-L2-000120", title: "Disabled ports parked in unused VLAN", would_change: "{{ unused_ports.changed | default(false) }}" }
+            - { id: "CISC-L2-000160", title: "Native VLAN moved off default", would_change: "{{ trunk_harden.changed | default(false) }}" }
+            - { id: "CISC-L2-000220", title: "Rapid-PVST spanning-tree mode", would_change: "{{ stp_mode.changed | default(false) }}" }
+            - { id: "CISC-L2-000230", title: "UDLD enabled", would_change: "{{ stp_udld.changed | default(false) }}" }
+            - { id: "CISC-ND-000010", title: "DoD login banner", would_change: "{{ ndm_banner.changed | default(false) }}" }
+            - { id: "CISC-ND-000160", title: "AAA / TACACS+ authentication", would_change: "{{ (ndm_aaa.changed | default(false)) or (ndm_aaa_methods.changed | default(false)) }}" }
+            - { id: "CISC-ND-000280", title: "EXEC idle timeout on console/VTY", would_change: "{{ (ndm_vty.changed | default(false)) or (ndm_con.changed | default(false)) }}" }
+            - { id: "CISC-ND-000470", title: "Authenticated NTP", would_change: "{{ ndm_ntp.changed | default(false) }}" }
+            - { id: "CISC-ND-000090", title: "Syslog logging configured", would_change: "{{ ndm_logging.changed | default(false) }}" }
+            - { id: "CISC-ND-000150", title: "SNMPv3 only", would_change: "{{ ndm_snmp.changed | default(false) }}" }
+            - { id: "CISC-ND-001000", title: "SSH hardened", would_change: "{{ ndm_ssh.changed | default(false) }}" }
+            - { id: "CISC-ND-001310", title: "Telnet disabled (SSH only)", would_change: "{{ ndm_vty.changed | default(false) }}" }
+            - { id: "CISC-ND-001440", title: "Unused management services disabled", would_change: "{{ ndm_services.changed | default(false) }}" }
+      tags: [report]
+
+    - name: Write JSON compliance artifact
+      ansible.builtin.copy:
+        dest: "{{ artifacts_dir }}/{{ inventory_hostname }}_ios_xe_l2_stig.json"
+        mode: "0640"
+        content: "{{ l2_stig_results | to_nice_json }}"
+      delegate_to: localhost
+      tags: [report]
+
+    - name: Summarize compliance state
+      ansible.builtin.debug:
+        msg: >-
+          {{ inventory_hostname }}: {{ l2_stig_results.controls | selectattr('would_change') | list | length }}
+          of {{ l2_stig_results.controls | length }} controls
+          {{ 'still need remediation (dry-run)' if not (apply_changes | bool) else 'were remediated' }}.
+          Artifact: {{ artifacts_dir }}/{{ inventory_hostname }}_ios_xe_l2_stig.json
+      tags: [report]
+
+    # ----------------------------- postflight -------------------
+
+    - name: "cisco/cisco_ios_xe_l2_stig/compliance_report | Postflight | Verify the guarded body ran after a passing preflight"
+      ansible.builtin.assert:
+        that:
+          - fe_cisco_cisco_ios_xe_l2_stig_compliance_report_preflight_passed | bool
+          - fe_cisco_cisco_ios_xe_l2_stig_compliance_report_status in ['running', 'succeeded']
+        fail_msg: >-
+          cisco/cisco_ios_xe_l2_stig/compliance_report: postflight validation failed - preflight passed
+          ={{ fe_cisco_cisco_ios_xe_l2_stig_compliance_report_preflight_passed | default(false) }},
+          status={{ fe_cisco_cisco_ios_xe_l2_stig_compliance_report_status | default('unknown') }}.
+        success_msg: "cisco/cisco_ios_xe_l2_stig/compliance_report: postflight validation passed."
+        quiet: true
+      tags:
+        - always
+        - postflight
+        - validation
+
+    - name: "cisco/cisco_ios_xe_l2_stig/compliance_report | Postflight | Record the successful outcome"
+      ansible.builtin.set_fact:
+        fe_cisco_cisco_ios_xe_l2_stig_compliance_report_postflight_passed: true
+        fe_cisco_cisco_ios_xe_l2_stig_compliance_report_status: "succeeded"
+      tags:
+        - always
+        - postflight
+        - validation
+
+  rescue:
+
+    - name: "cisco/cisco_ios_xe_l2_stig/compliance_report | Rescue | Capture the failing task and error detail"
+      ansible.builtin.set_fact:
+        fe_cisco_cisco_ios_xe_l2_stig_compliance_report_status: "failed"
+        fe_cisco_cisco_ios_xe_l2_stig_compliance_report_postflight_passed: false
+        fe_cisco_cisco_ios_xe_l2_stig_compliance_report_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+        fe_cisco_cisco_ios_xe_l2_stig_compliance_report_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+      tags:
+        - always
+        - rescue
+
+    - name: "cisco/cisco_ios_xe_l2_stig/compliance_report | Rescue | Report the failure"
+      ansible.builtin.debug:
+        msg: >-
+          cisco/cisco_ios_xe_l2_stig/compliance_report: FAILED at '{{ fe_cisco_cisco_ios_xe_l2_stig_compliance_report_failed_task }}' on
+          {{ inventory_hostname }} - {{ fe_cisco_cisco_ios_xe_l2_stig_compliance_report_error }}
+      tags:
+        - always
+        - rescue
+
+    - name: "cisco/cisco_ios_xe_l2_stig/compliance_report | Rescue | Re-raise the failure unless the caller opted to continue"
+      ansible.builtin.fail:
+        msg: >-
+          cisco/cisco_ios_xe_l2_stig/compliance_report failed at '{{ fe_cisco_cisco_ios_xe_l2_stig_compliance_report_failed_task }}': {{ fe_cisco_cisco_ios_xe_l2_stig_compliance_report_error }}
+      when: not (fe_validation_continue_on_error | default(false) | bool)
+      tags:
+        - always
+        - rescue
+
+  always:
+
+    - name: "cisco/cisco_ios_xe_l2_stig/compliance_report | Always | Compute the execution duration"
+      ansible.builtin.set_fact:
+        fe_cisco_cisco_ios_xe_l2_stig_compliance_report_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+        fe_cisco_cisco_ios_xe_l2_stig_compliance_report_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_cisco_cisco_ios_xe_l2_stig_compliance_report_start_epoch | default(0) | int) }}"
+      tags:
+        - always
+
+    - name: "cisco/cisco_ios_xe_l2_stig/compliance_report | Always | Publish the validation result with set_stats"
+      ansible.builtin.set_stats:
+        data:
+          fe_validation_results:
+            "cisco/cisco_ios_xe_l2_stig/compliance_report":
+              component: "cisco/cisco_ios_xe_l2_stig/compliance_report"
+              type: "role-tasks"
+              platform: "cisco"
+              host: "{{ inventory_hostname }}"
+              status: "{{ fe_cisco_cisco_ios_xe_l2_stig_compliance_report_status | default('unknown') }}"
+              preflight_passed: "{{ fe_cisco_cisco_ios_xe_l2_stig_compliance_report_preflight_passed | default(false) | bool }}"
+              postflight_passed: "{{ fe_cisco_cisco_ios_xe_l2_stig_compliance_report_postflight_passed | default(false) | bool }}"
+              started_at: "{{ fe_cisco_cisco_ios_xe_l2_stig_compliance_report_started_at | default('') }}"
+              ended_at: "{{ fe_cisco_cisco_ios_xe_l2_stig_compliance_report_ended_at | default('') }}"
+              duration_seconds: "{{ fe_cisco_cisco_ios_xe_l2_stig_compliance_report_duration_seconds | default(0) | int }}"
+              failed_task: "{{ fe_cisco_cisco_ios_xe_l2_stig_compliance_report_failed_task | default('') }}"
+              error: "{{ fe_cisco_cisco_ios_xe_l2_stig_compliance_report_error | default('') }}"
+              check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+          fe_validation_executions: 1
+          fe_validation_succeeded: "{{ 1 if fe_cisco_cisco_ios_xe_l2_stig_compliance_report_status | default('') == 'succeeded' else 0 }}"
+          fe_validation_failed: "{{ 0 if fe_cisco_cisco_ios_xe_l2_stig_compliance_report_status | default('') == 'succeeded' else 1 }}"
+          fe_validation_duration_seconds: "{{ fe_cisco_cisco_ios_xe_l2_stig_compliance_report_duration_seconds | default(0) | int }}"
+          fe_validation_failed_components: >-
+            {{ [] if fe_cisco_cisco_ios_xe_l2_stig_compliance_report_status | default('') == 'succeeded' else ['cisco/cisco_ios_xe_l2_stig/compliance_report'] }}
+        aggregate: true
+        per_host: false
+      tags:
+        - always
+
+    - name: "cisco/cisco_ios_xe_l2_stig/compliance_report | Always | Mark the validation statistics as published"
+      ansible.builtin.set_fact:
+        fe_cisco_cisco_ios_xe_l2_stig_compliance_report_stats_published: true
+      tags:
+        - always

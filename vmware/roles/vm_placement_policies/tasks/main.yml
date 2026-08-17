@@ -1,197 +1,381 @@
 ---
-- name: Assert required inputs
-  ansible.builtin.assert:
-    that:
-      - vcenter_hostname | length > 0
-      - vcenter_username | length > 0
-      - vcenter_password | length > 0
-      - cluster_name | length > 0
-    fail_msg: "vcenter_hostname/username/password and cluster_name are required."
 
-- name: Set defaults
+# ---------------------------------------------------------------------------
+# Fourth Estate preflight / postflight validation harness
+#
+# The task file body below is wrapped in an Ansible block/rescue/always structure:
+#
+#   block   preflight validation runs first, then the original task file body, then
+#           postflight validation. Any failure transfers control to rescue.
+#   rescue  records which task failed and why, then re-raises so a failure is
+#           never silently swallowed. Set fe_validation_continue_on_error=true
+#           to record the failure and keep going instead.
+#   always  computes the run duration and publishes the outcome through
+#           ansible.builtin.set_stats, so a wrapping playbook, AWX/AAP or CI can
+#           consume the result without scraping log output.
+#
+# Published stats (see docs/VALIDATION_AND_STATS.md):
+#   fe_validation_results['vmware/vm_placement_policies']  per-component record
+#   fe_validation_executions / _succeeded / _failed / _duration_seconds
+#   fe_validation_failed_components
+#
+# Add component-specific preflight checks without editing this file by setting
+#   fe_vmware_vm_placement_policies_required_vars: [var_one, var_two]
+# ---------------------------------------------------------------------------
+
+- name: "vmware/vm_placement_policies | Initialize validation state"
   ansible.builtin.set_fact:
-    vcenter_validate_certs: "{{ vcenter_validate_certs | default(false) }}"
-    affinity_policies: "{{ affinity_policies | default([]) }}"
-    host_affinity_policies: "{{ host_affinity_policies | default([]) }}"
-    resource_pools: "{{ resource_pools | default([]) }}"
-    report_path: "{{ report_path | default('/tmp/vm-placement-policies-report.json') }}"
+    fe_vmware_vm_placement_policies_start_epoch: "{{ now(fmt='%s') | int }}"
+    fe_vmware_vm_placement_policies_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+    fe_vmware_vm_placement_policies_status: "running"
+    fe_vmware_vm_placement_policies_preflight_passed: false
+    fe_vmware_vm_placement_policies_postflight_passed: false
+    fe_vmware_vm_placement_policies_failed_task: ""
+    fe_vmware_vm_placement_policies_error: ""
+    fe_vmware_vm_placement_policies_stats_published: false
+  tags:
+    - always
 
-- name: Enforce placement policies (DRS rules/groups + Resource Pools) and report
-  ansible.builtin.command:
-    cmd: >-
-      pwsh -NoLogo -NoProfile -NonInteractive -Command
-      "$ErrorActionPreference='Stop';
-       Import-Module VMware.PowerCLI -ErrorAction Stop;
-       Set-PowerCLIConfiguration -InvalidCertificateAction {{ vcenter_validate_certs | ternary('Ignore','Fail') }} -Scope Session -Confirm:$false | Out-Null;
-       $null = Connect-VIServer -Server '{{ vcenter_hostname }}' -User '{{ vcenter_username }}' -Password '{{ vcenter_password }}';
+- name: "vmware/vm_placement_policies | Guarded execution with preflight and postflight validation"
+  block:
 
-       function Resolve-Cluster([string]$cName) {
-         if ([string]::IsNullOrWhiteSpace($cName)) { $cName = '{{ cluster_name }}' }
-         return (Get-Cluster -Name $cName -ErrorAction Stop)
-       }
+    # ----------------------------- preflight --------------------
 
-       <# --------------------------------------- #>
-       <# 1) VM-VM (anti-)affinity by tag #>
-       <# --------------------------------------- #>
-       $affResults = @()
-       {% for pol in affinity_policies %}
-       try {
-         $cluster = Resolve-Cluster '{{ pol.cluster | default('') }}'
-         $name = '{{ pol.name }}'
-         $type = '{{ pol.type | default('separate') }}'.ToLower()  # separate|together
-         $enabled = {{ pol.enabled | default(true) | ternary('$true','$false') }}
-         $mandatory = {{ pol.mandatory | default(false) | ternary('$true','$false') }}
-         $vms = @(); try { $vms = Get-VM -Tag '{{ pol.vm_tag }}' } catch { $vms = @() }
+    - name: "vmware/vm_placement_policies | Preflight | Verify the control node meets the minimum ansible-core version"
+      ansible.builtin.assert:
+        that:
+          - ansible_version.full is version(fe_validation_min_ansible_version | default('2.12'), '>=')
+        fail_msg: >-
+          vmware/vm_placement_policies: requires ansible-core
+          {{ fe_validation_min_ansible_version | default('2.12') }} or newer,
+          found {{ ansible_version.full }}.
+        success_msg: >-
+          vmware/vm_placement_policies: ansible-core {{ ansible_version.full }} satisfies the minimum.
+        quiet: true
+      tags:
+        - always
+        - preflight
+        - validation
 
-         <# Find existing rule #>
-         $rule = Get-DrsRule -Cluster $cluster -Name $name -ErrorAction SilentlyContinue
-         if (-not $rule) {
-           if ($type -eq 'separate') {
-             $rule = New-DrsRule -Cluster $cluster -Name $name -SeparateVirtualMachine -Enabled:$enabled -KeepTogether:$false -Mandatory:$mandatory -VM $vms -ErrorAction Stop
-           } else {
-             $rule = New-DrsRule -Cluster $cluster -Name $name -KeepTogether -Enabled:$enabled -Mandatory:$mandatory -VM $vms -ErrorAction Stop
+    - name: "vmware/vm_placement_policies | Preflight | Verify every declared required variable is defined"
+      ansible.builtin.assert:
+        that:
+          - vars[item] is defined
+        fail_msg: "vmware/vm_placement_policies: required variable '{{ item }}' is not defined."
+        success_msg: "vmware/vm_placement_policies: required variable '{{ item }}' is defined."
+        quiet: true
+      loop: "{{ fe_vmware_vm_placement_policies_required_vars | default([]) }}"
+      loop_control:
+        label: "{{ item }}"
+      tags:
+        - always
+        - preflight
+        - validation
+
+    - name: "vmware/vm_placement_policies | Preflight | Record that preflight validation passed"
+      ansible.builtin.set_fact:
+        fe_vmware_vm_placement_policies_preflight_passed: true
+      tags:
+        - always
+        - preflight
+        - validation
+
+    # ----------------------------- execute ----------------------
+
+    - name: Assert required inputs
+      ansible.builtin.assert:
+        that:
+          - vcenter_hostname | length > 0
+          - vcenter_username | length > 0
+          - vcenter_password | length > 0
+          - cluster_name | length > 0
+        fail_msg: "vcenter_hostname/username/password and cluster_name are required."
+
+    - name: Set defaults
+      ansible.builtin.set_fact:
+        vcenter_validate_certs: "{{ vcenter_validate_certs | default(false) }}"
+        affinity_policies: "{{ affinity_policies | default([]) }}"
+        host_affinity_policies: "{{ host_affinity_policies | default([]) }}"
+        resource_pools: "{{ resource_pools | default([]) }}"
+        report_path: "{{ report_path | default('/tmp/vm-placement-policies-report.json') }}"
+
+    - name: Enforce placement policies (DRS rules/groups + Resource Pools) and report
+      ansible.builtin.command:
+        cmd: >-
+          pwsh -NoLogo -NoProfile -NonInteractive -Command
+          "$ErrorActionPreference='Stop';
+           Import-Module VMware.PowerCLI -ErrorAction Stop;
+           Set-PowerCLIConfiguration -InvalidCertificateAction {{ vcenter_validate_certs | ternary('Ignore','Fail') }} -Scope Session -Confirm:$false | Out-Null;
+           $null = Connect-VIServer -Server '{{ vcenter_hostname }}' -User '{{ vcenter_username }}' -Password '{{ vcenter_password }}';
+
+           function Resolve-Cluster([string]$cName) {
+             if ([string]::IsNullOrWhiteSpace($cName)) { $cName = '{{ cluster_name }}' }
+             return (Get-Cluster -Name $cName -ErrorAction Stop)
            }
-           $affResults += [pscustomobject]@{ name=$name; cluster=$cluster.Name; action='created'; vm_count=$vms.Count; type=$type }
-         } else {
-           <# Update rule properties + membership #>
-           if ($type -eq 'separate') {
-             Set-DrsRule -DrsRule $rule -Enabled:$enabled -Mandatory:$mandatory -KeepTogether:$false -VirtualMachine $vms -ErrorAction Stop | Out-Null
-           } else {
-             Set-DrsRule -DrsRule $rule -Enabled:$enabled -Mandatory:$mandatory -KeepTogether:$true -VirtualMachine $vms -ErrorAction Stop | Out-Null
+
+           <# --------------------------------------- #>
+           <# 1) VM-VM (anti-)affinity by tag #>
+           <# --------------------------------------- #>
+           $affResults = @()
+           {% for pol in affinity_policies %}
+           try {
+             $cluster = Resolve-Cluster '{{ pol.cluster | default('') }}'
+             $name = '{{ pol.name }}'
+             $type = '{{ pol.type | default('separate') }}'.ToLower()  # separate|together
+             $enabled = {{ pol.enabled | default(true) | ternary('$true','$false') }}
+             $mandatory = {{ pol.mandatory | default(false) | ternary('$true','$false') }}
+             $vms = @(); try { $vms = Get-VM -Tag '{{ pol.vm_tag }}' } catch { $vms = @() }
+
+             <# Find existing rule #>
+             $rule = Get-DrsRule -Cluster $cluster -Name $name -ErrorAction SilentlyContinue
+             if (-not $rule) {
+               if ($type -eq 'separate') {
+                 $rule = New-DrsRule -Cluster $cluster -Name $name -SeparateVirtualMachine -Enabled:$enabled -KeepTogether:$false -Mandatory:$mandatory -VM $vms -ErrorAction Stop
+               } else {
+                 $rule = New-DrsRule -Cluster $cluster -Name $name -KeepTogether -Enabled:$enabled -Mandatory:$mandatory -VM $vms -ErrorAction Stop
+               }
+               $affResults += [pscustomobject]@{ name=$name; cluster=$cluster.Name; action='created'; vm_count=$vms.Count; type=$type }
+             } else {
+               <# Update rule properties + membership #>
+               if ($type -eq 'separate') {
+                 Set-DrsRule -DrsRule $rule -Enabled:$enabled -Mandatory:$mandatory -KeepTogether:$false -VirtualMachine $vms -ErrorAction Stop | Out-Null
+               } else {
+                 Set-DrsRule -DrsRule $rule -Enabled:$enabled -Mandatory:$mandatory -KeepTogether:$true -VirtualMachine $vms -ErrorAction Stop | Out-Null
+               }
+               $affResults += [pscustomobject]@{ name=$name; cluster=$cluster.Name; action='updated'; vm_count=$vms.Count; type=$type }
+             }
+           } catch {
+             $affResults += [pscustomobject]@{ name='{{ pol.name }}'; cluster='{{ pol.cluster | default(cluster_name) }}'; action='error'; error=$_.Exception.Message }
            }
-           $affResults += [pscustomobject]@{ name=$name; cluster=$cluster.Name; action='updated'; vm_count=$vms.Count; type=$type }
-         }
-       } catch {
-         $affResults += [pscustomobject]@{ name='{{ pol.name }}'; cluster='{{ pol.cluster | default(cluster_name) }}'; action='error'; error=$_.Exception.Message }
-       }
-       {% endfor %}
+           {% endfor %}
 
-       <# --------------------------------------- #>
-       <# 2) VM↔Host affinity via groups #>
-       <# --------------------------------------- #>
-       $hostAffResults = @()
-       {% for pol in host_affinity_policies %}
-       try {
-         $cluster = Resolve-Cluster '{{ pol.cluster | default('') }}'
-         $name = '{{ pol.name }}'
-         $policy = '{{ pol.policy | default('must_run_on') }}'.ToLower()   # must_run_on|should_run_on|must_not_run_on
-         $enabled = {{ pol.enabled | default(true) | ternary('$true','$false') }}
-         $vmTag = '{{ pol.vm_tag }}'
-         $vmGroupName = $name + '-VMs'
-         $hostGroupName = '{{ pol.host_group.name | default(pol.name + "-Hosts") }}'
+           <# --------------------------------------- #>
+           <# 2) VM↔Host affinity via groups #>
+           <# --------------------------------------- #>
+           $hostAffResults = @()
+           {% for pol in host_affinity_policies %}
+           try {
+             $cluster = Resolve-Cluster '{{ pol.cluster | default('') }}'
+             $name = '{{ pol.name }}'
+             $policy = '{{ pol.policy | default('must_run_on') }}'.ToLower()   # must_run_on|should_run_on|must_not_run_on
+             $enabled = {{ pol.enabled | default(true) | ternary('$true','$false') }}
+             $vmTag = '{{ pol.vm_tag }}'
+             $vmGroupName = $name + '-VMs'
+             $hostGroupName = '{{ pol.host_group.name | default(pol.name + "-Hosts") }}'
 
-         <# Build groups #>
-         $vms = @(); try { $vms = Get-VM -Tag $vmTag } catch { $vms = @() }
-         $hostNames = @('{{ (pol.host_group.hosts | default([])) | join("','") }}')
-         $hosts = @(); foreach ($hn in $hostNames) { if (-not [string]::IsNullOrWhiteSpace($hn)) { $h = Get-VMHost -Name $hn -ErrorAction SilentlyContinue; if ($h) { $hosts += $h } } }
+             <# Build groups #>
+             $vms = @(); try { $vms = Get-VM -Tag $vmTag } catch { $vms = @() }
+             $hostNames = @('{{ (pol.host_group.hosts | default([])) | join("','") }}')
+             $hosts = @(); foreach ($hn in $hostNames) { if (-not [string]::IsNullOrWhiteSpace($hn)) { $h = Get-VMHost -Name $hn -ErrorAction SilentlyContinue; if ($h) { $hosts += $h } } }
 
-         <# Ensure VM group #>
-         $vmGroup = Get-DrsClusterGroup -Cluster $cluster -Name $vmGroupName -ErrorAction SilentlyContinue | Where-Object {$_.Type -eq 'Vm'}
-         if (-not $vmGroup) { $vmGroup = New-DrsVmGroup -Cluster $cluster -Name $vmGroupName -VM $vms }
-         else { Set-DrsClusterGroup -Cluster $cluster -DrsClusterGroup $vmGroup -VM $vms | Out-Null }
+             <# Ensure VM group #>
+             $vmGroup = Get-DrsClusterGroup -Cluster $cluster -Name $vmGroupName -ErrorAction SilentlyContinue | Where-Object {$_.Type -eq 'Vm'}
+             if (-not $vmGroup) { $vmGroup = New-DrsVmGroup -Cluster $cluster -Name $vmGroupName -VM $vms }
+             else { Set-DrsClusterGroup -Cluster $cluster -DrsClusterGroup $vmGroup -VM $vms | Out-Null }
 
-         <# Ensure Host group #>
-         $hostGroup = Get-DrsClusterGroup -Cluster $cluster -Name $hostGroupName -ErrorAction SilentlyContinue | Where-Object {$_.Type -eq 'Host'}
-         if (-not $hostGroup) { $hostGroup = New-DrsHostGroup -Cluster $cluster -Name $hostGroupName -VMHost $hosts }
-         else { Set-DrsClusterGroup -Cluster $cluster -DrsClusterGroup $hostGroup -VMHost $hosts | Out-Null }
+             <# Ensure Host group #>
+             $hostGroup = Get-DrsClusterGroup -Cluster $cluster -Name $hostGroupName -ErrorAction SilentlyContinue | Where-Object {$_.Type -eq 'Host'}
+             if (-not $hostGroup) { $hostGroup = New-DrsHostGroup -Cluster $cluster -Name $hostGroupName -VMHost $hosts }
+             else { Set-DrsClusterGroup -Cluster $cluster -DrsClusterGroup $hostGroup -VMHost $hosts | Out-Null }
 
-         <# Ensure rule linking groups #>
-         $rule = Get-DrsRule -Cluster $cluster -Name $name -ErrorAction SilentlyContinue
-         if (-not $rule) {
-           switch ($policy) {
-             'must_run_on'   { $rule = New-DrsRule -Cluster $cluster -Name $name -Enabled:$enabled -VmGroup $vmGroup -HostGroup $hostGroup -Mandatory:$true  -Policy 'MustRunOn' }
-             'should_run_on' { $rule = New-DrsRule -Cluster $cluster -Name $name -Enabled:$enabled -VmGroup $vmGroup -HostGroup $hostGroup -Mandatory:$false -Policy 'ShouldRunOn' }
-             'must_not_run_on' { $rule = New-DrsRule -Cluster $cluster -Name $name -Enabled:$enabled -VmGroup $vmGroup -HostGroup $hostGroup -Mandatory:$true -Policy 'MustNotRunOn' }
-             Default { $rule = New-DrsRule -Cluster $cluster -Name $name -Enabled:$enabled -VmGroup $vmGroup -HostGroup $hostGroup -Mandatory:$true -Policy 'MustRunOn' }
+             <# Ensure rule linking groups #>
+             $rule = Get-DrsRule -Cluster $cluster -Name $name -ErrorAction SilentlyContinue
+             if (-not $rule) {
+               switch ($policy) {
+                 'must_run_on'   { $rule = New-DrsRule -Cluster $cluster -Name $name -Enabled:$enabled -VmGroup $vmGroup -HostGroup $hostGroup -Mandatory:$true  -Policy 'MustRunOn' }
+                 'should_run_on' { $rule = New-DrsRule -Cluster $cluster -Name $name -Enabled:$enabled -VmGroup $vmGroup -HostGroup $hostGroup -Mandatory:$false -Policy 'ShouldRunOn' }
+                 'must_not_run_on' { $rule = New-DrsRule -Cluster $cluster -Name $name -Enabled:$enabled -VmGroup $vmGroup -HostGroup $hostGroup -Mandatory:$true -Policy 'MustNotRunOn' }
+                 Default { $rule = New-DrsRule -Cluster $cluster -Name $name -Enabled:$enabled -VmGroup $vmGroup -HostGroup $hostGroup -Mandatory:$true -Policy 'MustRunOn' }
+               }
+               $hostAffResults += [pscustomobject]@{ name=$name; action='created'; vms=$vms.Count; hosts=$hosts.Count; policy=$policy }
+             } else {
+               Set-DrsRule -DrsRule $rule -Enabled:$enabled -VmGroup $vmGroup -HostGroup $hostGroup | Out-Null
+               $hostAffResults += [pscustomobject]@{ name=$name; action='updated'; vms=$vms.Count; hosts=$hosts.Count; policy=$policy }
+             }
+           } catch {
+             $hostAffResults += [pscustomobject]@{ name='{{ pol.name }}'; action='error'; error=$_.Exception.Message }
            }
-           $hostAffResults += [pscustomobject]@{ name=$name; action='created'; vms=$vms.Count; hosts=$hosts.Count; policy=$policy }
-         } else {
-           Set-DrsRule -DrsRule $rule -Enabled:$enabled -VmGroup $vmGroup -HostGroup $hostGroup | Out-Null
-           $hostAffResults += [pscustomobject]@{ name=$name; action='updated'; vms=$vms.Count; hosts=$hosts.Count; policy=$policy }
-         }
-       } catch {
-         $hostAffResults += [pscustomobject]@{ name='{{ pol.name }}'; action='error'; error=$_.Exception.Message }
-       }
-       {% endfor %}
+           {% endfor %}
 
-       <# --------------------------------------- #>
-       <# 3) Resource Pools + move VMs by tag #>
-       <# --------------------------------------- #>
-       function Set-RpShares($rp, [string]$what, [pscustomobject]$cfg) {
-         $level = ($cfg.shares); if (-not $level) { $level = 'Normal' }
-         if ($level -ieq 'custom') {
-           if ($what -eq 'cpu') { Set-ResourcePool -ResourcePool $rp -NumCpuSharesLevel Custom -NumCpuShares $cfg.shares_value -Confirm:$false | Out-Null }
-           else { Set-ResourcePool -ResourcePool $rp -NumMemSharesLevel Custom -NumMemShares $cfg.shares_value -Confirm:$false | Out-Null }
-         } else {
-           if ($what -eq 'cpu') { Set-ResourcePool -ResourcePool $rp -NumCpuSharesLevel $level -Confirm:$false | Out-Null }
-           else { Set-ResourcePool -ResourcePool $rp -NumMemSharesLevel $level -Confirm:$false | Out-Null }
-         }
-       }
-
-       $rpResults = @(); $vmMoves = @()
-       {% for rp in resource_pools %}
-       try {
-         $cluster = Resolve-Cluster '{{ rp.cluster | default('') }}'
-         $name = '{{ rp.name }}'
-         $parentName = '{{ rp.parent | default('') }}'
-
-         $parent = $cluster
-         if (-not [string]::IsNullOrWhiteSpace($parentName)) {
-           $parent = Get-ResourcePool -Location $cluster -Name $parentName -ErrorAction SilentlyContinue
-           if (-not $parent) { $parent = New-ResourcePool -Name $parentName -Location $cluster }
-         }
-
-         $rp = Get-ResourcePool -Location $parent -Name $name -ErrorAction SilentlyContinue
-         if (-not $rp) {
-           $rp = New-ResourcePool -Name $name -Location $parent
-           $rpResults += [pscustomobject]@{ name=$name; action='created'; parent=($parent.Name) }
-         } else {
-           $rpResults += [pscustomobject]@{ name=$name; action='exists'; parent=($parent.Name) }
-         }
-
-         <# CPU #>
-         try {
-           Set-ResourcePool -ResourcePool $rp -CpuReservationMhz ([int]'{{ rp.cpu.reservation_mhz | default(0) }}') -CpuLimitMhz ([int]'{{ rp.cpu.limit_mhz | default(-1) }}') -Confirm:$false | Out-Null
-           Set-RpShares -rp $rp -what 'cpu' -cfg ([pscustomobject]@{ shares='{{ rp.cpu.shares | default('normal') }}'; shares_value=[int]'{{ rp.cpu.shares_value | default(0) }}' })
-         } catch { }
-
-         <# Memory #>
-         try {
-           Set-ResourcePool -ResourcePool $rp -MemReservationMB ([int]'{{ rp.memory.reservation_mb | default(0) }}') -MemLimitMB ([int]'{{ rp.memory.limit_mb | default(-1) }}') -Confirm:$false | Out-Null
-           Set-RpShares -rp $rp -what 'mem' -cfg ([pscustomobject]@{ shares='{{ rp.memory.shares | default('normal') }}'; shares_value=[int]'{{ rp.memory.shares_value | default(0) }}' })
-         } catch { }
-
-         <# Move VMs by tag #>
-         $tag = '{{ rp.vm_tag | default('') }}'
-         if (-not [string]::IsNullOrWhiteSpace($tag)) {
-           $targets = @(); try { $targets = Get-VM -Tag $tag -ErrorAction SilentlyContinue } catch { $targets = @() }
-           foreach ($vm in $targets) {
-             if ($vm.ResourcePoolId -ne $rp.Id) {
-               try { Move-VM -VM $vm -ResourcePool $rp -Confirm:$false | Out-Null; $vmMoves += [pscustomobject]@{ vm=$vm.Name; dest=$rp.Name } } catch { }
+           <# --------------------------------------- #>
+           <# 3) Resource Pools + move VMs by tag #>
+           <# --------------------------------------- #>
+           function Set-RpShares($rp, [string]$what, [pscustomobject]$cfg) {
+             $level = ($cfg.shares); if (-not $level) { $level = 'Normal' }
+             if ($level -ieq 'custom') {
+               if ($what -eq 'cpu') { Set-ResourcePool -ResourcePool $rp -NumCpuSharesLevel Custom -NumCpuShares $cfg.shares_value -Confirm:$false | Out-Null }
+               else { Set-ResourcePool -ResourcePool $rp -NumMemSharesLevel Custom -NumMemShares $cfg.shares_value -Confirm:$false | Out-Null }
+             } else {
+               if ($what -eq 'cpu') { Set-ResourcePool -ResourcePool $rp -NumCpuSharesLevel $level -Confirm:$false | Out-Null }
+               else { Set-ResourcePool -ResourcePool $rp -NumMemSharesLevel $level -Confirm:$false | Out-Null }
              }
            }
-         }
-       } catch {
-         $rpResults += [pscustomobject]@{ name='{{ rp.name }}'; action='error'; error=$_.Exception.Message }
-       }
-       {% endfor %}
 
-       $out = [pscustomobject]@{
-         vcenter='{{ vcenter_hostname }}'
-         cluster_default='{{ cluster_name }}'
-         affinity=$affResults
-         host_affinity=$hostAffResults
-         resource_pools=$rpResults
-         vm_moves=$vmMoves
-         timestamp=(Get-Date).ToString('s')
-       }
-       $json = $out | ConvertTo-Json -Depth 8
-       Set-Content -Path '{{ report_path }}' -Value $json -Encoding UTF8
-       $json"
-  register: place_cmd
-  changed_when: true
-  delegate_to: localhost
+           $rpResults = @(); $vmMoves = @()
+           {% for rp in resource_pools %}
+           try {
+             $cluster = Resolve-Cluster '{{ rp.cluster | default('') }}'
+             $name = '{{ rp.name }}'
+             $parentName = '{{ rp.parent | default('') }}'
 
-- name: Show summary JSON (truncated)
-  ansible.builtin.debug:
-    msg: "{{ place_cmd.stdout[:1500] }}... (see full at {{ report_path }})"
+             $parent = $cluster
+             if (-not [string]::IsNullOrWhiteSpace($parentName)) {
+               $parent = Get-ResourcePool -Location $cluster -Name $parentName -ErrorAction SilentlyContinue
+               if (-not $parent) { $parent = New-ResourcePool -Name $parentName -Location $cluster }
+             }
+
+             $rp = Get-ResourcePool -Location $parent -Name $name -ErrorAction SilentlyContinue
+             if (-not $rp) {
+               $rp = New-ResourcePool -Name $name -Location $parent
+               $rpResults += [pscustomobject]@{ name=$name; action='created'; parent=($parent.Name) }
+             } else {
+               $rpResults += [pscustomobject]@{ name=$name; action='exists'; parent=($parent.Name) }
+             }
+
+             <# CPU #>
+             try {
+               Set-ResourcePool -ResourcePool $rp -CpuReservationMhz ([int]'{{ rp.cpu.reservation_mhz | default(0) }}') -CpuLimitMhz ([int]'{{ rp.cpu.limit_mhz | default(-1) }}') -Confirm:$false | Out-Null
+               Set-RpShares -rp $rp -what 'cpu' -cfg ([pscustomobject]@{ shares='{{ rp.cpu.shares | default('normal') }}'; shares_value=[int]'{{ rp.cpu.shares_value | default(0) }}' })
+             } catch { }
+
+             <# Memory #>
+             try {
+               Set-ResourcePool -ResourcePool $rp -MemReservationMB ([int]'{{ rp.memory.reservation_mb | default(0) }}') -MemLimitMB ([int]'{{ rp.memory.limit_mb | default(-1) }}') -Confirm:$false | Out-Null
+               Set-RpShares -rp $rp -what 'mem' -cfg ([pscustomobject]@{ shares='{{ rp.memory.shares | default('normal') }}'; shares_value=[int]'{{ rp.memory.shares_value | default(0) }}' })
+             } catch { }
+
+             <# Move VMs by tag #>
+             $tag = '{{ rp.vm_tag | default('') }}'
+             if (-not [string]::IsNullOrWhiteSpace($tag)) {
+               $targets = @(); try { $targets = Get-VM -Tag $tag -ErrorAction SilentlyContinue } catch { $targets = @() }
+               foreach ($vm in $targets) {
+                 if ($vm.ResourcePoolId -ne $rp.Id) {
+                   try { Move-VM -VM $vm -ResourcePool $rp -Confirm:$false | Out-Null; $vmMoves += [pscustomobject]@{ vm=$vm.Name; dest=$rp.Name } } catch { }
+                 }
+               }
+             }
+           } catch {
+             $rpResults += [pscustomobject]@{ name='{{ rp.name }}'; action='error'; error=$_.Exception.Message }
+           }
+           {% endfor %}
+
+           $out = [pscustomobject]@{
+             vcenter='{{ vcenter_hostname }}'
+             cluster_default='{{ cluster_name }}'
+             affinity=$affResults
+             host_affinity=$hostAffResults
+             resource_pools=$rpResults
+             vm_moves=$vmMoves
+             timestamp=(Get-Date).ToString('s')
+           }
+           $json = $out | ConvertTo-Json -Depth 8
+           Set-Content -Path '{{ report_path }}' -Value $json -Encoding UTF8
+           $json"
+      register: place_cmd
+      changed_when: true
+      delegate_to: localhost
+
+    - name: Show summary JSON (truncated)
+      ansible.builtin.debug:
+        msg: "{{ place_cmd.stdout[:1500] }}... (see full at {{ report_path }})"
+
+    # ----------------------------- postflight -------------------
+
+    - name: "vmware/vm_placement_policies | Postflight | Verify the guarded body ran after a passing preflight"
+      ansible.builtin.assert:
+        that:
+          - fe_vmware_vm_placement_policies_preflight_passed | bool
+          - fe_vmware_vm_placement_policies_status in ['running', 'succeeded']
+        fail_msg: >-
+          vmware/vm_placement_policies: postflight validation failed - preflight passed
+          ={{ fe_vmware_vm_placement_policies_preflight_passed | default(false) }},
+          status={{ fe_vmware_vm_placement_policies_status | default('unknown') }}.
+        success_msg: "vmware/vm_placement_policies: postflight validation passed."
+        quiet: true
+      tags:
+        - always
+        - postflight
+        - validation
+
+    - name: "vmware/vm_placement_policies | Postflight | Record the successful outcome"
+      ansible.builtin.set_fact:
+        fe_vmware_vm_placement_policies_postflight_passed: true
+        fe_vmware_vm_placement_policies_status: "succeeded"
+      tags:
+        - always
+        - postflight
+        - validation
+
+  rescue:
+
+    - name: "vmware/vm_placement_policies | Rescue | Capture the failing task and error detail"
+      ansible.builtin.set_fact:
+        fe_vmware_vm_placement_policies_status: "failed"
+        fe_vmware_vm_placement_policies_postflight_passed: false
+        fe_vmware_vm_placement_policies_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+        fe_vmware_vm_placement_policies_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+      tags:
+        - always
+        - rescue
+
+    - name: "vmware/vm_placement_policies | Rescue | Report the failure"
+      ansible.builtin.debug:
+        msg: >-
+          vmware/vm_placement_policies: FAILED at '{{ fe_vmware_vm_placement_policies_failed_task }}' on
+          {{ inventory_hostname }} - {{ fe_vmware_vm_placement_policies_error }}
+      tags:
+        - always
+        - rescue
+
+    - name: "vmware/vm_placement_policies | Rescue | Re-raise the failure unless the caller opted to continue"
+      ansible.builtin.fail:
+        msg: >-
+          vmware/vm_placement_policies failed at '{{ fe_vmware_vm_placement_policies_failed_task }}': {{ fe_vmware_vm_placement_policies_error }}
+      when: not (fe_validation_continue_on_error | default(false) | bool)
+      tags:
+        - always
+        - rescue
+
+  always:
+
+    - name: "vmware/vm_placement_policies | Always | Compute the execution duration"
+      ansible.builtin.set_fact:
+        fe_vmware_vm_placement_policies_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+        fe_vmware_vm_placement_policies_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_vmware_vm_placement_policies_start_epoch | default(0) | int) }}"
+      tags:
+        - always
+
+    - name: "vmware/vm_placement_policies | Always | Publish the validation result with set_stats"
+      ansible.builtin.set_stats:
+        data:
+          fe_validation_results:
+            "vmware/vm_placement_policies":
+              component: "vmware/vm_placement_policies"
+              type: "role"
+              platform: "vmware"
+              host: "{{ inventory_hostname }}"
+              status: "{{ fe_vmware_vm_placement_policies_status | default('unknown') }}"
+              preflight_passed: "{{ fe_vmware_vm_placement_policies_preflight_passed | default(false) | bool }}"
+              postflight_passed: "{{ fe_vmware_vm_placement_policies_postflight_passed | default(false) | bool }}"
+              started_at: "{{ fe_vmware_vm_placement_policies_started_at | default('') }}"
+              ended_at: "{{ fe_vmware_vm_placement_policies_ended_at | default('') }}"
+              duration_seconds: "{{ fe_vmware_vm_placement_policies_duration_seconds | default(0) | int }}"
+              failed_task: "{{ fe_vmware_vm_placement_policies_failed_task | default('') }}"
+              error: "{{ fe_vmware_vm_placement_policies_error | default('') }}"
+              check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+          fe_validation_executions: 1
+          fe_validation_succeeded: "{{ 1 if fe_vmware_vm_placement_policies_status | default('') == 'succeeded' else 0 }}"
+          fe_validation_failed: "{{ 0 if fe_vmware_vm_placement_policies_status | default('') == 'succeeded' else 1 }}"
+          fe_validation_duration_seconds: "{{ fe_vmware_vm_placement_policies_duration_seconds | default(0) | int }}"
+          fe_validation_failed_components: >-
+            {{ [] if fe_vmware_vm_placement_policies_status | default('') == 'succeeded' else ['vmware/vm_placement_policies'] }}
+        aggregate: true
+        per_host: false
+      tags:
+        - always
+
+    - name: "vmware/vm_placement_policies | Always | Mark the validation statistics as published"
+      ansible.builtin.set_fact:
+        fe_vmware_vm_placement_policies_stats_published: true
+      tags:
+        - always

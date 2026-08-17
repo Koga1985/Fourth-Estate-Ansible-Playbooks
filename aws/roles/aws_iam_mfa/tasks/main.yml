@@ -1,103 +1,286 @@
 ---
 # tasks file for aws_iam_mfa
 
-- name: Check current MFA devices for users
-  community.aws.iam_mfa_device_info:
-    user_name: "{{ item.name }}"
-  loop: "{{ iam_mfa_users }}"
-  when: iam_mfa_users is defined
-  register: mfa_device_status
+# ---------------------------------------------------------------------------
+# Fourth Estate preflight / postflight validation harness
+#
+# The task file body below is wrapped in an Ansible block/rescue/always structure:
+#
+#   block   preflight validation runs first, then the original task file body, then
+#           postflight validation. Any failure transfers control to rescue.
+#   rescue  records which task failed and why, then re-raises so a failure is
+#           never silently swallowed. Set fe_validation_continue_on_error=true
+#           to record the failure and keep going instead.
+#   always  computes the run duration and publishes the outcome through
+#           ansible.builtin.set_stats, so a wrapping playbook, AWX/AAP or CI can
+#           consume the result without scraping log output.
+#
+# Published stats (see docs/VALIDATION_AND_STATS.md):
+#   fe_validation_results['aws/aws_iam_mfa']  per-component record
+#   fe_validation_executions / _succeeded / _failed / _duration_seconds
+#   fe_validation_failed_components
+#
+# Add component-specific preflight checks without editing this file by setting
+#   fe_aws_aws_iam_mfa_required_vars: [var_one, var_two]
+# ---------------------------------------------------------------------------
 
-- name: Create virtual MFA devices
-  amazon.aws.iam_user:
-    name: "{{ item.name }}"
-    state: present
-  loop: "{{ iam_mfa_users }}"
-  when:
-    - iam_mfa_users is defined
-    - item.enable_mfa | default(true) | bool
+- name: "aws/aws_iam_mfa | Initialize validation state"
+  ansible.builtin.set_fact:
+    fe_aws_aws_iam_mfa_start_epoch: "{{ now(fmt='%s') | int }}"
+    fe_aws_aws_iam_mfa_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+    fe_aws_aws_iam_mfa_status: "running"
+    fe_aws_aws_iam_mfa_preflight_passed: false
+    fe_aws_aws_iam_mfa_postflight_passed: false
+    fe_aws_aws_iam_mfa_failed_task: ""
+    fe_aws_aws_iam_mfa_error: ""
+    fe_aws_aws_iam_mfa_stats_published: false
+  tags:
+    - always
 
-- name: Enable MFA enforcement policy
-  community.aws.iam_policy:
-    iam_type: user
-    iam_name: "{{ item.name }}"
-    policy_name: "RequireMFA"
-    policy_document: "{{ lookup('template', 'require_mfa_policy.json.j2') }}"
-    state: present
-  loop: "{{ iam_mfa_users }}"
-  when:
-    - iam_mfa_users is defined
-    - iam_enforce_mfa | bool
+- name: "aws/aws_iam_mfa | Guarded execution with preflight and postflight validation"
+  block:
 
-- name: Create MFA compliance report
-  ansible.builtin.template:
-    src: "mfa_compliance_report.html.j2"
-    dest: "/tmp/mfa_compliance_report_{{ ansible_date_time.date }}.html"
-    mode: '0644'
-  delegate_to: localhost
-  when: iam_generate_mfa_report | bool
+    # ----------------------------- preflight --------------------
 
-- name: Tag users without MFA
-  community.aws.iam_user:
-    name: "{{ item.item.name }}"
-    state: present
-    tags:
-      MFAEnabled: "false"
-      ComplianceStatus: "NonCompliant"
-      RequiresAction: "true"
-  loop: "{{ mfa_device_status.results }}"
-  when:
-    - mfa_device_status is defined
-    - item.mfa_devices | length == 0
-    - iam_tag_non_compliant | bool
+    - name: "aws/aws_iam_mfa | Preflight | Verify the control node meets the minimum ansible-core version"
+      ansible.builtin.assert:
+        that:
+          - ansible_version.full is version(fe_validation_min_ansible_version | default('2.12'), '>=')
+        fail_msg: >-
+          aws/aws_iam_mfa: requires ansible-core
+          {{ fe_validation_min_ansible_version | default('2.12') }} or newer,
+          found {{ ansible_version.full }}.
+        success_msg: >-
+          aws/aws_iam_mfa: ansible-core {{ ansible_version.full }} satisfies the minimum.
+        quiet: true
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: Send MFA reminder notifications
-  ansible.builtin.uri:
-    url: "{{ notification_webhook_url }}"
-    method: POST
-    body_format: json
-    body:
-      users_without_mfa: "{{ mfa_device_status.results | selectattr('mfa_devices', 'equalto', []) | map(attribute='item.name') | list }}"
-      timestamp: "{{ ansible_date_time.iso8601 }}"
-      message: "The following users do not have MFA enabled and must configure it within {{ iam_mfa_grace_period_days }} days"
-    status_code: [200, 201, 204]
-  when:
-    - notification_webhook_url is defined
-    - iam_send_mfa_reminders | bool
-  delegate_to: localhost
+    - name: "aws/aws_iam_mfa | Preflight | Verify every declared required variable is defined"
+      ansible.builtin.assert:
+        that:
+          - vars[item] is defined
+        fail_msg: "aws/aws_iam_mfa: required variable '{{ item }}' is not defined."
+        success_msg: "aws/aws_iam_mfa: required variable '{{ item }}' is defined."
+        quiet: true
+      loop: "{{ fe_aws_aws_iam_mfa_required_vars | default([]) }}"
+      loop_control:
+        label: "{{ item }}"
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: Create IAM access report for MFA analysis
-  community.aws.iam_access_key_info:
-    user_name: "{{ item.name }}"
-  loop: "{{ iam_mfa_users }}"
-  when: iam_mfa_users is defined
-  register: access_key_info
+    - name: "aws/aws_iam_mfa | Preflight | Record that preflight validation passed"
+      ansible.builtin.set_fact:
+        fe_aws_aws_iam_mfa_preflight_passed: true
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: Deactivate old access keys without MFA
-  community.aws.iam_access_key:
-    user_name: "{{ item.0.item.name }}"
-    id: "{{ item.1.access_key_id }}"
-    state: absent
-  loop: "{{ access_key_info.results | subelements('access_keys', skip_missing=True) }}"
-  when:
-    - access_key_info is defined
-    - iam_revoke_keys_without_mfa | bool
-    - item.1.create_date | to_datetime('%Y-%m-%dT%H:%M:%S%z') < (ansible_date_time.iso8601 | to_datetime('%Y-%m-%dT%H:%M:%S%z')) - timedelta(days=iam_mfa_grace_period_days)
-  no_log: true
+    # ----------------------------- execute ----------------------
 
-- name: Display MFA compliance summary
-  ansible.builtin.debug:
-    msg:
-      - "Total Users Checked: {{ iam_mfa_users | length }}"
-      - "Users with MFA: {{ mfa_device_status.results | selectattr('mfa_devices', 'ne', []) | list | length }}"
-      - "Users without MFA: {{ mfa_device_status.results | selectattr('mfa_devices', 'equalto', []) | list | length }}"
-      - "Compliance Rate: {{ ((mfa_device_status.results | selectattr('mfa_devices', 'ne', []) | list | length) / (iam_mfa_users | length) * 100) | round(2) }}%"
-  when:
-    - iam_mfa_users is defined
-    - mfa_device_status is defined
+    - name: Check current MFA devices for users
+      community.aws.iam_mfa_device_info:
+        user_name: "{{ item.name }}"
+      loop: "{{ iam_mfa_users }}"
+      when: iam_mfa_users is defined
+      register: mfa_device_status
 
-- name: Notify MFA configuration changes
-  ansible.builtin.debug:
-    msg: "MFA configuration check completed"
-  changed_when: true
-  notify: notify mfa changes
+    - name: Create virtual MFA devices
+      amazon.aws.iam_user:
+        name: "{{ item.name }}"
+        state: present
+      loop: "{{ iam_mfa_users }}"
+      when:
+        - iam_mfa_users is defined
+        - item.enable_mfa | default(true) | bool
+
+    - name: Enable MFA enforcement policy
+      community.aws.iam_policy:
+        iam_type: user
+        iam_name: "{{ item.name }}"
+        policy_name: "RequireMFA"
+        policy_document: "{{ lookup('template', 'require_mfa_policy.json.j2') }}"
+        state: present
+      loop: "{{ iam_mfa_users }}"
+      when:
+        - iam_mfa_users is defined
+        - iam_enforce_mfa | bool
+
+    - name: Create MFA compliance report
+      ansible.builtin.template:
+        src: "mfa_compliance_report.html.j2"
+        dest: "/tmp/mfa_compliance_report_{{ ansible_date_time.date }}.html"
+        mode: '0644'
+      delegate_to: localhost
+      when: iam_generate_mfa_report | bool
+
+    - name: Tag users without MFA
+      community.aws.iam_user:
+        name: "{{ item.item.name }}"
+        state: present
+        tags:
+          MFAEnabled: "false"
+          ComplianceStatus: "NonCompliant"
+          RequiresAction: "true"
+      loop: "{{ mfa_device_status.results }}"
+      when:
+        - mfa_device_status is defined
+        - item.mfa_devices | length == 0
+        - iam_tag_non_compliant | bool
+
+    - name: Send MFA reminder notifications
+      ansible.builtin.uri:
+        url: "{{ notification_webhook_url }}"
+        method: POST
+        body_format: json
+        body:
+          users_without_mfa: "{{ mfa_device_status.results | selectattr('mfa_devices', 'equalto', []) | map(attribute='item.name') | list }}"
+          timestamp: "{{ ansible_date_time.iso8601 }}"
+          message: "The following users do not have MFA enabled and must configure it within {{ iam_mfa_grace_period_days }} days"
+        status_code: [200, 201, 204]
+      when:
+        - notification_webhook_url is defined
+        - iam_send_mfa_reminders | bool
+      delegate_to: localhost
+
+    - name: Create IAM access report for MFA analysis
+      community.aws.iam_access_key_info:
+        user_name: "{{ item.name }}"
+      loop: "{{ iam_mfa_users }}"
+      when: iam_mfa_users is defined
+      register: access_key_info
+
+    - name: Deactivate old access keys without MFA
+      community.aws.iam_access_key:
+        user_name: "{{ item.0.item.name }}"
+        id: "{{ item.1.access_key_id }}"
+        state: absent
+      loop: "{{ access_key_info.results | subelements('access_keys', skip_missing=True) }}"
+      when:
+        - access_key_info is defined
+        - iam_revoke_keys_without_mfa | bool
+        - item.1.create_date | to_datetime('%Y-%m-%dT%H:%M:%S%z') < (ansible_date_time.iso8601 | to_datetime('%Y-%m-%dT%H:%M:%S%z')) - timedelta(days=iam_mfa_grace_period_days)
+      no_log: true
+
+    - name: Display MFA compliance summary
+      ansible.builtin.debug:
+        msg:
+          - "Total Users Checked: {{ iam_mfa_users | length }}"
+          - "Users with MFA: {{ mfa_device_status.results | selectattr('mfa_devices', 'ne', []) | list | length }}"
+          - "Users without MFA: {{ mfa_device_status.results | selectattr('mfa_devices', 'equalto', []) | list | length }}"
+          - "Compliance Rate: {{ ((mfa_device_status.results | selectattr('mfa_devices', 'ne', []) | list | length) / (iam_mfa_users | length) * 100) | round(2) }}%"
+      when:
+        - iam_mfa_users is defined
+        - mfa_device_status is defined
+
+    - name: Notify MFA configuration changes
+      ansible.builtin.debug:
+        msg: "MFA configuration check completed"
+      changed_when: true
+      notify: notify mfa changes
+
+    # ----------------------------- postflight -------------------
+
+    - name: "aws/aws_iam_mfa | Postflight | Verify the guarded body ran after a passing preflight"
+      ansible.builtin.assert:
+        that:
+          - fe_aws_aws_iam_mfa_preflight_passed | bool
+          - fe_aws_aws_iam_mfa_status in ['running', 'succeeded']
+        fail_msg: >-
+          aws/aws_iam_mfa: postflight validation failed - preflight passed
+          ={{ fe_aws_aws_iam_mfa_preflight_passed | default(false) }},
+          status={{ fe_aws_aws_iam_mfa_status | default('unknown') }}.
+        success_msg: "aws/aws_iam_mfa: postflight validation passed."
+        quiet: true
+      tags:
+        - always
+        - postflight
+        - validation
+
+    - name: "aws/aws_iam_mfa | Postflight | Record the successful outcome"
+      ansible.builtin.set_fact:
+        fe_aws_aws_iam_mfa_postflight_passed: true
+        fe_aws_aws_iam_mfa_status: "succeeded"
+      tags:
+        - always
+        - postflight
+        - validation
+
+  rescue:
+
+    - name: "aws/aws_iam_mfa | Rescue | Capture the failing task and error detail"
+      ansible.builtin.set_fact:
+        fe_aws_aws_iam_mfa_status: "failed"
+        fe_aws_aws_iam_mfa_postflight_passed: false
+        fe_aws_aws_iam_mfa_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+        fe_aws_aws_iam_mfa_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+      tags:
+        - always
+        - rescue
+
+    - name: "aws/aws_iam_mfa | Rescue | Report the failure"
+      ansible.builtin.debug:
+        msg: >-
+          aws/aws_iam_mfa: FAILED at '{{ fe_aws_aws_iam_mfa_failed_task }}' on
+          {{ inventory_hostname }} - {{ fe_aws_aws_iam_mfa_error }}
+      tags:
+        - always
+        - rescue
+
+    - name: "aws/aws_iam_mfa | Rescue | Re-raise the failure unless the caller opted to continue"
+      ansible.builtin.fail:
+        msg: >-
+          aws/aws_iam_mfa failed at '{{ fe_aws_aws_iam_mfa_failed_task }}': {{ fe_aws_aws_iam_mfa_error }}
+      when: not (fe_validation_continue_on_error | default(false) | bool)
+      tags:
+        - always
+        - rescue
+
+  always:
+
+    - name: "aws/aws_iam_mfa | Always | Compute the execution duration"
+      ansible.builtin.set_fact:
+        fe_aws_aws_iam_mfa_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+        fe_aws_aws_iam_mfa_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_aws_aws_iam_mfa_start_epoch | default(0) | int) }}"
+      tags:
+        - always
+
+    - name: "aws/aws_iam_mfa | Always | Publish the validation result with set_stats"
+      ansible.builtin.set_stats:
+        data:
+          fe_validation_results:
+            "aws/aws_iam_mfa":
+              component: "aws/aws_iam_mfa"
+              type: "role"
+              platform: "aws"
+              host: "{{ inventory_hostname }}"
+              status: "{{ fe_aws_aws_iam_mfa_status | default('unknown') }}"
+              preflight_passed: "{{ fe_aws_aws_iam_mfa_preflight_passed | default(false) | bool }}"
+              postflight_passed: "{{ fe_aws_aws_iam_mfa_postflight_passed | default(false) | bool }}"
+              started_at: "{{ fe_aws_aws_iam_mfa_started_at | default('') }}"
+              ended_at: "{{ fe_aws_aws_iam_mfa_ended_at | default('') }}"
+              duration_seconds: "{{ fe_aws_aws_iam_mfa_duration_seconds | default(0) | int }}"
+              failed_task: "{{ fe_aws_aws_iam_mfa_failed_task | default('') }}"
+              error: "{{ fe_aws_aws_iam_mfa_error | default('') }}"
+              check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+          fe_validation_executions: 1
+          fe_validation_succeeded: "{{ 1 if fe_aws_aws_iam_mfa_status | default('') == 'succeeded' else 0 }}"
+          fe_validation_failed: "{{ 0 if fe_aws_aws_iam_mfa_status | default('') == 'succeeded' else 1 }}"
+          fe_validation_duration_seconds: "{{ fe_aws_aws_iam_mfa_duration_seconds | default(0) | int }}"
+          fe_validation_failed_components: >-
+            {{ [] if fe_aws_aws_iam_mfa_status | default('') == 'succeeded' else ['aws/aws_iam_mfa'] }}
+        aggregate: true
+        per_host: false
+      tags:
+        - always
+
+    - name: "aws/aws_iam_mfa | Always | Mark the validation statistics as published"
+      ansible.builtin.set_fact:
+        fe_aws_aws_iam_mfa_stats_published: true
+      tags:
+        - always

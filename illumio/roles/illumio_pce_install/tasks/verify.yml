@@ -1,245 +1,428 @@
 ---
 # PCE installation verification
 
-- name: Verify PCE service is running
-  systemd:
-    name: illumio-pce
-  register: pce_service
+# ---------------------------------------------------------------------------
+# Fourth Estate preflight / postflight validation harness
+#
+# The task file body below is wrapped in an Ansible block/rescue/always structure:
+#
+#   block   preflight validation runs first, then the original task file body, then
+#           postflight validation. Any failure transfers control to rescue.
+#   rescue  records which task failed and why, then re-raises so a failure is
+#           never silently swallowed. Set fe_validation_continue_on_error=true
+#           to record the failure and keep going instead.
+#   always  computes the run duration and publishes the outcome through
+#           ansible.builtin.set_stats, so a wrapping playbook, AWX/AAP or CI can
+#           consume the result without scraping log output.
+#
+# Published stats (see docs/VALIDATION_AND_STATS.md):
+#   fe_validation_results['illumio/illumio_pce_install/verify']  per-component record
+#   fe_validation_executions / _succeeded / _failed / _duration_seconds
+#   fe_validation_failed_components
+#
+# Add component-specific preflight checks without editing this file by setting
+#   fe_illumio_illumio_pce_install_verify_required_vars: [var_one, var_two]
+# ---------------------------------------------------------------------------
 
-- name: Assert PCE service is active
-  assert:
-    that:
-      - pce_service.status.ActiveState == "active"
-    fail_msg: "PCE service is not running"
-    success_msg: "PCE service is running"
+- name: "illumio/illumio_pce_install/verify | Initialize validation state"
+  ansible.builtin.set_fact:
+    fe_illumio_illumio_pce_install_verify_start_epoch: "{{ now(fmt='%s') | int }}"
+    fe_illumio_illumio_pce_install_verify_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+    fe_illumio_illumio_pce_install_verify_status: "running"
+    fe_illumio_illumio_pce_install_verify_preflight_passed: false
+    fe_illumio_illumio_pce_install_verify_postflight_passed: false
+    fe_illumio_illumio_pce_install_verify_failed_task: ""
+    fe_illumio_illumio_pce_install_verify_error: ""
+    fe_illumio_illumio_pce_install_verify_stats_published: false
+  tags:
+    - always
 
-- name: Check PCE health endpoint
-  uri:
-    url: "https://{{ illumio_pce_fqdn }}:{{ illumio_pce_port }}/api/v2/health"
-    method: GET
-    validate_certs: no
-    status_code: 200
-    return_content: yes
-  register: health_check
-  retries: 5
-  delay: 10
+- name: "illumio/illumio_pce_install/verify | Guarded execution with preflight and postflight validation"
+  block:
 
-- name: Display PCE health status
-  debug:
-    msg: "PCE Health: {{ health_check.json }}"
+    # ----------------------------- preflight --------------------
 
-- name: Verify PCE version
-  uri:
-    url: "https://{{ illumio_pce_fqdn }}:{{ illumio_pce_port }}/api/v2/product_version"
-    method: GET
-    validate_certs: no
-    return_content: yes
-  register: version_check
+    - name: "illumio/illumio_pce_install/verify | Preflight | Verify the control node meets the minimum ansible-core version"
+      ansible.builtin.assert:
+        that:
+          - ansible_version.full is version(fe_validation_min_ansible_version | default('2.12'), '>=')
+        fail_msg: >-
+          illumio/illumio_pce_install/verify: requires ansible-core
+          {{ fe_validation_min_ansible_version | default('2.12') }} or newer,
+          found {{ ansible_version.full }}.
+        success_msg: >-
+          illumio/illumio_pce_install/verify: ansible-core {{ ansible_version.full }} satisfies the minimum.
+        quiet: true
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: Display PCE version
-  debug:
-    msg: "PCE Version: {{ version_check.json.version }}"
+    - name: "illumio/illumio_pce_install/verify | Preflight | Verify every declared required variable is defined"
+      ansible.builtin.assert:
+        that:
+          - vars[item] is defined
+        fail_msg: "illumio/illumio_pce_install/verify: required variable '{{ item }}' is not defined."
+        success_msg: "illumio/illumio_pce_install/verify: required variable '{{ item }}' is defined."
+        quiet: true
+      loop: "{{ fe_illumio_illumio_pce_install_verify_required_vars | default([]) }}"
+      loop_control:
+        label: "{{ item }}"
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: Test PCE authentication
-  uri:
-    url: "https://{{ illumio_pce_fqdn }}:{{ illumio_pce_port }}/api/v2/users/login"
-    method: POST
-    user: "{{ illumio_pce_admin_user }}"
-    password: "{{ illumio_pce_admin_password }}"
-    force_basic_auth: yes
-    validate_certs: no
-    body_format: json
-    body:
-      pce_fqdn: "{{ illumio_pce_fqdn }}"
-      org_id: "{{ illumio_org_id }}"
-    status_code: 200
-  register: auth_test
-  no_log: true
+    - name: "illumio/illumio_pce_install/verify | Preflight | Record that preflight validation passed"
+      ansible.builtin.set_fact:
+        fe_illumio_illumio_pce_install_verify_preflight_passed: true
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: Verify authentication successful
-  assert:
-    that:
-      - auth_test.json.session_token is defined
-    success_msg: "PCE authentication successful"
-    fail_msg: "PCE authentication failed"
+    # ----------------------------- execute ----------------------
 
-- name: Check database connectivity
-  postgresql_ping:
-    db: "{{ illumio_pce_database_name }}"
-    login_host: "{{ illumio_pce_database_host }}"
-    login_user: "{{ illumio_pce_database_user }}"
-    login_password: "{{ illumio_pce_database_password }}"
-  no_log: true
-  when: illumio_pce_install_database | bool
+    - name: Verify PCE service is running
+      systemd:
+        name: illumio-pce
+      register: pce_service
 
-- name: Verify SSL certificate
-  openssl_certificate_info:
-    path: "{{ illumio_pce_cert_dir }}/server.crt"
-  register: cert_info
+    - name: Assert PCE service is active
+      assert:
+        that:
+          - pce_service.status.ActiveState == "active"
+        fail_msg: "PCE service is not running"
+        success_msg: "PCE service is running"
 
-- name: Check certificate expiration
-  debug:
-    msg: "Certificate expires: {{ cert_info.not_after }}"
+    - name: Check PCE health endpoint
+      uri:
+        url: "https://{{ illumio_pce_fqdn }}:{{ illumio_pce_port }}/api/v2/health"
+        method: GET
+        validate_certs: no
+        status_code: 200
+        return_content: yes
+      register: health_check
+      retries: 5
+      delay: 10
 
-- name: Verify ports are listening
-  wait_for:
-    port: "{{ item }}"
-    host: "{{ ansible_default_ipv4.address }}"
-    timeout: 5
-  loop:
-    - 8443
-    - 8444
-    - 8445
-    - 8446
-  register: port_check
+    - name: Display PCE health status
+      debug:
+        msg: "PCE Health: {{ health_check.json }}"
 
-- name: Display listening ports
-  debug:
-    msg: "PCE is listening on ports: 8443, 8444, 8445, 8446"
+    - name: Verify PCE version
+      uri:
+        url: "https://{{ illumio_pce_fqdn }}:{{ illumio_pce_port }}/api/v2/product_version"
+        method: GET
+        validate_certs: no
+        return_content: yes
+      register: version_check
 
-- name: Check PCE processes
-  shell: ps aux | grep -i illumio | grep -v grep
-  register: pce_processes
-  changed_when: false
+    - name: Display PCE version
+      debug:
+        msg: "PCE Version: {{ version_check.json.version }}"
 
-- name: Display PCE processes
-  debug:
-    var: pce_processes.stdout_lines
+    - name: Test PCE authentication
+      uri:
+        url: "https://{{ illumio_pce_fqdn }}:{{ illumio_pce_port }}/api/v2/users/login"
+        method: POST
+        user: "{{ illumio_pce_admin_user }}"
+        password: "{{ illumio_pce_admin_password }}"
+        force_basic_auth: yes
+        validate_certs: no
+        body_format: json
+        body:
+          pce_fqdn: "{{ illumio_pce_fqdn }}"
+          org_id: "{{ illumio_org_id }}"
+        status_code: 200
+      register: auth_test
+      no_log: true
 
-- name: Check PCE log for errors
-  shell: tail -100 {{ illumio_pce_data_dir }}/log/pce.log | grep -i error || echo "No errors found"
-  register: pce_log_errors
-  changed_when: false
+    - name: Verify authentication successful
+      assert:
+        that:
+          - auth_test.json.session_token is defined
+        success_msg: "PCE authentication successful"
+        fail_msg: "PCE authentication failed"
 
-- name: Display recent log errors (if any)
-  debug:
-    var: pce_log_errors.stdout_lines
-  when: "'error' in pce_log_errors.stdout.lower()"
+    - name: Check database connectivity
+      postgresql_ping:
+        db: "{{ illumio_pce_database_name }}"
+        login_host: "{{ illumio_pce_database_host }}"
+        login_user: "{{ illumio_pce_database_user }}"
+        login_password: "{{ illumio_pce_database_password }}"
+      no_log: true
+      when: illumio_pce_install_database | bool
 
-- name: Verify disk space
-  shell: df -h {{ illumio_pce_data_dir }}
-  register: disk_space
-  changed_when: false
+    - name: Verify SSL certificate
+      openssl_certificate_info:
+        path: "{{ illumio_pce_cert_dir }}/server.crt"
+      register: cert_info
 
-- name: Display disk space
-  debug:
-    var: disk_space.stdout_lines
+    - name: Check certificate expiration
+      debug:
+        msg: "Certificate expires: {{ cert_info.not_after }}"
 
-- name: Check system load
-  shell: uptime
-  register: system_load
-  changed_when: false
+    - name: Verify ports are listening
+      wait_for:
+        port: "{{ item }}"
+        host: "{{ ansible_default_ipv4.address }}"
+        timeout: 5
+      loop:
+        - 8443
+        - 8444
+        - 8445
+        - 8446
+      register: port_check
 
-- name: Display system load
-  debug:
-    var: system_load.stdout
+    - name: Display listening ports
+      debug:
+        msg: "PCE is listening on ports: 8443, 8444, 8445, 8446"
 
-- name: Verify cluster status (if cluster mode)
-  uri:
-    url: "https://{{ illumio_pce_cluster_vip }}:{{ illumio_pce_port }}/api/v2/health/cluster"
-    method: GET
-    user: "{{ illumio_pce_admin_user }}"
-    password: "{{ illumio_pce_admin_password }}"
-    force_basic_auth: yes
-    validate_certs: no
-    return_content: yes
-  register: cluster_status
-  when: illumio_pce_cluster_mode | bool
-  no_log: true
+    - name: Check PCE processes
+      shell: ps aux | grep -i illumio | grep -v grep
+      register: pce_processes
+      changed_when: false
 
-- name: Display cluster status
-  debug:
-    msg: "Cluster has {{ cluster_status.json.members | length }} members"
-  when:
-    - illumio_pce_cluster_mode | bool
-    - cluster_status.json is defined
+    - name: Display PCE processes
+      debug:
+        var: pce_processes.stdout_lines
 
-- name: Test PCE API endpoints
-  uri:
-    url: "https://{{ illumio_pce_fqdn }}:{{ illumio_pce_port }}/api/v2/{{ item }}"
-    method: GET
-    user: "{{ illumio_pce_admin_user }}"
-    password: "{{ illumio_pce_admin_password }}"
-    force_basic_auth: yes
-    validate_certs: no
-    status_code: 200
-  loop:
-    - orgs
-    - workloads
-    - labels
-  register: api_test
-  no_log: true
+    - name: Check PCE log for errors
+      shell: tail -100 {{ illumio_pce_data_dir }}/log/pce.log | grep -i error || echo "No errors found"
+      register: pce_log_errors
+      changed_when: false
 
-- name: Verify API endpoints accessible
-  debug:
-    msg: "All PCE API endpoints are accessible"
+    - name: Display recent log errors (if any)
+      debug:
+        var: pce_log_errors.stdout_lines
+      when: "'error' in pce_log_errors.stdout.lower()"
 
-- name: Create verification report
-  copy:
-    content: |
-      Illumio PCE Installation Verification Report
-      =============================================
-      Date: {{ ansible_date_time.iso8601 }}
-      Hostname: {{ ansible_hostname }}
+    - name: Verify disk space
+      shell: df -h {{ illumio_pce_data_dir }}
+      register: disk_space
+      changed_when: false
 
-      PCE Status:
-      - Service: {{ pce_service.status.ActiveState }}
-      - Version: {{ version_check.json.version }}
-      - Health: {{ health_check.json.status | default('OK') }}
+    - name: Display disk space
+      debug:
+        var: disk_space.stdout_lines
 
-      Network:
-      - FQDN: {{ illumio_pce_fqdn }}
-      - Port: {{ illumio_pce_port }}
-      - Listening Ports: 8443, 8444, 8445, 8446
+    - name: Check system load
+      shell: uptime
+      register: system_load
+      changed_when: false
 
-      SSL Certificate:
-      - Subject: {{ cert_info.subject.commonName }}
-      - Issuer: {{ cert_info.issuer.commonName }}
-      - Expiration: {{ cert_info.not_after }}
+    - name: Display system load
+      debug:
+        var: system_load.stdout
 
-      Database:
-      - Host: {{ illumio_pce_database_host }}
-      - Name: {{ illumio_pce_database_name }}
-      - Status: Connected
+    - name: Verify cluster status (if cluster mode)
+      uri:
+        url: "https://{{ illumio_pce_cluster_vip }}:{{ illumio_pce_port }}/api/v2/health/cluster"
+        method: GET
+        user: "{{ illumio_pce_admin_user }}"
+        password: "{{ illumio_pce_admin_password }}"
+        force_basic_auth: yes
+        validate_certs: no
+        return_content: yes
+      register: cluster_status
+      when: illumio_pce_cluster_mode | bool
+      no_log: true
 
-      {% if illumio_pce_cluster_mode | bool %}
-      Cluster:
-      - Mode: HA Cluster
-      - VIP: {{ illumio_pce_cluster_vip }}
-      - Members: {{ cluster_status.json.members | length if cluster_status.json is defined else 'N/A' }}
-      {% else %}
-      Cluster: Standalone mode
-      {% endif %}
+    - name: Display cluster status
+      debug:
+        msg: "Cluster has {{ cluster_status.json.members | length }} members"
+      when:
+        - illumio_pce_cluster_mode | bool
+        - cluster_status.json is defined
 
-      Authentication:
-      - Admin User: {{ illumio_pce_admin_user }}
-      - Auth Status: OK
+    - name: Test PCE API endpoints
+      uri:
+        url: "https://{{ illumio_pce_fqdn }}:{{ illumio_pce_port }}/api/v2/{{ item }}"
+        method: GET
+        user: "{{ illumio_pce_admin_user }}"
+        password: "{{ illumio_pce_admin_password }}"
+        force_basic_auth: yes
+        validate_certs: no
+        status_code: 200
+      loop:
+        - orgs
+        - workloads
+        - labels
+      register: api_test
+      no_log: true
 
-      System Resources:
-      {{ disk_space.stdout }}
+    - name: Verify API endpoints accessible
+      debug:
+        msg: "All PCE API endpoints are accessible"
 
-      {{ system_load.stdout }}
+    - name: Create verification report
+      copy:
+        content: |
+          Illumio PCE Installation Verification Report
+          =============================================
+          Date: {{ ansible_date_time.iso8601 }}
+          Hostname: {{ ansible_hostname }}
 
-      Verification: All checks passed successfully
+          PCE Status:
+          - Service: {{ pce_service.status.ActiveState }}
+          - Version: {{ version_check.json.version }}
+          - Health: {{ health_check.json.status | default('OK') }}
 
-      PCE is ready for VEN deployment and policy configuration.
+          Network:
+          - FQDN: {{ illumio_pce_fqdn }}
+          - Port: {{ illumio_pce_port }}
+          - Listening Ports: 8443, 8444, 8445, 8446
 
-      Access Information:
-      - Web Console: https://{{ illumio_pce_fqdn }}:{{ illumio_pce_port }}
-      - API Endpoint: https://{{ illumio_pce_fqdn }}:{{ illumio_pce_port }}/api/v2
-      - API Credentials: /etc/illumio-pce/api-credentials.env
+          SSL Certificate:
+          - Subject: {{ cert_info.subject.commonName }}
+          - Issuer: {{ cert_info.issuer.commonName }}
+          - Expiration: {{ cert_info.not_after }}
 
-    dest: /etc/illumio-pce/verification-report_{{ ansible_date_time.epoch }}.txt
-    mode: '0644'
+          Database:
+          - Host: {{ illumio_pce_database_host }}
+          - Name: {{ illumio_pce_database_name }}
+          - Status: Connected
 
-- name: Display verification summary
-  debug:
-    msg: |
-      ====================================
-      PCE Installation Verification Complete
-      ====================================
-      PCE Version: {{ version_check.json.version }}
-      Status: All checks passed
-      Web Console: https://{{ illumio_pce_fqdn }}:{{ illumio_pce_port }}
-      Report: /etc/illumio-pce/verification-report_{{ ansible_date_time.epoch }}.txt
-      ====================================
+          {% if illumio_pce_cluster_mode | bool %}
+          Cluster:
+          - Mode: HA Cluster
+          - VIP: {{ illumio_pce_cluster_vip }}
+          - Members: {{ cluster_status.json.members | length if cluster_status.json is defined else 'N/A' }}
+          {% else %}
+          Cluster: Standalone mode
+          {% endif %}
+
+          Authentication:
+          - Admin User: {{ illumio_pce_admin_user }}
+          - Auth Status: OK
+
+          System Resources:
+          {{ disk_space.stdout }}
+
+          {{ system_load.stdout }}
+
+          Verification: All checks passed successfully
+
+          PCE is ready for VEN deployment and policy configuration.
+
+          Access Information:
+          - Web Console: https://{{ illumio_pce_fqdn }}:{{ illumio_pce_port }}
+          - API Endpoint: https://{{ illumio_pce_fqdn }}:{{ illumio_pce_port }}/api/v2
+          - API Credentials: /etc/illumio-pce/api-credentials.env
+
+        dest: /etc/illumio-pce/verification-report_{{ ansible_date_time.epoch }}.txt
+        mode: '0644'
+
+    - name: Display verification summary
+      debug:
+        msg: |
+          ====================================
+          PCE Installation Verification Complete
+          ====================================
+          PCE Version: {{ version_check.json.version }}
+          Status: All checks passed
+          Web Console: https://{{ illumio_pce_fqdn }}:{{ illumio_pce_port }}
+          Report: /etc/illumio-pce/verification-report_{{ ansible_date_time.epoch }}.txt
+          ====================================
+
+    # ----------------------------- postflight -------------------
+
+    - name: "illumio/illumio_pce_install/verify | Postflight | Verify the guarded body ran after a passing preflight"
+      ansible.builtin.assert:
+        that:
+          - fe_illumio_illumio_pce_install_verify_preflight_passed | bool
+          - fe_illumio_illumio_pce_install_verify_status in ['running', 'succeeded']
+        fail_msg: >-
+          illumio/illumio_pce_install/verify: postflight validation failed - preflight passed
+          ={{ fe_illumio_illumio_pce_install_verify_preflight_passed | default(false) }},
+          status={{ fe_illumio_illumio_pce_install_verify_status | default('unknown') }}.
+        success_msg: "illumio/illumio_pce_install/verify: postflight validation passed."
+        quiet: true
+      tags:
+        - always
+        - postflight
+        - validation
+
+    - name: "illumio/illumio_pce_install/verify | Postflight | Record the successful outcome"
+      ansible.builtin.set_fact:
+        fe_illumio_illumio_pce_install_verify_postflight_passed: true
+        fe_illumio_illumio_pce_install_verify_status: "succeeded"
+      tags:
+        - always
+        - postflight
+        - validation
+
+  rescue:
+
+    - name: "illumio/illumio_pce_install/verify | Rescue | Capture the failing task and error detail"
+      ansible.builtin.set_fact:
+        fe_illumio_illumio_pce_install_verify_status: "failed"
+        fe_illumio_illumio_pce_install_verify_postflight_passed: false
+        fe_illumio_illumio_pce_install_verify_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+        fe_illumio_illumio_pce_install_verify_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+      tags:
+        - always
+        - rescue
+
+    - name: "illumio/illumio_pce_install/verify | Rescue | Report the failure"
+      ansible.builtin.debug:
+        msg: >-
+          illumio/illumio_pce_install/verify: FAILED at '{{ fe_illumio_illumio_pce_install_verify_failed_task }}' on
+          {{ inventory_hostname }} - {{ fe_illumio_illumio_pce_install_verify_error }}
+      tags:
+        - always
+        - rescue
+
+    - name: "illumio/illumio_pce_install/verify | Rescue | Re-raise the failure unless the caller opted to continue"
+      ansible.builtin.fail:
+        msg: >-
+          illumio/illumio_pce_install/verify failed at '{{ fe_illumio_illumio_pce_install_verify_failed_task }}': {{ fe_illumio_illumio_pce_install_verify_error }}
+      when: not (fe_validation_continue_on_error | default(false) | bool)
+      tags:
+        - always
+        - rescue
+
+  always:
+
+    - name: "illumio/illumio_pce_install/verify | Always | Compute the execution duration"
+      ansible.builtin.set_fact:
+        fe_illumio_illumio_pce_install_verify_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+        fe_illumio_illumio_pce_install_verify_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_illumio_illumio_pce_install_verify_start_epoch | default(0) | int) }}"
+      tags:
+        - always
+
+    - name: "illumio/illumio_pce_install/verify | Always | Publish the validation result with set_stats"
+      ansible.builtin.set_stats:
+        data:
+          fe_validation_results:
+            "illumio/illumio_pce_install/verify":
+              component: "illumio/illumio_pce_install/verify"
+              type: "role-tasks"
+              platform: "illumio"
+              host: "{{ inventory_hostname }}"
+              status: "{{ fe_illumio_illumio_pce_install_verify_status | default('unknown') }}"
+              preflight_passed: "{{ fe_illumio_illumio_pce_install_verify_preflight_passed | default(false) | bool }}"
+              postflight_passed: "{{ fe_illumio_illumio_pce_install_verify_postflight_passed | default(false) | bool }}"
+              started_at: "{{ fe_illumio_illumio_pce_install_verify_started_at | default('') }}"
+              ended_at: "{{ fe_illumio_illumio_pce_install_verify_ended_at | default('') }}"
+              duration_seconds: "{{ fe_illumio_illumio_pce_install_verify_duration_seconds | default(0) | int }}"
+              failed_task: "{{ fe_illumio_illumio_pce_install_verify_failed_task | default('') }}"
+              error: "{{ fe_illumio_illumio_pce_install_verify_error | default('') }}"
+              check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+          fe_validation_executions: 1
+          fe_validation_succeeded: "{{ 1 if fe_illumio_illumio_pce_install_verify_status | default('') == 'succeeded' else 0 }}"
+          fe_validation_failed: "{{ 0 if fe_illumio_illumio_pce_install_verify_status | default('') == 'succeeded' else 1 }}"
+          fe_validation_duration_seconds: "{{ fe_illumio_illumio_pce_install_verify_duration_seconds | default(0) | int }}"
+          fe_validation_failed_components: >-
+            {{ [] if fe_illumio_illumio_pce_install_verify_status | default('') == 'succeeded' else ['illumio/illumio_pce_install/verify'] }}
+        aggregate: true
+        per_host: false
+      tags:
+        - always
+
+    - name: "illumio/illumio_pce_install/verify | Always | Mark the validation statistics as published"
+      ansible.builtin.set_fact:
+        fe_illumio_illumio_pce_install_verify_stats_published: true
+      tags:
+        - always

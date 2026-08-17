@@ -16,6 +16,23 @@
 #   - monitoring: Monitor, Log Analytics
 #   - compliance: NIST/FedRAMP compliance checks
 
+# ---------------------------------------------------------------------------
+# Fourth Estate preflight / postflight validation harness
+#
+# Every play below carries a block/rescue/always validation wrapper:
+#
+#   pre_tasks   preflight validation. On failure it records the reason,
+#               publishes the outcome with set_stats and aborts the play
+#               before any role or task runs.
+#   tasks       the original task list, wrapped so a failure is captured
+#               (which task, which error) and then re-raised.
+#   post_tasks  postflight validation, then the run record is published with
+#               ansible.builtin.set_stats.
+#
+# Set fe_validation_continue_on_error=true to record failures and keep going.
+# See docs/VALIDATION_AND_STATS.md for the published stats schema.
+# ---------------------------------------------------------------------------
+
 - name: Azure Infrastructure Deployment
   hosts: localhost
   connection: local
@@ -38,281 +55,614 @@
     # =========================================
     # Phase 1: Identity & Access Management
     # =========================================
-    - name: Phase 1 - Azure AD Configuration
-      ansible.builtin.include_role:
-        name: azure_ad
-      when: deploy_identity | bool
-      tags: ['identity', 'phase1']
+    - name: "azure/site | Guarded execution with rescue and always handling"
+      block:
 
-    - name: Phase 1 - Azure AD MFA
-      ansible.builtin.include_role:
-        name: azure_ad_mfa
-      when: deploy_identity | bool
-      tags: ['identity', 'phase1']
+        - name: Phase 1 - Azure AD Configuration
+          ansible.builtin.include_role:
+            name: azure_ad
+          when: deploy_identity | bool
+          tags: ['identity', 'phase1']
 
-    - name: Phase 1 - RBAC Configuration
-      ansible.builtin.include_role:
-        name: azure_rbac
-      when: deploy_identity | bool
-      tags: ['identity', 'phase1']
+        - name: Phase 1 - Azure AD MFA
+          ansible.builtin.include_role:
+            name: azure_ad_mfa
+          when: deploy_identity | bool
+          tags: ['identity', 'phase1']
 
-    - name: Phase 1 - Managed Identity
-      ansible.builtin.include_role:
-        name: azure_managed_identity
-      when: deploy_identity | bool
-      tags: ['identity', 'phase1']
+        - name: Phase 1 - RBAC Configuration
+          ansible.builtin.include_role:
+            name: azure_rbac
+          when: deploy_identity | bool
+          tags: ['identity', 'phase1']
 
-    - name: Phase 1 - Service Principals
-      ansible.builtin.include_role:
-        name: azure_service_principals
-      when: deploy_identity | bool
-      tags: ['identity', 'phase1']
+        - name: Phase 1 - Managed Identity
+          ansible.builtin.include_role:
+            name: azure_managed_identity
+          when: deploy_identity | bool
+          tags: ['identity', 'phase1']
 
-    - name: Phase 1 - Conditional Access
-      ansible.builtin.include_role:
-        name: azure_conditional_access
-      when: deploy_identity | bool
-      tags: ['identity', 'phase1']
+        - name: Phase 1 - Service Principals
+          ansible.builtin.include_role:
+            name: azure_service_principals
+          when: deploy_identity | bool
+          tags: ['identity', 'phase1']
 
-    - name: Phase 1 - Privileged Identity Management
-      ansible.builtin.include_role:
-        name: azure_privileged_identity
-      when: deploy_identity | bool
-      tags: ['identity', 'phase1']
+        - name: Phase 1 - Conditional Access
+          ansible.builtin.include_role:
+            name: azure_conditional_access
+          when: deploy_identity | bool
+          tags: ['identity', 'phase1']
 
-    # =========================================
-    # Phase 2: Networking
-    # =========================================
-    - name: Phase 2 - Virtual Network
-      ansible.builtin.include_role:
-        name: azure_vnet
-      when: deploy_network | bool
-      tags: ['network', 'phase2']
+        - name: Phase 1 - Privileged Identity Management
+          ansible.builtin.include_role:
+            name: azure_privileged_identity
+          when: deploy_identity | bool
+          tags: ['identity', 'phase1']
 
-    - name: Phase 2 - Subnets
-      ansible.builtin.include_role:
-        name: azure_subnets
-      when: deploy_network | bool
-      tags: ['network', 'phase2']
+        # =========================================
+        # Phase 2: Networking
+        # =========================================
+        - name: Phase 2 - Virtual Network
+          ansible.builtin.include_role:
+            name: azure_vnet
+          when: deploy_network | bool
+          tags: ['network', 'phase2']
 
-    - name: Phase 2 - Network Security Groups
-      ansible.builtin.include_role:
-        name: azure_nsg
-      when: deploy_network | bool
-      tags: ['network', 'phase2']
+        - name: Phase 2 - Subnets
+          ansible.builtin.include_role:
+            name: azure_subnets
+          when: deploy_network | bool
+          tags: ['network', 'phase2']
 
-    - name: Phase 2 - Azure Firewall
-      ansible.builtin.include_role:
-        name: azure_firewall
-      when: deploy_network | bool
-      tags: ['network', 'phase2']
+        - name: Phase 2 - Network Security Groups
+          ansible.builtin.include_role:
+            name: azure_nsg
+          when: deploy_network | bool
+          tags: ['network', 'phase2']
 
-    - name: Phase 2 - Application Gateway
-      ansible.builtin.include_role:
-        name: azure_application_gateway
-      when: deploy_network | bool
-      tags: ['network', 'phase2']
+        - name: Phase 2 - Azure Firewall
+          ansible.builtin.include_role:
+            name: azure_firewall
+          when: deploy_network | bool
+          tags: ['network', 'phase2']
 
-    - name: Phase 2 - VPN Gateway
-      ansible.builtin.include_role:
-        name: azure_vpn_gateway
-      when: deploy_network | bool
-      tags: ['network', 'phase2']
+        - name: Phase 2 - Application Gateway
+          ansible.builtin.include_role:
+            name: azure_application_gateway
+          when: deploy_network | bool
+          tags: ['network', 'phase2']
 
-    # =========================================
-    # Phase 3: Security Services
-    # =========================================
-    - name: Phase 3 - Key Vault
-      ansible.builtin.include_role:
-        name: azure_key_vault
-      when: deploy_security | bool
-      tags: ['security', 'phase3']
+        - name: Phase 2 - VPN Gateway
+          ansible.builtin.include_role:
+            name: azure_vpn_gateway
+          when: deploy_network | bool
+          tags: ['network', 'phase2']
 
-    - name: Phase 3 - Azure Defender
-      ansible.builtin.include_role:
-        name: azure_defender
-      when: deploy_security | bool
-      tags: ['security', 'phase3']
+        # =========================================
+        # Phase 3: Security Services
+        # =========================================
+        - name: Phase 3 - Key Vault
+          ansible.builtin.include_role:
+            name: azure_key_vault
+          when: deploy_security | bool
+          tags: ['security', 'phase3']
 
-    - name: Phase 3 - Security Center
-      ansible.builtin.include_role:
-        name: azure_security_center
-      when: deploy_security | bool
-      tags: ['security', 'phase3']
+        - name: Phase 3 - Azure Defender
+          ansible.builtin.include_role:
+            name: azure_defender
+          when: deploy_security | bool
+          tags: ['security', 'phase3']
 
-    - name: Phase 3 - Azure Sentinel
-      ansible.builtin.include_role:
-        name: azure_sentinel
-      when: deploy_security | bool
-      tags: ['security', 'phase3']
+        - name: Phase 3 - Security Center
+          ansible.builtin.include_role:
+            name: azure_security_center
+          when: deploy_security | bool
+          tags: ['security', 'phase3']
 
-    - name: Phase 3 - Azure Policy
-      ansible.builtin.include_role:
-        name: azure_policy
-      when: deploy_security | bool
-      tags: ['security', 'phase3']
+        - name: Phase 3 - Azure Sentinel
+          ansible.builtin.include_role:
+            name: azure_sentinel
+          when: deploy_security | bool
+          tags: ['security', 'phase3']
 
-    # =========================================
-    # Phase 4: Storage
-    # =========================================
-    - name: Phase 4 - Storage Accounts
-      ansible.builtin.include_role:
-        name: azure_storage_account
-      when: deploy_storage | bool
-      tags: ['storage', 'phase4']
+        - name: Phase 3 - Azure Policy
+          ansible.builtin.include_role:
+            name: azure_policy
+          when: deploy_security | bool
+          tags: ['security', 'phase3']
 
-    - name: Phase 4 - Blob Storage
-      ansible.builtin.include_role:
-        name: azure_blob_storage
-      when: deploy_storage | bool
-      tags: ['storage', 'phase4']
+        # =========================================
+        # Phase 4: Storage
+        # =========================================
+        - name: Phase 4 - Storage Accounts
+          ansible.builtin.include_role:
+            name: azure_storage_account
+          when: deploy_storage | bool
+          tags: ['storage', 'phase4']
 
-    - name: Phase 4 - File Shares
-      ansible.builtin.include_role:
-        name: azure_file_share
-      when: deploy_storage | bool
-      tags: ['storage', 'phase4']
+        - name: Phase 4 - Blob Storage
+          ansible.builtin.include_role:
+            name: azure_blob_storage
+          when: deploy_storage | bool
+          tags: ['storage', 'phase4']
 
-    - name: Phase 4 - Managed Disks
-      ansible.builtin.include_role:
-        name: azure_disk_storage
-      when: deploy_storage | bool
-      tags: ['storage', 'phase4']
+        - name: Phase 4 - File Shares
+          ansible.builtin.include_role:
+            name: azure_file_share
+          when: deploy_storage | bool
+          tags: ['storage', 'phase4']
 
-    # =========================================
-    # Phase 5: Compute (Optional)
-    # =========================================
-    - name: Phase 5 - Availability Sets
-      ansible.builtin.include_role:
-        name: azure_availability_sets
-      when: deploy_compute | bool
-      tags: ['compute', 'phase5']
+        - name: Phase 4 - Managed Disks
+          ansible.builtin.include_role:
+            name: azure_disk_storage
+          when: deploy_storage | bool
+          tags: ['storage', 'phase4']
 
-    - name: Phase 5 - VM Images
-      ansible.builtin.include_role:
-        name: azure_image
-      when: deploy_compute | bool
-      tags: ['compute', 'phase5']
+        # =========================================
+        # Phase 5: Compute (Optional)
+        # =========================================
+        - name: Phase 5 - Availability Sets
+          ansible.builtin.include_role:
+            name: azure_availability_sets
+          when: deploy_compute | bool
+          tags: ['compute', 'phase5']
 
-    - name: Phase 5 - Virtual Machines
-      ansible.builtin.include_role:
-        name: azure_vm
-      when: deploy_compute | bool
-      tags: ['compute', 'phase5']
+        - name: Phase 5 - VM Images
+          ansible.builtin.include_role:
+            name: azure_image
+          when: deploy_compute | bool
+          tags: ['compute', 'phase5']
 
-    - name: Phase 5 - VM Scale Sets
-      ansible.builtin.include_role:
-        name: azure_vmss
-      when: deploy_compute | bool
-      tags: ['compute', 'phase5']
+        - name: Phase 5 - Virtual Machines
+          ansible.builtin.include_role:
+            name: azure_vm
+          when: deploy_compute | bool
+          tags: ['compute', 'phase5']
 
-    # =========================================
-    # Phase 6: AKS (Optional)
-    # =========================================
-    - name: Phase 6 - Container Registry
-      ansible.builtin.include_role:
-        name: azure_acr
-      when: deploy_aks | bool
-      tags: ['aks', 'phase6']
+        - name: Phase 5 - VM Scale Sets
+          ansible.builtin.include_role:
+            name: azure_vmss
+          when: deploy_compute | bool
+          tags: ['compute', 'phase5']
 
-    - name: Phase 6 - AKS Cluster
-      ansible.builtin.include_role:
-        name: azure_aks
-      when: deploy_aks | bool
-      tags: ['aks', 'phase6']
+        # =========================================
+        # Phase 6: AKS (Optional)
+        # =========================================
+        - name: Phase 6 - Container Registry
+          ansible.builtin.include_role:
+            name: azure_acr
+          when: deploy_aks | bool
+          tags: ['aks', 'phase6']
 
-    - name: Phase 6 - Container Instances
-      ansible.builtin.include_role:
-        name: azure_aci
-      when: deploy_aks | bool
-      tags: ['aks', 'phase6']
+        - name: Phase 6 - AKS Cluster
+          ansible.builtin.include_role:
+            name: azure_aks
+          when: deploy_aks | bool
+          tags: ['aks', 'phase6']
 
-    # =========================================
-    # Phase 7: Databases (Optional)
-    # =========================================
-    - name: Phase 7 - Azure SQL Database
-      ansible.builtin.include_role:
-        name: azure_sql_database
-      when: deploy_database | bool
-      tags: ['database', 'phase7']
+        - name: Phase 6 - Container Instances
+          ansible.builtin.include_role:
+            name: azure_aci
+          when: deploy_aks | bool
+          tags: ['aks', 'phase6']
 
-    - name: Phase 7 - PostgreSQL
-      ansible.builtin.include_role:
-        name: azure_postgresql
-      when: deploy_database | bool
-      tags: ['database', 'phase7']
+        # =========================================
+        # Phase 7: Databases (Optional)
+        # =========================================
+        - name: Phase 7 - Azure SQL Database
+          ansible.builtin.include_role:
+            name: azure_sql_database
+          when: deploy_database | bool
+          tags: ['database', 'phase7']
 
-    - name: Phase 7 - MySQL
-      ansible.builtin.include_role:
-        name: azure_mysql
-      when: deploy_database | bool
-      tags: ['database', 'phase7']
+        - name: Phase 7 - PostgreSQL
+          ansible.builtin.include_role:
+            name: azure_postgresql
+          when: deploy_database | bool
+          tags: ['database', 'phase7']
 
-    - name: Phase 7 - Cosmos DB
-      ansible.builtin.include_role:
-        name: azure_cosmos_db
-      when: deploy_database | bool
-      tags: ['database', 'phase7']
+        - name: Phase 7 - MySQL
+          ansible.builtin.include_role:
+            name: azure_mysql
+          when: deploy_database | bool
+          tags: ['database', 'phase7']
 
-    # =========================================
-    # Phase 8: Monitoring & Logging
-    # =========================================
-    - name: Phase 8 - Log Analytics
-      ansible.builtin.include_role:
-        name: azure_log_analytics
-      when: deploy_monitoring | bool
-      tags: ['monitoring', 'phase8']
+        - name: Phase 7 - Cosmos DB
+          ansible.builtin.include_role:
+            name: azure_cosmos_db
+          when: deploy_database | bool
+          tags: ['database', 'phase7']
 
-    - name: Phase 8 - Azure Monitor
-      ansible.builtin.include_role:
-        name: azure_monitor
-      when: deploy_monitoring | bool
-      tags: ['monitoring', 'phase8']
+        # =========================================
+        # Phase 8: Monitoring & Logging
+        # =========================================
+        - name: Phase 8 - Log Analytics
+          ansible.builtin.include_role:
+            name: azure_log_analytics
+          when: deploy_monitoring | bool
+          tags: ['monitoring', 'phase8']
 
-    - name: Phase 8 - Application Insights
-      ansible.builtin.include_role:
-        name: azure_application_insights
-      when: deploy_monitoring | bool
-      tags: ['monitoring', 'phase8']
+        - name: Phase 8 - Azure Monitor
+          ansible.builtin.include_role:
+            name: azure_monitor
+          when: deploy_monitoring | bool
+          tags: ['monitoring', 'phase8']
 
-    # =========================================
-    # Phase 9: Compliance Validation
-    # =========================================
-    - name: Phase 9 - NIST Compliance Check
-      ansible.builtin.include_role:
-        name: azure_nist_compliance
-      when: deploy_compliance | bool
-      tags: ['compliance', 'phase9']
+        - name: Phase 8 - Application Insights
+          ansible.builtin.include_role:
+            name: azure_application_insights
+          when: deploy_monitoring | bool
+          tags: ['monitoring', 'phase8']
 
-    - name: Phase 9 - FedRAMP Compliance Check
-      ansible.builtin.include_role:
-        name: azure_fedramp_compliance
-      when: deploy_compliance | bool
-      tags: ['compliance', 'phase9']
+        # =========================================
+        # Phase 9: Compliance Validation
+        # =========================================
+        - name: Phase 9 - NIST Compliance Check
+          ansible.builtin.include_role:
+            name: azure_nist_compliance
+          when: deploy_compliance | bool
+          tags: ['compliance', 'phase9']
 
-    - name: Phase 9 - Azure Compliance Review
-      ansible.builtin.include_role:
-        name: azure_compliance
-      when: deploy_compliance | bool
-      tags: ['compliance', 'phase9']
+        - name: Phase 9 - FedRAMP Compliance Check
+          ansible.builtin.include_role:
+            name: azure_fedramp_compliance
+          when: deploy_compliance | bool
+          tags: ['compliance', 'phase9']
 
-    # =========================================
-    # Deployment Summary
-    # =========================================
-    - name: Display deployment summary
-      ansible.builtin.debug:
-        msg:
-          - "=== Azure Deployment Complete ==="
-          - "Location: {{ azure_location | default('eastus') }}"
-          - "Environment: {{ azure_environment | default('production') }}"
-          - "Resource Group: {{ azure_resource_group | default('myorg-production-rg') }}"
-          - "Identity: {{ 'Configured' if deploy_identity else 'Skipped' }}"
-          - "Network: {{ 'Configured' if deploy_network else 'Skipped' }}"
-          - "Security: {{ 'Configured' if deploy_security else 'Skipped' }}"
-          - "Storage: {{ 'Configured' if deploy_storage else 'Skipped' }}"
-          - "Compute: {{ 'Configured' if deploy_compute else 'Skipped' }}"
-          - "AKS: {{ 'Configured' if deploy_aks else 'Skipped' }}"
-          - "Database: {{ 'Configured' if deploy_database else 'Skipped' }}"
-          - "Monitoring: {{ 'Configured' if deploy_monitoring else 'Skipped' }}"
-          - "Compliance: {{ 'Validated' if deploy_compliance else 'Skipped' }}"
-      tags: ['always']
+        - name: Phase 9 - Azure Compliance Review
+          ansible.builtin.include_role:
+            name: azure_compliance
+          when: deploy_compliance | bool
+          tags: ['compliance', 'phase9']
+
+        # =========================================
+        # Deployment Summary
+        # =========================================
+        - name: Display deployment summary
+          ansible.builtin.debug:
+            msg:
+              - "=== Azure Deployment Complete ==="
+              - "Location: {{ azure_location | default('eastus') }}"
+              - "Environment: {{ azure_environment | default('production') }}"
+              - "Resource Group: {{ azure_resource_group | default('myorg-production-rg') }}"
+              - "Identity: {{ 'Configured' if deploy_identity else 'Skipped' }}"
+              - "Network: {{ 'Configured' if deploy_network else 'Skipped' }}"
+              - "Security: {{ 'Configured' if deploy_security else 'Skipped' }}"
+              - "Storage: {{ 'Configured' if deploy_storage else 'Skipped' }}"
+              - "Compute: {{ 'Configured' if deploy_compute else 'Skipped' }}"
+              - "AKS: {{ 'Configured' if deploy_aks else 'Skipped' }}"
+              - "Database: {{ 'Configured' if deploy_database else 'Skipped' }}"
+              - "Monitoring: {{ 'Configured' if deploy_monitoring else 'Skipped' }}"
+              - "Compliance: {{ 'Validated' if deploy_compliance else 'Skipped' }}"
+          tags: ['always']
+
+      rescue:
+
+        - name: "azure/site | Rescue | Capture the failing task and error detail"
+          ansible.builtin.set_fact:
+            fe_azure_site_status: "failed"
+            fe_azure_site_postflight_passed: false
+            fe_azure_site_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+            fe_azure_site_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+          tags:
+            - always
+            - rescue
+
+        - name: "azure/site | Rescue | Report the failure"
+          ansible.builtin.debug:
+            msg: >-
+              azure/site: FAILED at '{{ fe_azure_site_failed_task }}' on
+              {{ inventory_hostname }} - {{ fe_azure_site_error }}
+          tags:
+            - always
+            - rescue
+
+        - name: "azure/site | Rescue | Re-raise the failure unless the caller opted to continue"
+          ansible.builtin.fail:
+            msg: >-
+              azure/site failed at '{{ fe_azure_site_failed_task }}': {{ fe_azure_site_error }}
+          when: not (fe_validation_continue_on_error | default(false) | bool)
+          tags:
+            - always
+            - rescue
+
+      always:
+
+        - name: "azure/site | Always | Compute the execution duration"
+          ansible.builtin.set_fact:
+            fe_azure_site_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+            fe_azure_site_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_azure_site_start_epoch | default(0) | int) }}"
+          tags:
+            - always
+
+        - name: "azure/site | Always | Publish the validation result with set_stats"
+          ansible.builtin.set_stats:
+            data:
+              fe_validation_results:
+                "azure/site":
+                  component: "azure/site"
+                  type: "playbook"
+                  platform: "azure"
+                  host: "{{ inventory_hostname }}"
+                  status: "{{ fe_azure_site_status | default('unknown') }}"
+                  preflight_passed: "{{ fe_azure_site_preflight_passed | default(false) | bool }}"
+                  postflight_passed: "{{ fe_azure_site_postflight_passed | default(false) | bool }}"
+                  started_at: "{{ fe_azure_site_started_at | default('') }}"
+                  ended_at: "{{ fe_azure_site_ended_at | default('') }}"
+                  duration_seconds: "{{ fe_azure_site_duration_seconds | default(0) | int }}"
+                  failed_task: "{{ fe_azure_site_failed_task | default('') }}"
+                  error: "{{ fe_azure_site_error | default('') }}"
+                  check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+              fe_validation_executions: 1
+              fe_validation_succeeded: "{{ 1 if fe_azure_site_status | default('') == 'succeeded' else 0 }}"
+              fe_validation_failed: "{{ 0 if fe_azure_site_status | default('') == 'succeeded' else 1 }}"
+              fe_validation_duration_seconds: "{{ fe_azure_site_duration_seconds | default(0) | int }}"
+              fe_validation_failed_components: >-
+                {{ [] if fe_azure_site_status | default('') == 'succeeded' else ['azure/site'] }}
+            aggregate: true
+            per_host: false
+          when:
+            - fe_azure_site_status | default('') == 'failed'
+            - not (fe_azure_site_stats_published | default(false) | bool)
+          tags:
+            - always
+
+        - name: "azure/site | Always | Mark the validation statistics as published"
+          ansible.builtin.set_fact:
+            fe_azure_site_stats_published: true
+          when:
+            - fe_azure_site_status | default('') == 'failed'
+          tags:
+            - always
+  pre_tasks:
+    - name: "azure/site | Preflight validation"
+      tags:
+        - always
+        - preflight
+        - validation
+      block:
+
+        - name: "azure/site | Initialize validation state"
+          ansible.builtin.set_fact:
+            fe_azure_site_start_epoch: "{{ now(fmt='%s') | int }}"
+            fe_azure_site_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+            fe_azure_site_status: "running"
+            fe_azure_site_preflight_passed: false
+            fe_azure_site_postflight_passed: false
+            fe_azure_site_failed_task: ""
+            fe_azure_site_error: ""
+            fe_azure_site_stats_published: false
+          tags:
+            - always
+
+        - name: "azure/site | Preflight | Verify the control node meets the minimum ansible-core version"
+          ansible.builtin.assert:
+            that:
+              - ansible_version.full is version(fe_validation_min_ansible_version | default('2.12'), '>=')
+            fail_msg: >-
+              azure/site: requires ansible-core
+              {{ fe_validation_min_ansible_version | default('2.12') }} or newer,
+              found {{ ansible_version.full }}.
+            success_msg: >-
+              azure/site: ansible-core {{ ansible_version.full }} satisfies the minimum.
+            quiet: true
+          tags:
+            - always
+            - preflight
+            - validation
+
+        - name: "azure/site | Preflight | Verify every declared required variable is defined"
+          ansible.builtin.assert:
+            that:
+              - vars[item] is defined
+            fail_msg: "azure/site: required variable '{{ item }}' is not defined."
+            success_msg: "azure/site: required variable '{{ item }}' is defined."
+            quiet: true
+          loop: "{{ fe_azure_site_required_vars | default([]) }}"
+          loop_control:
+            label: "{{ item }}"
+          tags:
+            - always
+            - preflight
+            - validation
+
+        - name: "azure/site | Preflight | Record that preflight validation passed"
+          ansible.builtin.set_fact:
+            fe_azure_site_preflight_passed: true
+          tags:
+            - always
+            - preflight
+            - validation
+
+      rescue:
+
+        - name: "azure/site | Rescue | Capture the failing task and error detail"
+          ansible.builtin.set_fact:
+            fe_azure_site_status: "preflight_failed"
+            fe_azure_site_postflight_passed: false
+            fe_azure_site_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+            fe_azure_site_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+          tags:
+            - always
+            - rescue
+
+        - name: "azure/site | Rescue | Report the failure"
+          ansible.builtin.debug:
+            msg: >-
+              azure/site: FAILED at '{{ fe_azure_site_failed_task }}' on
+              {{ inventory_hostname }} - {{ fe_azure_site_error }}
+          tags:
+            - always
+            - rescue
+
+        - name: "azure/site | Always | Publish the validation result with set_stats"
+          ansible.builtin.set_stats:
+            data:
+              fe_validation_results:
+                "azure/site":
+                  component: "azure/site"
+                  type: "playbook"
+                  platform: "azure"
+                  host: "{{ inventory_hostname }}"
+                  status: "{{ fe_azure_site_status | default('unknown') }}"
+                  preflight_passed: "{{ fe_azure_site_preflight_passed | default(false) | bool }}"
+                  postflight_passed: "{{ fe_azure_site_postflight_passed | default(false) | bool }}"
+                  started_at: "{{ fe_azure_site_started_at | default('') }}"
+                  ended_at: "{{ fe_azure_site_ended_at | default('') }}"
+                  duration_seconds: "{{ fe_azure_site_duration_seconds | default(0) | int }}"
+                  failed_task: "{{ fe_azure_site_failed_task | default('') }}"
+                  error: "{{ fe_azure_site_error | default('') }}"
+                  check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+              fe_validation_executions: 1
+              fe_validation_succeeded: "{{ 1 if fe_azure_site_status | default('') == 'succeeded' else 0 }}"
+              fe_validation_failed: "{{ 0 if fe_azure_site_status | default('') == 'succeeded' else 1 }}"
+              fe_validation_duration_seconds: "{{ fe_azure_site_duration_seconds | default(0) | int }}"
+              fe_validation_failed_components: >-
+                {{ [] if fe_azure_site_status | default('') == 'succeeded' else ['azure/site'] }}
+            aggregate: true
+            per_host: false
+          tags:
+            - always
+
+        - name: "azure/site | Always | Mark the validation statistics as published"
+          ansible.builtin.set_fact:
+            fe_azure_site_stats_published: true
+          tags:
+            - always
+
+        - name: "azure/site | Rescue | Re-raise the failure unless the caller opted to continue"
+          ansible.builtin.fail:
+            msg: >-
+              azure/site failed at '{{ fe_azure_site_failed_task }}': {{ fe_azure_site_error }}
+          when: not (fe_validation_continue_on_error | default(false) | bool)
+          tags:
+            - always
+            - rescue
+
+      always:
+
+        - name: "azure/site | Always | Report the preflight outcome"
+          ansible.builtin.debug:
+            msg: >-
+              azure/site: preflight
+              {{ 'passed' if fe_azure_site_preflight_passed | default(false) | bool else 'FAILED' }}
+              on {{ inventory_hostname }}.
+          tags:
+            - always
+  post_tasks:
+    - name: "azure/site | Postflight validation"
+      tags:
+        - always
+        - postflight
+        - validation
+      block:
+
+        - name: "azure/site | Postflight | Verify the guarded body ran after a passing preflight"
+          ansible.builtin.assert:
+            that:
+              - fe_azure_site_preflight_passed | bool
+              - fe_azure_site_status in ['running', 'succeeded']
+            fail_msg: >-
+              azure/site: postflight validation failed - preflight passed
+              ={{ fe_azure_site_preflight_passed | default(false) }},
+              status={{ fe_azure_site_status | default('unknown') }}.
+            success_msg: "azure/site: postflight validation passed."
+            quiet: true
+          tags:
+            - always
+            - postflight
+            - validation
+
+        - name: "azure/site | Postflight | Record the successful outcome"
+          ansible.builtin.set_fact:
+            fe_azure_site_postflight_passed: true
+            fe_azure_site_status: "succeeded"
+          tags:
+            - always
+            - postflight
+            - validation
+
+      rescue:
+
+        - name: "azure/site | Rescue | Capture the failing task and error detail"
+          ansible.builtin.set_fact:
+            fe_azure_site_status: "failed"
+            fe_azure_site_postflight_passed: false
+            fe_azure_site_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+            fe_azure_site_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+          tags:
+            - always
+            - rescue
+
+        - name: "azure/site | Rescue | Report the failure"
+          ansible.builtin.debug:
+            msg: >-
+              azure/site: FAILED at '{{ fe_azure_site_failed_task }}' on
+              {{ inventory_hostname }} - {{ fe_azure_site_error }}
+          tags:
+            - always
+            - rescue
+
+        - name: "azure/site | Rescue | Re-raise the failure unless the caller opted to continue"
+          ansible.builtin.fail:
+            msg: >-
+              azure/site failed at '{{ fe_azure_site_failed_task }}': {{ fe_azure_site_error }}
+          when: not (fe_validation_continue_on_error | default(false) | bool)
+          tags:
+            - always
+            - rescue
+
+      always:
+
+        - name: "azure/site | Always | Compute the execution duration"
+          ansible.builtin.set_fact:
+            fe_azure_site_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+            fe_azure_site_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_azure_site_start_epoch | default(0) | int) }}"
+          tags:
+            - always
+
+        - name: "azure/site | Always | Publish the validation result with set_stats"
+          ansible.builtin.set_stats:
+            data:
+              fe_validation_results:
+                "azure/site":
+                  component: "azure/site"
+                  type: "playbook"
+                  platform: "azure"
+                  host: "{{ inventory_hostname }}"
+                  status: "{{ fe_azure_site_status | default('unknown') }}"
+                  preflight_passed: "{{ fe_azure_site_preflight_passed | default(false) | bool }}"
+                  postflight_passed: "{{ fe_azure_site_postflight_passed | default(false) | bool }}"
+                  started_at: "{{ fe_azure_site_started_at | default('') }}"
+                  ended_at: "{{ fe_azure_site_ended_at | default('') }}"
+                  duration_seconds: "{{ fe_azure_site_duration_seconds | default(0) | int }}"
+                  failed_task: "{{ fe_azure_site_failed_task | default('') }}"
+                  error: "{{ fe_azure_site_error | default('') }}"
+                  check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+              fe_validation_executions: 1
+              fe_validation_succeeded: "{{ 1 if fe_azure_site_status | default('') == 'succeeded' else 0 }}"
+              fe_validation_failed: "{{ 0 if fe_azure_site_status | default('') == 'succeeded' else 1 }}"
+              fe_validation_duration_seconds: "{{ fe_azure_site_duration_seconds | default(0) | int }}"
+              fe_validation_failed_components: >-
+                {{ [] if fe_azure_site_status | default('') == 'succeeded' else ['azure/site'] }}
+            aggregate: true
+            per_host: false
+          when:
+            - not (fe_azure_site_stats_published | default(false) | bool)
+          tags:
+            - always
+
+        - name: "azure/site | Always | Mark the validation statistics as published"
+          ansible.builtin.set_fact:
+            fe_azure_site_stats_published: true
+          tags:
+            - always
+
+        - name: "azure/site | Always | Report the run summary"
+          ansible.builtin.debug:
+            msg: >-
+              azure/site: {{ fe_azure_site_status | default('unknown') }} in
+              {{ fe_azure_site_duration_seconds | default(0) }}s on {{ inventory_hostname }}.
+          tags:
+            - always

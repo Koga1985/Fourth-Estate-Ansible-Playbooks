@@ -1,98 +1,281 @@
 ---
 # Detect and catalog industrial protocols in OT environments
 
-- name: Retrieve protocol detection data
-  ansible.builtin.uri:
-    url: "{{ dragos_base_url }}/api/assets/protocols?timerange={{ protocol_timerange }}&limit={{ page_size }}"
-    method: GET
-    headers:
-      Authorization: "Bearer {{ dragos_token }}"
-    return_content: true
-    status_code: 200
-    validate_certs: "{{ dragos_verify_ssl }}"
-  register: detected_protocols
+# ---------------------------------------------------------------------------
+# Fourth Estate preflight / postflight validation harness
+#
+# The task file body below is wrapped in an Ansible block/rescue/always structure:
+#
+#   block   preflight validation runs first, then the original task file body, then
+#           postflight validation. Any failure transfers control to rescue.
+#   rescue  records which task failed and why, then re-raises so a failure is
+#           never silently swallowed. Set fe_validation_continue_on_error=true
+#           to record the failure and keep going instead.
+#   always  computes the run duration and publishes the outcome through
+#           ansible.builtin.set_stats, so a wrapping playbook, AWX/AAP or CI can
+#           consume the result without scraping log output.
+#
+# Published stats (see docs/VALIDATION_AND_STATS.md):
+#   fe_validation_results['dragos/dragos_inventory_model/assets_protocols']  per-component record
+#   fe_validation_executions / _succeeded / _failed / _duration_seconds
+#   fe_validation_failed_components
+#
+# Add component-specific preflight checks without editing this file by setting
+#   fe_dragos_dragos_inventory_model_assets_protocols_required_vars: [var_one, var_two]
+# ---------------------------------------------------------------------------
 
-- name: Categorize protocols by type
+- name: "dragos/dragos_inventory_model/assets_protocols | Initialize validation state"
   ansible.builtin.set_fact:
-    protocol_categories:
-      fieldbus:
-        - Modbus
-        - DNP3
-        - Profinet
-        - EtherNet/IP
-        - CIP
-      process_control:
-        - OPC UA
-        - IEC 61850
-        - IEC 60870-5-104
-      building_automation:
-        - BACnet
-        - LonWorks
-        - KNX
-      legacy:
-        - Modbus RTU
-        - Modbus ASCII
-        - DF1
-      proprietary:
-        - S7comm
-        - CIP
-        - GE SRTP
+    fe_dragos_dragos_inventory_model_assets_protocols_start_epoch: "{{ now(fmt='%s') | int }}"
+    fe_dragos_dragos_inventory_model_assets_protocols_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+    fe_dragos_dragos_inventory_model_assets_protocols_status: "running"
+    fe_dragos_dragos_inventory_model_assets_protocols_preflight_passed: false
+    fe_dragos_dragos_inventory_model_assets_protocols_postflight_passed: false
+    fe_dragos_dragos_inventory_model_assets_protocols_failed_task: ""
+    fe_dragos_dragos_inventory_model_assets_protocols_error: ""
+    fe_dragos_dragos_inventory_model_assets_protocols_stats_published: false
+  tags:
+    - always
 
-- name: Identify Modbus communications
-  ansible.builtin.set_fact:
-    modbus_assets: "{{ detected_protocols.json.assets | default([]) | selectattr('protocols', 'search', 'Modbus') | list }}"
+- name: "dragos/dragos_inventory_model/assets_protocols | Guarded execution with preflight and postflight validation"
+  block:
 
-- name: Identify DNP3 communications
-  ansible.builtin.set_fact:
-    dnp3_assets: "{{ detected_protocols.json.assets | default([]) | selectattr('protocols', 'search', 'DNP3') | list }}"
+    # ----------------------------- preflight --------------------
 
-- name: Identify IEC 61850 communications
-  ansible.builtin.set_fact:
-    iec61850_assets: "{{ detected_protocols.json.assets | default([]) | selectattr('protocols', 'search', 'IEC 61850') | list }}"
+    - name: "dragos/dragos_inventory_model/assets_protocols | Preflight | Verify the control node meets the minimum ansible-core version"
+      ansible.builtin.assert:
+        that:
+          - ansible_version.full is version(fe_validation_min_ansible_version | default('2.12'), '>=')
+        fail_msg: >-
+          dragos/dragos_inventory_model/assets_protocols: requires ansible-core
+          {{ fe_validation_min_ansible_version | default('2.12') }} or newer,
+          found {{ ansible_version.full }}.
+        success_msg: >-
+          dragos/dragos_inventory_model/assets_protocols: ansible-core {{ ansible_version.full }} satisfies the minimum.
+        quiet: true
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: Identify BACnet communications
-  ansible.builtin.set_fact:
-    bacnet_assets: "{{ detected_protocols.json.assets | default([]) | selectattr('protocols', 'search', 'BACnet') | list }}"
+    - name: "dragos/dragos_inventory_model/assets_protocols | Preflight | Verify every declared required variable is defined"
+      ansible.builtin.assert:
+        that:
+          - vars[item] is defined
+        fail_msg: "dragos/dragos_inventory_model/assets_protocols: required variable '{{ item }}' is not defined."
+        success_msg: "dragos/dragos_inventory_model/assets_protocols: required variable '{{ item }}' is defined."
+        quiet: true
+      loop: "{{ fe_dragos_dragos_inventory_model_assets_protocols_required_vars | default([]) }}"
+      loop_control:
+        label: "{{ item }}"
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: Identify OPC UA communications
-  ansible.builtin.set_fact:
-    opcua_assets: "{{ detected_protocols.json.assets | default([]) | selectattr('protocols', 'search', 'OPC UA') | list }}"
+    - name: "dragos/dragos_inventory_model/assets_protocols | Preflight | Record that preflight validation passed"
+      ansible.builtin.set_fact:
+        fe_dragos_dragos_inventory_model_assets_protocols_preflight_passed: true
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: Identify EtherNet/IP communications
-  ansible.builtin.set_fact:
-    ethernetip_assets: "{{ detected_protocols.json.assets | default([]) | selectattr('protocols', 'search', 'EtherNet/IP') | list }}"
+    # ----------------------------- execute ----------------------
 
-- name: Identify Profinet communications
-  ansible.builtin.set_fact:
-    profinet_assets: "{{ detected_protocols.json.assets | default([]) | selectattr('protocols', 'search', 'Profinet') | list }}"
+    - name: Retrieve protocol detection data
+      ansible.builtin.uri:
+        url: "{{ dragos_base_url }}/api/assets/protocols?timerange={{ protocol_timerange }}&limit={{ page_size }}"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ dragos_token }}"
+        return_content: true
+        status_code: 200
+        validate_certs: "{{ dragos_verify_ssl }}"
+      register: detected_protocols
 
-- name: Identify S7comm communications (Siemens)
-  ansible.builtin.set_fact:
-    s7comm_assets: "{{ detected_protocols.json.assets | default([]) | selectattr('protocols', 'search', 'S7comm') | list }}"
+    - name: Categorize protocols by type
+      ansible.builtin.set_fact:
+        protocol_categories:
+          fieldbus:
+            - Modbus
+            - DNP3
+            - Profinet
+            - EtherNet/IP
+            - CIP
+          process_control:
+            - OPC UA
+            - IEC 61850
+            - IEC 60870-5-104
+          building_automation:
+            - BACnet
+            - LonWorks
+            - KNX
+          legacy:
+            - Modbus RTU
+            - Modbus ASCII
+            - DF1
+          proprietary:
+            - S7comm
+            - CIP
+            - GE SRTP
 
-- name: Detect insecure protocol usage
-  ansible.builtin.uri:
-    url: "{{ dragos_base_url }}/api/assets/protocols/insecure"
-    method: GET
-    headers:
-      Authorization: "Bearer {{ dragos_token }}"
-    return_content: true
-    status_code: 200
-    validate_certs: "{{ dragos_verify_ssl }}"
-  register: insecure_protocols
+    - name: Identify Modbus communications
+      ansible.builtin.set_fact:
+        modbus_assets: "{{ detected_protocols.json.assets | default([]) | selectattr('protocols', 'search', 'Modbus') | list }}"
 
-- name: Detect legacy protocol usage
-  ansible.builtin.set_fact:
-    legacy_protocol_assets: "{{ detected_protocols.json.assets | default([]) | selectattr('protocols', 'search', 'RTU|ASCII|DF1') | list }}"
+    - name: Identify DNP3 communications
+      ansible.builtin.set_fact:
+        dnp3_assets: "{{ detected_protocols.json.assets | default([]) | selectattr('protocols', 'search', 'DNP3') | list }}"
 
-- name: Generate protocol distribution report
-  ansible.builtin.template:
-    src: protocol_distribution_report.j2
-    dest: "{{ artifacts_dir }}/protocol_distribution_{{ ansible_date_time.iso8601_basic_short }}.html"
-    mode: "0644"
+    - name: Identify IEC 61850 communications
+      ansible.builtin.set_fact:
+        iec61850_assets: "{{ detected_protocols.json.assets | default([]) | selectattr('protocols', 'search', 'IEC 61850') | list }}"
 
-- name: Save protocol detection data
-  ansible.builtin.copy:
-    dest: "{{ artifacts_dir }}/protocol_detection_{{ ansible_date_time.iso8601_basic_short }}.json"
-    content: "{{ {'modbus': modbus_assets, 'dnp3': dnp3_assets, 'iec61850': iec61850_assets, 'bacnet': bacnet_assets, 'opcua': opcua_assets, 'ethernetip': ethernetip_assets, 'profinet': profinet_assets, 's7comm': s7comm_assets, 'insecure': insecure_protocols, 'legacy': legacy_protocol_assets} | to_nice_json }}"
-    mode: "0644"
+    - name: Identify BACnet communications
+      ansible.builtin.set_fact:
+        bacnet_assets: "{{ detected_protocols.json.assets | default([]) | selectattr('protocols', 'search', 'BACnet') | list }}"
+
+    - name: Identify OPC UA communications
+      ansible.builtin.set_fact:
+        opcua_assets: "{{ detected_protocols.json.assets | default([]) | selectattr('protocols', 'search', 'OPC UA') | list }}"
+
+    - name: Identify EtherNet/IP communications
+      ansible.builtin.set_fact:
+        ethernetip_assets: "{{ detected_protocols.json.assets | default([]) | selectattr('protocols', 'search', 'EtherNet/IP') | list }}"
+
+    - name: Identify Profinet communications
+      ansible.builtin.set_fact:
+        profinet_assets: "{{ detected_protocols.json.assets | default([]) | selectattr('protocols', 'search', 'Profinet') | list }}"
+
+    - name: Identify S7comm communications (Siemens)
+      ansible.builtin.set_fact:
+        s7comm_assets: "{{ detected_protocols.json.assets | default([]) | selectattr('protocols', 'search', 'S7comm') | list }}"
+
+    - name: Detect insecure protocol usage
+      ansible.builtin.uri:
+        url: "{{ dragos_base_url }}/api/assets/protocols/insecure"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ dragos_token }}"
+        return_content: true
+        status_code: 200
+        validate_certs: "{{ dragos_verify_ssl }}"
+      register: insecure_protocols
+
+    - name: Detect legacy protocol usage
+      ansible.builtin.set_fact:
+        legacy_protocol_assets: "{{ detected_protocols.json.assets | default([]) | selectattr('protocols', 'search', 'RTU|ASCII|DF1') | list }}"
+
+    - name: Generate protocol distribution report
+      ansible.builtin.template:
+        src: protocol_distribution_report.j2
+        dest: "{{ artifacts_dir }}/protocol_distribution_{{ ansible_date_time.iso8601_basic_short }}.html"
+        mode: "0644"
+
+    - name: Save protocol detection data
+      ansible.builtin.copy:
+        dest: "{{ artifacts_dir }}/protocol_detection_{{ ansible_date_time.iso8601_basic_short }}.json"
+        content: "{{ {'modbus': modbus_assets, 'dnp3': dnp3_assets, 'iec61850': iec61850_assets, 'bacnet': bacnet_assets, 'opcua': opcua_assets, 'ethernetip': ethernetip_assets, 'profinet': profinet_assets, 's7comm': s7comm_assets, 'insecure': insecure_protocols, 'legacy': legacy_protocol_assets} | to_nice_json }}"
+        mode: "0644"
+
+    # ----------------------------- postflight -------------------
+
+    - name: "dragos/dragos_inventory_model/assets_protocols | Postflight | Verify the guarded body ran after a passing preflight"
+      ansible.builtin.assert:
+        that:
+          - fe_dragos_dragos_inventory_model_assets_protocols_preflight_passed | bool
+          - fe_dragos_dragos_inventory_model_assets_protocols_status in ['running', 'succeeded']
+        fail_msg: >-
+          dragos/dragos_inventory_model/assets_protocols: postflight validation failed - preflight passed
+          ={{ fe_dragos_dragos_inventory_model_assets_protocols_preflight_passed | default(false) }},
+          status={{ fe_dragos_dragos_inventory_model_assets_protocols_status | default('unknown') }}.
+        success_msg: "dragos/dragos_inventory_model/assets_protocols: postflight validation passed."
+        quiet: true
+      tags:
+        - always
+        - postflight
+        - validation
+
+    - name: "dragos/dragos_inventory_model/assets_protocols | Postflight | Record the successful outcome"
+      ansible.builtin.set_fact:
+        fe_dragos_dragos_inventory_model_assets_protocols_postflight_passed: true
+        fe_dragos_dragos_inventory_model_assets_protocols_status: "succeeded"
+      tags:
+        - always
+        - postflight
+        - validation
+
+  rescue:
+
+    - name: "dragos/dragos_inventory_model/assets_protocols | Rescue | Capture the failing task and error detail"
+      ansible.builtin.set_fact:
+        fe_dragos_dragos_inventory_model_assets_protocols_status: "failed"
+        fe_dragos_dragos_inventory_model_assets_protocols_postflight_passed: false
+        fe_dragos_dragos_inventory_model_assets_protocols_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+        fe_dragos_dragos_inventory_model_assets_protocols_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+      tags:
+        - always
+        - rescue
+
+    - name: "dragos/dragos_inventory_model/assets_protocols | Rescue | Report the failure"
+      ansible.builtin.debug:
+        msg: >-
+          dragos/dragos_inventory_model/assets_protocols: FAILED at '{{ fe_dragos_dragos_inventory_model_assets_protocols_failed_task }}' on
+          {{ inventory_hostname }} - {{ fe_dragos_dragos_inventory_model_assets_protocols_error }}
+      tags:
+        - always
+        - rescue
+
+    - name: "dragos/dragos_inventory_model/assets_protocols | Rescue | Re-raise the failure unless the caller opted to continue"
+      ansible.builtin.fail:
+        msg: >-
+          dragos/dragos_inventory_model/assets_protocols failed at '{{ fe_dragos_dragos_inventory_model_assets_protocols_failed_task }}': {{ fe_dragos_dragos_inventory_model_assets_protocols_error }}
+      when: not (fe_validation_continue_on_error | default(false) | bool)
+      tags:
+        - always
+        - rescue
+
+  always:
+
+    - name: "dragos/dragos_inventory_model/assets_protocols | Always | Compute the execution duration"
+      ansible.builtin.set_fact:
+        fe_dragos_dragos_inventory_model_assets_protocols_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+        fe_dragos_dragos_inventory_model_assets_protocols_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_dragos_dragos_inventory_model_assets_protocols_start_epoch | default(0) | int) }}"
+      tags:
+        - always
+
+    - name: "dragos/dragos_inventory_model/assets_protocols | Always | Publish the validation result with set_stats"
+      ansible.builtin.set_stats:
+        data:
+          fe_validation_results:
+            "dragos/dragos_inventory_model/assets_protocols":
+              component: "dragos/dragos_inventory_model/assets_protocols"
+              type: "role-tasks"
+              platform: "dragos"
+              host: "{{ inventory_hostname }}"
+              status: "{{ fe_dragos_dragos_inventory_model_assets_protocols_status | default('unknown') }}"
+              preflight_passed: "{{ fe_dragos_dragos_inventory_model_assets_protocols_preflight_passed | default(false) | bool }}"
+              postflight_passed: "{{ fe_dragos_dragos_inventory_model_assets_protocols_postflight_passed | default(false) | bool }}"
+              started_at: "{{ fe_dragos_dragos_inventory_model_assets_protocols_started_at | default('') }}"
+              ended_at: "{{ fe_dragos_dragos_inventory_model_assets_protocols_ended_at | default('') }}"
+              duration_seconds: "{{ fe_dragos_dragos_inventory_model_assets_protocols_duration_seconds | default(0) | int }}"
+              failed_task: "{{ fe_dragos_dragos_inventory_model_assets_protocols_failed_task | default('') }}"
+              error: "{{ fe_dragos_dragos_inventory_model_assets_protocols_error | default('') }}"
+              check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+          fe_validation_executions: 1
+          fe_validation_succeeded: "{{ 1 if fe_dragos_dragos_inventory_model_assets_protocols_status | default('') == 'succeeded' else 0 }}"
+          fe_validation_failed: "{{ 0 if fe_dragos_dragos_inventory_model_assets_protocols_status | default('') == 'succeeded' else 1 }}"
+          fe_validation_duration_seconds: "{{ fe_dragos_dragos_inventory_model_assets_protocols_duration_seconds | default(0) | int }}"
+          fe_validation_failed_components: >-
+            {{ [] if fe_dragos_dragos_inventory_model_assets_protocols_status | default('') == 'succeeded' else ['dragos/dragos_inventory_model/assets_protocols'] }}
+        aggregate: true
+        per_host: false
+      tags:
+        - always
+
+    - name: "dragos/dragos_inventory_model/assets_protocols | Always | Mark the validation statistics as published"
+      ansible.builtin.set_fact:
+        fe_dragos_dragos_inventory_model_assets_protocols_stats_published: true
+      tags:
+        - always

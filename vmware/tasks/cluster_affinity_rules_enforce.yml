@@ -25,163 +25,346 @@
 #
 #   remove_undeclared_rules: false  # when true, delete cluster rules not in vm_vm_rules/vm_host_rules by name
 
-- name: Assert required inputs
-  ansible.builtin.assert:
-    that:
-      - vcenter_hostname|length > 0
-      - vcenter_username|length > 0
-      - vcenter_password|length > 0
-      - vcenter_datacenter|length > 0
-      - cluster_name|length > 0
-    fail_msg: "vCenter creds + vcenter_datacenter + cluster_name are required."
+# ---------------------------------------------------------------------------
+# Fourth Estate preflight / postflight validation harness
+#
+# The task file body below is wrapped in an Ansible block/rescue/always structure:
+#
+#   block   preflight validation runs first, then the original task file body, then
+#           postflight validation. Any failure transfers control to rescue.
+#   rescue  records which task failed and why, then re-raises so a failure is
+#           never silently swallowed. Set fe_validation_continue_on_error=true
+#           to record the failure and keep going instead.
+#   always  computes the run duration and publishes the outcome through
+#           ansible.builtin.set_stats, so a wrapping playbook, AWX/AAP or CI can
+#           consume the result without scraping log output.
+#
+# Published stats (see docs/VALIDATION_AND_STATS.md):
+#   fe_validation_results['vmware/cluster_affinity_rules_enforce']  per-component record
+#   fe_validation_executions / _succeeded / _failed / _duration_seconds
+#   fe_validation_failed_components
+#
+# Add component-specific preflight checks without editing this file by setting
+#   fe_vmware_cluster_affinity_rules_enforce_required_vars: [var_one, var_two]
+# ---------------------------------------------------------------------------
 
-- name: Defaults
+- name: "vmware/cluster_affinity_rules_enforce | Initialize validation state"
   ansible.builtin.set_fact:
-    vcenter_validate_certs: "{{ vcenter_validate_certs | default(false) }}"
-    vm_vm_rules: "{{ vm_vm_rules | default([]) }}"
-    vm_host_rules: "{{ vm_host_rules | default([]) }}"
-    remove_undeclared_rules: "{{ remove_undeclared_rules | default(false) }}"
+    fe_vmware_cluster_affinity_rules_enforce_start_epoch: "{{ now(fmt='%s') | int }}"
+    fe_vmware_cluster_affinity_rules_enforce_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+    fe_vmware_cluster_affinity_rules_enforce_status: "running"
+    fe_vmware_cluster_affinity_rules_enforce_preflight_passed: false
+    fe_vmware_cluster_affinity_rules_enforce_postflight_passed: false
+    fe_vmware_cluster_affinity_rules_enforce_failed_task: ""
+    fe_vmware_cluster_affinity_rules_enforce_error: ""
+    fe_vmware_cluster_affinity_rules_enforce_stats_published: false
+  tags:
+    - always
 
-#######################################################################
-# VM/VM AFFINITY & ANTI-AFFINITY
-#######################################################################
-- name: Enforce VM/VM DRS rules
-  community.vmware.vmware_drs_rule:
-    hostname: "{{ vcenter_hostname }}"
-    username: "{{ vcenter_username }}"
-    password: "{{ vcenter_password }}"
-    validate_certs: "{{ vcenter_validate_certs }}"
-    datacenter: "{{ vcenter_datacenter }}"
-    cluster: "{{ cluster_name }}"
-    drs_rule_name: "{{ item.name }}"
-    state: "{{ item.state | default('present') }}"
-    enabled: "{{ item.enabled | default(true) }}"
-    mandatory: "{{ item.mandatory | default(false) }}"
-    affinity_rule: "{{ item.affinity | default(false) }}"
-    vm_list: "{{ item.vms | default([]) }}"
-  no_log: true
-  loop: "{{ vm_vm_rules }}"
-  loop_control:
-    label: "{{ item.name }} ({{ (item.affinity|default(false)) | ternary('affinity','anti-affinity') }})"
-  delegate_to: localhost
+- name: "vmware/cluster_affinity_rules_enforce | Guarded execution with preflight and postflight validation"
+  block:
 
-#######################################################################
-# VM/HOST AFFINITY (via DRS Groups + VM/Host Rule)
-#######################################################################
-# 1) Ensure VM and Host DRS groups exist/updated
-- name: Ensure VM DRS groups (for VM/Host rules)
-  community.vmware.vmware_cluster_vm_drs_group:
-    hostname: "{{ vcenter_hostname }}"
-    username: "{{ vcenter_username }}"
-    password: "{{ vcenter_password }}"
-    validate_certs: "{{ vcenter_validate_certs }}"
-    datacenter_name: "{{ vcenter_datacenter }}"
-    cluster_name: "{{ cluster_name }}"
-    group_name: "{{ item.vm_group }}"
-    vms: "{{ item.vms | default([]) }}"
-    state: "{{ item.state | default('present') }}"
-  no_log: true
-  loop: "{{ vm_host_rules }}"
-  when: item.vm_group is defined
-  delegate_to: localhost
+    # ----------------------------- preflight --------------------
 
-- name: Ensure Host DRS groups (for VM/Host rules)
-  community.vmware.vmware_cluster_host_drs_group:
-    hostname: "{{ vcenter_hostname }}"
-    username: "{{ vcenter_username }}"
-    password: "{{ vcenter_password }}"
-    validate_certs: "{{ vcenter_validate_certs }}"
-    datacenter_name: "{{ vcenter_datacenter }}"
-    cluster_name: "{{ cluster_name }}"
-    group_name: "{{ item.host_group }}"
-    hosts: "{{ item.hosts | default([]) }}"
-    state: "{{ item.state | default('present') }}"
-  no_log: true
-  loop: "{{ vm_host_rules }}"
-  when: item.host_group is defined
-  delegate_to: localhost
+    - name: "vmware/cluster_affinity_rules_enforce | Preflight | Verify the control node meets the minimum ansible-core version"
+      ansible.builtin.assert:
+        that:
+          - ansible_version.full is version(fe_validation_min_ansible_version | default('2.12'), '>=')
+        fail_msg: >-
+          vmware/cluster_affinity_rules_enforce: requires ansible-core
+          {{ fe_validation_min_ansible_version | default('2.12') }} or newer,
+          found {{ ansible_version.full }}.
+        success_msg: >-
+          vmware/cluster_affinity_rules_enforce: ansible-core {{ ansible_version.full }} satisfies the minimum.
+        quiet: true
+      tags:
+        - always
+        - preflight
+        - validation
 
-# 2) Ensure the VM/Host rule referencing those groups
-- name: Enforce VM/Host DRS rules
-  community.vmware.vmware_vm_host_rule:
-    hostname: "{{ vcenter_hostname }}"
-    username: "{{ vcenter_username }}"
-    password: "{{ vcenter_password }}"
-    validate_certs: "{{ vcenter_validate_certs }}"
-    datacenter: "{{ vcenter_datacenter }}"
-    cluster: "{{ cluster_name }}"
-    rule_name: "{{ item.name }}"
-    state: "{{ item.state | default('present') }}"
-    enabled: "{{ item.enabled | default(true) }}"
-    mandatory: "{{ item.mandatory | default(true) }}"
-    vm_group_name: "{{ item.vm_group }}"
-    host_group_name: "{{ item.host_group }}"
-  no_log: true
-  loop: "{{ vm_host_rules }}"
-  loop_control:
-    label: "{{ item.name }} (VMs: {{ item.vm_group }} ↔ Hosts: {{ item.host_group }})"
-  delegate_to: localhost
+    - name: "vmware/cluster_affinity_rules_enforce | Preflight | Verify every declared required variable is defined"
+      ansible.builtin.assert:
+        that:
+          - vars[item] is defined
+        fail_msg: "vmware/cluster_affinity_rules_enforce: required variable '{{ item }}' is not defined."
+        success_msg: "vmware/cluster_affinity_rules_enforce: required variable '{{ item }}' is defined."
+        quiet: true
+      loop: "{{ fe_vmware_cluster_affinity_rules_enforce_required_vars | default([]) }}"
+      loop_control:
+        label: "{{ item }}"
+      tags:
+        - always
+        - preflight
+        - validation
 
-#######################################################################
-# OPTIONAL: RULE DRIFT ENFORCEMENT (DELETE UNDECLARED RULES)
-#######################################################################
-- name: Gather existing cluster DRS rules
-  community.vmware.vmware_cluster_drs_rule_info:
-    hostname: "{{ vcenter_hostname }}"
-    username: "{{ vcenter_username }}"
-    password: "{{ vcenter_password }}"
-    validate_certs: "{{ vcenter_validate_certs }}"
-    datacenter_name: "{{ vcenter_datacenter }}"
-    cluster_name: "{{ cluster_name }}"
-  no_log: true
-  register: _drs_info
-  when: remove_undeclared_rules | bool
-  delegate_to: localhost
+    - name: "vmware/cluster_affinity_rules_enforce | Preflight | Record that preflight validation passed"
+      ansible.builtin.set_fact:
+        fe_vmware_cluster_affinity_rules_enforce_preflight_passed: true
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: Compute rule names to remove (not in declared lists)
-  ansible.builtin.set_fact:
-    _declared_names: "{{ (vm_vm_rules | map(attribute='name') | list) + (vm_host_rules | map(attribute='name') | list) }}"
-    _to_remove: >-
-      {{
-        (_drs_info.rules | default([]))
-        | rejectattr('name','in', _declared_names)
-        | map(attribute='name') | list
-      }}
-  when: remove_undeclared_rules | bool
+    # ----------------------------- execute ----------------------
 
-- name: Remove undeclared VM/VM rules (by name)
-  community.vmware.vmware_drs_rule:
-    hostname: "{{ vcenter_hostname }}"
-    username: "{{ vcenter_username }}"
-    password: "{{ vcenter_password }}"
-    validate_certs: "{{ vcenter_validate_certs }}"
-    datacenter: "{{ vcenter_datacenter }}"
-    cluster: "{{ cluster_name }}"
-    drs_rule_name: "{{ item }}"
-    state: absent
-  no_log: true
-  loop: "{{ _to_remove | default([]) }}"
-  when: remove_undeclared_rules | bool
-  delegate_to: localhost
+    - name: Assert required inputs
+      ansible.builtin.assert:
+        that:
+          - vcenter_hostname|length > 0
+          - vcenter_username|length > 0
+          - vcenter_password|length > 0
+          - vcenter_datacenter|length > 0
+          - cluster_name|length > 0
+        fail_msg: "vCenter creds + vcenter_datacenter + cluster_name are required."
 
-- name: Remove undeclared VM/Host rules (by name)
-  community.vmware.vmware_vm_host_rule:
-    hostname: "{{ vcenter_hostname }}"
-    username: "{{ vcenter_username }}"
-    password: "{{ vcenter_password }}"
-    validate_certs: "{{ vcenter_validate_certs }}"
-    datacenter: "{{ vcenter_datacenter }}"
-    cluster: "{{ cluster_name }}"
-    rule_name: "{{ item }}"
-    state: absent
-  no_log: true
-  loop: "{{ _to_remove | default([]) }}"
-  when: remove_undeclared_rules | bool
-  delegate_to: localhost
+    - name: Defaults
+      ansible.builtin.set_fact:
+        vcenter_validate_certs: "{{ vcenter_validate_certs | default(false) }}"
+        vm_vm_rules: "{{ vm_vm_rules | default([]) }}"
+        vm_host_rules: "{{ vm_host_rules | default([]) }}"
+        remove_undeclared_rules: "{{ remove_undeclared_rules | default(false) }}"
 
-- name: Summary
-  ansible.builtin.debug:
-    msg:
-      vm_vm_rules_declared: "{{ vm_vm_rules | map(attribute='name') | list }}"
-      vm_host_rules_declared: "{{ vm_host_rules | map(attribute='name') | list }}"
-      removed_rules: "{{ _to_remove | default([]) }}"
+    #######################################################################
+    # VM/VM AFFINITY & ANTI-AFFINITY
+    #######################################################################
+    - name: Enforce VM/VM DRS rules
+      community.vmware.vmware_drs_rule:
+        hostname: "{{ vcenter_hostname }}"
+        username: "{{ vcenter_username }}"
+        password: "{{ vcenter_password }}"
+        validate_certs: "{{ vcenter_validate_certs }}"
+        datacenter: "{{ vcenter_datacenter }}"
+        cluster: "{{ cluster_name }}"
+        drs_rule_name: "{{ item.name }}"
+        state: "{{ item.state | default('present') }}"
+        enabled: "{{ item.enabled | default(true) }}"
+        mandatory: "{{ item.mandatory | default(false) }}"
+        affinity_rule: "{{ item.affinity | default(false) }}"
+        vm_list: "{{ item.vms | default([]) }}"
+      no_log: true
+      loop: "{{ vm_vm_rules }}"
+      loop_control:
+        label: "{{ item.name }} ({{ (item.affinity|default(false)) | ternary('affinity','anti-affinity') }})"
+      delegate_to: localhost
+
+    #######################################################################
+    # VM/HOST AFFINITY (via DRS Groups + VM/Host Rule)
+    #######################################################################
+    # 1) Ensure VM and Host DRS groups exist/updated
+    - name: Ensure VM DRS groups (for VM/Host rules)
+      community.vmware.vmware_cluster_vm_drs_group:
+        hostname: "{{ vcenter_hostname }}"
+        username: "{{ vcenter_username }}"
+        password: "{{ vcenter_password }}"
+        validate_certs: "{{ vcenter_validate_certs }}"
+        datacenter_name: "{{ vcenter_datacenter }}"
+        cluster_name: "{{ cluster_name }}"
+        group_name: "{{ item.vm_group }}"
+        vms: "{{ item.vms | default([]) }}"
+        state: "{{ item.state | default('present') }}"
+      no_log: true
+      loop: "{{ vm_host_rules }}"
+      when: item.vm_group is defined
+      delegate_to: localhost
+
+    - name: Ensure Host DRS groups (for VM/Host rules)
+      community.vmware.vmware_cluster_host_drs_group:
+        hostname: "{{ vcenter_hostname }}"
+        username: "{{ vcenter_username }}"
+        password: "{{ vcenter_password }}"
+        validate_certs: "{{ vcenter_validate_certs }}"
+        datacenter_name: "{{ vcenter_datacenter }}"
+        cluster_name: "{{ cluster_name }}"
+        group_name: "{{ item.host_group }}"
+        hosts: "{{ item.hosts | default([]) }}"
+        state: "{{ item.state | default('present') }}"
+      no_log: true
+      loop: "{{ vm_host_rules }}"
+      when: item.host_group is defined
+      delegate_to: localhost
+
+    # 2) Ensure the VM/Host rule referencing those groups
+    - name: Enforce VM/Host DRS rules
+      community.vmware.vmware_vm_host_rule:
+        hostname: "{{ vcenter_hostname }}"
+        username: "{{ vcenter_username }}"
+        password: "{{ vcenter_password }}"
+        validate_certs: "{{ vcenter_validate_certs }}"
+        datacenter: "{{ vcenter_datacenter }}"
+        cluster: "{{ cluster_name }}"
+        rule_name: "{{ item.name }}"
+        state: "{{ item.state | default('present') }}"
+        enabled: "{{ item.enabled | default(true) }}"
+        mandatory: "{{ item.mandatory | default(true) }}"
+        vm_group_name: "{{ item.vm_group }}"
+        host_group_name: "{{ item.host_group }}"
+      no_log: true
+      loop: "{{ vm_host_rules }}"
+      loop_control:
+        label: "{{ item.name }} (VMs: {{ item.vm_group }} ↔ Hosts: {{ item.host_group }})"
+      delegate_to: localhost
+
+    #######################################################################
+    # OPTIONAL: RULE DRIFT ENFORCEMENT (DELETE UNDECLARED RULES)
+    #######################################################################
+    - name: Gather existing cluster DRS rules
+      community.vmware.vmware_cluster_drs_rule_info:
+        hostname: "{{ vcenter_hostname }}"
+        username: "{{ vcenter_username }}"
+        password: "{{ vcenter_password }}"
+        validate_certs: "{{ vcenter_validate_certs }}"
+        datacenter_name: "{{ vcenter_datacenter }}"
+        cluster_name: "{{ cluster_name }}"
+      no_log: true
+      register: _drs_info
+      when: remove_undeclared_rules | bool
+      delegate_to: localhost
+
+    - name: Compute rule names to remove (not in declared lists)
+      ansible.builtin.set_fact:
+        _declared_names: "{{ (vm_vm_rules | map(attribute='name') | list) + (vm_host_rules | map(attribute='name') | list) }}"
+        _to_remove: >-
+          {{
+            (_drs_info.rules | default([]))
+            | rejectattr('name','in', _declared_names)
+            | map(attribute='name') | list
+          }}
+      when: remove_undeclared_rules | bool
+
+    - name: Remove undeclared VM/VM rules (by name)
+      community.vmware.vmware_drs_rule:
+        hostname: "{{ vcenter_hostname }}"
+        username: "{{ vcenter_username }}"
+        password: "{{ vcenter_password }}"
+        validate_certs: "{{ vcenter_validate_certs }}"
+        datacenter: "{{ vcenter_datacenter }}"
+        cluster: "{{ cluster_name }}"
+        drs_rule_name: "{{ item }}"
+        state: absent
+      no_log: true
+      loop: "{{ _to_remove | default([]) }}"
+      when: remove_undeclared_rules | bool
+      delegate_to: localhost
+
+    - name: Remove undeclared VM/Host rules (by name)
+      community.vmware.vmware_vm_host_rule:
+        hostname: "{{ vcenter_hostname }}"
+        username: "{{ vcenter_username }}"
+        password: "{{ vcenter_password }}"
+        validate_certs: "{{ vcenter_validate_certs }}"
+        datacenter: "{{ vcenter_datacenter }}"
+        cluster: "{{ cluster_name }}"
+        rule_name: "{{ item }}"
+        state: absent
+      no_log: true
+      loop: "{{ _to_remove | default([]) }}"
+      when: remove_undeclared_rules | bool
+      delegate_to: localhost
+
+    - name: Summary
+      ansible.builtin.debug:
+        msg:
+          vm_vm_rules_declared: "{{ vm_vm_rules | map(attribute='name') | list }}"
+          vm_host_rules_declared: "{{ vm_host_rules | map(attribute='name') | list }}"
+          removed_rules: "{{ _to_remove | default([]) }}"
+
+    # ----------------------------- postflight -------------------
+
+    - name: "vmware/cluster_affinity_rules_enforce | Postflight | Verify the guarded body ran after a passing preflight"
+      ansible.builtin.assert:
+        that:
+          - fe_vmware_cluster_affinity_rules_enforce_preflight_passed | bool
+          - fe_vmware_cluster_affinity_rules_enforce_status in ['running', 'succeeded']
+        fail_msg: >-
+          vmware/cluster_affinity_rules_enforce: postflight validation failed - preflight passed
+          ={{ fe_vmware_cluster_affinity_rules_enforce_preflight_passed | default(false) }},
+          status={{ fe_vmware_cluster_affinity_rules_enforce_status | default('unknown') }}.
+        success_msg: "vmware/cluster_affinity_rules_enforce: postflight validation passed."
+        quiet: true
+      tags:
+        - always
+        - postflight
+        - validation
+
+    - name: "vmware/cluster_affinity_rules_enforce | Postflight | Record the successful outcome"
+      ansible.builtin.set_fact:
+        fe_vmware_cluster_affinity_rules_enforce_postflight_passed: true
+        fe_vmware_cluster_affinity_rules_enforce_status: "succeeded"
+      tags:
+        - always
+        - postflight
+        - validation
+
+  rescue:
+
+    - name: "vmware/cluster_affinity_rules_enforce | Rescue | Capture the failing task and error detail"
+      ansible.builtin.set_fact:
+        fe_vmware_cluster_affinity_rules_enforce_status: "failed"
+        fe_vmware_cluster_affinity_rules_enforce_postflight_passed: false
+        fe_vmware_cluster_affinity_rules_enforce_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+        fe_vmware_cluster_affinity_rules_enforce_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+      tags:
+        - always
+        - rescue
+
+    - name: "vmware/cluster_affinity_rules_enforce | Rescue | Report the failure"
+      ansible.builtin.debug:
+        msg: >-
+          vmware/cluster_affinity_rules_enforce: FAILED at '{{ fe_vmware_cluster_affinity_rules_enforce_failed_task }}' on
+          {{ inventory_hostname }} - {{ fe_vmware_cluster_affinity_rules_enforce_error }}
+      tags:
+        - always
+        - rescue
+
+    - name: "vmware/cluster_affinity_rules_enforce | Rescue | Re-raise the failure unless the caller opted to continue"
+      ansible.builtin.fail:
+        msg: >-
+          vmware/cluster_affinity_rules_enforce failed at '{{ fe_vmware_cluster_affinity_rules_enforce_failed_task }}': {{ fe_vmware_cluster_affinity_rules_enforce_error }}
+      when: not (fe_validation_continue_on_error | default(false) | bool)
+      tags:
+        - always
+        - rescue
+
+  always:
+
+    - name: "vmware/cluster_affinity_rules_enforce | Always | Compute the execution duration"
+      ansible.builtin.set_fact:
+        fe_vmware_cluster_affinity_rules_enforce_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+        fe_vmware_cluster_affinity_rules_enforce_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_vmware_cluster_affinity_rules_enforce_start_epoch | default(0) | int) }}"
+      tags:
+        - always
+
+    - name: "vmware/cluster_affinity_rules_enforce | Always | Publish the validation result with set_stats"
+      ansible.builtin.set_stats:
+        data:
+          fe_validation_results:
+            "vmware/cluster_affinity_rules_enforce":
+              component: "vmware/cluster_affinity_rules_enforce"
+              type: "tasks"
+              platform: "vmware"
+              host: "{{ inventory_hostname }}"
+              status: "{{ fe_vmware_cluster_affinity_rules_enforce_status | default('unknown') }}"
+              preflight_passed: "{{ fe_vmware_cluster_affinity_rules_enforce_preflight_passed | default(false) | bool }}"
+              postflight_passed: "{{ fe_vmware_cluster_affinity_rules_enforce_postflight_passed | default(false) | bool }}"
+              started_at: "{{ fe_vmware_cluster_affinity_rules_enforce_started_at | default('') }}"
+              ended_at: "{{ fe_vmware_cluster_affinity_rules_enforce_ended_at | default('') }}"
+              duration_seconds: "{{ fe_vmware_cluster_affinity_rules_enforce_duration_seconds | default(0) | int }}"
+              failed_task: "{{ fe_vmware_cluster_affinity_rules_enforce_failed_task | default('') }}"
+              error: "{{ fe_vmware_cluster_affinity_rules_enforce_error | default('') }}"
+              check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+          fe_validation_executions: 1
+          fe_validation_succeeded: "{{ 1 if fe_vmware_cluster_affinity_rules_enforce_status | default('') == 'succeeded' else 0 }}"
+          fe_validation_failed: "{{ 0 if fe_vmware_cluster_affinity_rules_enforce_status | default('') == 'succeeded' else 1 }}"
+          fe_validation_duration_seconds: "{{ fe_vmware_cluster_affinity_rules_enforce_duration_seconds | default(0) | int }}"
+          fe_validation_failed_components: >-
+            {{ [] if fe_vmware_cluster_affinity_rules_enforce_status | default('') == 'succeeded' else ['vmware/cluster_affinity_rules_enforce'] }}
+        aggregate: true
+        per_host: false
+      tags:
+        - always
+
+    - name: "vmware/cluster_affinity_rules_enforce | Always | Mark the validation statistics as published"
+      ansible.builtin.set_fact:
+        fe_vmware_cluster_affinity_rules_enforce_stats_published: true
+      tags:
+        - always

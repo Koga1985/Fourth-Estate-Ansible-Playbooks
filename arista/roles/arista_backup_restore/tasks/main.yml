@@ -2,211 +2,394 @@
 # tasks file for arista_backup_restore
 # Production-ready configuration backup and restore for Fourth Estate agencies
 
-- name: Ensure backup directory exists
-  ansible.builtin.file:
-    path: "{{ backup_dir }}"
-    state: directory
-    mode: "0755"
-  delegate_to: localhost
-  run_once: true
+# ---------------------------------------------------------------------------
+# Fourth Estate preflight / postflight validation harness
+#
+# The task file body below is wrapped in an Ansible block/rescue/always structure:
+#
+#   block   preflight validation runs first, then the original task file body, then
+#           postflight validation. Any failure transfers control to rescue.
+#   rescue  records which task failed and why, then re-raises so a failure is
+#           never silently swallowed. Set fe_validation_continue_on_error=true
+#           to record the failure and keep going instead.
+#   always  computes the run duration and publishes the outcome through
+#           ansible.builtin.set_stats, so a wrapping playbook, AWX/AAP or CI can
+#           consume the result without scraping log output.
+#
+# Published stats (see docs/VALIDATION_AND_STATS.md):
+#   fe_validation_results['arista/arista_backup_restore']  per-component record
+#   fe_validation_executions / _succeeded / _failed / _duration_seconds
+#   fe_validation_failed_components
+#
+# Add component-specific preflight checks without editing this file by setting
+#   fe_arista_arista_backup_restore_required_vars: [var_one, var_two]
+# ---------------------------------------------------------------------------
 
-- name: Ensure device-specific backup directory exists
-  ansible.builtin.file:
-    path: "{{ backup_dir }}/{{ inventory_hostname }}"
-    state: directory
-    mode: "0755"
-  delegate_to: localhost
+- name: "arista/arista_backup_restore | Initialize validation state"
+  ansible.builtin.set_fact:
+    fe_arista_arista_backup_restore_start_epoch: "{{ now(fmt='%s') | int }}"
+    fe_arista_arista_backup_restore_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+    fe_arista_arista_backup_restore_status: "running"
+    fe_arista_arista_backup_restore_preflight_passed: false
+    fe_arista_arista_backup_restore_postflight_passed: false
+    fe_arista_arista_backup_restore_failed_task: ""
+    fe_arista_arista_backup_restore_error: ""
+    fe_arista_arista_backup_restore_stats_published: false
+  tags:
+    - always
 
-# Backup Operations
-- name: Backup running configuration
-  when: backup_operation == "backup" or backup_operation == "both"
-  arista.eos.eos_config:
-    backup: yes
-    backup_options:
-      filename: "{{ inventory_hostname }}_{{ ansible_date_time.date }}_{{ ansible_date_time.time | replace(':', '-') }}.cfg"
-      dir_path: "{{ backup_dir }}/{{ inventory_hostname }}"
-  register: backup_result
+- name: "arista/arista_backup_restore | Guarded execution with preflight and postflight validation"
+  block:
 
-- name: Display backup location
-  when: backup_operation == "backup" or backup_operation == "both"
-  ansible.builtin.debug:
-    msg: "Configuration backed up to: {{ backup_result.backup_path }}"
+    # ----------------------------- preflight --------------------
 
-- name: Collect device facts for backup metadata
-  when: backup_operation == "backup" or backup_operation == "both"
-  arista.eos.eos_facts:
-    gather_subset: all
-  register: device_facts
+    - name: "arista/arista_backup_restore | Preflight | Verify the control node meets the minimum ansible-core version"
+      ansible.builtin.assert:
+        that:
+          - ansible_version.full is version(fe_validation_min_ansible_version | default('2.12'), '>=')
+        fail_msg: >-
+          arista/arista_backup_restore: requires ansible-core
+          {{ fe_validation_min_ansible_version | default('2.12') }} or newer,
+          found {{ ansible_version.full }}.
+        success_msg: >-
+          arista/arista_backup_restore: ansible-core {{ ansible_version.full }} satisfies the minimum.
+        quiet: true
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: Save device facts metadata
-  when: backup_operation == "backup" or backup_operation == "both"
-  ansible.builtin.copy:
-    dest: "{{ backup_dir }}/{{ inventory_hostname }}/{{ inventory_hostname }}_facts_{{ ansible_date_time.date }}.json"
-    content: "{{ device_facts | to_nice_json }}"
-    mode: "0644"
-  delegate_to: localhost
+    - name: "arista/arista_backup_restore | Preflight | Verify every declared required variable is defined"
+      ansible.builtin.assert:
+        that:
+          - vars[item] is defined
+        fail_msg: "arista/arista_backup_restore: required variable '{{ item }}' is not defined."
+        success_msg: "arista/arista_backup_restore: required variable '{{ item }}' is defined."
+        quiet: true
+      loop: "{{ fe_arista_arista_backup_restore_required_vars | default([]) }}"
+      loop_control:
+        label: "{{ item }}"
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: Backup startup configuration
-  when: (backup_operation == "backup" or backup_operation == "both") and backup_startup | default(true)
-  arista.eos.eos_command:
-    commands:
-      - show startup-config
-  register: startup_config
+    - name: "arista/arista_backup_restore | Preflight | Record that preflight validation passed"
+      ansible.builtin.set_fact:
+        fe_arista_arista_backup_restore_preflight_passed: true
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: Save startup configuration
-  when: (backup_operation == "backup" or backup_operation == "both") and backup_startup | default(true)
-  ansible.builtin.copy:
-    dest: "{{ backup_dir }}/{{ inventory_hostname }}/{{ inventory_hostname }}_startup_{{ ansible_date_time.date }}.cfg"
-    content: "{{ startup_config.stdout[0] }}"
-    mode: "0644"
-  delegate_to: localhost
+    # ----------------------------- execute ----------------------
 
-- name: Collect configuration snapshots
-  when: (backup_operation == "backup" or backup_operation == "both") and backup_snapshots | default(true)
-  arista.eos.eos_command:
-    commands:
-      - show running-config
-      - show version
-      - show inventory
-      - show vlan
-      - show interfaces status
-      - show ip route summary
-      - show bgp summary
-      - show ip interface brief
-  register: config_snapshots
+    - name: Ensure backup directory exists
+      ansible.builtin.file:
+        path: "{{ backup_dir }}"
+        state: directory
+        mode: "0755"
+      delegate_to: localhost
+      run_once: true
 
-- name: Save configuration snapshots
-  when: (backup_operation == "backup" or backup_operation == "both") and backup_snapshots | default(true)
-  ansible.builtin.copy:
-    dest: "{{ backup_dir }}/{{ inventory_hostname }}/{{ inventory_hostname }}_snapshot_{{ ansible_date_time.date }}.json"
-    content: "{{ config_snapshots | to_nice_json }}"
-    mode: "0644"
-  delegate_to: localhost
+    - name: Ensure device-specific backup directory exists
+      ansible.builtin.file:
+        path: "{{ backup_dir }}/{{ inventory_hostname }}"
+        state: directory
+        mode: "0755"
+      delegate_to: localhost
 
-# Archive old backups
-- name: Find old backup files
-  when: (backup_operation == "backup" or backup_operation == "both") and backup_retention_days is defined
-  ansible.builtin.find:
-    paths: "{{ backup_dir }}/{{ inventory_hostname }}"
-    age: "{{ backup_retention_days }}d"
-    patterns: "*.cfg,*.json"
-  register: old_backups
-  delegate_to: localhost
+    # Backup Operations
+    - name: Backup running configuration
+      when: backup_operation == "backup" or backup_operation == "both"
+      arista.eos.eos_config:
+        backup: yes
+        backup_options:
+          filename: "{{ inventory_hostname }}_{{ ansible_date_time.date }}_{{ ansible_date_time.time | replace(':', '-') }}.cfg"
+          dir_path: "{{ backup_dir }}/{{ inventory_hostname }}"
+      register: backup_result
 
-- name: Archive old backups
-  when: (backup_operation == "backup" or backup_operation == "both") and backup_retention_days is defined and old_backups.matched > 0
-  ansible.builtin.archive:
-    path: "{{ backup_dir }}/{{ inventory_hostname }}"
-    dest: "{{ backup_archive_dir }}/{{ inventory_hostname }}_archive_{{ ansible_date_time.date }}.tar.gz"
-    format: gz
-    remove: no
-  delegate_to: localhost
-  ignore_errors: true
+    - name: Display backup location
+      when: backup_operation == "backup" or backup_operation == "both"
+      ansible.builtin.debug:
+        msg: "Configuration backed up to: {{ backup_result.backup_path }}"
 
-- name: Remove old backups after archiving
-  when: (backup_operation == "backup" or backup_operation == "both") and backup_retention_days is defined and old_backups.matched > 0
-  ansible.builtin.file:
-    path: "{{ item.path }}"
-    state: absent
-  loop: "{{ old_backups.files }}"
-  delegate_to: localhost
+    - name: Collect device facts for backup metadata
+      when: backup_operation == "backup" or backup_operation == "both"
+      arista.eos.eos_facts:
+        gather_subset: all
+      register: device_facts
 
-# Restore Operations
-- name: Validate restore file exists
-  when: backup_operation == "restore" or backup_operation == "both"
-  ansible.builtin.stat:
-    path: "{{ restore_file }}"
-  register: restore_file_stat
-  delegate_to: localhost
-  failed_when: not restore_file_stat.stat.exists
+    - name: Save device facts metadata
+      when: backup_operation == "backup" or backup_operation == "both"
+      ansible.builtin.copy:
+        dest: "{{ backup_dir }}/{{ inventory_hostname }}/{{ inventory_hostname }}_facts_{{ ansible_date_time.date }}.json"
+        content: "{{ device_facts | to_nice_json }}"
+        mode: "0644"
+      delegate_to: localhost
 
-- name: Read restore configuration file
-  when: backup_operation == "restore" or backup_operation == "both"
-  ansible.builtin.slurp:
-    src: "{{ restore_file }}"
-  register: restore_config_content
-  delegate_to: localhost
+    - name: Backup startup configuration
+      when: (backup_operation == "backup" or backup_operation == "both") and backup_startup | default(true)
+      arista.eos.eos_command:
+        commands:
+          - show startup-config
+      register: startup_config
 
-- name: Create pre-restore backup
-  when: (backup_operation == "restore" or backup_operation == "both") and pre_restore_backup | default(true)
-  arista.eos.eos_config:
-    backup: yes
-    backup_options:
-      filename: "{{ inventory_hostname }}_pre_restore_{{ ansible_date_time.date }}_{{ ansible_date_time.time | replace(':', '-') }}.cfg"
-      dir_path: "{{ backup_dir }}/{{ inventory_hostname }}"
-  register: pre_restore_backup_result
+    - name: Save startup configuration
+      when: (backup_operation == "backup" or backup_operation == "both") and backup_startup | default(true)
+      ansible.builtin.copy:
+        dest: "{{ backup_dir }}/{{ inventory_hostname }}/{{ inventory_hostname }}_startup_{{ ansible_date_time.date }}.cfg"
+        content: "{{ startup_config.stdout[0] }}"
+        mode: "0644"
+      delegate_to: localhost
 
-- name: Display pre-restore backup location
-  when: (backup_operation == "restore" or backup_operation == "both") and pre_restore_backup | default(true)
-  ansible.builtin.debug:
-    msg: "Pre-restore backup saved to: {{ pre_restore_backup_result.backup_path }}"
+    - name: Collect configuration snapshots
+      when: (backup_operation == "backup" or backup_operation == "both") and backup_snapshots | default(true)
+      arista.eos.eos_command:
+        commands:
+          - show running-config
+          - show version
+          - show inventory
+          - show vlan
+          - show interfaces status
+          - show ip route summary
+          - show bgp summary
+          - show ip interface brief
+      register: config_snapshots
 
-- name: Restore configuration (replace mode)
-  when: (backup_operation == "restore" or backup_operation == "both") and restore_mode == "replace"
-  arista.eos.eos_config:
-    src: "{{ restore_file }}"
-    replace: config
-    match: none
-  register: restore_result
+    - name: Save configuration snapshots
+      when: (backup_operation == "backup" or backup_operation == "both") and backup_snapshots | default(true)
+      ansible.builtin.copy:
+        dest: "{{ backup_dir }}/{{ inventory_hostname }}/{{ inventory_hostname }}_snapshot_{{ ansible_date_time.date }}.json"
+        content: "{{ config_snapshots | to_nice_json }}"
+        mode: "0644"
+      delegate_to: localhost
 
-- name: Restore configuration (merge mode)
-  when: (backup_operation == "restore" or backup_operation == "both") and restore_mode == "merge"
-  arista.eos.eos_config:
-    src: "{{ restore_file }}"
-    replace: line
-    match: line
-  register: restore_result
+    # Archive old backups
+    - name: Find old backup files
+      when: (backup_operation == "backup" or backup_operation == "both") and backup_retention_days is defined
+      ansible.builtin.find:
+        paths: "{{ backup_dir }}/{{ inventory_hostname }}"
+        age: "{{ backup_retention_days }}d"
+        patterns: "*.cfg,*.json"
+      register: old_backups
+      delegate_to: localhost
 
-- name: Display restore results
-  when: backup_operation == "restore" or backup_operation == "both"
-  ansible.builtin.debug:
-    msg: "Configuration restored from: {{ restore_file }}"
+    - name: Archive old backups
+      when: (backup_operation == "backup" or backup_operation == "both") and backup_retention_days is defined and old_backups.matched > 0
+      ansible.builtin.archive:
+        path: "{{ backup_dir }}/{{ inventory_hostname }}"
+        dest: "{{ backup_archive_dir }}/{{ inventory_hostname }}_archive_{{ ansible_date_time.date }}.tar.gz"
+        format: gz
+        remove: no
+      delegate_to: localhost
+      ignore_errors: true
 
-- name: Save running config after restore
-  when: (backup_operation == "restore" or backup_operation == "both") and save_after_restore | default(true)
-  arista.eos.eos_config:
-    save_when: always
+    - name: Remove old backups after archiving
+      when: (backup_operation == "backup" or backup_operation == "both") and backup_retention_days is defined and old_backups.matched > 0
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: absent
+      loop: "{{ old_backups.files }}"
+      delegate_to: localhost
 
-- name: Verify configuration after restore
-  when: (backup_operation == "restore" or backup_operation == "both") and verify_after_restore | default(true)
-  arista.eos.eos_command:
-    commands:
-      - show running-config | include hostname
-      - show version | include Software
-      - show interfaces status | include connected
-  register: post_restore_verification
+    # Restore Operations
+    - name: Validate restore file exists
+      when: backup_operation == "restore" or backup_operation == "both"
+      ansible.builtin.stat:
+        path: "{{ restore_file }}"
+      register: restore_file_stat
+      delegate_to: localhost
+      failed_when: not restore_file_stat.stat.exists
 
-- name: Display post-restore verification
-  when: (backup_operation == "restore" or backup_operation == "both") and verify_after_restore | default(true)
-  ansible.builtin.debug:
-    msg: "Post-restore verification: {{ post_restore_verification }}"
+    - name: Read restore configuration file
+      when: backup_operation == "restore" or backup_operation == "both"
+      ansible.builtin.slurp:
+        src: "{{ restore_file }}"
+      register: restore_config_content
+      delegate_to: localhost
 
-# Compare Configurations
-- name: Compare current config with baseline
-  when: backup_operation == "compare" and baseline_config is defined
-  arista.eos.eos_config:
-    diff_against: intended
-    intended_config: "{{ lookup('file', baseline_config) }}"
-  register: config_diff
+    - name: Create pre-restore backup
+      when: (backup_operation == "restore" or backup_operation == "both") and pre_restore_backup | default(true)
+      arista.eos.eos_config:
+        backup: yes
+        backup_options:
+          filename: "{{ inventory_hostname }}_pre_restore_{{ ansible_date_time.date }}_{{ ansible_date_time.time | replace(':', '-') }}.cfg"
+          dir_path: "{{ backup_dir }}/{{ inventory_hostname }}"
+      register: pre_restore_backup_result
 
-- name: Display configuration differences
-  when: (backup_operation == "compare" and baseline_config is defined) and (config_diff.diff is defined)
-  ansible.builtin.debug:
-    msg: "Configuration differences: {{ config_diff.diff }}"
+    - name: Display pre-restore backup location
+      when: (backup_operation == "restore" or backup_operation == "both") and pre_restore_backup | default(true)
+      ansible.builtin.debug:
+        msg: "Pre-restore backup saved to: {{ pre_restore_backup_result.backup_path }}"
 
-- name: Save configuration diff to file
-  when: backup_operation == "compare" and baseline_config is defined and config_diff.diff is defined
-  ansible.builtin.copy:
-    dest: "{{ backup_dir }}/{{ inventory_hostname }}/{{ inventory_hostname }}_diff_{{ ansible_date_time.date }}.txt"
-    content: "{{ config_diff.diff }}"
-    mode: "0644"
-  delegate_to: localhost
+    - name: Restore configuration (replace mode)
+      when: (backup_operation == "restore" or backup_operation == "both") and restore_mode == "replace"
+      arista.eos.eos_config:
+        src: "{{ restore_file }}"
+        replace: config
+        match: none
+      register: restore_result
 
-# Generate backup report
-- name: Generate backup report
-  when: backup_operation == "backup" or backup_operation == "both"
-  ansible.builtin.template:
-    src: backup_report.j2
-    dest: "{{ backup_dir }}/{{ inventory_hostname }}/backup_report_{{ ansible_date_time.date }}.html"
-    mode: "0644"
-  delegate_to: localhost
+    - name: Restore configuration (merge mode)
+      when: (backup_operation == "restore" or backup_operation == "both") and restore_mode == "merge"
+      arista.eos.eos_config:
+        src: "{{ restore_file }}"
+        replace: line
+        match: line
+      register: restore_result
+
+    - name: Display restore results
+      when: backup_operation == "restore" or backup_operation == "both"
+      ansible.builtin.debug:
+        msg: "Configuration restored from: {{ restore_file }}"
+
+    - name: Save running config after restore
+      when: (backup_operation == "restore" or backup_operation == "both") and save_after_restore | default(true)
+      arista.eos.eos_config:
+        save_when: always
+
+    - name: Verify configuration after restore
+      when: (backup_operation == "restore" or backup_operation == "both") and verify_after_restore | default(true)
+      arista.eos.eos_command:
+        commands:
+          - show running-config | include hostname
+          - show version | include Software
+          - show interfaces status | include connected
+      register: post_restore_verification
+
+    - name: Display post-restore verification
+      when: (backup_operation == "restore" or backup_operation == "both") and verify_after_restore | default(true)
+      ansible.builtin.debug:
+        msg: "Post-restore verification: {{ post_restore_verification }}"
+
+    # Compare Configurations
+    - name: Compare current config with baseline
+      when: backup_operation == "compare" and baseline_config is defined
+      arista.eos.eos_config:
+        diff_against: intended
+        intended_config: "{{ lookup('file', baseline_config) }}"
+      register: config_diff
+
+    - name: Display configuration differences
+      when: (backup_operation == "compare" and baseline_config is defined) and (config_diff.diff is defined)
+      ansible.builtin.debug:
+        msg: "Configuration differences: {{ config_diff.diff }}"
+
+    - name: Save configuration diff to file
+      when: backup_operation == "compare" and baseline_config is defined and config_diff.diff is defined
+      ansible.builtin.copy:
+        dest: "{{ backup_dir }}/{{ inventory_hostname }}/{{ inventory_hostname }}_diff_{{ ansible_date_time.date }}.txt"
+        content: "{{ config_diff.diff }}"
+        mode: "0644"
+      delegate_to: localhost
+
+    # Generate backup report
+    - name: Generate backup report
+      when: backup_operation == "backup" or backup_operation == "both"
+      ansible.builtin.template:
+        src: backup_report.j2
+        dest: "{{ backup_dir }}/{{ inventory_hostname }}/backup_report_{{ ansible_date_time.date }}.html"
+        mode: "0644"
+      delegate_to: localhost
+
+    # ----------------------------- postflight -------------------
+
+    - name: "arista/arista_backup_restore | Postflight | Verify the guarded body ran after a passing preflight"
+      ansible.builtin.assert:
+        that:
+          - fe_arista_arista_backup_restore_preflight_passed | bool
+          - fe_arista_arista_backup_restore_status in ['running', 'succeeded']
+        fail_msg: >-
+          arista/arista_backup_restore: postflight validation failed - preflight passed
+          ={{ fe_arista_arista_backup_restore_preflight_passed | default(false) }},
+          status={{ fe_arista_arista_backup_restore_status | default('unknown') }}.
+        success_msg: "arista/arista_backup_restore: postflight validation passed."
+        quiet: true
+      tags:
+        - always
+        - postflight
+        - validation
+
+    - name: "arista/arista_backup_restore | Postflight | Record the successful outcome"
+      ansible.builtin.set_fact:
+        fe_arista_arista_backup_restore_postflight_passed: true
+        fe_arista_arista_backup_restore_status: "succeeded"
+      tags:
+        - always
+        - postflight
+        - validation
+
+  rescue:
+
+    - name: "arista/arista_backup_restore | Rescue | Capture the failing task and error detail"
+      ansible.builtin.set_fact:
+        fe_arista_arista_backup_restore_status: "failed"
+        fe_arista_arista_backup_restore_postflight_passed: false
+        fe_arista_arista_backup_restore_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+        fe_arista_arista_backup_restore_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+      tags:
+        - always
+        - rescue
+
+    - name: "arista/arista_backup_restore | Rescue | Report the failure"
+      ansible.builtin.debug:
+        msg: >-
+          arista/arista_backup_restore: FAILED at '{{ fe_arista_arista_backup_restore_failed_task }}' on
+          {{ inventory_hostname }} - {{ fe_arista_arista_backup_restore_error }}
+      tags:
+        - always
+        - rescue
+
+    - name: "arista/arista_backup_restore | Rescue | Re-raise the failure unless the caller opted to continue"
+      ansible.builtin.fail:
+        msg: >-
+          arista/arista_backup_restore failed at '{{ fe_arista_arista_backup_restore_failed_task }}': {{ fe_arista_arista_backup_restore_error }}
+      when: not (fe_validation_continue_on_error | default(false) | bool)
+      tags:
+        - always
+        - rescue
+
+  always:
+
+    - name: "arista/arista_backup_restore | Always | Compute the execution duration"
+      ansible.builtin.set_fact:
+        fe_arista_arista_backup_restore_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+        fe_arista_arista_backup_restore_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_arista_arista_backup_restore_start_epoch | default(0) | int) }}"
+      tags:
+        - always
+
+    - name: "arista/arista_backup_restore | Always | Publish the validation result with set_stats"
+      ansible.builtin.set_stats:
+        data:
+          fe_validation_results:
+            "arista/arista_backup_restore":
+              component: "arista/arista_backup_restore"
+              type: "role"
+              platform: "arista"
+              host: "{{ inventory_hostname }}"
+              status: "{{ fe_arista_arista_backup_restore_status | default('unknown') }}"
+              preflight_passed: "{{ fe_arista_arista_backup_restore_preflight_passed | default(false) | bool }}"
+              postflight_passed: "{{ fe_arista_arista_backup_restore_postflight_passed | default(false) | bool }}"
+              started_at: "{{ fe_arista_arista_backup_restore_started_at | default('') }}"
+              ended_at: "{{ fe_arista_arista_backup_restore_ended_at | default('') }}"
+              duration_seconds: "{{ fe_arista_arista_backup_restore_duration_seconds | default(0) | int }}"
+              failed_task: "{{ fe_arista_arista_backup_restore_failed_task | default('') }}"
+              error: "{{ fe_arista_arista_backup_restore_error | default('') }}"
+              check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+          fe_validation_executions: 1
+          fe_validation_succeeded: "{{ 1 if fe_arista_arista_backup_restore_status | default('') == 'succeeded' else 0 }}"
+          fe_validation_failed: "{{ 0 if fe_arista_arista_backup_restore_status | default('') == 'succeeded' else 1 }}"
+          fe_validation_duration_seconds: "{{ fe_arista_arista_backup_restore_duration_seconds | default(0) | int }}"
+          fe_validation_failed_components: >-
+            {{ [] if fe_arista_arista_backup_restore_status | default('') == 'succeeded' else ['arista/arista_backup_restore'] }}
+        aggregate: true
+        per_host: false
+      tags:
+        - always
+
+    - name: "arista/arista_backup_restore | Always | Mark the validation statistics as published"
+      ansible.builtin.set_fact:
+        fe_arista_arista_backup_restore_stats_published: true
+      tags:
+        - always

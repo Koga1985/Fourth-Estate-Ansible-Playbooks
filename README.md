@@ -50,6 +50,7 @@ This repository provides production-ready Ansible automation for network infrast
 - [**Changelog**](./docs/CHANGELOG.md)
 - [**DISA STIG & NIST 800-53 Compliance Mapping**](./docs/COMPLIANCE_MAPPING.md)
 - [**STIG / SRG Coverage Matrix**](./docs/STIG_COVERAGE_MATRIX.md)
+- [**Preflight/Postflight Validation & Run Statistics**](./docs/VALIDATION_AND_STATS.md)
 
 ## Repository Purpose
 
@@ -509,6 +510,47 @@ See `policy_as_code/DEPLOYMENT_GUIDE.md` for detailed deployment procedures.
     - name: Configure system
       ansible.builtin.package:
         # Runs on remote host
+```
+
+### Preflight / Postflight Validation
+
+Every task file, role and playbook in this repository is wrapped in a uniform
+`block` / `rescue` / `always` harness and reports its outcome through
+`ansible.builtin.set_stats`. See
+[**docs/VALIDATION_AND_STATS.md**](./docs/VALIDATION_AND_STATS.md) for the full
+reference.
+
+- **`block`** runs preflight validation, then the original tasks, then
+  postflight validation.
+- **`rescue`** records which task failed and why, then re-raises — failures stay
+  failures and exit codes are unchanged.
+- **`always`** computes the duration and publishes the result, so statistics are
+  emitted on the success *and* the failure path.
+
+```bash
+# See the published statistics on the console
+ANSIBLE_SHOW_CUSTOM_STATS=true ansible-playbook -i inventory site.yml
+
+# Survey every component and record failures instead of aborting
+ansible-playbook -i inventory site.yml -e fe_validation_continue_on_error=true
+
+# Run only the preflight/postflight checks
+ansible-playbook -i inventory site.yml --tags validation
+```
+
+Published keys: `fe_validation_results` (one record per component),
+`fe_validation_executions`, `fe_validation_succeeded`, `fe_validation_failed`,
+`fe_validation_duration_seconds`, `fe_validation_failed_components`. In AWX/AAP
+these are available to downstream workflow nodes with no extra configuration.
+
+Require component-specific inputs at preflight time — before any change is
+attempted — by declaring them per component:
+
+```yaml
+fe_cisco_ise_profiling__probes_required_vars:
+  - ise_hostname
+  - ise_username
+  - ise_password
 ```
 
 ### Security Best Practices

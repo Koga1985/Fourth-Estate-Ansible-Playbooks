@@ -3,96 +3,279 @@
 # Cisco UCS Production Infrastructure Deployment for Fourth Estate
 # Supports DoD STIG and NIST 800-53 compliance requirements
 
-- name: Include prerequisites validation tasks
-  ansible.builtin.include_tasks: prerequisites.yml
+# ---------------------------------------------------------------------------
+# Fourth Estate preflight / postflight validation harness
+#
+# The task file body below is wrapped in an Ansible block/rescue/always structure:
+#
+#   block   preflight validation runs first, then the original task file body, then
+#           postflight validation. Any failure transfers control to rescue.
+#   rescue  records which task failed and why, then re-raises so a failure is
+#           never silently swallowed. Set fe_validation_continue_on_error=true
+#           to record the failure and keep going instead.
+#   always  computes the run duration and publishes the outcome through
+#           ansible.builtin.set_stats, so a wrapping playbook, AWX/AAP or CI can
+#           consume the result without scraping log output.
+#
+# Published stats (see docs/VALIDATION_AND_STATS.md):
+#   fe_validation_results['cisco/ucs_prod_infrastructure']  per-component record
+#   fe_validation_executions / _succeeded / _failed / _duration_seconds
+#   fe_validation_failed_components
+#
+# Add component-specific preflight checks without editing this file by setting
+#   fe_cisco_ucs_prod_infrastructure_required_vars: [var_one, var_two]
+# ---------------------------------------------------------------------------
+
+- name: "cisco/ucs_prod_infrastructure | Initialize validation state"
+  ansible.builtin.set_fact:
+    fe_cisco_ucs_prod_infrastructure_start_epoch: "{{ now(fmt='%s') | int }}"
+    fe_cisco_ucs_prod_infrastructure_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+    fe_cisco_ucs_prod_infrastructure_status: "running"
+    fe_cisco_ucs_prod_infrastructure_preflight_passed: false
+    fe_cisco_ucs_prod_infrastructure_postflight_passed: false
+    fe_cisco_ucs_prod_infrastructure_failed_task: ""
+    fe_cisco_ucs_prod_infrastructure_error: ""
+    fe_cisco_ucs_prod_infrastructure_stats_published: false
   tags:
     - always
-    - prerequisites
-    - validation
 
-- name: Include UCS Manager initial configuration
-  ansible.builtin.include_tasks: ucsm_initial_config.yml
-  when: ucs_enable_ucsm_config | bool
-  tags:
-    - infrastructure
-    - ucsm
-    - initial_config
+- name: "cisco/ucs_prod_infrastructure | Guarded execution with preflight and postflight validation"
+  block:
 
-- name: Include organization and sub-organization setup
-  ansible.builtin.include_tasks: organizations.yml
-  when: ucs_enable_org_setup | bool
-  tags:
-    - infrastructure
-    - organizations
-    - hierarchy
+    # ----------------------------- preflight --------------------
 
-- name: Include service profile template configuration
-  ansible.builtin.include_tasks: service_profiles.yml
-  when: ucs_enable_service_profiles | bool
-  tags:
-    - infrastructure
-    - service_profiles
-    - templates
+    - name: "cisco/ucs_prod_infrastructure | Preflight | Verify the control node meets the minimum ansible-core version"
+      ansible.builtin.assert:
+        that:
+          - ansible_version.full is version(fe_validation_min_ansible_version | default('2.12'), '>=')
+        fail_msg: >-
+          cisco/ucs_prod_infrastructure: requires ansible-core
+          {{ fe_validation_min_ansible_version | default('2.12') }} or newer,
+          found {{ ansible_version.full }}.
+        success_msg: >-
+          cisco/ucs_prod_infrastructure: ansible-core {{ ansible_version.full }} satisfies the minimum.
+        quiet: true
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: Include vNIC and vHBA template configuration
-  ansible.builtin.include_tasks: vnic_vhba_templates.yml
-  when: ucs_enable_vnic_vhba | bool
-  tags:
-    - infrastructure
-    - networking
-    - storage
+    - name: "cisco/ucs_prod_infrastructure | Preflight | Verify every declared required variable is defined"
+      ansible.builtin.assert:
+        that:
+          - vars[item] is defined
+        fail_msg: "cisco/ucs_prod_infrastructure: required variable '{{ item }}' is not defined."
+        success_msg: "cisco/ucs_prod_infrastructure: required variable '{{ item }}' is defined."
+        quiet: true
+      loop: "{{ fe_cisco_ucs_prod_infrastructure_required_vars | default([]) }}"
+      loop_control:
+        label: "{{ item }}"
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: Include server pool configuration
-  ansible.builtin.include_tasks: server_pools.yml
-  when: ucs_enable_server_pools | bool
-  tags:
-    - infrastructure
-    - servers
-    - pools
+    - name: "cisco/ucs_prod_infrastructure | Preflight | Record that preflight validation passed"
+      ansible.builtin.set_fact:
+        fe_cisco_ucs_prod_infrastructure_preflight_passed: true
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: Include UUID and MAC address pool configuration
-  ansible.builtin.include_tasks: uuid_mac_pools.yml
-  when: ucs_enable_address_pools | bool
-  tags:
-    - infrastructure
-    - pools
-    - addressing
+    # ----------------------------- execute ----------------------
 
-- name: Include firmware management tasks
-  ansible.builtin.include_tasks: firmware_management.yml
-  when: ucs_enable_firmware_mgmt | bool
-  tags:
-    - infrastructure
-    - firmware
-    - updates
+    - name: Include prerequisites validation tasks
+      ansible.builtin.include_tasks: prerequisites.yml
+      tags:
+        - always
+        - prerequisites
+        - validation
 
-- name: Include chassis and FEX discovery
-  ansible.builtin.include_tasks: chassis_discovery.yml
-  when: ucs_enable_chassis_discovery | bool
-  tags:
-    - infrastructure
-    - chassis
-    - discovery
+    - name: Include UCS Manager initial configuration
+      ansible.builtin.include_tasks: ucsm_initial_config.yml
+      when: ucs_enable_ucsm_config | bool
+      tags:
+        - infrastructure
+        - ucsm
+        - initial_config
 
-- name: Include blade and rack server configuration
-  ansible.builtin.include_tasks: server_configuration.yml
-  when: ucs_enable_server_config | bool
-  tags:
-    - infrastructure
-    - servers
-    - configuration
+    - name: Include organization and sub-organization setup
+      ansible.builtin.include_tasks: organizations.yml
+      when: ucs_enable_org_setup | bool
+      tags:
+        - infrastructure
+        - organizations
+        - hierarchy
 
-- name: Include high availability configuration
-  ansible.builtin.include_tasks: high_availability.yml
-  when: ucs_enable_ha | bool
-  tags:
-    - infrastructure
-    - ha
-    - clustering
+    - name: Include service profile template configuration
+      ansible.builtin.include_tasks: service_profiles.yml
+      when: ucs_enable_service_profiles | bool
+      tags:
+        - infrastructure
+        - service_profiles
+        - templates
 
-- name: Include verification and validation tasks
-  ansible.builtin.include_tasks: validation.yml
-  tags:
-    - validation
-    - verification
-    - compliance
+    - name: Include vNIC and vHBA template configuration
+      ansible.builtin.include_tasks: vnic_vhba_templates.yml
+      when: ucs_enable_vnic_vhba | bool
+      tags:
+        - infrastructure
+        - networking
+        - storage
+
+    - name: Include server pool configuration
+      ansible.builtin.include_tasks: server_pools.yml
+      when: ucs_enable_server_pools | bool
+      tags:
+        - infrastructure
+        - servers
+        - pools
+
+    - name: Include UUID and MAC address pool configuration
+      ansible.builtin.include_tasks: uuid_mac_pools.yml
+      when: ucs_enable_address_pools | bool
+      tags:
+        - infrastructure
+        - pools
+        - addressing
+
+    - name: Include firmware management tasks
+      ansible.builtin.include_tasks: firmware_management.yml
+      when: ucs_enable_firmware_mgmt | bool
+      tags:
+        - infrastructure
+        - firmware
+        - updates
+
+    - name: Include chassis and FEX discovery
+      ansible.builtin.include_tasks: chassis_discovery.yml
+      when: ucs_enable_chassis_discovery | bool
+      tags:
+        - infrastructure
+        - chassis
+        - discovery
+
+    - name: Include blade and rack server configuration
+      ansible.builtin.include_tasks: server_configuration.yml
+      when: ucs_enable_server_config | bool
+      tags:
+        - infrastructure
+        - servers
+        - configuration
+
+    - name: Include high availability configuration
+      ansible.builtin.include_tasks: high_availability.yml
+      when: ucs_enable_ha | bool
+      tags:
+        - infrastructure
+        - ha
+        - clustering
+
+    - name: Include verification and validation tasks
+      ansible.builtin.include_tasks: validation.yml
+      tags:
+        - validation
+        - verification
+        - compliance
+
+    # ----------------------------- postflight -------------------
+
+    - name: "cisco/ucs_prod_infrastructure | Postflight | Verify the guarded body ran after a passing preflight"
+      ansible.builtin.assert:
+        that:
+          - fe_cisco_ucs_prod_infrastructure_preflight_passed | bool
+          - fe_cisco_ucs_prod_infrastructure_status in ['running', 'succeeded']
+        fail_msg: >-
+          cisco/ucs_prod_infrastructure: postflight validation failed - preflight passed
+          ={{ fe_cisco_ucs_prod_infrastructure_preflight_passed | default(false) }},
+          status={{ fe_cisco_ucs_prod_infrastructure_status | default('unknown') }}.
+        success_msg: "cisco/ucs_prod_infrastructure: postflight validation passed."
+        quiet: true
+      tags:
+        - always
+        - postflight
+        - validation
+
+    - name: "cisco/ucs_prod_infrastructure | Postflight | Record the successful outcome"
+      ansible.builtin.set_fact:
+        fe_cisco_ucs_prod_infrastructure_postflight_passed: true
+        fe_cisco_ucs_prod_infrastructure_status: "succeeded"
+      tags:
+        - always
+        - postflight
+        - validation
+
+  rescue:
+
+    - name: "cisco/ucs_prod_infrastructure | Rescue | Capture the failing task and error detail"
+      ansible.builtin.set_fact:
+        fe_cisco_ucs_prod_infrastructure_status: "failed"
+        fe_cisco_ucs_prod_infrastructure_postflight_passed: false
+        fe_cisco_ucs_prod_infrastructure_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+        fe_cisco_ucs_prod_infrastructure_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+      tags:
+        - always
+        - rescue
+
+    - name: "cisco/ucs_prod_infrastructure | Rescue | Report the failure"
+      ansible.builtin.debug:
+        msg: >-
+          cisco/ucs_prod_infrastructure: FAILED at '{{ fe_cisco_ucs_prod_infrastructure_failed_task }}' on
+          {{ inventory_hostname }} - {{ fe_cisco_ucs_prod_infrastructure_error }}
+      tags:
+        - always
+        - rescue
+
+    - name: "cisco/ucs_prod_infrastructure | Rescue | Re-raise the failure unless the caller opted to continue"
+      ansible.builtin.fail:
+        msg: >-
+          cisco/ucs_prod_infrastructure failed at '{{ fe_cisco_ucs_prod_infrastructure_failed_task }}': {{ fe_cisco_ucs_prod_infrastructure_error }}
+      when: not (fe_validation_continue_on_error | default(false) | bool)
+      tags:
+        - always
+        - rescue
+
+  always:
+
+    - name: "cisco/ucs_prod_infrastructure | Always | Compute the execution duration"
+      ansible.builtin.set_fact:
+        fe_cisco_ucs_prod_infrastructure_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+        fe_cisco_ucs_prod_infrastructure_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_cisco_ucs_prod_infrastructure_start_epoch | default(0) | int) }}"
+      tags:
+        - always
+
+    - name: "cisco/ucs_prod_infrastructure | Always | Publish the validation result with set_stats"
+      ansible.builtin.set_stats:
+        data:
+          fe_validation_results:
+            "cisco/ucs_prod_infrastructure":
+              component: "cisco/ucs_prod_infrastructure"
+              type: "role"
+              platform: "cisco"
+              host: "{{ inventory_hostname }}"
+              status: "{{ fe_cisco_ucs_prod_infrastructure_status | default('unknown') }}"
+              preflight_passed: "{{ fe_cisco_ucs_prod_infrastructure_preflight_passed | default(false) | bool }}"
+              postflight_passed: "{{ fe_cisco_ucs_prod_infrastructure_postflight_passed | default(false) | bool }}"
+              started_at: "{{ fe_cisco_ucs_prod_infrastructure_started_at | default('') }}"
+              ended_at: "{{ fe_cisco_ucs_prod_infrastructure_ended_at | default('') }}"
+              duration_seconds: "{{ fe_cisco_ucs_prod_infrastructure_duration_seconds | default(0) | int }}"
+              failed_task: "{{ fe_cisco_ucs_prod_infrastructure_failed_task | default('') }}"
+              error: "{{ fe_cisco_ucs_prod_infrastructure_error | default('') }}"
+              check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+          fe_validation_executions: 1
+          fe_validation_succeeded: "{{ 1 if fe_cisco_ucs_prod_infrastructure_status | default('') == 'succeeded' else 0 }}"
+          fe_validation_failed: "{{ 0 if fe_cisco_ucs_prod_infrastructure_status | default('') == 'succeeded' else 1 }}"
+          fe_validation_duration_seconds: "{{ fe_cisco_ucs_prod_infrastructure_duration_seconds | default(0) | int }}"
+          fe_validation_failed_components: >-
+            {{ [] if fe_cisco_ucs_prod_infrastructure_status | default('') == 'succeeded' else ['cisco/ucs_prod_infrastructure'] }}
+        aggregate: true
+        per_host: false
+      tags:
+        - always
+
+    - name: "cisco/ucs_prod_infrastructure | Always | Mark the validation statistics as published"
+      ansible.builtin.set_fact:
+        fe_cisco_ucs_prod_infrastructure_stats_published: true
+      tags:
+        - always

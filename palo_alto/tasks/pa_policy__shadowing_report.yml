@@ -6,66 +6,249 @@
 #   vsys: "vsys1"
 #   rulebase_location: "pre-rulebase"   # Panorama only: pre-rulebase/post-rulebase
 
-- name: Ensure artifacts dir exists
-  ansible.builtin.file:
-    path: "{{ artifacts_dir | default('/tmp/pan-artifacts') }}"
-    state: directory
-    mode: "0755"
+# ---------------------------------------------------------------------------
+# Fourth Estate preflight / postflight validation harness
+#
+# The task file body below is wrapped in an Ansible block/rescue/always structure:
+#
+#   block   preflight validation runs first, then the original task file body, then
+#           postflight validation. Any failure transfers control to rescue.
+#   rescue  records which task failed and why, then re-raises so a failure is
+#           never silently swallowed. Set fe_validation_continue_on_error=true
+#           to record the failure and keep going instead.
+#   always  computes the run duration and publishes the outcome through
+#           ansible.builtin.set_stats, so a wrapping playbook, AWX/AAP or CI can
+#           consume the result without scraping log output.
+#
+# Published stats (see docs/VALIDATION_AND_STATS.md):
+#   fe_validation_results['palo_alto/pa_policy__shadowing_report']  per-component record
+#   fe_validation_executions / _succeeded / _failed / _duration_seconds
+#   fe_validation_failed_components
+#
+# Add component-specific preflight checks without editing this file by setting
+#   fe_palo_alto_pa_policy__shadowing_report_required_vars: [var_one, var_two]
+# ---------------------------------------------------------------------------
 
-# Fetch full rulebase (running config) as XML via op command.
-- name: Get running config (XML)
-  paloaltonetworks.panos.panos_op:
-    cmd: "<show><config><running/></config></show>"
-  register: _cfg
-
-- name: Parse security rules from config (best effort)
-  vars:
-    _xml: "{{ _cfg.stdout_xml | default('') }}"
+- name: "palo_alto/pa_policy__shadowing_report | Initialize validation state"
   ansible.builtin.set_fact:
-    _rules_raw: >-
-      {{
-        _xml.response.result.configuration.devices.entry.device-group.entry
-          if (pa_use_panorama | default(false)) else
-        _xml.response.result.configuration.devices.entry.vsys.entry.rulebase.security.rules
-      }}
-    _rules_list: >-
-      {{
-        (
-          (_rules_raw.pre-rulebase.security.rules.entry if (pa_use_panorama | default(false)) else _rules_raw.entry)
-          | default([])
-        )
-      }}
+    fe_palo_alto_pa_policy__shadowing_report_start_epoch: "{{ now(fmt='%s') | int }}"
+    fe_palo_alto_pa_policy__shadowing_report_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+    fe_palo_alto_pa_policy__shadowing_report_status: "running"
+    fe_palo_alto_pa_policy__shadowing_report_preflight_passed: false
+    fe_palo_alto_pa_policy__shadowing_report_postflight_passed: false
+    fe_palo_alto_pa_policy__shadowing_report_failed_task: ""
+    fe_palo_alto_pa_policy__shadowing_report_error: ""
+    fe_palo_alto_pa_policy__shadowing_report_stats_published: false
+  tags:
+    - always
 
-# Build a simple heuristic shadowing report:
-# earlier rule shadows later if each of source/destination/service is 'any'
-# OR lists are identical; you can refine as needed.
-- name: Write shadowing CSV
-  ansible.builtin.copy:
-    dest: "{{ artifacts_dir | default('/tmp/pan-artifacts') }}/policy_shadowing.csv"
-    mode: "0644"
-    content: |
-      earlier_name,earlier_idx,later_name,later_idx,reason
-      {% set rules = [] %}
-      {% for r in _rules_list | default([]) %}
-      {% set _ = rules.append({
-           'idx': loop.index0,
-           'name': r.name,
-           'src': (r.source.member if r.source is mapping else r.source | default(['any'])),
-           'dst': (r.destination.member if r.destination is mapping else r.destination | default(['any'])),
-           'svc': (r.service.member if r.service is mapping else r.service | default(['application-default']))
-         }) %}
-      {% endfor %}
-      {% for later in rules %}
-      {% for earlier in rules if earlier.idx < later.idx %}
-      {% set src_ok = ('any' in earlier.src) or (earlier.src == later.src) %}
-      {% set dst_ok = ('any' in earlier.dst) or (earlier.dst == later.dst) %}
-      {% set svc_ok = ('any' in earlier.svc) or (earlier.svc == later.svc) or ('application-default' in earlier.svc) %}
-      {% if src_ok and dst_ok and svc_ok %}
-      {{ earlier.name | replace(',',';') }},{{ earlier.idx }},{{ later.name | replace(',',';') }},{{ later.idx }},heuristic
-      {% endif %}
-      {% endfor %}
-      {% endfor %}
+- name: "palo_alto/pa_policy__shadowing_report | Guarded execution with preflight and postflight validation"
+  block:
 
-- name: Tell user where CSV is
-  ansible.builtin.debug:
-    msg: "Shadowing report CSV written to {{ artifacts_dir | default('/tmp/pan-artifacts') }}/policy_shadowing.csv"
+    # ----------------------------- preflight --------------------
+
+    - name: "palo_alto/pa_policy__shadowing_report | Preflight | Verify the control node meets the minimum ansible-core version"
+      ansible.builtin.assert:
+        that:
+          - ansible_version.full is version(fe_validation_min_ansible_version | default('2.12'), '>=')
+        fail_msg: >-
+          palo_alto/pa_policy__shadowing_report: requires ansible-core
+          {{ fe_validation_min_ansible_version | default('2.12') }} or newer,
+          found {{ ansible_version.full }}.
+        success_msg: >-
+          palo_alto/pa_policy__shadowing_report: ansible-core {{ ansible_version.full }} satisfies the minimum.
+        quiet: true
+      tags:
+        - always
+        - preflight
+        - validation
+
+    - name: "palo_alto/pa_policy__shadowing_report | Preflight | Verify every declared required variable is defined"
+      ansible.builtin.assert:
+        that:
+          - vars[item] is defined
+        fail_msg: "palo_alto/pa_policy__shadowing_report: required variable '{{ item }}' is not defined."
+        success_msg: "palo_alto/pa_policy__shadowing_report: required variable '{{ item }}' is defined."
+        quiet: true
+      loop: "{{ fe_palo_alto_pa_policy__shadowing_report_required_vars | default([]) }}"
+      loop_control:
+        label: "{{ item }}"
+      tags:
+        - always
+        - preflight
+        - validation
+
+    - name: "palo_alto/pa_policy__shadowing_report | Preflight | Record that preflight validation passed"
+      ansible.builtin.set_fact:
+        fe_palo_alto_pa_policy__shadowing_report_preflight_passed: true
+      tags:
+        - always
+        - preflight
+        - validation
+
+    # ----------------------------- execute ----------------------
+
+    - name: Ensure artifacts dir exists
+      ansible.builtin.file:
+        path: "{{ artifacts_dir | default('/tmp/pan-artifacts') }}"
+        state: directory
+        mode: "0755"
+
+    # Fetch full rulebase (running config) as XML via op command.
+    - name: Get running config (XML)
+      paloaltonetworks.panos.panos_op:
+        cmd: "<show><config><running/></config></show>"
+      register: _cfg
+
+    - name: Parse security rules from config (best effort)
+      vars:
+        _xml: "{{ _cfg.stdout_xml | default('') }}"
+      ansible.builtin.set_fact:
+        _rules_raw: >-
+          {{
+            _xml.response.result.configuration.devices.entry.device-group.entry
+              if (pa_use_panorama | default(false)) else
+            _xml.response.result.configuration.devices.entry.vsys.entry.rulebase.security.rules
+          }}
+        _rules_list: >-
+          {{
+            (
+              (_rules_raw.pre-rulebase.security.rules.entry if (pa_use_panorama | default(false)) else _rules_raw.entry)
+              | default([])
+            )
+          }}
+
+    # Build a simple heuristic shadowing report:
+    # earlier rule shadows later if each of source/destination/service is 'any'
+    # OR lists are identical; you can refine as needed.
+    - name: Write shadowing CSV
+      ansible.builtin.copy:
+        dest: "{{ artifacts_dir | default('/tmp/pan-artifacts') }}/policy_shadowing.csv"
+        mode: "0644"
+        content: |
+          earlier_name,earlier_idx,later_name,later_idx,reason
+          {% set rules = [] %}
+          {% for r in _rules_list | default([]) %}
+          {% set _ = rules.append({
+               'idx': loop.index0,
+               'name': r.name,
+               'src': (r.source.member if r.source is mapping else r.source | default(['any'])),
+               'dst': (r.destination.member if r.destination is mapping else r.destination | default(['any'])),
+               'svc': (r.service.member if r.service is mapping else r.service | default(['application-default']))
+             }) %}
+          {% endfor %}
+          {% for later in rules %}
+          {% for earlier in rules if earlier.idx < later.idx %}
+          {% set src_ok = ('any' in earlier.src) or (earlier.src == later.src) %}
+          {% set dst_ok = ('any' in earlier.dst) or (earlier.dst == later.dst) %}
+          {% set svc_ok = ('any' in earlier.svc) or (earlier.svc == later.svc) or ('application-default' in earlier.svc) %}
+          {% if src_ok and dst_ok and svc_ok %}
+          {{ earlier.name | replace(',',';') }},{{ earlier.idx }},{{ later.name | replace(',',';') }},{{ later.idx }},heuristic
+          {% endif %}
+          {% endfor %}
+          {% endfor %}
+
+    - name: Tell user where CSV is
+      ansible.builtin.debug:
+        msg: "Shadowing report CSV written to {{ artifacts_dir | default('/tmp/pan-artifacts') }}/policy_shadowing.csv"
+
+    # ----------------------------- postflight -------------------
+
+    - name: "palo_alto/pa_policy__shadowing_report | Postflight | Verify the guarded body ran after a passing preflight"
+      ansible.builtin.assert:
+        that:
+          - fe_palo_alto_pa_policy__shadowing_report_preflight_passed | bool
+          - fe_palo_alto_pa_policy__shadowing_report_status in ['running', 'succeeded']
+        fail_msg: >-
+          palo_alto/pa_policy__shadowing_report: postflight validation failed - preflight passed
+          ={{ fe_palo_alto_pa_policy__shadowing_report_preflight_passed | default(false) }},
+          status={{ fe_palo_alto_pa_policy__shadowing_report_status | default('unknown') }}.
+        success_msg: "palo_alto/pa_policy__shadowing_report: postflight validation passed."
+        quiet: true
+      tags:
+        - always
+        - postflight
+        - validation
+
+    - name: "palo_alto/pa_policy__shadowing_report | Postflight | Record the successful outcome"
+      ansible.builtin.set_fact:
+        fe_palo_alto_pa_policy__shadowing_report_postflight_passed: true
+        fe_palo_alto_pa_policy__shadowing_report_status: "succeeded"
+      tags:
+        - always
+        - postflight
+        - validation
+
+  rescue:
+
+    - name: "palo_alto/pa_policy__shadowing_report | Rescue | Capture the failing task and error detail"
+      ansible.builtin.set_fact:
+        fe_palo_alto_pa_policy__shadowing_report_status: "failed"
+        fe_palo_alto_pa_policy__shadowing_report_postflight_passed: false
+        fe_palo_alto_pa_policy__shadowing_report_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+        fe_palo_alto_pa_policy__shadowing_report_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+      tags:
+        - always
+        - rescue
+
+    - name: "palo_alto/pa_policy__shadowing_report | Rescue | Report the failure"
+      ansible.builtin.debug:
+        msg: >-
+          palo_alto/pa_policy__shadowing_report: FAILED at '{{ fe_palo_alto_pa_policy__shadowing_report_failed_task }}' on
+          {{ inventory_hostname }} - {{ fe_palo_alto_pa_policy__shadowing_report_error }}
+      tags:
+        - always
+        - rescue
+
+    - name: "palo_alto/pa_policy__shadowing_report | Rescue | Re-raise the failure unless the caller opted to continue"
+      ansible.builtin.fail:
+        msg: >-
+          palo_alto/pa_policy__shadowing_report failed at '{{ fe_palo_alto_pa_policy__shadowing_report_failed_task }}': {{ fe_palo_alto_pa_policy__shadowing_report_error }}
+      when: not (fe_validation_continue_on_error | default(false) | bool)
+      tags:
+        - always
+        - rescue
+
+  always:
+
+    - name: "palo_alto/pa_policy__shadowing_report | Always | Compute the execution duration"
+      ansible.builtin.set_fact:
+        fe_palo_alto_pa_policy__shadowing_report_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+        fe_palo_alto_pa_policy__shadowing_report_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_palo_alto_pa_policy__shadowing_report_start_epoch | default(0) | int) }}"
+      tags:
+        - always
+
+    - name: "palo_alto/pa_policy__shadowing_report | Always | Publish the validation result with set_stats"
+      ansible.builtin.set_stats:
+        data:
+          fe_validation_results:
+            "palo_alto/pa_policy__shadowing_report":
+              component: "palo_alto/pa_policy__shadowing_report"
+              type: "tasks"
+              platform: "palo_alto"
+              host: "{{ inventory_hostname }}"
+              status: "{{ fe_palo_alto_pa_policy__shadowing_report_status | default('unknown') }}"
+              preflight_passed: "{{ fe_palo_alto_pa_policy__shadowing_report_preflight_passed | default(false) | bool }}"
+              postflight_passed: "{{ fe_palo_alto_pa_policy__shadowing_report_postflight_passed | default(false) | bool }}"
+              started_at: "{{ fe_palo_alto_pa_policy__shadowing_report_started_at | default('') }}"
+              ended_at: "{{ fe_palo_alto_pa_policy__shadowing_report_ended_at | default('') }}"
+              duration_seconds: "{{ fe_palo_alto_pa_policy__shadowing_report_duration_seconds | default(0) | int }}"
+              failed_task: "{{ fe_palo_alto_pa_policy__shadowing_report_failed_task | default('') }}"
+              error: "{{ fe_palo_alto_pa_policy__shadowing_report_error | default('') }}"
+              check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+          fe_validation_executions: 1
+          fe_validation_succeeded: "{{ 1 if fe_palo_alto_pa_policy__shadowing_report_status | default('') == 'succeeded' else 0 }}"
+          fe_validation_failed: "{{ 0 if fe_palo_alto_pa_policy__shadowing_report_status | default('') == 'succeeded' else 1 }}"
+          fe_validation_duration_seconds: "{{ fe_palo_alto_pa_policy__shadowing_report_duration_seconds | default(0) | int }}"
+          fe_validation_failed_components: >-
+            {{ [] if fe_palo_alto_pa_policy__shadowing_report_status | default('') == 'succeeded' else ['palo_alto/pa_policy__shadowing_report'] }}
+        aggregate: true
+        per_host: false
+      tags:
+        - always
+
+    - name: "palo_alto/pa_policy__shadowing_report | Always | Mark the validation statistics as published"
+      ansible.builtin.set_fact:
+        fe_palo_alto_pa_policy__shadowing_report_stats_published: true
+      tags:
+        - always

@@ -2,90 +2,273 @@
 # tasks file for aci_network_config - BGP Peer Configuration
 # Configures BGP peer connectivity on L3Out logical interface profiles
 
-- name: PHASE 3 - Configure BGP peers on L3Out interface paths
-  cisco.aci.aci_l3out_bgp_peer:
-    host: "{{ aci_host }}"
-    username: "{{ aci_username }}"
-    password: "{{ aci_password }}"
-    validate_certs: "{{ aci_verify_ssl }}"
-    use_proxy: "{{ aci_use_proxy }}"
-    tenant: "{{ item.0.tenant }}"
-    l3out: "{{ item.0.name }}"
-    node_profile: "{{ item.0.node_profile }}"
-    interface_profile: "{{ item.0.interface_profile }}"
-    pod_id: "{{ item.1.path_dn | regex_replace('topology/pod-(\\d+)/.*', '\\1') }}"
-    node_id: "{{ item.1.path_dn | regex_replace('topology/pod-\\d+/paths-(\\d+)/.*', '\\1') }}"
-    path_ep: "{{ item.1.path_dn | regex_replace('.*pathep-\\[(.*)\\]', '\\1') }}"
-    peer_ip: "{{ item.1.peer_ip }}"
-    remote_asn: "{{ item.1.remote_asn }}"
-    local_asn: "{{ item.1.local_asn | default(omit) }}"
-    description: "{{ item.1.description | default('') }}"
-    allow_self_as: false
-    as_override: false
-    dis_peer_as_check: false
-    next_hop_self: false
-    send_com: false
-    send_ext_com: false
-    state: "{{ 'present' if apply_changes | bool else 'query' }}"
-  no_log: true
-  changed_when: not (apply_changes | bool)
-  loop: >-
-    {{
-      aci_l3outs
-      | selectattr('bgp_enabled', 'defined')
-      | selectattr('bgp_enabled')
-      | selectattr('bgp_peers', 'defined')
-      | subelements('bgp_peers')
-    }}
-  loop_control:
-    label: "{{ item.0.tenant }}/{{ item.0.name }} BGP peer {{ item.1.peer_ip }} ASN {{ item.1.remote_asn }}"
-  register: bgp_peer_results
-  tags:
-    - aci
-    - network
-    - bgp
-    - routing
-    - phase3
+# ---------------------------------------------------------------------------
+# Fourth Estate preflight / postflight validation harness
+#
+# The task file body below is wrapped in an Ansible block/rescue/always structure:
+#
+#   block   preflight validation runs first, then the original task file body, then
+#           postflight validation. Any failure transfers control to rescue.
+#   rescue  records which task failed and why, then re-raises so a failure is
+#           never silently swallowed. Set fe_validation_continue_on_error=true
+#           to record the failure and keep going instead.
+#   always  computes the run duration and publishes the outcome through
+#           ansible.builtin.set_stats, so a wrapping playbook, AWX/AAP or CI can
+#           consume the result without scraping log output.
+#
+# Published stats (see docs/VALIDATION_AND_STATS.md):
+#   fe_validation_results['cisco/aci_network_config/bgp_peers']  per-component record
+#   fe_validation_executions / _succeeded / _failed / _duration_seconds
+#   fe_validation_failed_components
+#
+# Add component-specific preflight checks without editing this file by setting
+#   fe_cisco_aci_network_config_bgp_peers_required_vars: [var_one, var_two]
+# ---------------------------------------------------------------------------
 
-- name: PHASE 3 - Display BGP peer configuration summary
-  ansible.builtin.debug:
-    msg:
-      - "=== BGP Peer Configuration Summary ==="
-      - "L3Outs with BGP:     {{ aci_l3outs | selectattr('bgp_enabled', 'defined') | selectattr('bgp_enabled') | list | length }}"
-      - "Total BGP peers:     {{ aci_l3outs | selectattr('bgp_enabled', 'defined') | selectattr('bgp_enabled') | selectattr('bgp_peers', 'defined') | map(attribute='bgp_peers') | map('length') | sum }}"
-      - "Apply changes:       {{ apply_changes | bool }}"
+- name: "cisco/aci_network_config/bgp_peers | Initialize validation state"
+  ansible.builtin.set_fact:
+    fe_cisco_aci_network_config_bgp_peers_start_epoch: "{{ now(fmt='%s') | int }}"
+    fe_cisco_aci_network_config_bgp_peers_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+    fe_cisco_aci_network_config_bgp_peers_status: "running"
+    fe_cisco_aci_network_config_bgp_peers_preflight_passed: false
+    fe_cisco_aci_network_config_bgp_peers_postflight_passed: false
+    fe_cisco_aci_network_config_bgp_peers_failed_task: ""
+    fe_cisco_aci_network_config_bgp_peers_error: ""
+    fe_cisco_aci_network_config_bgp_peers_stats_published: false
   tags:
-    - aci
-    - network
-    - bgp
-    - routing
-    - phase3
+    - always
 
-- name: PHASE 3 - Save BGP peer configuration artifact
-  ansible.builtin.copy:
-    dest: "{{ artifacts_dir }}/aci_bgp_peers.json"
-    mode: "0640"
-    content: "{{ bgp_artifact | to_nice_json }}"
-  vars:
-    bgp_artifact:
-      timestamp: "{{ ansible_date_time.iso8601 }}"
-      apic_host: "{{ aci_host }}"
-      apply_changes: "{{ apply_changes | bool }}"
-      l3outs_with_bgp: "{{ aci_l3outs | selectattr('bgp_enabled', 'defined') | selectattr('bgp_enabled') | map(attribute='name') | list }}"
-      total_bgp_peers: "{{ aci_l3outs | selectattr('bgp_enabled', 'defined') | selectattr('bgp_enabled') | selectattr('bgp_peers', 'defined') | map(attribute='bgp_peers') | map('length') | sum }}"
-      bgp_peers_by_l3out: >-
+- name: "cisco/aci_network_config/bgp_peers | Guarded execution with preflight and postflight validation"
+  block:
+
+    # ----------------------------- preflight --------------------
+
+    - name: "cisco/aci_network_config/bgp_peers | Preflight | Verify the control node meets the minimum ansible-core version"
+      ansible.builtin.assert:
+        that:
+          - ansible_version.full is version(fe_validation_min_ansible_version | default('2.12'), '>=')
+        fail_msg: >-
+          cisco/aci_network_config/bgp_peers: requires ansible-core
+          {{ fe_validation_min_ansible_version | default('2.12') }} or newer,
+          found {{ ansible_version.full }}.
+        success_msg: >-
+          cisco/aci_network_config/bgp_peers: ansible-core {{ ansible_version.full }} satisfies the minimum.
+        quiet: true
+      tags:
+        - always
+        - preflight
+        - validation
+
+    - name: "cisco/aci_network_config/bgp_peers | Preflight | Verify every declared required variable is defined"
+      ansible.builtin.assert:
+        that:
+          - vars[item] is defined
+        fail_msg: "cisco/aci_network_config/bgp_peers: required variable '{{ item }}' is not defined."
+        success_msg: "cisco/aci_network_config/bgp_peers: required variable '{{ item }}' is defined."
+        quiet: true
+      loop: "{{ fe_cisco_aci_network_config_bgp_peers_required_vars | default([]) }}"
+      loop_control:
+        label: "{{ item }}"
+      tags:
+        - always
+        - preflight
+        - validation
+
+    - name: "cisco/aci_network_config/bgp_peers | Preflight | Record that preflight validation passed"
+      ansible.builtin.set_fact:
+        fe_cisco_aci_network_config_bgp_peers_preflight_passed: true
+      tags:
+        - always
+        - preflight
+        - validation
+
+    # ----------------------------- execute ----------------------
+
+    - name: PHASE 3 - Configure BGP peers on L3Out interface paths
+      cisco.aci.aci_l3out_bgp_peer:
+        host: "{{ aci_host }}"
+        username: "{{ aci_username }}"
+        password: "{{ aci_password }}"
+        validate_certs: "{{ aci_verify_ssl }}"
+        use_proxy: "{{ aci_use_proxy }}"
+        tenant: "{{ item.0.tenant }}"
+        l3out: "{{ item.0.name }}"
+        node_profile: "{{ item.0.node_profile }}"
+        interface_profile: "{{ item.0.interface_profile }}"
+        pod_id: "{{ item.1.path_dn | regex_replace('topology/pod-(\\d+)/.*', '\\1') }}"
+        node_id: "{{ item.1.path_dn | regex_replace('topology/pod-\\d+/paths-(\\d+)/.*', '\\1') }}"
+        path_ep: "{{ item.1.path_dn | regex_replace('.*pathep-\\[(.*)\\]', '\\1') }}"
+        peer_ip: "{{ item.1.peer_ip }}"
+        remote_asn: "{{ item.1.remote_asn }}"
+        local_asn: "{{ item.1.local_asn | default(omit) }}"
+        description: "{{ item.1.description | default('') }}"
+        allow_self_as: false
+        as_override: false
+        dis_peer_as_check: false
+        next_hop_self: false
+        send_com: false
+        send_ext_com: false
+        state: "{{ 'present' if apply_changes | bool else 'query' }}"
+      no_log: true
+      changed_when: not (apply_changes | bool)
+      loop: >-
         {{
           aci_l3outs
           | selectattr('bgp_enabled', 'defined')
           | selectattr('bgp_enabled')
           | selectattr('bgp_peers', 'defined')
-          | map(attribute='name')
-          | list
+          | subelements('bgp_peers')
         }}
-      compliance_frameworks: "{{ compliance_frameworks }}"
-  tags:
-    - aci
-    - network
-    - bgp
-    - routing
-    - phase3
+      loop_control:
+        label: "{{ item.0.tenant }}/{{ item.0.name }} BGP peer {{ item.1.peer_ip }} ASN {{ item.1.remote_asn }}"
+      register: bgp_peer_results
+      tags:
+        - aci
+        - network
+        - bgp
+        - routing
+        - phase3
+
+    - name: PHASE 3 - Display BGP peer configuration summary
+      ansible.builtin.debug:
+        msg:
+          - "=== BGP Peer Configuration Summary ==="
+          - "L3Outs with BGP:     {{ aci_l3outs | selectattr('bgp_enabled', 'defined') | selectattr('bgp_enabled') | list | length }}"
+          - "Total BGP peers:     {{ aci_l3outs | selectattr('bgp_enabled', 'defined') | selectattr('bgp_enabled') | selectattr('bgp_peers', 'defined') | map(attribute='bgp_peers') | map('length') | sum }}"
+          - "Apply changes:       {{ apply_changes | bool }}"
+      tags:
+        - aci
+        - network
+        - bgp
+        - routing
+        - phase3
+
+    - name: PHASE 3 - Save BGP peer configuration artifact
+      ansible.builtin.copy:
+        dest: "{{ artifacts_dir }}/aci_bgp_peers.json"
+        mode: "0640"
+        content: "{{ bgp_artifact | to_nice_json }}"
+      vars:
+        bgp_artifact:
+          timestamp: "{{ ansible_date_time.iso8601 }}"
+          apic_host: "{{ aci_host }}"
+          apply_changes: "{{ apply_changes | bool }}"
+          l3outs_with_bgp: "{{ aci_l3outs | selectattr('bgp_enabled', 'defined') | selectattr('bgp_enabled') | map(attribute='name') | list }}"
+          total_bgp_peers: "{{ aci_l3outs | selectattr('bgp_enabled', 'defined') | selectattr('bgp_enabled') | selectattr('bgp_peers', 'defined') | map(attribute='bgp_peers') | map('length') | sum }}"
+          bgp_peers_by_l3out: >-
+            {{
+              aci_l3outs
+              | selectattr('bgp_enabled', 'defined')
+              | selectattr('bgp_enabled')
+              | selectattr('bgp_peers', 'defined')
+              | map(attribute='name')
+              | list
+            }}
+          compliance_frameworks: "{{ compliance_frameworks }}"
+      tags:
+        - aci
+        - network
+        - bgp
+        - routing
+        - phase3
+
+    # ----------------------------- postflight -------------------
+
+    - name: "cisco/aci_network_config/bgp_peers | Postflight | Verify the guarded body ran after a passing preflight"
+      ansible.builtin.assert:
+        that:
+          - fe_cisco_aci_network_config_bgp_peers_preflight_passed | bool
+          - fe_cisco_aci_network_config_bgp_peers_status in ['running', 'succeeded']
+        fail_msg: >-
+          cisco/aci_network_config/bgp_peers: postflight validation failed - preflight passed
+          ={{ fe_cisco_aci_network_config_bgp_peers_preflight_passed | default(false) }},
+          status={{ fe_cisco_aci_network_config_bgp_peers_status | default('unknown') }}.
+        success_msg: "cisco/aci_network_config/bgp_peers: postflight validation passed."
+        quiet: true
+      tags:
+        - always
+        - postflight
+        - validation
+
+    - name: "cisco/aci_network_config/bgp_peers | Postflight | Record the successful outcome"
+      ansible.builtin.set_fact:
+        fe_cisco_aci_network_config_bgp_peers_postflight_passed: true
+        fe_cisco_aci_network_config_bgp_peers_status: "succeeded"
+      tags:
+        - always
+        - postflight
+        - validation
+
+  rescue:
+
+    - name: "cisco/aci_network_config/bgp_peers | Rescue | Capture the failing task and error detail"
+      ansible.builtin.set_fact:
+        fe_cisco_aci_network_config_bgp_peers_status: "failed"
+        fe_cisco_aci_network_config_bgp_peers_postflight_passed: false
+        fe_cisco_aci_network_config_bgp_peers_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+        fe_cisco_aci_network_config_bgp_peers_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+      tags:
+        - always
+        - rescue
+
+    - name: "cisco/aci_network_config/bgp_peers | Rescue | Report the failure"
+      ansible.builtin.debug:
+        msg: >-
+          cisco/aci_network_config/bgp_peers: FAILED at '{{ fe_cisco_aci_network_config_bgp_peers_failed_task }}' on
+          {{ inventory_hostname }} - {{ fe_cisco_aci_network_config_bgp_peers_error }}
+      tags:
+        - always
+        - rescue
+
+    - name: "cisco/aci_network_config/bgp_peers | Rescue | Re-raise the failure unless the caller opted to continue"
+      ansible.builtin.fail:
+        msg: >-
+          cisco/aci_network_config/bgp_peers failed at '{{ fe_cisco_aci_network_config_bgp_peers_failed_task }}': {{ fe_cisco_aci_network_config_bgp_peers_error }}
+      when: not (fe_validation_continue_on_error | default(false) | bool)
+      tags:
+        - always
+        - rescue
+
+  always:
+
+    - name: "cisco/aci_network_config/bgp_peers | Always | Compute the execution duration"
+      ansible.builtin.set_fact:
+        fe_cisco_aci_network_config_bgp_peers_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+        fe_cisco_aci_network_config_bgp_peers_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_cisco_aci_network_config_bgp_peers_start_epoch | default(0) | int) }}"
+      tags:
+        - always
+
+    - name: "cisco/aci_network_config/bgp_peers | Always | Publish the validation result with set_stats"
+      ansible.builtin.set_stats:
+        data:
+          fe_validation_results:
+            "cisco/aci_network_config/bgp_peers":
+              component: "cisco/aci_network_config/bgp_peers"
+              type: "role-tasks"
+              platform: "cisco"
+              host: "{{ inventory_hostname }}"
+              status: "{{ fe_cisco_aci_network_config_bgp_peers_status | default('unknown') }}"
+              preflight_passed: "{{ fe_cisco_aci_network_config_bgp_peers_preflight_passed | default(false) | bool }}"
+              postflight_passed: "{{ fe_cisco_aci_network_config_bgp_peers_postflight_passed | default(false) | bool }}"
+              started_at: "{{ fe_cisco_aci_network_config_bgp_peers_started_at | default('') }}"
+              ended_at: "{{ fe_cisco_aci_network_config_bgp_peers_ended_at | default('') }}"
+              duration_seconds: "{{ fe_cisco_aci_network_config_bgp_peers_duration_seconds | default(0) | int }}"
+              failed_task: "{{ fe_cisco_aci_network_config_bgp_peers_failed_task | default('') }}"
+              error: "{{ fe_cisco_aci_network_config_bgp_peers_error | default('') }}"
+              check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+          fe_validation_executions: 1
+          fe_validation_succeeded: "{{ 1 if fe_cisco_aci_network_config_bgp_peers_status | default('') == 'succeeded' else 0 }}"
+          fe_validation_failed: "{{ 0 if fe_cisco_aci_network_config_bgp_peers_status | default('') == 'succeeded' else 1 }}"
+          fe_validation_duration_seconds: "{{ fe_cisco_aci_network_config_bgp_peers_duration_seconds | default(0) | int }}"
+          fe_validation_failed_components: >-
+            {{ [] if fe_cisco_aci_network_config_bgp_peers_status | default('') == 'succeeded' else ['cisco/aci_network_config/bgp_peers'] }}
+        aggregate: true
+        per_host: false
+      tags:
+        - always
+
+    - name: "cisco/aci_network_config/bgp_peers | Always | Mark the validation statistics as published"
+      ansible.builtin.set_fact:
+        fe_cisco_aci_network_config_bgp_peers_stats_published: true
+      tags:
+        - always

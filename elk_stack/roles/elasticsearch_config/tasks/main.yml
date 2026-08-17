@@ -1,206 +1,389 @@
 ---
 # Elasticsearch Configuration Tasks
 
-- name: Ensure Elasticsearch is installed
-  stat:
-    path: /usr/share/elasticsearch/bin/elasticsearch
-  register: elasticsearch_binary
-  failed_when: not elasticsearch_binary.stat.exists
+# ---------------------------------------------------------------------------
+# Fourth Estate preflight / postflight validation harness
+#
+# The task file body below is wrapped in an Ansible block/rescue/always structure:
+#
+#   block   preflight validation runs first, then the original task file body, then
+#           postflight validation. Any failure transfers control to rescue.
+#   rescue  records which task failed and why, then re-raises so a failure is
+#           never silently swallowed. Set fe_validation_continue_on_error=true
+#           to record the failure and keep going instead.
+#   always  computes the run duration and publishes the outcome through
+#           ansible.builtin.set_stats, so a wrapping playbook, AWX/AAP or CI can
+#           consume the result without scraping log output.
+#
+# Published stats (see docs/VALIDATION_AND_STATS.md):
+#   fe_validation_results['elk_stack/elasticsearch_config']  per-component record
+#   fe_validation_executions / _succeeded / _failed / _duration_seconds
+#   fe_validation_failed_components
+#
+# Add component-specific preflight checks without editing this file by setting
+#   fe_elk_stack_elasticsearch_config_required_vars: [var_one, var_two]
+# ---------------------------------------------------------------------------
 
-- name: Backup existing elasticsearch.yml
-  copy:
-    src: /etc/elasticsearch/elasticsearch.yml
-    dest: "/etc/elasticsearch/elasticsearch.yml.backup.{{ ansible_date_time.epoch }}"
-    remote_src: yes
-  when: elasticsearch_binary.stat.exists
-  ignore_errors: yes
+- name: "elk_stack/elasticsearch_config | Initialize validation state"
+  ansible.builtin.set_fact:
+    fe_elk_stack_elasticsearch_config_start_epoch: "{{ now(fmt='%s') | int }}"
+    fe_elk_stack_elasticsearch_config_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+    fe_elk_stack_elasticsearch_config_status: "running"
+    fe_elk_stack_elasticsearch_config_preflight_passed: false
+    fe_elk_stack_elasticsearch_config_postflight_passed: false
+    fe_elk_stack_elasticsearch_config_failed_task: ""
+    fe_elk_stack_elasticsearch_config_error: ""
+    fe_elk_stack_elasticsearch_config_stats_published: false
+  tags:
+    - always
 
-- name: Configure elasticsearch.yml
-  template:
-    src: elasticsearch.yml.j2
-    dest: /etc/elasticsearch/elasticsearch.yml
-    owner: root
-    group: elasticsearch
-    mode: '0660'
-    backup: yes
-  notify: restart elasticsearch
+- name: "elk_stack/elasticsearch_config | Guarded execution with preflight and postflight validation"
+  block:
 
-- name: Configure log4j2.properties
-  template:
-    src: log4j2.properties.j2
-    dest: /etc/elasticsearch/log4j2.properties
-    owner: root
-    group: elasticsearch
-    mode: '0660'
-  notify: restart elasticsearch
+    # ----------------------------- preflight --------------------
 
-- name: Create custom dictionary directory
-  file:
-    path: /etc/elasticsearch/dictionaries
-    state: directory
-    owner: root
-    group: elasticsearch
-    mode: '0755'
+    - name: "elk_stack/elasticsearch_config | Preflight | Verify the control node meets the minimum ansible-core version"
+      ansible.builtin.assert:
+        that:
+          - ansible_version.full is version(fe_validation_min_ansible_version | default('2.12'), '>=')
+        fail_msg: >-
+          elk_stack/elasticsearch_config: requires ansible-core
+          {{ fe_validation_min_ansible_version | default('2.12') }} or newer,
+          found {{ ansible_version.full }}.
+        success_msg: >-
+          elk_stack/elasticsearch_config: ansible-core {{ ansible_version.full }} satisfies the minimum.
+        quiet: true
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: Configure role mappings
-  template:
-    src: role_mapping.yml.j2
-    dest: /etc/elasticsearch/role_mapping.yml
-    owner: root
-    group: elasticsearch
-    mode: '0660'
-  when: elasticsearch_fourth_estate_mode | bool
-  notify: restart elasticsearch
+    - name: "elk_stack/elasticsearch_config | Preflight | Verify every declared required variable is defined"
+      ansible.builtin.assert:
+        that:
+          - vars[item] is defined
+        fail_msg: "elk_stack/elasticsearch_config: required variable '{{ item }}' is not defined."
+        success_msg: "elk_stack/elasticsearch_config: required variable '{{ item }}' is defined."
+        quiet: true
+      loop: "{{ fe_elk_stack_elasticsearch_config_required_vars | default([]) }}"
+      loop_control:
+        label: "{{ item }}"
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: Wait for Elasticsearch to be ready
-  wait_for:
-    host: localhost
-    port: "{{ elasticsearch_http_port }}"
-    delay: 5
-    timeout: 300
-  when: elasticsearch_service_state is defined and elasticsearch_service_state == 'started'
+    - name: "elk_stack/elasticsearch_config | Preflight | Record that preflight validation passed"
+      ansible.builtin.set_fact:
+        fe_elk_stack_elasticsearch_config_preflight_passed: true
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: Configure ILM policies
-  uri:
-    url: "http://localhost:{{ elasticsearch_http_port }}/_ilm/policy/{{ item.name }}"
-    method: PUT
-    body: "{{ lookup('template', 'ilm_policy.json.j2') }}"
-    body_format: json
-    status_code: [200, 201]
-  loop: "{{ elasticsearch_ilm_policies }}"
-  when:
-    - elasticsearch_ilm_enabled | bool
-    - elasticsearch_ilm_policies | length > 0
-  register: ilm_result
-  until: ilm_result is succeeded
-  retries: 5
-  delay: 10
-  ignore_errors: yes
+    # ----------------------------- execute ----------------------
 
-- name: Configure index templates
-  uri:
-    url: "http://localhost:{{ elasticsearch_http_port }}/_index_template/{{ item.name }}"
-    method: PUT
-    body: "{{ item | to_json }}"
-    body_format: json
-    status_code: [200, 201]
-  loop: "{{ elasticsearch_index_templates }}"
-  when: elasticsearch_index_templates | length > 0
-  register: template_result
-  until: template_result is succeeded
-  retries: 5
-  delay: 10
-  ignore_errors: yes
+    - name: Ensure Elasticsearch is installed
+      stat:
+        path: /usr/share/elasticsearch/bin/elasticsearch
+      register: elasticsearch_binary
+      failed_when: not elasticsearch_binary.stat.exists
 
-- name: Configure snapshot repositories
-  uri:
-    url: "http://localhost:{{ elasticsearch_http_port }}/_snapshot/{{ item.name }}"
-    method: PUT
-    body:
-      type: "{{ item.type }}"
-      settings: "{{ item.settings }}"
-    body_format: json
-    status_code: [200, 201]
-  loop: "{{ elasticsearch_snapshot_repositories }}"
-  when: elasticsearch_snapshot_repositories | length > 0
-  register: snapshot_result
-  until: snapshot_result is succeeded
-  retries: 5
-  delay: 10
-  ignore_errors: yes
+    - name: Backup existing elasticsearch.yml
+      copy:
+        src: /etc/elasticsearch/elasticsearch.yml
+        dest: "/etc/elasticsearch/elasticsearch.yml.backup.{{ ansible_date_time.epoch }}"
+        remote_src: yes
+      when: elasticsearch_binary.stat.exists
+      ignore_errors: yes
 
-- name: Configure remote clusters
-  uri:
-    url: "http://localhost:{{ elasticsearch_http_port }}/_cluster/settings"
-    method: PUT
-    body:
-      persistent:
-        cluster:
-          remote: "{{ elasticsearch_remote_clusters | items2dict(key_name='name', value_name='seeds') }}"
-    body_format: json
-    status_code: [200]
-  when: elasticsearch_remote_clusters | length > 0
-  register: remote_cluster_result
-  until: remote_cluster_result is succeeded
-  retries: 5
-  delay: 10
-  ignore_errors: yes
+    - name: Configure elasticsearch.yml
+      template:
+        src: elasticsearch.yml.j2
+        dest: /etc/elasticsearch/elasticsearch.yml
+        owner: root
+        group: elasticsearch
+        mode: '0660'
+        backup: yes
+      notify: restart elasticsearch
 
-- name: Configure cluster settings
-  uri:
-    url: "http://localhost:{{ elasticsearch_http_port }}/_cluster/settings"
-    method: PUT
-    body: "{{ lookup('template', 'cluster_settings.json.j2') }}"
-    body_format: json
-    status_code: [200]
-  register: cluster_settings_result
-  until: cluster_settings_result is succeeded
-  retries: 5
-  delay: 10
-  ignore_errors: yes
+    - name: Configure log4j2.properties
+      template:
+        src: log4j2.properties.j2
+        dest: /etc/elasticsearch/log4j2.properties
+        owner: root
+        group: elasticsearch
+        mode: '0660'
+      notify: restart elasticsearch
 
-- name: Create Fourth Estate specific index aliases
-  uri:
-    url: "http://localhost:{{ elasticsearch_http_port }}/_aliases"
-    method: POST
-    body:
-      actions:
-        - add:
-            index: "logs-*"
-            alias: "all-logs"
-        - add:
-            index: "filebeat-*"
-            alias: "filebeat-logs"
-        - add:
-            index: "metricbeat-*"
-            alias: "system-metrics"
-    body_format: json
-    status_code: [200, 404]
-  when: elasticsearch_fourth_estate_mode | bool
-  ignore_errors: yes
+    - name: Create custom dictionary directory
+      file:
+        path: /etc/elasticsearch/dictionaries
+        state: directory
+        owner: root
+        group: elasticsearch
+        mode: '0755'
 
-- name: Configure index lifecycle settings
-  uri:
-    url: "http://localhost:{{ elasticsearch_http_port }}/_all/_settings"
-    method: PUT
-    body:
-      index:
-        lifecycle:
-          parse_origination_date: true
-    body_format: json
-    status_code: [200]
-  when: elasticsearch_ilm_enabled | bool
-  ignore_errors: yes
+    - name: Configure role mappings
+      template:
+        src: role_mapping.yml.j2
+        dest: /etc/elasticsearch/role_mapping.yml
+        owner: root
+        group: elasticsearch
+        mode: '0660'
+      when: elasticsearch_fourth_estate_mode | bool
+      notify: restart elasticsearch
 
-- name: Create monitoring indices
-  uri:
-    url: "http://localhost:{{ elasticsearch_http_port }}/.monitoring-es-*"
-    method: PUT
-    status_code: [200, 400]
-  when: elasticsearch_monitoring_enabled | bool
-  ignore_errors: yes
+    - name: Wait for Elasticsearch to be ready
+      wait_for:
+        host: localhost
+        port: "{{ elasticsearch_http_port }}"
+        delay: 5
+        timeout: 300
+      when: elasticsearch_service_state is defined and elasticsearch_service_state == 'started'
 
-- name: Display cluster health
-  uri:
-    url: "http://localhost:{{ elasticsearch_http_port }}/_cluster/health"
-    method: GET
-    return_content: yes
-  register: cluster_health
-  ignore_errors: yes
+    - name: Configure ILM policies
+      uri:
+        url: "http://localhost:{{ elasticsearch_http_port }}/_ilm/policy/{{ item.name }}"
+        method: PUT
+        body: "{{ lookup('template', 'ilm_policy.json.j2') }}"
+        body_format: json
+        status_code: [200, 201]
+      loop: "{{ elasticsearch_ilm_policies }}"
+      when:
+        - elasticsearch_ilm_enabled | bool
+        - elasticsearch_ilm_policies | length > 0
+      register: ilm_result
+      until: ilm_result is succeeded
+      retries: 5
+      delay: 10
+      ignore_errors: yes
 
-- name: Show cluster health
-  debug:
-    var: cluster_health.json
-  when: cluster_health is succeeded
+    - name: Configure index templates
+      uri:
+        url: "http://localhost:{{ elasticsearch_http_port }}/_index_template/{{ item.name }}"
+        method: PUT
+        body: "{{ item | to_json }}"
+        body_format: json
+        status_code: [200, 201]
+      loop: "{{ elasticsearch_index_templates }}"
+      when: elasticsearch_index_templates | length > 0
+      register: template_result
+      until: template_result is succeeded
+      retries: 5
+      delay: 10
+      ignore_errors: yes
 
-- name: Display cluster stats
-  uri:
-    url: "http://localhost:{{ elasticsearch_http_port }}/_cluster/stats"
-    method: GET
-    return_content: yes
-  register: cluster_stats
-  ignore_errors: yes
+    - name: Configure snapshot repositories
+      uri:
+        url: "http://localhost:{{ elasticsearch_http_port }}/_snapshot/{{ item.name }}"
+        method: PUT
+        body:
+          type: "{{ item.type }}"
+          settings: "{{ item.settings }}"
+        body_format: json
+        status_code: [200, 201]
+      loop: "{{ elasticsearch_snapshot_repositories }}"
+      when: elasticsearch_snapshot_repositories | length > 0
+      register: snapshot_result
+      until: snapshot_result is succeeded
+      retries: 5
+      delay: 10
+      ignore_errors: yes
 
-- name: Show node roles
-  debug:
-    msg: "Node {{ elasticsearch_node_name }} configured with roles: master={{ elasticsearch_node_master }}, data={{ elasticsearch_node_data }}, ingest={{ elasticsearch_node_ingest }}"
+    - name: Configure remote clusters
+      uri:
+        url: "http://localhost:{{ elasticsearch_http_port }}/_cluster/settings"
+        method: PUT
+        body:
+          persistent:
+            cluster:
+              remote: "{{ elasticsearch_remote_clusters | items2dict(key_name='name', value_name='seeds') }}"
+        body_format: json
+        status_code: [200]
+      when: elasticsearch_remote_clusters | length > 0
+      register: remote_cluster_result
+      until: remote_cluster_result is succeeded
+      retries: 5
+      delay: 10
+      ignore_errors: yes
+
+    - name: Configure cluster settings
+      uri:
+        url: "http://localhost:{{ elasticsearch_http_port }}/_cluster/settings"
+        method: PUT
+        body: "{{ lookup('template', 'cluster_settings.json.j2') }}"
+        body_format: json
+        status_code: [200]
+      register: cluster_settings_result
+      until: cluster_settings_result is succeeded
+      retries: 5
+      delay: 10
+      ignore_errors: yes
+
+    - name: Create Fourth Estate specific index aliases
+      uri:
+        url: "http://localhost:{{ elasticsearch_http_port }}/_aliases"
+        method: POST
+        body:
+          actions:
+            - add:
+                index: "logs-*"
+                alias: "all-logs"
+            - add:
+                index: "filebeat-*"
+                alias: "filebeat-logs"
+            - add:
+                index: "metricbeat-*"
+                alias: "system-metrics"
+        body_format: json
+        status_code: [200, 404]
+      when: elasticsearch_fourth_estate_mode | bool
+      ignore_errors: yes
+
+    - name: Configure index lifecycle settings
+      uri:
+        url: "http://localhost:{{ elasticsearch_http_port }}/_all/_settings"
+        method: PUT
+        body:
+          index:
+            lifecycle:
+              parse_origination_date: true
+        body_format: json
+        status_code: [200]
+      when: elasticsearch_ilm_enabled | bool
+      ignore_errors: yes
+
+    - name: Create monitoring indices
+      uri:
+        url: "http://localhost:{{ elasticsearch_http_port }}/.monitoring-es-*"
+        method: PUT
+        status_code: [200, 400]
+      when: elasticsearch_monitoring_enabled | bool
+      ignore_errors: yes
+
+    - name: Display cluster health
+      uri:
+        url: "http://localhost:{{ elasticsearch_http_port }}/_cluster/health"
+        method: GET
+        return_content: yes
+      register: cluster_health
+      ignore_errors: yes
+
+    - name: Show cluster health
+      debug:
+        var: cluster_health.json
+      when: cluster_health is succeeded
+
+    - name: Display cluster stats
+      uri:
+        url: "http://localhost:{{ elasticsearch_http_port }}/_cluster/stats"
+        method: GET
+        return_content: yes
+      register: cluster_stats
+      ignore_errors: yes
+
+    - name: Show node roles
+      debug:
+        msg: "Node {{ elasticsearch_node_name }} configured with roles: master={{ elasticsearch_node_master }}, data={{ elasticsearch_node_data }}, ingest={{ elasticsearch_node_ingest }}"
+
+    # ----------------------------- postflight -------------------
+
+    - name: "elk_stack/elasticsearch_config | Postflight | Verify the guarded body ran after a passing preflight"
+      ansible.builtin.assert:
+        that:
+          - fe_elk_stack_elasticsearch_config_preflight_passed | bool
+          - fe_elk_stack_elasticsearch_config_status in ['running', 'succeeded']
+        fail_msg: >-
+          elk_stack/elasticsearch_config: postflight validation failed - preflight passed
+          ={{ fe_elk_stack_elasticsearch_config_preflight_passed | default(false) }},
+          status={{ fe_elk_stack_elasticsearch_config_status | default('unknown') }}.
+        success_msg: "elk_stack/elasticsearch_config: postflight validation passed."
+        quiet: true
+      tags:
+        - always
+        - postflight
+        - validation
+
+    - name: "elk_stack/elasticsearch_config | Postflight | Record the successful outcome"
+      ansible.builtin.set_fact:
+        fe_elk_stack_elasticsearch_config_postflight_passed: true
+        fe_elk_stack_elasticsearch_config_status: "succeeded"
+      tags:
+        - always
+        - postflight
+        - validation
+
+  rescue:
+
+    - name: "elk_stack/elasticsearch_config | Rescue | Capture the failing task and error detail"
+      ansible.builtin.set_fact:
+        fe_elk_stack_elasticsearch_config_status: "failed"
+        fe_elk_stack_elasticsearch_config_postflight_passed: false
+        fe_elk_stack_elasticsearch_config_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+        fe_elk_stack_elasticsearch_config_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+      tags:
+        - always
+        - rescue
+
+    - name: "elk_stack/elasticsearch_config | Rescue | Report the failure"
+      ansible.builtin.debug:
+        msg: >-
+          elk_stack/elasticsearch_config: FAILED at '{{ fe_elk_stack_elasticsearch_config_failed_task }}' on
+          {{ inventory_hostname }} - {{ fe_elk_stack_elasticsearch_config_error }}
+      tags:
+        - always
+        - rescue
+
+    - name: "elk_stack/elasticsearch_config | Rescue | Re-raise the failure unless the caller opted to continue"
+      ansible.builtin.fail:
+        msg: >-
+          elk_stack/elasticsearch_config failed at '{{ fe_elk_stack_elasticsearch_config_failed_task }}': {{ fe_elk_stack_elasticsearch_config_error }}
+      when: not (fe_validation_continue_on_error | default(false) | bool)
+      tags:
+        - always
+        - rescue
+
+  always:
+
+    - name: "elk_stack/elasticsearch_config | Always | Compute the execution duration"
+      ansible.builtin.set_fact:
+        fe_elk_stack_elasticsearch_config_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+        fe_elk_stack_elasticsearch_config_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_elk_stack_elasticsearch_config_start_epoch | default(0) | int) }}"
+      tags:
+        - always
+
+    - name: "elk_stack/elasticsearch_config | Always | Publish the validation result with set_stats"
+      ansible.builtin.set_stats:
+        data:
+          fe_validation_results:
+            "elk_stack/elasticsearch_config":
+              component: "elk_stack/elasticsearch_config"
+              type: "role"
+              platform: "elk_stack"
+              host: "{{ inventory_hostname }}"
+              status: "{{ fe_elk_stack_elasticsearch_config_status | default('unknown') }}"
+              preflight_passed: "{{ fe_elk_stack_elasticsearch_config_preflight_passed | default(false) | bool }}"
+              postflight_passed: "{{ fe_elk_stack_elasticsearch_config_postflight_passed | default(false) | bool }}"
+              started_at: "{{ fe_elk_stack_elasticsearch_config_started_at | default('') }}"
+              ended_at: "{{ fe_elk_stack_elasticsearch_config_ended_at | default('') }}"
+              duration_seconds: "{{ fe_elk_stack_elasticsearch_config_duration_seconds | default(0) | int }}"
+              failed_task: "{{ fe_elk_stack_elasticsearch_config_failed_task | default('') }}"
+              error: "{{ fe_elk_stack_elasticsearch_config_error | default('') }}"
+              check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+          fe_validation_executions: 1
+          fe_validation_succeeded: "{{ 1 if fe_elk_stack_elasticsearch_config_status | default('') == 'succeeded' else 0 }}"
+          fe_validation_failed: "{{ 0 if fe_elk_stack_elasticsearch_config_status | default('') == 'succeeded' else 1 }}"
+          fe_validation_duration_seconds: "{{ fe_elk_stack_elasticsearch_config_duration_seconds | default(0) | int }}"
+          fe_validation_failed_components: >-
+            {{ [] if fe_elk_stack_elasticsearch_config_status | default('') == 'succeeded' else ['elk_stack/elasticsearch_config'] }}
+        aggregate: true
+        per_host: false
+      tags:
+        - always
+
+    - name: "elk_stack/elasticsearch_config | Always | Mark the validation statistics as published"
+      ansible.builtin.set_fact:
+        fe_elk_stack_elasticsearch_config_stats_published: true
+      tags:
+        - always

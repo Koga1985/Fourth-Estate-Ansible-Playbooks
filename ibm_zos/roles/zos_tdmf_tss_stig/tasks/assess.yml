@@ -2,67 +2,250 @@
 # Generic z/OS STIG checklist generator + optional live read-only assessment.
 # Reusable across all ibm_zos/* roles via zos_catalog / zos_slug.
 
-- name: Ensure artifacts directory exists
-  ansible.builtin.file:
-    path: "{{ artifacts_dir }}"
-    state: directory
-    mode: "0750"
-  delegate_to: localhost
-  run_once: true
-  changed_when: false
-  tags: [always]
+# ---------------------------------------------------------------------------
+# Fourth Estate preflight / postflight validation harness
+#
+# The task file body below is wrapped in an Ansible block/rescue/always structure:
+#
+#   block   preflight validation runs first, then the original task file body, then
+#           postflight validation. Any failure transfers control to rescue.
+#   rescue  records which task failed and why, then re-raises so a failure is
+#           never silently swallowed. Set fe_validation_continue_on_error=true
+#           to record the failure and keep going instead.
+#   always  computes the run duration and publishes the outcome through
+#           ansible.builtin.set_stats, so a wrapping playbook, AWX/AAP or CI can
+#           consume the result without scraping log output.
+#
+# Published stats (see docs/VALIDATION_AND_STATS.md):
+#   fe_validation_results['ibm_zos/zos_tdmf_tss_stig/assess']  per-component record
+#   fe_validation_executions / _succeeded / _failed / _duration_seconds
+#   fe_validation_failed_components
+#
+# Add component-specific preflight checks without editing this file by setting
+#   fe_ibm_zos_zos_tdmf_tss_stig_assess_required_vars: [var_one, var_two]
+# ---------------------------------------------------------------------------
 
-- name: Show run mode
-  ansible.builtin.debug:
-    msg: >-
-      {{ zos_slug }} ({{ stig_benchmark }}, ESM={{ zos_esm | default('n/a') }}) -
-      {{ ('LIVE read-only assessment against ' + zos_target) if (zos_live_assessment | bool and zos_target | length > 0) else 'CHECKLIST only (no mainframe contacted)' }}
-  tags: [always]
-
-- name: Build checklist data
+- name: "ibm_zos/zos_tdmf_tss_stig/assess | Initialize validation state"
   ansible.builtin.set_fact:
-    zos_checklist:
-      meta:
-        benchmark: "{{ stig_benchmark }}"
-        version: "{{ stig_version }}"
-        esm: "{{ zos_esm | default('n/a') }}"
-        generated: "{{ ansible_date_time.iso8601 | default(lookup('pipe', 'date -u +%Y-%m-%dT%H:%M:%SZ')) }}"
-        mode: "{{ 'live-assessment' if (zos_live_assessment | bool and zos_target | length > 0) else 'checklist-only' }}"
-        compliance_frameworks: "{{ compliance_frameworks }}"
-        control_count: "{{ zos_catalog | length }}"
-      controls: "{{ zos_catalog }}"
-  tags: [always]
+    fe_ibm_zos_zos_tdmf_tss_stig_assess_start_epoch: "{{ now(fmt='%s') | int }}"
+    fe_ibm_zos_zos_tdmf_tss_stig_assess_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+    fe_ibm_zos_zos_tdmf_tss_stig_assess_status: "running"
+    fe_ibm_zos_zos_tdmf_tss_stig_assess_preflight_passed: false
+    fe_ibm_zos_zos_tdmf_tss_stig_assess_postflight_passed: false
+    fe_ibm_zos_zos_tdmf_tss_stig_assess_failed_task: ""
+    fe_ibm_zos_zos_tdmf_tss_stig_assess_error: ""
+    fe_ibm_zos_zos_tdmf_tss_stig_assess_stats_published: false
+  tags:
+    - always
 
-- name: Write checklist JSON artifact
-  ansible.builtin.copy:
-    dest: "{{ artifacts_dir }}/{{ zos_slug }}_checklist.json"
-    mode: "0640"
-    content: "{{ zos_checklist | to_nice_json }}"
-  delegate_to: localhost
-  tags: [report]
+- name: "ibm_zos/zos_tdmf_tss_stig/assess | Guarded execution with preflight and postflight validation"
+  block:
 
-- name: Render checklist Markdown
-  ansible.builtin.template:
-    src: checklist.md.j2
-    dest: "{{ artifacts_dir }}/{{ zos_slug }}_checklist.md"
-    mode: "0640"
-  delegate_to: localhost
-  tags: [report]
+    # ----------------------------- preflight --------------------
 
-# Live read-only assessment is dynamically included so this role's checklist
-# mode runs without the ibm.ibm_zos_core collection installed. The include is
-# only loaded (and the collection only required) when live mode is requested.
-- name: Live read-only assessment (gated; requires ibm.ibm_zos_core)
-  ansible.builtin.include_tasks: assess_live.yml
-  when:
-    - zos_live_assessment | bool
-    - zos_target | length > 0
-  tags: [live]
+    - name: "ibm_zos/zos_tdmf_tss_stig/assess | Preflight | Verify the control node meets the minimum ansible-core version"
+      ansible.builtin.assert:
+        that:
+          - ansible_version.full is version(fe_validation_min_ansible_version | default('2.12'), '>=')
+        fail_msg: >-
+          ibm_zos/zos_tdmf_tss_stig/assess: requires ansible-core
+          {{ fe_validation_min_ansible_version | default('2.12') }} or newer,
+          found {{ ansible_version.full }}.
+        success_msg: >-
+          ibm_zos/zos_tdmf_tss_stig/assess: ansible-core {{ ansible_version.full }} satisfies the minimum.
+        quiet: true
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: Summarize
-  ansible.builtin.debug:
-    msg: >-
-      {{ zos_slug }}: {{ zos_catalog | length }} controls documented.
-      Checklist: {{ artifacts_dir }}/{{ zos_slug }}_checklist.md
-      {{ '| live evidence: ' + artifacts_dir + '/' + zos_slug + '_live_evidence.json' if (zos_live_assessment | bool and zos_target | length > 0) else '' }}
-  tags: [always]
+    - name: "ibm_zos/zos_tdmf_tss_stig/assess | Preflight | Verify every declared required variable is defined"
+      ansible.builtin.assert:
+        that:
+          - vars[item] is defined
+        fail_msg: "ibm_zos/zos_tdmf_tss_stig/assess: required variable '{{ item }}' is not defined."
+        success_msg: "ibm_zos/zos_tdmf_tss_stig/assess: required variable '{{ item }}' is defined."
+        quiet: true
+      loop: "{{ fe_ibm_zos_zos_tdmf_tss_stig_assess_required_vars | default([]) }}"
+      loop_control:
+        label: "{{ item }}"
+      tags:
+        - always
+        - preflight
+        - validation
+
+    - name: "ibm_zos/zos_tdmf_tss_stig/assess | Preflight | Record that preflight validation passed"
+      ansible.builtin.set_fact:
+        fe_ibm_zos_zos_tdmf_tss_stig_assess_preflight_passed: true
+      tags:
+        - always
+        - preflight
+        - validation
+
+    # ----------------------------- execute ----------------------
+
+    - name: Ensure artifacts directory exists
+      ansible.builtin.file:
+        path: "{{ artifacts_dir }}"
+        state: directory
+        mode: "0750"
+      delegate_to: localhost
+      run_once: true
+      changed_when: false
+      tags: [always]
+
+    - name: Show run mode
+      ansible.builtin.debug:
+        msg: >-
+          {{ zos_slug }} ({{ stig_benchmark }}, ESM={{ zos_esm | default('n/a') }}) -
+          {{ ('LIVE read-only assessment against ' + zos_target) if (zos_live_assessment | bool and zos_target | length > 0) else 'CHECKLIST only (no mainframe contacted)' }}
+      tags: [always]
+
+    - name: Build checklist data
+      ansible.builtin.set_fact:
+        zos_checklist:
+          meta:
+            benchmark: "{{ stig_benchmark }}"
+            version: "{{ stig_version }}"
+            esm: "{{ zos_esm | default('n/a') }}"
+            generated: "{{ ansible_date_time.iso8601 | default(lookup('pipe', 'date -u +%Y-%m-%dT%H:%M:%SZ')) }}"
+            mode: "{{ 'live-assessment' if (zos_live_assessment | bool and zos_target | length > 0) else 'checklist-only' }}"
+            compliance_frameworks: "{{ compliance_frameworks }}"
+            control_count: "{{ zos_catalog | length }}"
+          controls: "{{ zos_catalog }}"
+      tags: [always]
+
+    - name: Write checklist JSON artifact
+      ansible.builtin.copy:
+        dest: "{{ artifacts_dir }}/{{ zos_slug }}_checklist.json"
+        mode: "0640"
+        content: "{{ zos_checklist | to_nice_json }}"
+      delegate_to: localhost
+      tags: [report]
+
+    - name: Render checklist Markdown
+      ansible.builtin.template:
+        src: checklist.md.j2
+        dest: "{{ artifacts_dir }}/{{ zos_slug }}_checklist.md"
+        mode: "0640"
+      delegate_to: localhost
+      tags: [report]
+
+    # Live read-only assessment is dynamically included so this role's checklist
+    # mode runs without the ibm.ibm_zos_core collection installed. The include is
+    # only loaded (and the collection only required) when live mode is requested.
+    - name: Live read-only assessment (gated; requires ibm.ibm_zos_core)
+      ansible.builtin.include_tasks: assess_live.yml
+      when:
+        - zos_live_assessment | bool
+        - zos_target | length > 0
+      tags: [live]
+
+    - name: Summarize
+      ansible.builtin.debug:
+        msg: >-
+          {{ zos_slug }}: {{ zos_catalog | length }} controls documented.
+          Checklist: {{ artifacts_dir }}/{{ zos_slug }}_checklist.md
+          {{ '| live evidence: ' + artifacts_dir + '/' + zos_slug + '_live_evidence.json' if (zos_live_assessment | bool and zos_target | length > 0) else '' }}
+      tags: [always]
+
+    # ----------------------------- postflight -------------------
+
+    - name: "ibm_zos/zos_tdmf_tss_stig/assess | Postflight | Verify the guarded body ran after a passing preflight"
+      ansible.builtin.assert:
+        that:
+          - fe_ibm_zos_zos_tdmf_tss_stig_assess_preflight_passed | bool
+          - fe_ibm_zos_zos_tdmf_tss_stig_assess_status in ['running', 'succeeded']
+        fail_msg: >-
+          ibm_zos/zos_tdmf_tss_stig/assess: postflight validation failed - preflight passed
+          ={{ fe_ibm_zos_zos_tdmf_tss_stig_assess_preflight_passed | default(false) }},
+          status={{ fe_ibm_zos_zos_tdmf_tss_stig_assess_status | default('unknown') }}.
+        success_msg: "ibm_zos/zos_tdmf_tss_stig/assess: postflight validation passed."
+        quiet: true
+      tags:
+        - always
+        - postflight
+        - validation
+
+    - name: "ibm_zos/zos_tdmf_tss_stig/assess | Postflight | Record the successful outcome"
+      ansible.builtin.set_fact:
+        fe_ibm_zos_zos_tdmf_tss_stig_assess_postflight_passed: true
+        fe_ibm_zos_zos_tdmf_tss_stig_assess_status: "succeeded"
+      tags:
+        - always
+        - postflight
+        - validation
+
+  rescue:
+
+    - name: "ibm_zos/zos_tdmf_tss_stig/assess | Rescue | Capture the failing task and error detail"
+      ansible.builtin.set_fact:
+        fe_ibm_zos_zos_tdmf_tss_stig_assess_status: "failed"
+        fe_ibm_zos_zos_tdmf_tss_stig_assess_postflight_passed: false
+        fe_ibm_zos_zos_tdmf_tss_stig_assess_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+        fe_ibm_zos_zos_tdmf_tss_stig_assess_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+      tags:
+        - always
+        - rescue
+
+    - name: "ibm_zos/zos_tdmf_tss_stig/assess | Rescue | Report the failure"
+      ansible.builtin.debug:
+        msg: >-
+          ibm_zos/zos_tdmf_tss_stig/assess: FAILED at '{{ fe_ibm_zos_zos_tdmf_tss_stig_assess_failed_task }}' on
+          {{ inventory_hostname }} - {{ fe_ibm_zos_zos_tdmf_tss_stig_assess_error }}
+      tags:
+        - always
+        - rescue
+
+    - name: "ibm_zos/zos_tdmf_tss_stig/assess | Rescue | Re-raise the failure unless the caller opted to continue"
+      ansible.builtin.fail:
+        msg: >-
+          ibm_zos/zos_tdmf_tss_stig/assess failed at '{{ fe_ibm_zos_zos_tdmf_tss_stig_assess_failed_task }}': {{ fe_ibm_zos_zos_tdmf_tss_stig_assess_error }}
+      when: not (fe_validation_continue_on_error | default(false) | bool)
+      tags:
+        - always
+        - rescue
+
+  always:
+
+    - name: "ibm_zos/zos_tdmf_tss_stig/assess | Always | Compute the execution duration"
+      ansible.builtin.set_fact:
+        fe_ibm_zos_zos_tdmf_tss_stig_assess_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+        fe_ibm_zos_zos_tdmf_tss_stig_assess_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_ibm_zos_zos_tdmf_tss_stig_assess_start_epoch | default(0) | int) }}"
+      tags:
+        - always
+
+    - name: "ibm_zos/zos_tdmf_tss_stig/assess | Always | Publish the validation result with set_stats"
+      ansible.builtin.set_stats:
+        data:
+          fe_validation_results:
+            "ibm_zos/zos_tdmf_tss_stig/assess":
+              component: "ibm_zos/zos_tdmf_tss_stig/assess"
+              type: "role-tasks"
+              platform: "ibm_zos"
+              host: "{{ inventory_hostname }}"
+              status: "{{ fe_ibm_zos_zos_tdmf_tss_stig_assess_status | default('unknown') }}"
+              preflight_passed: "{{ fe_ibm_zos_zos_tdmf_tss_stig_assess_preflight_passed | default(false) | bool }}"
+              postflight_passed: "{{ fe_ibm_zos_zos_tdmf_tss_stig_assess_postflight_passed | default(false) | bool }}"
+              started_at: "{{ fe_ibm_zos_zos_tdmf_tss_stig_assess_started_at | default('') }}"
+              ended_at: "{{ fe_ibm_zos_zos_tdmf_tss_stig_assess_ended_at | default('') }}"
+              duration_seconds: "{{ fe_ibm_zos_zos_tdmf_tss_stig_assess_duration_seconds | default(0) | int }}"
+              failed_task: "{{ fe_ibm_zos_zos_tdmf_tss_stig_assess_failed_task | default('') }}"
+              error: "{{ fe_ibm_zos_zos_tdmf_tss_stig_assess_error | default('') }}"
+              check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+          fe_validation_executions: 1
+          fe_validation_succeeded: "{{ 1 if fe_ibm_zos_zos_tdmf_tss_stig_assess_status | default('') == 'succeeded' else 0 }}"
+          fe_validation_failed: "{{ 0 if fe_ibm_zos_zos_tdmf_tss_stig_assess_status | default('') == 'succeeded' else 1 }}"
+          fe_validation_duration_seconds: "{{ fe_ibm_zos_zos_tdmf_tss_stig_assess_duration_seconds | default(0) | int }}"
+          fe_validation_failed_components: >-
+            {{ [] if fe_ibm_zos_zos_tdmf_tss_stig_assess_status | default('') == 'succeeded' else ['ibm_zos/zos_tdmf_tss_stig/assess'] }}
+        aggregate: true
+        per_host: false
+      tags:
+        - always
+
+    - name: "ibm_zos/zos_tdmf_tss_stig/assess | Always | Mark the validation statistics as published"
+      ansible.builtin.set_fact:
+        fe_ibm_zos_zos_tdmf_tss_stig_assess_stats_published: true
+      tags:
+        - always

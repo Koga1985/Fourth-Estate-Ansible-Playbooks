@@ -2,153 +2,336 @@
 # tasks/main.yml - RHEL Patch Management
 # DoD STIG V-204393
 
-- name: Display patch management information
-  ansible.builtin.debug:
-    msg:
-      - "=================================="
-      - "RHEL Patch Management"
-      - "=================================="
-      - "Security updates only: {{ rhel_security_updates_only }}"
-      - "Auto reboot: {{ rhel_auto_reboot }}"
-      - "Update kernel: {{ rhel_update_kernel }}"
-      - "=================================="
+# ---------------------------------------------------------------------------
+# Fourth Estate preflight / postflight validation harness
+#
+# The task file body below is wrapped in an Ansible block/rescue/always structure:
+#
+#   block   preflight validation runs first, then the original task file body, then
+#           postflight validation. Any failure transfers control to rescue.
+#   rescue  records which task failed and why, then re-raises so a failure is
+#           never silently swallowed. Set fe_validation_continue_on_error=true
+#           to record the failure and keep going instead.
+#   always  computes the run duration and publishes the outcome through
+#           ansible.builtin.set_stats, so a wrapping playbook, AWX/AAP or CI can
+#           consume the result without scraping log output.
+#
+# Published stats (see docs/VALIDATION_AND_STATS.md):
+#   fe_validation_results['rhel/rhel-patch-management']  per-component record
+#   fe_validation_executions / _succeeded / _failed / _duration_seconds
+#   fe_validation_failed_components
+#
+# Add component-specific preflight checks without editing this file by setting
+#   fe_rhel_rhel_patch_management_required_vars: [var_one, var_two]
+# ---------------------------------------------------------------------------
+
+- name: "rhel/rhel-patch-management | Initialize validation state"
+  ansible.builtin.set_fact:
+    fe_rhel_rhel_patch_management_start_epoch: "{{ now(fmt='%s') | int }}"
+    fe_rhel_rhel_patch_management_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+    fe_rhel_rhel_patch_management_status: "running"
+    fe_rhel_rhel_patch_management_preflight_passed: false
+    fe_rhel_rhel_patch_management_postflight_passed: false
+    fe_rhel_rhel_patch_management_failed_task: ""
+    fe_rhel_rhel_patch_management_error: ""
+    fe_rhel_rhel_patch_management_stats_published: false
   tags:
     - always
 
-- name: Check subscription status
-  ansible.builtin.command: subscription-manager status
-  register: subscription_status
-  changed_when: false
-  failed_when: false
-  tags:
-    - validation
+- name: "rhel/rhel-patch-management | Guarded execution with preflight and postflight validation"
+  block:
 
-- name: Update package cache
-  ansible.builtin.dnf:
-    update_cache: true
-  when: rhel_update_cache | bool
-  tags:
-    - cache
+    # ----------------------------- preflight --------------------
 
-- name: Check for available updates
-  ansible.builtin.dnf:
-    list: updates
-  register: available_updates
-  tags:
-    - validation
+    - name: "rhel/rhel-patch-management | Preflight | Verify the control node meets the minimum ansible-core version"
+      ansible.builtin.assert:
+        that:
+          - ansible_version.full is version(fe_validation_min_ansible_version | default('2.12'), '>=')
+        fail_msg: >-
+          rhel/rhel-patch-management: requires ansible-core
+          {{ fe_validation_min_ansible_version | default('2.12') }} or newer,
+          found {{ ansible_version.full }}.
+        success_msg: >-
+          rhel/rhel-patch-management: ansible-core {{ ansible_version.full }} satisfies the minimum.
+        quiet: true
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: Display available updates
-  ansible.builtin.debug:
-    msg: "Available updates: {{ available_updates.results | length }}"
-  tags:
-    - validation
+    - name: "rhel/rhel-patch-management | Preflight | Verify every declared required variable is defined"
+      ansible.builtin.assert:
+        that:
+          - vars[item] is defined
+        fail_msg: "rhel/rhel-patch-management: required variable '{{ item }}' is not defined."
+        success_msg: "rhel/rhel-patch-management: required variable '{{ item }}' is defined."
+        quiet: true
+      loop: "{{ fe_rhel_rhel_patch_management_required_vars | default([]) }}"
+      loop_control:
+        label: "{{ item }}"
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: Install security updates only (STIG V-204393)
-  ansible.builtin.dnf:
-    name: "*"
-    state: latest
-    security: true
-    exclude: "{{ rhel_exclude_packages | join(',') }}"
-  when:
-    - rhel_security_updates_only | bool
-    - not rhel_check_only | bool
-    - not rhel_download_only | bool
-  notify: reboot if required
-  tags:
-    - updates
-    - security-updates
+    - name: "rhel/rhel-patch-management | Preflight | Record that preflight validation passed"
+      ansible.builtin.set_fact:
+        fe_rhel_rhel_patch_management_preflight_passed: true
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: Install all updates
-  ansible.builtin.dnf:
-    name: "*"
-    state: latest
-    exclude: "{{ rhel_exclude_packages | join(',') }}"
-  when:
-    - not rhel_security_updates_only | bool
-    - rhel_update_all_packages | bool
-    - not rhel_check_only | bool
-    - not rhel_download_only | bool
-  notify: reboot if required
-  tags:
-    - updates
+    # ----------------------------- execute ----------------------
 
-- name: Update specific packages
-  ansible.builtin.dnf:
-    name: "{{ rhel_packages_to_update }}"
-    state: latest
-  when:
-    - rhel_packages_to_update | length > 0
-    - not rhel_check_only | bool
-    - not rhel_download_only | bool
-  tags:
-    - updates
+    - name: Display patch management information
+      ansible.builtin.debug:
+        msg:
+          - "=================================="
+          - "RHEL Patch Management"
+          - "=================================="
+          - "Security updates only: {{ rhel_security_updates_only }}"
+          - "Auto reboot: {{ rhel_auto_reboot }}"
+          - "Update kernel: {{ rhel_update_kernel }}"
+          - "=================================="
+      tags:
+        - always
 
-- name: Update kernel
-  ansible.builtin.dnf:
-    name: kernel
-    state: latest
-  when:
-    - rhel_update_kernel | bool
-    - not rhel_check_only | bool
-    - not rhel_download_only | bool
-  notify: reboot if required
-  tags:
-    - updates
-    - kernel
+    - name: Check subscription status
+      ansible.builtin.command: subscription-manager status
+      register: subscription_status
+      changed_when: false
+      failed_when: false
+      tags:
+        - validation
 
-- name: Clean package cache
-  ansible.builtin.dnf:
-    autoremove: true
-  when: rhel_clean_cache | bool
-  tags:
-    - cleanup
+    - name: Update package cache
+      ansible.builtin.dnf:
+        update_cache: true
+      when: rhel_update_cache | bool
+      tags:
+        - cache
 
-- name: Check if reboot is required
-  ansible.builtin.stat:
-    path: /var/run/reboot-required
-  register: reboot_required_file
-  tags:
-    - validation
+    - name: Check for available updates
+      ansible.builtin.dnf:
+        list: updates
+      register: available_updates
+      tags:
+        - validation
 
-- name: Check for new kernel
-  ansible.builtin.shell: |
-    LAST_KERNEL=$(rpm -q --last kernel | head -1 | awk '{print $1}' | sed 's/kernel-//')
-    CURRENT_KERNEL=$(uname -r)
-    if [ "$LAST_KERNEL" != "$CURRENT_KERNEL" ]; then
-      echo "reboot_required"
-    fi
-  register: kernel_check
-  changed_when: false
-  tags:
-    - validation
+    - name: Display available updates
+      ansible.builtin.debug:
+        msg: "Available updates: {{ available_updates.results | length }}"
+      tags:
+        - validation
 
-- name: Display reboot status
-  ansible.builtin.debug:
-    msg:
-      - "Reboot required: {{ 'yes' if kernel_check.stdout == 'reboot_required' else 'no' }}"
-      - "Auto reboot: {{ rhel_auto_reboot }}"
-  tags:
-    - validation
+    - name: Install security updates only (STIG V-204393)
+      ansible.builtin.dnf:
+        name: "*"
+        state: latest
+        security: true
+        exclude: "{{ rhel_exclude_packages | join(',') }}"
+      when:
+        - rhel_security_updates_only | bool
+        - not rhel_check_only | bool
+        - not rhel_download_only | bool
+      notify: reboot if required
+      tags:
+        - updates
+        - security-updates
 
-- name: Generate update report
-  ansible.builtin.template:
-    src: update-report.j2
-    dest: "{{ rhel_update_report_path }}"
-    owner: root
-    group: root
-    mode: '0600'
-  when: rhel_generate_update_report | bool
-  tags:
-    - report
+    - name: Install all updates
+      ansible.builtin.dnf:
+        name: "*"
+        state: latest
+        exclude: "{{ rhel_exclude_packages | join(',') }}"
+      when:
+        - not rhel_security_updates_only | bool
+        - rhel_update_all_packages | bool
+        - not rhel_check_only | bool
+        - not rhel_download_only | bool
+      notify: reboot if required
+      tags:
+        - updates
 
-- name: Display patch management completion
-  ansible.builtin.debug:
-    msg:
-      - "=================================="
-      - "Patch Management Completed"
-      - "=================================="
-      - "Updates installed: {{ available_updates.results | length }}"
-      - "Reboot required: {{ 'yes' if kernel_check.stdout == 'reboot_required' else 'no' }}"
-      - "=================================="
-  tags:
-    - always
+    - name: Update specific packages
+      ansible.builtin.dnf:
+        name: "{{ rhel_packages_to_update }}"
+        state: latest
+      when:
+        - rhel_packages_to_update | length > 0
+        - not rhel_check_only | bool
+        - not rhel_download_only | bool
+      tags:
+        - updates
+
+    - name: Update kernel
+      ansible.builtin.dnf:
+        name: kernel
+        state: latest
+      when:
+        - rhel_update_kernel | bool
+        - not rhel_check_only | bool
+        - not rhel_download_only | bool
+      notify: reboot if required
+      tags:
+        - updates
+        - kernel
+
+    - name: Clean package cache
+      ansible.builtin.dnf:
+        autoremove: true
+      when: rhel_clean_cache | bool
+      tags:
+        - cleanup
+
+    - name: Check if reboot is required
+      ansible.builtin.stat:
+        path: /var/run/reboot-required
+      register: reboot_required_file
+      tags:
+        - validation
+
+    - name: Check for new kernel
+      ansible.builtin.shell: |
+        LAST_KERNEL=$(rpm -q --last kernel | head -1 | awk '{print $1}' | sed 's/kernel-//')
+        CURRENT_KERNEL=$(uname -r)
+        if [ "$LAST_KERNEL" != "$CURRENT_KERNEL" ]; then
+          echo "reboot_required"
+        fi
+      register: kernel_check
+      changed_when: false
+      tags:
+        - validation
+
+    - name: Display reboot status
+      ansible.builtin.debug:
+        msg:
+          - "Reboot required: {{ 'yes' if kernel_check.stdout == 'reboot_required' else 'no' }}"
+          - "Auto reboot: {{ rhel_auto_reboot }}"
+      tags:
+        - validation
+
+    - name: Generate update report
+      ansible.builtin.template:
+        src: update-report.j2
+        dest: "{{ rhel_update_report_path }}"
+        owner: root
+        group: root
+        mode: '0600'
+      when: rhel_generate_update_report | bool
+      tags:
+        - report
+
+    - name: Display patch management completion
+      ansible.builtin.debug:
+        msg:
+          - "=================================="
+          - "Patch Management Completed"
+          - "=================================="
+          - "Updates installed: {{ available_updates.results | length }}"
+          - "Reboot required: {{ 'yes' if kernel_check.stdout == 'reboot_required' else 'no' }}"
+          - "=================================="
+      tags:
+        - always
+
+    # ----------------------------- postflight -------------------
+
+    - name: "rhel/rhel-patch-management | Postflight | Verify the guarded body ran after a passing preflight"
+      ansible.builtin.assert:
+        that:
+          - fe_rhel_rhel_patch_management_preflight_passed | bool
+          - fe_rhel_rhel_patch_management_status in ['running', 'succeeded']
+        fail_msg: >-
+          rhel/rhel-patch-management: postflight validation failed - preflight passed
+          ={{ fe_rhel_rhel_patch_management_preflight_passed | default(false) }},
+          status={{ fe_rhel_rhel_patch_management_status | default('unknown') }}.
+        success_msg: "rhel/rhel-patch-management: postflight validation passed."
+        quiet: true
+      tags:
+        - always
+        - postflight
+        - validation
+
+    - name: "rhel/rhel-patch-management | Postflight | Record the successful outcome"
+      ansible.builtin.set_fact:
+        fe_rhel_rhel_patch_management_postflight_passed: true
+        fe_rhel_rhel_patch_management_status: "succeeded"
+      tags:
+        - always
+        - postflight
+        - validation
+
+  rescue:
+
+    - name: "rhel/rhel-patch-management | Rescue | Capture the failing task and error detail"
+      ansible.builtin.set_fact:
+        fe_rhel_rhel_patch_management_status: "failed"
+        fe_rhel_rhel_patch_management_postflight_passed: false
+        fe_rhel_rhel_patch_management_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+        fe_rhel_rhel_patch_management_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+      tags:
+        - always
+        - rescue
+
+    - name: "rhel/rhel-patch-management | Rescue | Report the failure"
+      ansible.builtin.debug:
+        msg: >-
+          rhel/rhel-patch-management: FAILED at '{{ fe_rhel_rhel_patch_management_failed_task }}' on
+          {{ inventory_hostname }} - {{ fe_rhel_rhel_patch_management_error }}
+      tags:
+        - always
+        - rescue
+
+    - name: "rhel/rhel-patch-management | Rescue | Re-raise the failure unless the caller opted to continue"
+      ansible.builtin.fail:
+        msg: >-
+          rhel/rhel-patch-management failed at '{{ fe_rhel_rhel_patch_management_failed_task }}': {{ fe_rhel_rhel_patch_management_error }}
+      when: not (fe_validation_continue_on_error | default(false) | bool)
+      tags:
+        - always
+        - rescue
+
+  always:
+
+    - name: "rhel/rhel-patch-management | Always | Compute the execution duration"
+      ansible.builtin.set_fact:
+        fe_rhel_rhel_patch_management_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+        fe_rhel_rhel_patch_management_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_rhel_rhel_patch_management_start_epoch | default(0) | int) }}"
+      tags:
+        - always
+
+    - name: "rhel/rhel-patch-management | Always | Publish the validation result with set_stats"
+      ansible.builtin.set_stats:
+        data:
+          fe_validation_results:
+            "rhel/rhel-patch-management":
+              component: "rhel/rhel-patch-management"
+              type: "role"
+              platform: "rhel"
+              host: "{{ inventory_hostname }}"
+              status: "{{ fe_rhel_rhel_patch_management_status | default('unknown') }}"
+              preflight_passed: "{{ fe_rhel_rhel_patch_management_preflight_passed | default(false) | bool }}"
+              postflight_passed: "{{ fe_rhel_rhel_patch_management_postflight_passed | default(false) | bool }}"
+              started_at: "{{ fe_rhel_rhel_patch_management_started_at | default('') }}"
+              ended_at: "{{ fe_rhel_rhel_patch_management_ended_at | default('') }}"
+              duration_seconds: "{{ fe_rhel_rhel_patch_management_duration_seconds | default(0) | int }}"
+              failed_task: "{{ fe_rhel_rhel_patch_management_failed_task | default('') }}"
+              error: "{{ fe_rhel_rhel_patch_management_error | default('') }}"
+              check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+          fe_validation_executions: 1
+          fe_validation_succeeded: "{{ 1 if fe_rhel_rhel_patch_management_status | default('') == 'succeeded' else 0 }}"
+          fe_validation_failed: "{{ 0 if fe_rhel_rhel_patch_management_status | default('') == 'succeeded' else 1 }}"
+          fe_validation_duration_seconds: "{{ fe_rhel_rhel_patch_management_duration_seconds | default(0) | int }}"
+          fe_validation_failed_components: >-
+            {{ [] if fe_rhel_rhel_patch_management_status | default('') == 'succeeded' else ['rhel/rhel-patch-management'] }}
+        aggregate: true
+        per_host: false
+      tags:
+        - always
+
+    - name: "rhel/rhel-patch-management | Always | Mark the validation statistics as published"
+      ansible.builtin.set_fact:
+        fe_rhel_rhel_patch_management_stats_published: true
+      tags:
+        - always

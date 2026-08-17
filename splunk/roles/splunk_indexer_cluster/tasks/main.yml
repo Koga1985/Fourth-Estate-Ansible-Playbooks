@@ -3,247 +3,430 @@
 # Production-ready Splunk Indexer Cluster configuration for Fourth Estate agencies
 # Handles cluster master, indexer peers, replication, and SmartStore
 
-- name: Validate indexer cluster configuration
-  ansible.builtin.assert:
-    that:
-      - splunk_cluster_mode in ['master', 'peer', 'searchhead']
-      - splunk_cluster_replication_factor | int >= 2
-      - splunk_cluster_search_factor | int >= 2
-      - splunk_cluster_secret is defined
-      - splunk_cluster_secret | length > 0
-    fail_msg: "Invalid indexer cluster configuration"
+# ---------------------------------------------------------------------------
+# Fourth Estate preflight / postflight validation harness
+#
+# The task file body below is wrapped in an Ansible block/rescue/always structure:
+#
+#   block   preflight validation runs first, then the original task file body, then
+#           postflight validation. Any failure transfers control to rescue.
+#   rescue  records which task failed and why, then re-raises so a failure is
+#           never silently swallowed. Set fe_validation_continue_on_error=true
+#           to record the failure and keep going instead.
+#   always  computes the run duration and publishes the outcome through
+#           ansible.builtin.set_stats, so a wrapping playbook, AWX/AAP or CI can
+#           consume the result without scraping log output.
+#
+# Published stats (see docs/VALIDATION_AND_STATS.md):
+#   fe_validation_results['splunk/splunk_indexer_cluster']  per-component record
+#   fe_validation_executions / _succeeded / _failed / _duration_seconds
+#   fe_validation_failed_components
+#
+# Add component-specific preflight checks without editing this file by setting
+#   fe_splunk_splunk_indexer_cluster_required_vars: [var_one, var_two]
+# ---------------------------------------------------------------------------
 
-- name: Configure Cluster Master
+- name: "splunk/splunk_indexer_cluster | Initialize validation state"
+  ansible.builtin.set_fact:
+    fe_splunk_splunk_indexer_cluster_start_epoch: "{{ now(fmt='%s') | int }}"
+    fe_splunk_splunk_indexer_cluster_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+    fe_splunk_splunk_indexer_cluster_status: "running"
+    fe_splunk_splunk_indexer_cluster_preflight_passed: false
+    fe_splunk_splunk_indexer_cluster_postflight_passed: false
+    fe_splunk_splunk_indexer_cluster_failed_task: ""
+    fe_splunk_splunk_indexer_cluster_error: ""
+    fe_splunk_splunk_indexer_cluster_stats_published: false
+  tags:
+    - always
+
+- name: "splunk/splunk_indexer_cluster | Guarded execution with preflight and postflight validation"
   block:
-    - name: Create cluster master directories
-      ansible.builtin.file:
-        path: "{{ item }}"
-        state: directory
-        owner: "{{ splunk_user }}"
-        group: "{{ splunk_group }}"
-        mode: '0755'
-      loop:
-        - "{{ splunk_home }}/etc/master-apps/_cluster"
-        - "{{ splunk_home }}/etc/master-apps/_cluster/local"
-        - "{{ splunk_home }}/var/run/splunk/cluster/master"
 
-    - name: Configure cluster master server.conf
-      ansible.builtin.template:
-        src: cluster_master_server.conf.j2
-        dest: "{{ splunk_home }}/etc/system/local/server.conf"
-        owner: "{{ splunk_user }}"
-        group: "{{ splunk_group }}"
-        mode: '0600'
-      notify: restart splunk
+    # ----------------------------- preflight --------------------
 
-    - name: Deploy cluster master apps
-      ansible.builtin.copy:
-        src: "{{ item }}"
-        dest: "{{ splunk_home }}/etc/master-apps/"
-        owner: "{{ splunk_user }}"
-        group: "{{ splunk_group }}"
-        mode: '0644'
-      loop: "{{ splunk_cluster_master_apps }}"
-      when: splunk_cluster_master_apps is defined
-      notify: apply cluster bundle
+    - name: "splunk/splunk_indexer_cluster | Preflight | Verify the control node meets the minimum ansible-core version"
+      ansible.builtin.assert:
+        that:
+          - ansible_version.full is version(fe_validation_min_ansible_version | default('2.12'), '>=')
+        fail_msg: >-
+          splunk/splunk_indexer_cluster: requires ansible-core
+          {{ fe_validation_min_ansible_version | default('2.12') }} or newer,
+          found {{ ansible_version.full }}.
+        success_msg: >-
+          splunk/splunk_indexer_cluster: ansible-core {{ ansible_version.full }} satisfies the minimum.
+        quiet: true
+      tags:
+        - always
+        - preflight
+        - validation
 
-    - name: Configure indexes on cluster master
-      ansible.builtin.template:
-        src: indexes.conf.j2
-        dest: "{{ splunk_home }}/etc/master-apps/_cluster/local/indexes.conf"
-        owner: "{{ splunk_user }}"
-        group: "{{ splunk_group }}"
-        mode: '0600'
-      notify: apply cluster bundle
-
-    - name: Configure SmartStore on cluster master
-      ansible.builtin.template:
-        src: smartstore_indexes.conf.j2
-        dest: "{{ splunk_home }}/etc/master-apps/_cluster/local/indexes.conf"
-        owner: "{{ splunk_user }}"
-        group: "{{ splunk_group }}"
-        mode: '0600'
-      when: splunk_smartstore_enabled | bool
-      notify: apply cluster bundle
-
-    - name: Apply cluster bundle
-      ansible.builtin.command:
-        cmd: "{{ splunk_home }}/bin/splunk apply cluster-bundle --answer-yes -auth {{ splunk_admin_user }}:{{ splunk_admin_password }}"
-      become: true
-      become_user: "{{ splunk_user }}"
-      register: bundle_result
-      changed_when: "'Bundle has been pushed' in bundle_result.stdout"
-      no_log: true
-
-    - name: Get cluster master status
-      ansible.builtin.uri:
-        url: "https://{{ ansible_default_ipv4.address }}:{{ splunk_management_port }}/services/cluster/master/info"
-        method: GET
-        user: "{{ splunk_admin_user }}"
-        password: "{{ splunk_admin_password }}"
-        validate_certs: false
-        return_content: true
-      register: cluster_master_status
-      no_log: true
-
-  when: splunk_cluster_mode == 'master'
-
-- name: Configure Indexer Peer
-  block:
-    - name: Create indexer peer directories
-      ansible.builtin.file:
-        path: "{{ splunk_db_path }}/{{ item.0.name }}/{{ item.1 }}"
-        state: directory
-        owner: "{{ splunk_user }}"
-        group: "{{ splunk_group }}"
-        mode: '0755'
-      loop: "{{ splunk_indexes | product(['db', 'colddb', 'thaweddb', 'datamodel_summary']) | list }}"
+    - name: "splunk/splunk_indexer_cluster | Preflight | Verify every declared required variable is defined"
+      ansible.builtin.assert:
+        that:
+          - vars[item] is defined
+        fail_msg: "splunk/splunk_indexer_cluster: required variable '{{ item }}' is not defined."
+        success_msg: "splunk/splunk_indexer_cluster: required variable '{{ item }}' is defined."
+        quiet: true
+      loop: "{{ fe_splunk_splunk_indexer_cluster_required_vars | default([]) }}"
       loop_control:
-        label: "{{ item.0.name }}/{{ item.1 }}"
-      vars:
-        _idx: "{{ item.0.name }}"
-        _sub: "{{ item.1 }}"
-      when: splunk_indexes is defined
+        label: "{{ item }}"
+      tags:
+        - always
+        - preflight
+        - validation
 
-    - name: Create hot/warm/cold storage volumes
-      ansible.builtin.file:
-        path: "{{ item.path }}"
-        state: directory
-        owner: "{{ splunk_user }}"
-        group: "{{ splunk_group }}"
-        mode: '0755'
-      loop: "{{ splunk_storage_volumes }}"
-      when: splunk_storage_volumes is defined
+    - name: "splunk/splunk_indexer_cluster | Preflight | Record that preflight validation passed"
+      ansible.builtin.set_fact:
+        fe_splunk_splunk_indexer_cluster_preflight_passed: true
+      tags:
+        - always
+        - preflight
+        - validation
 
-    - name: Configure indexer peer server.conf
-      ansible.builtin.template:
-        src: indexer_peer_server.conf.j2
-        dest: "{{ splunk_home }}/etc/system/local/server.conf"
-        owner: "{{ splunk_user }}"
-        group: "{{ splunk_group }}"
-        mode: '0600'
-      notify: restart splunk
+    # ----------------------------- execute ----------------------
 
-    - name: Configure indexer inputs for cluster replication
-      ansible.builtin.template:
-        src: indexer_inputs.conf.j2
-        dest: "{{ splunk_home }}/etc/system/local/inputs.conf"
-        owner: "{{ splunk_user }}"
-        group: "{{ splunk_group }}"
-        mode: '0600'
-      notify: restart splunk
+    - name: Validate indexer cluster configuration
+      ansible.builtin.assert:
+        that:
+          - splunk_cluster_mode in ['master', 'peer', 'searchhead']
+          - splunk_cluster_replication_factor | int >= 2
+          - splunk_cluster_search_factor | int >= 2
+          - splunk_cluster_secret is defined
+          - splunk_cluster_secret | length > 0
+        fail_msg: "Invalid indexer cluster configuration"
 
-    - name: Configure SmartStore on indexer peer
-      ansible.builtin.template:
-        src: smartstore_server.conf.j2
-        dest: "{{ splunk_home }}/etc/system/local/server.conf"
-        owner: "{{ splunk_user }}"
-        group: "{{ splunk_group }}"
-        mode: '0600'
-      when: splunk_smartstore_enabled | bool
-      notify: restart splunk
+    - name: Configure Cluster Master
+      block:
+        - name: Create cluster master directories
+          ansible.builtin.file:
+            path: "{{ item }}"
+            state: directory
+            owner: "{{ splunk_user }}"
+            group: "{{ splunk_group }}"
+            mode: '0755'
+          loop:
+            - "{{ splunk_home }}/etc/master-apps/_cluster"
+            - "{{ splunk_home }}/etc/master-apps/_cluster/local"
+            - "{{ splunk_home }}/var/run/splunk/cluster/master"
 
-    - name: Join cluster as peer
-      ansible.builtin.command:
-        cmd: >
-          {{ splunk_home }}/bin/splunk edit cluster-config
-          -mode peer
-          -master_uri {{ splunk_cluster_master_uri }}
-          -replication_port {{ splunk_replication_port }}
-          -secret {{ splunk_cluster_secret }}
-          -auth {{ splunk_admin_user }}:{{ splunk_admin_password }}
-      become: true
-      become_user: "{{ splunk_user }}"
-      register: peer_join
-      changed_when: "'property has been edited' in peer_join.stdout"
-      no_log: true
-      notify: restart splunk
+        - name: Configure cluster master server.conf
+          ansible.builtin.template:
+            src: cluster_master_server.conf.j2
+            dest: "{{ splunk_home }}/etc/system/local/server.conf"
+            owner: "{{ splunk_user }}"
+            group: "{{ splunk_group }}"
+            mode: '0600'
+          notify: restart splunk
 
-    - name: Enable data replication
-      ansible.builtin.lineinfile:
-        path: "{{ splunk_home }}/etc/system/local/server.conf"
-        insertafter: "^\\[replication_port://{{ splunk_replication_port }}\\]"
-        line: "{{ item }}"
-        state: present
-      loop:
-        - "acceptFrom = {{ splunk_cluster_peer_networks | join(',') }}"
-        - "compress = true"
-      when: splunk_cluster_peer_networks is defined
-      notify: restart splunk
+        - name: Deploy cluster master apps
+          ansible.builtin.copy:
+            src: "{{ item }}"
+            dest: "{{ splunk_home }}/etc/master-apps/"
+            owner: "{{ splunk_user }}"
+            group: "{{ splunk_group }}"
+            mode: '0644'
+          loop: "{{ splunk_cluster_master_apps }}"
+          when: splunk_cluster_master_apps is defined
+          notify: apply cluster bundle
 
-    - name: Get peer status
-      ansible.builtin.uri:
-        url: "https://{{ ansible_default_ipv4.address }}:{{ splunk_management_port }}/services/cluster/slave/info"
-        method: GET
-        user: "{{ splunk_admin_user }}"
-        password: "{{ splunk_admin_password }}"
-        validate_certs: false
-        return_content: true
-      register: peer_status
-      no_log: true
+        - name: Configure indexes on cluster master
+          ansible.builtin.template:
+            src: indexes.conf.j2
+            dest: "{{ splunk_home }}/etc/master-apps/_cluster/local/indexes.conf"
+            owner: "{{ splunk_user }}"
+            group: "{{ splunk_group }}"
+            mode: '0600'
+          notify: apply cluster bundle
 
-    - name: Display peer status
-      ansible.builtin.debug:
-        msg: "Peer status: {{ peer_status.content | from_json }}"
+        - name: Configure SmartStore on cluster master
+          ansible.builtin.template:
+            src: smartstore_indexes.conf.j2
+            dest: "{{ splunk_home }}/etc/master-apps/_cluster/local/indexes.conf"
+            owner: "{{ splunk_user }}"
+            group: "{{ splunk_group }}"
+            mode: '0600'
+          when: splunk_smartstore_enabled | bool
+          notify: apply cluster bundle
 
-  when: splunk_cluster_mode == 'peer'
+        - name: Apply cluster bundle
+          ansible.builtin.command:
+            cmd: "{{ splunk_home }}/bin/splunk apply cluster-bundle --answer-yes -auth {{ splunk_admin_user }}:{{ splunk_admin_password }}"
+          become: true
+          become_user: "{{ splunk_user }}"
+          register: bundle_result
+          changed_when: "'Bundle has been pushed' in bundle_result.stdout"
+          no_log: true
 
-- name: Configure multisite clustering
-  block:
-    - name: Configure multisite cluster master
-      ansible.builtin.template:
-        src: multisite_master.conf.j2
-        dest: "{{ splunk_home }}/etc/system/local/server.conf"
-        owner: "{{ splunk_user }}"
-        group: "{{ splunk_group }}"
-        mode: '0600'
+        - name: Get cluster master status
+          ansible.builtin.uri:
+            url: "https://{{ ansible_default_ipv4.address }}:{{ splunk_management_port }}/services/cluster/master/info"
+            method: GET
+            user: "{{ splunk_admin_user }}"
+            password: "{{ splunk_admin_password }}"
+            validate_certs: false
+            return_content: true
+          register: cluster_master_status
+          no_log: true
+
       when: splunk_cluster_mode == 'master'
-      notify: restart splunk
 
-    - name: Configure multisite peer
-      ansible.builtin.command:
-        cmd: >
-          {{ splunk_home }}/bin/splunk edit cluster-config
-          -site {{ splunk_cluster_site }}
-          -auth {{ splunk_admin_user }}:{{ splunk_admin_password }}
-      become: true
-      become_user: "{{ splunk_user }}"
+    - name: Configure Indexer Peer
+      block:
+        - name: Create indexer peer directories
+          ansible.builtin.file:
+            path: "{{ splunk_db_path }}/{{ item.0.name }}/{{ item.1 }}"
+            state: directory
+            owner: "{{ splunk_user }}"
+            group: "{{ splunk_group }}"
+            mode: '0755'
+          loop: "{{ splunk_indexes | product(['db', 'colddb', 'thaweddb', 'datamodel_summary']) | list }}"
+          loop_control:
+            label: "{{ item.0.name }}/{{ item.1 }}"
+          vars:
+            _idx: "{{ item.0.name }}"
+            _sub: "{{ item.1 }}"
+          when: splunk_indexes is defined
+
+        - name: Create hot/warm/cold storage volumes
+          ansible.builtin.file:
+            path: "{{ item.path }}"
+            state: directory
+            owner: "{{ splunk_user }}"
+            group: "{{ splunk_group }}"
+            mode: '0755'
+          loop: "{{ splunk_storage_volumes }}"
+          when: splunk_storage_volumes is defined
+
+        - name: Configure indexer peer server.conf
+          ansible.builtin.template:
+            src: indexer_peer_server.conf.j2
+            dest: "{{ splunk_home }}/etc/system/local/server.conf"
+            owner: "{{ splunk_user }}"
+            group: "{{ splunk_group }}"
+            mode: '0600'
+          notify: restart splunk
+
+        - name: Configure indexer inputs for cluster replication
+          ansible.builtin.template:
+            src: indexer_inputs.conf.j2
+            dest: "{{ splunk_home }}/etc/system/local/inputs.conf"
+            owner: "{{ splunk_user }}"
+            group: "{{ splunk_group }}"
+            mode: '0600'
+          notify: restart splunk
+
+        - name: Configure SmartStore on indexer peer
+          ansible.builtin.template:
+            src: smartstore_server.conf.j2
+            dest: "{{ splunk_home }}/etc/system/local/server.conf"
+            owner: "{{ splunk_user }}"
+            group: "{{ splunk_group }}"
+            mode: '0600'
+          when: splunk_smartstore_enabled | bool
+          notify: restart splunk
+
+        - name: Join cluster as peer
+          ansible.builtin.command:
+            cmd: >
+              {{ splunk_home }}/bin/splunk edit cluster-config
+              -mode peer
+              -master_uri {{ splunk_cluster_master_uri }}
+              -replication_port {{ splunk_replication_port }}
+              -secret {{ splunk_cluster_secret }}
+              -auth {{ splunk_admin_user }}:{{ splunk_admin_password }}
+          become: true
+          become_user: "{{ splunk_user }}"
+          register: peer_join
+          changed_when: "'property has been edited' in peer_join.stdout"
+          no_log: true
+          notify: restart splunk
+
+        - name: Enable data replication
+          ansible.builtin.lineinfile:
+            path: "{{ splunk_home }}/etc/system/local/server.conf"
+            insertafter: "^\\[replication_port://{{ splunk_replication_port }}\\]"
+            line: "{{ item }}"
+            state: present
+          loop:
+            - "acceptFrom = {{ splunk_cluster_peer_networks | join(',') }}"
+            - "compress = true"
+          when: splunk_cluster_peer_networks is defined
+          notify: restart splunk
+
+        - name: Get peer status
+          ansible.builtin.uri:
+            url: "https://{{ ansible_default_ipv4.address }}:{{ splunk_management_port }}/services/cluster/slave/info"
+            method: GET
+            user: "{{ splunk_admin_user }}"
+            password: "{{ splunk_admin_password }}"
+            validate_certs: false
+            return_content: true
+          register: peer_status
+          no_log: true
+
+        - name: Display peer status
+          ansible.builtin.debug:
+            msg: "Peer status: {{ peer_status.content | from_json }}"
+
       when: splunk_cluster_mode == 'peer'
-      register: site_config
-      changed_when: "'property has been edited' in site_config.stdout"
-      no_log: true
-      notify: restart splunk
 
-  when:
-    - splunk_multisite_clustering | bool
-    - splunk_cluster_site is defined
+    - name: Configure multisite clustering
+      block:
+        - name: Configure multisite cluster master
+          ansible.builtin.template:
+            src: multisite_master.conf.j2
+            dest: "{{ splunk_home }}/etc/system/local/server.conf"
+            owner: "{{ splunk_user }}"
+            group: "{{ splunk_group }}"
+            mode: '0600'
+          when: splunk_cluster_mode == 'master'
+          notify: restart splunk
 
-- name: Configure storage retention policies
-  ansible.builtin.template:
-    src: retention_policies.conf.j2
-    dest: "{{ splunk_home }}/etc/master-apps/_cluster/local/indexes.conf"
-    owner: "{{ splunk_user }}"
-    group: "{{ splunk_group }}"
-    mode: '0600'
-  when: splunk_cluster_mode == 'master'
-  notify: apply cluster bundle
+        - name: Configure multisite peer
+          ansible.builtin.command:
+            cmd: >
+              {{ splunk_home }}/bin/splunk edit cluster-config
+              -site {{ splunk_cluster_site }}
+              -auth {{ splunk_admin_user }}:{{ splunk_admin_password }}
+          become: true
+          become_user: "{{ splunk_user }}"
+          when: splunk_cluster_mode == 'peer'
+          register: site_config
+          changed_when: "'property has been edited' in site_config.stdout"
+          no_log: true
+          notify: restart splunk
 
-- name: Monitor cluster health
-  block:
-    - name: Create cluster health check script
+      when:
+        - splunk_multisite_clustering | bool
+        - splunk_cluster_site is defined
+
+    - name: Configure storage retention policies
       ansible.builtin.template:
-        src: cluster_health_check.sh.j2
-        dest: "{{ splunk_home }}/bin/scripts/cluster_health_check.sh"
+        src: retention_policies.conf.j2
+        dest: "{{ splunk_home }}/etc/master-apps/_cluster/local/indexes.conf"
         owner: "{{ splunk_user }}"
         group: "{{ splunk_group }}"
-        mode: '0755'
-
-    - name: Schedule cluster health checks
-      ansible.builtin.cron:
-        name: "Splunk cluster health check"
-        minute: "*/5"
-        job: "{{ splunk_home }}/bin/scripts/cluster_health_check.sh >> {{ splunk_home }}/var/log/splunk/cluster_health.log 2>&1"
-        user: "{{ splunk_user }}"
+        mode: '0600'
       when: splunk_cluster_mode == 'master'
+      notify: apply cluster bundle
 
-  when: splunk_enable_cluster_monitoring | bool
+    - name: Monitor cluster health
+      block:
+        - name: Create cluster health check script
+          ansible.builtin.template:
+            src: cluster_health_check.sh.j2
+            dest: "{{ splunk_home }}/bin/scripts/cluster_health_check.sh"
+            owner: "{{ splunk_user }}"
+            group: "{{ splunk_group }}"
+            mode: '0755'
+
+        - name: Schedule cluster health checks
+          ansible.builtin.cron:
+            name: "Splunk cluster health check"
+            minute: "*/5"
+            job: "{{ splunk_home }}/bin/scripts/cluster_health_check.sh >> {{ splunk_home }}/var/log/splunk/cluster_health.log 2>&1"
+            user: "{{ splunk_user }}"
+          when: splunk_cluster_mode == 'master'
+
+      when: splunk_enable_cluster_monitoring | bool
+
+    # ----------------------------- postflight -------------------
+
+    - name: "splunk/splunk_indexer_cluster | Postflight | Verify the guarded body ran after a passing preflight"
+      ansible.builtin.assert:
+        that:
+          - fe_splunk_splunk_indexer_cluster_preflight_passed | bool
+          - fe_splunk_splunk_indexer_cluster_status in ['running', 'succeeded']
+        fail_msg: >-
+          splunk/splunk_indexer_cluster: postflight validation failed - preflight passed
+          ={{ fe_splunk_splunk_indexer_cluster_preflight_passed | default(false) }},
+          status={{ fe_splunk_splunk_indexer_cluster_status | default('unknown') }}.
+        success_msg: "splunk/splunk_indexer_cluster: postflight validation passed."
+        quiet: true
+      tags:
+        - always
+        - postflight
+        - validation
+
+    - name: "splunk/splunk_indexer_cluster | Postflight | Record the successful outcome"
+      ansible.builtin.set_fact:
+        fe_splunk_splunk_indexer_cluster_postflight_passed: true
+        fe_splunk_splunk_indexer_cluster_status: "succeeded"
+      tags:
+        - always
+        - postflight
+        - validation
+
+  rescue:
+
+    - name: "splunk/splunk_indexer_cluster | Rescue | Capture the failing task and error detail"
+      ansible.builtin.set_fact:
+        fe_splunk_splunk_indexer_cluster_status: "failed"
+        fe_splunk_splunk_indexer_cluster_postflight_passed: false
+        fe_splunk_splunk_indexer_cluster_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+        fe_splunk_splunk_indexer_cluster_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+      tags:
+        - always
+        - rescue
+
+    - name: "splunk/splunk_indexer_cluster | Rescue | Report the failure"
+      ansible.builtin.debug:
+        msg: >-
+          splunk/splunk_indexer_cluster: FAILED at '{{ fe_splunk_splunk_indexer_cluster_failed_task }}' on
+          {{ inventory_hostname }} - {{ fe_splunk_splunk_indexer_cluster_error }}
+      tags:
+        - always
+        - rescue
+
+    - name: "splunk/splunk_indexer_cluster | Rescue | Re-raise the failure unless the caller opted to continue"
+      ansible.builtin.fail:
+        msg: >-
+          splunk/splunk_indexer_cluster failed at '{{ fe_splunk_splunk_indexer_cluster_failed_task }}': {{ fe_splunk_splunk_indexer_cluster_error }}
+      when: not (fe_validation_continue_on_error | default(false) | bool)
+      tags:
+        - always
+        - rescue
+
+  always:
+
+    - name: "splunk/splunk_indexer_cluster | Always | Compute the execution duration"
+      ansible.builtin.set_fact:
+        fe_splunk_splunk_indexer_cluster_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+        fe_splunk_splunk_indexer_cluster_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_splunk_splunk_indexer_cluster_start_epoch | default(0) | int) }}"
+      tags:
+        - always
+
+    - name: "splunk/splunk_indexer_cluster | Always | Publish the validation result with set_stats"
+      ansible.builtin.set_stats:
+        data:
+          fe_validation_results:
+            "splunk/splunk_indexer_cluster":
+              component: "splunk/splunk_indexer_cluster"
+              type: "role"
+              platform: "splunk"
+              host: "{{ inventory_hostname }}"
+              status: "{{ fe_splunk_splunk_indexer_cluster_status | default('unknown') }}"
+              preflight_passed: "{{ fe_splunk_splunk_indexer_cluster_preflight_passed | default(false) | bool }}"
+              postflight_passed: "{{ fe_splunk_splunk_indexer_cluster_postflight_passed | default(false) | bool }}"
+              started_at: "{{ fe_splunk_splunk_indexer_cluster_started_at | default('') }}"
+              ended_at: "{{ fe_splunk_splunk_indexer_cluster_ended_at | default('') }}"
+              duration_seconds: "{{ fe_splunk_splunk_indexer_cluster_duration_seconds | default(0) | int }}"
+              failed_task: "{{ fe_splunk_splunk_indexer_cluster_failed_task | default('') }}"
+              error: "{{ fe_splunk_splunk_indexer_cluster_error | default('') }}"
+              check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+          fe_validation_executions: 1
+          fe_validation_succeeded: "{{ 1 if fe_splunk_splunk_indexer_cluster_status | default('') == 'succeeded' else 0 }}"
+          fe_validation_failed: "{{ 0 if fe_splunk_splunk_indexer_cluster_status | default('') == 'succeeded' else 1 }}"
+          fe_validation_duration_seconds: "{{ fe_splunk_splunk_indexer_cluster_duration_seconds | default(0) | int }}"
+          fe_validation_failed_components: >-
+            {{ [] if fe_splunk_splunk_indexer_cluster_status | default('') == 'succeeded' else ['splunk/splunk_indexer_cluster'] }}
+        aggregate: true
+        per_host: false
+      tags:
+        - always
+
+    - name: "splunk/splunk_indexer_cluster | Always | Mark the validation statistics as published"
+      ansible.builtin.set_fact:
+        fe_splunk_splunk_indexer_cluster_stats_published: true
+      tags:
+        - always

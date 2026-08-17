@@ -1,86 +1,269 @@
 ---
 # System and Information Integrity (SI) - NIST 800-53 SI Family
 
-- name: SI-2 - Check for firmware updates
-  cisco.ucs.ucs_query:
-    hostname: "{{ ucs_hostname }}"
-    username: "{{ ucs_username }}"
-    password: "{{ ucs_password }}"
-    class_ids: firmwareRunning
-  no_log: true
-  register: firmware_status
+# ---------------------------------------------------------------------------
+# Fourth Estate preflight / postflight validation harness
+#
+# The task file body below is wrapped in an Ansible block/rescue/always structure:
+#
+#   block   preflight validation runs first, then the original task file body, then
+#           postflight validation. Any failure transfers control to rescue.
+#   rescue  records which task failed and why, then re-raises so a failure is
+#           never silently swallowed. Set fe_validation_continue_on_error=true
+#           to record the failure and keep going instead.
+#   always  computes the run duration and publishes the outcome through
+#           ansible.builtin.set_stats, so a wrapping playbook, AWX/AAP or CI can
+#           consume the result without scraping log output.
+#
+# Published stats (see docs/VALIDATION_AND_STATS.md):
+#   fe_validation_results['cisco/ucs_security_hardening/system_integrity']  per-component record
+#   fe_validation_executions / _succeeded / _failed / _duration_seconds
+#   fe_validation_failed_components
+#
+# Add component-specific preflight checks without editing this file by setting
+#   fe_cisco_ucs_security_hardening_system_integrity_required_vars: [var_one, var_two]
+# ---------------------------------------------------------------------------
 
-- name: SI-2 - Document current firmware versions
-  ansible.builtin.copy:
-    dest: "{{ ucs_artifacts_dir }}/firmware_status.json"
-    mode: '0640'
-    content: "{{ firmware_status | to_nice_json }}"
-  delegate_to: localhost
+- name: "cisco/ucs_security_hardening/system_integrity | Initialize validation state"
+  ansible.builtin.set_fact:
+    fe_cisco_ucs_security_hardening_system_integrity_start_epoch: "{{ now(fmt='%s') | int }}"
+    fe_cisco_ucs_security_hardening_system_integrity_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+    fe_cisco_ucs_security_hardening_system_integrity_status: "running"
+    fe_cisco_ucs_security_hardening_system_integrity_preflight_passed: false
+    fe_cisco_ucs_security_hardening_system_integrity_postflight_passed: false
+    fe_cisco_ucs_security_hardening_system_integrity_failed_task: ""
+    fe_cisco_ucs_security_hardening_system_integrity_error: ""
+    fe_cisco_ucs_security_hardening_system_integrity_stats_published: false
+  tags:
+    - always
 
-- name: SI-3 - Configure malware protection integration
-  ansible.builtin.debug:
-    msg: "Integrate with external malware protection systems per fourth estate security policy"
+- name: "cisco/ucs_security_hardening/system_integrity | Guarded execution with preflight and postflight validation"
+  block:
 
-- name: SI-4 - Enable system monitoring
-  cisco.ucs.ucs_system:
-    hostname: "{{ ucs_hostname }}"
-    username: "{{ ucs_username }}"
-    password: "{{ ucs_password }}"
-    audit_log_enabled: "yes"
-  no_log: true
-  when: apply_changes | bool
+    # ----------------------------- preflight --------------------
 
-- name: SI-5 - Configure security alerts
-  cisco.ucs.ucs_callhome:
-    hostname: "{{ ucs_hostname }}"
-    username: "{{ ucs_username }}"
-    password: "{{ ucs_password }}"
-    admin_state: "on"
-    alert_groups: "all"
-  no_log: true
-  when:
-    - apply_changes | bool
-    - si_enable_security_alerts | bool
+    - name: "cisco/ucs_security_hardening/system_integrity | Preflight | Verify the control node meets the minimum ansible-core version"
+      ansible.builtin.assert:
+        that:
+          - ansible_version.full is version(fe_validation_min_ansible_version | default('2.12'), '>=')
+        fail_msg: >-
+          cisco/ucs_security_hardening/system_integrity: requires ansible-core
+          {{ fe_validation_min_ansible_version | default('2.12') }} or newer,
+          found {{ ansible_version.full }}.
+        success_msg: >-
+          cisco/ucs_security_hardening/system_integrity: ansible-core {{ ansible_version.full }} satisfies the minimum.
+        quiet: true
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: SI-6 - Verify security functions
-  cisco.ucs.ucs_query:
-    hostname: "{{ ucs_hostname }}"
-    username: "{{ ucs_username }}"
-    password: "{{ ucs_password }}"
-    class_ids: faultInst
-  no_log: true
-  register: system_faults
+    - name: "cisco/ucs_security_hardening/system_integrity | Preflight | Verify every declared required variable is defined"
+      ansible.builtin.assert:
+        that:
+          - vars[item] is defined
+        fail_msg: "cisco/ucs_security_hardening/system_integrity: required variable '{{ item }}' is not defined."
+        success_msg: "cisco/ucs_security_hardening/system_integrity: required variable '{{ item }}' is defined."
+        quiet: true
+      loop: "{{ fe_cisco_ucs_security_hardening_system_integrity_required_vars | default([]) }}"
+      loop_control:
+        label: "{{ item }}"
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: SI-6 - Document system faults
-  ansible.builtin.copy:
-    dest: "{{ ucs_artifacts_dir }}/system_faults.json"
-    mode: '0640'
-    content: "{{ system_faults | to_nice_json }}"
-  delegate_to: localhost
+    - name: "cisco/ucs_security_hardening/system_integrity | Preflight | Record that preflight validation passed"
+      ansible.builtin.set_fact:
+        fe_cisco_ucs_security_hardening_system_integrity_preflight_passed: true
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: SI-7 - Enable integrity monitoring
-  ansible.builtin.debug:
-    msg: "Configuration backup enables integrity verification"
+    # ----------------------------- execute ----------------------
 
-- name: SI-10 - Validate input from external systems
-  ansible.builtin.debug:
-    msg: "Input validation configured for all external interfaces"
+    - name: SI-2 - Check for firmware updates
+      cisco.ucs.ucs_query:
+        hostname: "{{ ucs_hostname }}"
+        username: "{{ ucs_username }}"
+        password: "{{ ucs_password }}"
+        class_ids: firmwareRunning
+      no_log: true
+      register: firmware_status
 
-- name: SI-11 - Handle error messages securely
-  ansible.builtin.debug:
-    msg: "Error messages do not reveal sensitive system information"
+    - name: SI-2 - Document current firmware versions
+      ansible.builtin.copy:
+        dest: "{{ ucs_artifacts_dir }}/firmware_status.json"
+        mode: '0640'
+        content: "{{ firmware_status | to_nice_json }}"
+      delegate_to: localhost
 
-- name: Record system integrity configuration
-  ansible.builtin.copy:
-    dest: "{{ ucs_artifacts_dir }}/system_integrity.json"
-    mode: '0640'
-    content: |
-      {
-        "nist_controls": ["SI-2", "SI-3", "SI-4", "SI-5", "SI-6", "SI-7", "SI-10", "SI-11"],
-        "monitoring_enabled": true,
-        "security_alerts": {{ si_enable_security_alerts | to_json }},
-        "integrity_checks": true,
-        "fault_count": {{ system_faults.objects | length }},
-        "configured_at": "{{ ansible_date_time.iso8601 }}"
-      }
-  delegate_to: localhost
+    - name: SI-3 - Configure malware protection integration
+      ansible.builtin.debug:
+        msg: "Integrate with external malware protection systems per fourth estate security policy"
+
+    - name: SI-4 - Enable system monitoring
+      cisco.ucs.ucs_system:
+        hostname: "{{ ucs_hostname }}"
+        username: "{{ ucs_username }}"
+        password: "{{ ucs_password }}"
+        audit_log_enabled: "yes"
+      no_log: true
+      when: apply_changes | bool
+
+    - name: SI-5 - Configure security alerts
+      cisco.ucs.ucs_callhome:
+        hostname: "{{ ucs_hostname }}"
+        username: "{{ ucs_username }}"
+        password: "{{ ucs_password }}"
+        admin_state: "on"
+        alert_groups: "all"
+      no_log: true
+      when:
+        - apply_changes | bool
+        - si_enable_security_alerts | bool
+
+    - name: SI-6 - Verify security functions
+      cisco.ucs.ucs_query:
+        hostname: "{{ ucs_hostname }}"
+        username: "{{ ucs_username }}"
+        password: "{{ ucs_password }}"
+        class_ids: faultInst
+      no_log: true
+      register: system_faults
+
+    - name: SI-6 - Document system faults
+      ansible.builtin.copy:
+        dest: "{{ ucs_artifacts_dir }}/system_faults.json"
+        mode: '0640'
+        content: "{{ system_faults | to_nice_json }}"
+      delegate_to: localhost
+
+    - name: SI-7 - Enable integrity monitoring
+      ansible.builtin.debug:
+        msg: "Configuration backup enables integrity verification"
+
+    - name: SI-10 - Validate input from external systems
+      ansible.builtin.debug:
+        msg: "Input validation configured for all external interfaces"
+
+    - name: SI-11 - Handle error messages securely
+      ansible.builtin.debug:
+        msg: "Error messages do not reveal sensitive system information"
+
+    - name: Record system integrity configuration
+      ansible.builtin.copy:
+        dest: "{{ ucs_artifacts_dir }}/system_integrity.json"
+        mode: '0640'
+        content: |
+          {
+            "nist_controls": ["SI-2", "SI-3", "SI-4", "SI-5", "SI-6", "SI-7", "SI-10", "SI-11"],
+            "monitoring_enabled": true,
+            "security_alerts": {{ si_enable_security_alerts | to_json }},
+            "integrity_checks": true,
+            "fault_count": {{ system_faults.objects | length }},
+            "configured_at": "{{ ansible_date_time.iso8601 }}"
+          }
+      delegate_to: localhost
+
+    # ----------------------------- postflight -------------------
+
+    - name: "cisco/ucs_security_hardening/system_integrity | Postflight | Verify the guarded body ran after a passing preflight"
+      ansible.builtin.assert:
+        that:
+          - fe_cisco_ucs_security_hardening_system_integrity_preflight_passed | bool
+          - fe_cisco_ucs_security_hardening_system_integrity_status in ['running', 'succeeded']
+        fail_msg: >-
+          cisco/ucs_security_hardening/system_integrity: postflight validation failed - preflight passed
+          ={{ fe_cisco_ucs_security_hardening_system_integrity_preflight_passed | default(false) }},
+          status={{ fe_cisco_ucs_security_hardening_system_integrity_status | default('unknown') }}.
+        success_msg: "cisco/ucs_security_hardening/system_integrity: postflight validation passed."
+        quiet: true
+      tags:
+        - always
+        - postflight
+        - validation
+
+    - name: "cisco/ucs_security_hardening/system_integrity | Postflight | Record the successful outcome"
+      ansible.builtin.set_fact:
+        fe_cisco_ucs_security_hardening_system_integrity_postflight_passed: true
+        fe_cisco_ucs_security_hardening_system_integrity_status: "succeeded"
+      tags:
+        - always
+        - postflight
+        - validation
+
+  rescue:
+
+    - name: "cisco/ucs_security_hardening/system_integrity | Rescue | Capture the failing task and error detail"
+      ansible.builtin.set_fact:
+        fe_cisco_ucs_security_hardening_system_integrity_status: "failed"
+        fe_cisco_ucs_security_hardening_system_integrity_postflight_passed: false
+        fe_cisco_ucs_security_hardening_system_integrity_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+        fe_cisco_ucs_security_hardening_system_integrity_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+      tags:
+        - always
+        - rescue
+
+    - name: "cisco/ucs_security_hardening/system_integrity | Rescue | Report the failure"
+      ansible.builtin.debug:
+        msg: >-
+          cisco/ucs_security_hardening/system_integrity: FAILED at '{{ fe_cisco_ucs_security_hardening_system_integrity_failed_task }}' on
+          {{ inventory_hostname }} - {{ fe_cisco_ucs_security_hardening_system_integrity_error }}
+      tags:
+        - always
+        - rescue
+
+    - name: "cisco/ucs_security_hardening/system_integrity | Rescue | Re-raise the failure unless the caller opted to continue"
+      ansible.builtin.fail:
+        msg: >-
+          cisco/ucs_security_hardening/system_integrity failed at '{{ fe_cisco_ucs_security_hardening_system_integrity_failed_task }}': {{ fe_cisco_ucs_security_hardening_system_integrity_error }}
+      when: not (fe_validation_continue_on_error | default(false) | bool)
+      tags:
+        - always
+        - rescue
+
+  always:
+
+    - name: "cisco/ucs_security_hardening/system_integrity | Always | Compute the execution duration"
+      ansible.builtin.set_fact:
+        fe_cisco_ucs_security_hardening_system_integrity_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+        fe_cisco_ucs_security_hardening_system_integrity_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_cisco_ucs_security_hardening_system_integrity_start_epoch | default(0) | int) }}"
+      tags:
+        - always
+
+    - name: "cisco/ucs_security_hardening/system_integrity | Always | Publish the validation result with set_stats"
+      ansible.builtin.set_stats:
+        data:
+          fe_validation_results:
+            "cisco/ucs_security_hardening/system_integrity":
+              component: "cisco/ucs_security_hardening/system_integrity"
+              type: "role-tasks"
+              platform: "cisco"
+              host: "{{ inventory_hostname }}"
+              status: "{{ fe_cisco_ucs_security_hardening_system_integrity_status | default('unknown') }}"
+              preflight_passed: "{{ fe_cisco_ucs_security_hardening_system_integrity_preflight_passed | default(false) | bool }}"
+              postflight_passed: "{{ fe_cisco_ucs_security_hardening_system_integrity_postflight_passed | default(false) | bool }}"
+              started_at: "{{ fe_cisco_ucs_security_hardening_system_integrity_started_at | default('') }}"
+              ended_at: "{{ fe_cisco_ucs_security_hardening_system_integrity_ended_at | default('') }}"
+              duration_seconds: "{{ fe_cisco_ucs_security_hardening_system_integrity_duration_seconds | default(0) | int }}"
+              failed_task: "{{ fe_cisco_ucs_security_hardening_system_integrity_failed_task | default('') }}"
+              error: "{{ fe_cisco_ucs_security_hardening_system_integrity_error | default('') }}"
+              check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+          fe_validation_executions: 1
+          fe_validation_succeeded: "{{ 1 if fe_cisco_ucs_security_hardening_system_integrity_status | default('') == 'succeeded' else 0 }}"
+          fe_validation_failed: "{{ 0 if fe_cisco_ucs_security_hardening_system_integrity_status | default('') == 'succeeded' else 1 }}"
+          fe_validation_duration_seconds: "{{ fe_cisco_ucs_security_hardening_system_integrity_duration_seconds | default(0) | int }}"
+          fe_validation_failed_components: >-
+            {{ [] if fe_cisco_ucs_security_hardening_system_integrity_status | default('') == 'succeeded' else ['cisco/ucs_security_hardening/system_integrity'] }}
+        aggregate: true
+        per_host: false
+      tags:
+        - always
+
+    - name: "cisco/ucs_security_hardening/system_integrity | Always | Mark the validation statistics as published"
+      ansible.builtin.set_fact:
+        fe_cisco_ucs_security_hardening_system_integrity_stats_published: true
+      tags:
+        - always

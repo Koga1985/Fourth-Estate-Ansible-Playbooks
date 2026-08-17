@@ -1,85 +1,268 @@
 ---
 # Install and configure CNI plugin
 
-- name: Install Calico CNI
-  when: k8s_cni_plugin == 'calico'
+# ---------------------------------------------------------------------------
+# Fourth Estate preflight / postflight validation harness
+#
+# The task file body below is wrapped in an Ansible block/rescue/always structure:
+#
+#   block   preflight validation runs first, then the original task file body, then
+#           postflight validation. Any failure transfers control to rescue.
+#   rescue  records which task failed and why, then re-raises so a failure is
+#           never silently swallowed. Set fe_validation_continue_on_error=true
+#           to record the failure and keep going instead.
+#   always  computes the run duration and publishes the outcome through
+#           ansible.builtin.set_stats, so a wrapping playbook, AWX/AAP or CI can
+#           consume the result without scraping log output.
+#
+# Published stats (see docs/VALIDATION_AND_STATS.md):
+#   fe_validation_results['kubernetes/k8s_cluster_install/cni_plugin']  per-component record
+#   fe_validation_executions / _succeeded / _failed / _duration_seconds
+#   fe_validation_failed_components
+#
+# Add component-specific preflight checks without editing this file by setting
+#   fe_kubernetes_k8s_cluster_install_cni_plugin_required_vars: [var_one, var_two]
+# ---------------------------------------------------------------------------
+
+- name: "kubernetes/k8s_cluster_install/cni_plugin | Initialize validation state"
+  ansible.builtin.set_fact:
+    fe_kubernetes_k8s_cluster_install_cni_plugin_start_epoch: "{{ now(fmt='%s') | int }}"
+    fe_kubernetes_k8s_cluster_install_cni_plugin_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+    fe_kubernetes_k8s_cluster_install_cni_plugin_status: "running"
+    fe_kubernetes_k8s_cluster_install_cni_plugin_preflight_passed: false
+    fe_kubernetes_k8s_cluster_install_cni_plugin_postflight_passed: false
+    fe_kubernetes_k8s_cluster_install_cni_plugin_failed_task: ""
+    fe_kubernetes_k8s_cluster_install_cni_plugin_error: ""
+    fe_kubernetes_k8s_cluster_install_cni_plugin_stats_published: false
+  tags:
+    - always
+
+- name: "kubernetes/k8s_cluster_install/cni_plugin | Guarded execution with preflight and postflight validation"
   block:
-    - name: Download Calico manifests
-      ansible.builtin.get_url:
-        url: "https://raw.githubusercontent.com/projectcalico/calico/{{ k8s_calico_version }}/manifests/calico.yaml"
-        dest: /tmp/calico.yaml
-        mode: '0644'
 
-    - name: Configure Calico pod network CIDR
-      ansible.builtin.replace:
-        path: /tmp/calico.yaml
-        regexp: '192\.168\.0\.0/16'
-        replace: '{{ k8s_pod_network_cidr }}'
+    # ----------------------------- preflight --------------------
 
-    - name: Apply Calico manifests
-      kubernetes.core.k8s:
-        state: present
-        src: /tmp/calico.yaml
-        kubeconfig: /etc/kubernetes/admin.conf
+    - name: "kubernetes/k8s_cluster_install/cni_plugin | Preflight | Verify the control node meets the minimum ansible-core version"
+      ansible.builtin.assert:
+        that:
+          - ansible_version.full is version(fe_validation_min_ansible_version | default('2.12'), '>=')
+        fail_msg: >-
+          kubernetes/k8s_cluster_install/cni_plugin: requires ansible-core
+          {{ fe_validation_min_ansible_version | default('2.12') }} or newer,
+          found {{ ansible_version.full }}.
+        success_msg: >-
+          kubernetes/k8s_cluster_install/cni_plugin: ansible-core {{ ansible_version.full }} satisfies the minimum.
+        quiet: true
+      tags:
+        - always
+        - preflight
+        - validation
 
-    - name: Wait for Calico pods to be ready
+    - name: "kubernetes/k8s_cluster_install/cni_plugin | Preflight | Verify every declared required variable is defined"
+      ansible.builtin.assert:
+        that:
+          - vars[item] is defined
+        fail_msg: "kubernetes/k8s_cluster_install/cni_plugin: required variable '{{ item }}' is not defined."
+        success_msg: "kubernetes/k8s_cluster_install/cni_plugin: required variable '{{ item }}' is defined."
+        quiet: true
+      loop: "{{ fe_kubernetes_k8s_cluster_install_cni_plugin_required_vars | default([]) }}"
+      loop_control:
+        label: "{{ item }}"
+      tags:
+        - always
+        - preflight
+        - validation
+
+    - name: "kubernetes/k8s_cluster_install/cni_plugin | Preflight | Record that preflight validation passed"
+      ansible.builtin.set_fact:
+        fe_kubernetes_k8s_cluster_install_cni_plugin_preflight_passed: true
+      tags:
+        - always
+        - preflight
+        - validation
+
+    # ----------------------------- execute ----------------------
+
+    - name: Install Calico CNI
+      when: k8s_cni_plugin == 'calico'
+      block:
+        - name: Download Calico manifests
+          ansible.builtin.get_url:
+            url: "https://raw.githubusercontent.com/projectcalico/calico/{{ k8s_calico_version }}/manifests/calico.yaml"
+            dest: /tmp/calico.yaml
+            mode: '0644'
+
+        - name: Configure Calico pod network CIDR
+          ansible.builtin.replace:
+            path: /tmp/calico.yaml
+            regexp: '192\.168\.0\.0/16'
+            replace: '{{ k8s_pod_network_cidr }}'
+
+        - name: Apply Calico manifests
+          kubernetes.core.k8s:
+            state: present
+            src: /tmp/calico.yaml
+            kubeconfig: /etc/kubernetes/admin.conf
+
+        - name: Wait for Calico pods to be ready
+          ansible.builtin.command: >
+            kubectl wait --for=condition=ready pod
+            -l k8s-app=calico-node
+            -n kube-system
+            --timeout=300s
+            --kubeconfig /etc/kubernetes/admin.conf
+          register: calico_ready
+          retries: 5
+          delay: 30
+          until: calico_ready.rc == 0
+          changed_when: false
+
+    - name: Install Cilium CNI
+      when: k8s_cni_plugin == 'cilium'
+      block:
+        - name: Download Cilium CLI
+          ansible.builtin.get_url:
+            url: "https://github.com/cilium/cilium-cli/releases/download/v{{ k8s_cilium_version }}/cilium-linux-amd64.tar.gz"
+            dest: /tmp/cilium-cli.tar.gz
+            mode: '0644'
+
+        - name: Extract Cilium CLI
+          ansible.builtin.unarchive:
+            src: /tmp/cilium-cli.tar.gz
+            dest: /usr/local/bin
+            remote_src: true
+            creates: /usr/local/bin/cilium
+
+        - name: Install Cilium
+          ansible.builtin.command: >
+            cilium install
+            --version {{ k8s_cilium_version }}
+            --set ipam.mode=kubernetes
+            --set tunnel={{ k8s_network_plugin_config.cilium.tunnel_mode }}
+            --set hubble.enabled={{ k8s_network_plugin_config.cilium.enable_hubble | lower }}
+            --set l7Proxy={{ k8s_network_plugin_config.cilium.enable_l7_proxy | lower }}
+            --kubeconfig /etc/kubernetes/admin.conf
+          changed_when: true
+          register: cilium_install
+
+        - name: Wait for Cilium to be ready
+          ansible.builtin.command: >
+            cilium status --wait
+            --kubeconfig /etc/kubernetes/admin.conf
+          register: cilium_ready
+          retries: 10
+          delay: 30
+          until: cilium_ready.rc == 0
+          changed_when: false
+
+    - name: Verify CNI installation
       ansible.builtin.command: >
-        kubectl wait --for=condition=ready pod
-        -l k8s-app=calico-node
-        -n kube-system
-        --timeout=300s
+        kubectl get pods -n kube-system
         --kubeconfig /etc/kubernetes/admin.conf
-      register: calico_ready
-      retries: 5
-      delay: 30
-      until: calico_ready.rc == 0
+      register: cni_pods
       changed_when: false
 
-- name: Install Cilium CNI
-  when: k8s_cni_plugin == 'cilium'
-  block:
-    - name: Download Cilium CLI
-      ansible.builtin.get_url:
-        url: "https://github.com/cilium/cilium-cli/releases/download/v{{ k8s_cilium_version }}/cilium-linux-amd64.tar.gz"
-        dest: /tmp/cilium-cli.tar.gz
-        mode: '0644'
+    - name: Display CNI pods status
+      ansible.builtin.debug:
+        msg: "{{ cni_pods.stdout_lines }}"
 
-    - name: Extract Cilium CLI
-      ansible.builtin.unarchive:
-        src: /tmp/cilium-cli.tar.gz
-        dest: /usr/local/bin
-        remote_src: true
-        creates: /usr/local/bin/cilium
+    # ----------------------------- postflight -------------------
 
-    - name: Install Cilium
-      ansible.builtin.command: >
-        cilium install
-        --version {{ k8s_cilium_version }}
-        --set ipam.mode=kubernetes
-        --set tunnel={{ k8s_network_plugin_config.cilium.tunnel_mode }}
-        --set hubble.enabled={{ k8s_network_plugin_config.cilium.enable_hubble | lower }}
-        --set l7Proxy={{ k8s_network_plugin_config.cilium.enable_l7_proxy | lower }}
-        --kubeconfig /etc/kubernetes/admin.conf
-      changed_when: true
-      register: cilium_install
+    - name: "kubernetes/k8s_cluster_install/cni_plugin | Postflight | Verify the guarded body ran after a passing preflight"
+      ansible.builtin.assert:
+        that:
+          - fe_kubernetes_k8s_cluster_install_cni_plugin_preflight_passed | bool
+          - fe_kubernetes_k8s_cluster_install_cni_plugin_status in ['running', 'succeeded']
+        fail_msg: >-
+          kubernetes/k8s_cluster_install/cni_plugin: postflight validation failed - preflight passed
+          ={{ fe_kubernetes_k8s_cluster_install_cni_plugin_preflight_passed | default(false) }},
+          status={{ fe_kubernetes_k8s_cluster_install_cni_plugin_status | default('unknown') }}.
+        success_msg: "kubernetes/k8s_cluster_install/cni_plugin: postflight validation passed."
+        quiet: true
+      tags:
+        - always
+        - postflight
+        - validation
 
-    - name: Wait for Cilium to be ready
-      ansible.builtin.command: >
-        cilium status --wait
-        --kubeconfig /etc/kubernetes/admin.conf
-      register: cilium_ready
-      retries: 10
-      delay: 30
-      until: cilium_ready.rc == 0
-      changed_when: false
+    - name: "kubernetes/k8s_cluster_install/cni_plugin | Postflight | Record the successful outcome"
+      ansible.builtin.set_fact:
+        fe_kubernetes_k8s_cluster_install_cni_plugin_postflight_passed: true
+        fe_kubernetes_k8s_cluster_install_cni_plugin_status: "succeeded"
+      tags:
+        - always
+        - postflight
+        - validation
 
-- name: Verify CNI installation
-  ansible.builtin.command: >
-    kubectl get pods -n kube-system
-    --kubeconfig /etc/kubernetes/admin.conf
-  register: cni_pods
-  changed_when: false
+  rescue:
 
-- name: Display CNI pods status
-  ansible.builtin.debug:
-    msg: "{{ cni_pods.stdout_lines }}"
+    - name: "kubernetes/k8s_cluster_install/cni_plugin | Rescue | Capture the failing task and error detail"
+      ansible.builtin.set_fact:
+        fe_kubernetes_k8s_cluster_install_cni_plugin_status: "failed"
+        fe_kubernetes_k8s_cluster_install_cni_plugin_postflight_passed: false
+        fe_kubernetes_k8s_cluster_install_cni_plugin_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+        fe_kubernetes_k8s_cluster_install_cni_plugin_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+      tags:
+        - always
+        - rescue
+
+    - name: "kubernetes/k8s_cluster_install/cni_plugin | Rescue | Report the failure"
+      ansible.builtin.debug:
+        msg: >-
+          kubernetes/k8s_cluster_install/cni_plugin: FAILED at '{{ fe_kubernetes_k8s_cluster_install_cni_plugin_failed_task }}' on
+          {{ inventory_hostname }} - {{ fe_kubernetes_k8s_cluster_install_cni_plugin_error }}
+      tags:
+        - always
+        - rescue
+
+    - name: "kubernetes/k8s_cluster_install/cni_plugin | Rescue | Re-raise the failure unless the caller opted to continue"
+      ansible.builtin.fail:
+        msg: >-
+          kubernetes/k8s_cluster_install/cni_plugin failed at '{{ fe_kubernetes_k8s_cluster_install_cni_plugin_failed_task }}': {{ fe_kubernetes_k8s_cluster_install_cni_plugin_error }}
+      when: not (fe_validation_continue_on_error | default(false) | bool)
+      tags:
+        - always
+        - rescue
+
+  always:
+
+    - name: "kubernetes/k8s_cluster_install/cni_plugin | Always | Compute the execution duration"
+      ansible.builtin.set_fact:
+        fe_kubernetes_k8s_cluster_install_cni_plugin_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+        fe_kubernetes_k8s_cluster_install_cni_plugin_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_kubernetes_k8s_cluster_install_cni_plugin_start_epoch | default(0) | int) }}"
+      tags:
+        - always
+
+    - name: "kubernetes/k8s_cluster_install/cni_plugin | Always | Publish the validation result with set_stats"
+      ansible.builtin.set_stats:
+        data:
+          fe_validation_results:
+            "kubernetes/k8s_cluster_install/cni_plugin":
+              component: "kubernetes/k8s_cluster_install/cni_plugin"
+              type: "role-tasks"
+              platform: "kubernetes"
+              host: "{{ inventory_hostname }}"
+              status: "{{ fe_kubernetes_k8s_cluster_install_cni_plugin_status | default('unknown') }}"
+              preflight_passed: "{{ fe_kubernetes_k8s_cluster_install_cni_plugin_preflight_passed | default(false) | bool }}"
+              postflight_passed: "{{ fe_kubernetes_k8s_cluster_install_cni_plugin_postflight_passed | default(false) | bool }}"
+              started_at: "{{ fe_kubernetes_k8s_cluster_install_cni_plugin_started_at | default('') }}"
+              ended_at: "{{ fe_kubernetes_k8s_cluster_install_cni_plugin_ended_at | default('') }}"
+              duration_seconds: "{{ fe_kubernetes_k8s_cluster_install_cni_plugin_duration_seconds | default(0) | int }}"
+              failed_task: "{{ fe_kubernetes_k8s_cluster_install_cni_plugin_failed_task | default('') }}"
+              error: "{{ fe_kubernetes_k8s_cluster_install_cni_plugin_error | default('') }}"
+              check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+          fe_validation_executions: 1
+          fe_validation_succeeded: "{{ 1 if fe_kubernetes_k8s_cluster_install_cni_plugin_status | default('') == 'succeeded' else 0 }}"
+          fe_validation_failed: "{{ 0 if fe_kubernetes_k8s_cluster_install_cni_plugin_status | default('') == 'succeeded' else 1 }}"
+          fe_validation_duration_seconds: "{{ fe_kubernetes_k8s_cluster_install_cni_plugin_duration_seconds | default(0) | int }}"
+          fe_validation_failed_components: >-
+            {{ [] if fe_kubernetes_k8s_cluster_install_cni_plugin_status | default('') == 'succeeded' else ['kubernetes/k8s_cluster_install/cni_plugin'] }}
+        aggregate: true
+        per_host: false
+      tags:
+        - always
+
+    - name: "kubernetes/k8s_cluster_install/cni_plugin | Always | Mark the validation statistics as published"
+      ansible.builtin.set_fact:
+        fe_kubernetes_k8s_cluster_install_cni_plugin_stats_published: true
+      tags:
+        - always

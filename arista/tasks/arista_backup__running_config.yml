@@ -1,4 +1,21 @@
 ---
+# ---------------------------------------------------------------------------
+# Fourth Estate preflight / postflight validation harness
+#
+# Every play below carries a block/rescue/always validation wrapper:
+#
+#   pre_tasks   preflight validation. On failure it records the reason,
+#               publishes the outcome with set_stats and aborts the play
+#               before any role or task runs.
+#   tasks       the original task list, wrapped so a failure is captured
+#               (which task, which error) and then re-raised.
+#   post_tasks  postflight validation, then the run record is published with
+#               ansible.builtin.set_stats.
+#
+# Set fe_validation_continue_on_error=true to record failures and keep going.
+# See docs/VALIDATION_AND_STATS.md for the published stats schema.
+# ---------------------------------------------------------------------------
+
 - name: Backup running-config to artifacts
   hosts: arista
   gather_facts: false
@@ -11,6 +28,140 @@
     artifacts_dir: "/tmp/arista-artifacts"
     backup_dir: "{{ artifacts_dir }}/backups"
   pre_tasks:
+    - name: "arista/tasks/arista_backup__running_config | Preflight validation"
+      tags:
+        - always
+        - preflight
+        - validation
+      block:
+
+        - name: "arista/tasks/arista_backup__running_config | Initialize validation state"
+          ansible.builtin.set_fact:
+            fe_arista_tasks_arista_backup__running_config_start_epoch: "{{ now(fmt='%s') | int }}"
+            fe_arista_tasks_arista_backup__running_config_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+            fe_arista_tasks_arista_backup__running_config_status: "running"
+            fe_arista_tasks_arista_backup__running_config_preflight_passed: false
+            fe_arista_tasks_arista_backup__running_config_postflight_passed: false
+            fe_arista_tasks_arista_backup__running_config_failed_task: ""
+            fe_arista_tasks_arista_backup__running_config_error: ""
+            fe_arista_tasks_arista_backup__running_config_stats_published: false
+          tags:
+            - always
+
+        - name: "arista/tasks/arista_backup__running_config | Preflight | Verify the control node meets the minimum ansible-core version"
+          ansible.builtin.assert:
+            that:
+              - ansible_version.full is version(fe_validation_min_ansible_version | default('2.12'), '>=')
+            fail_msg: >-
+              arista/tasks/arista_backup__running_config: requires ansible-core
+              {{ fe_validation_min_ansible_version | default('2.12') }} or newer,
+              found {{ ansible_version.full }}.
+            success_msg: >-
+              arista/tasks/arista_backup__running_config: ansible-core {{ ansible_version.full }} satisfies the minimum.
+            quiet: true
+          tags:
+            - always
+            - preflight
+            - validation
+
+        - name: "arista/tasks/arista_backup__running_config | Preflight | Verify every declared required variable is defined"
+          ansible.builtin.assert:
+            that:
+              - vars[item] is defined
+            fail_msg: "arista/tasks/arista_backup__running_config: required variable '{{ item }}' is not defined."
+            success_msg: "arista/tasks/arista_backup__running_config: required variable '{{ item }}' is defined."
+            quiet: true
+          loop: "{{ fe_arista_tasks_arista_backup__running_config_required_vars | default([]) }}"
+          loop_control:
+            label: "{{ item }}"
+          tags:
+            - always
+            - preflight
+            - validation
+
+        - name: "arista/tasks/arista_backup__running_config | Preflight | Record that preflight validation passed"
+          ansible.builtin.set_fact:
+            fe_arista_tasks_arista_backup__running_config_preflight_passed: true
+          tags:
+            - always
+            - preflight
+            - validation
+
+      rescue:
+
+        - name: "arista/tasks/arista_backup__running_config | Rescue | Capture the failing task and error detail"
+          ansible.builtin.set_fact:
+            fe_arista_tasks_arista_backup__running_config_status: "preflight_failed"
+            fe_arista_tasks_arista_backup__running_config_postflight_passed: false
+            fe_arista_tasks_arista_backup__running_config_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+            fe_arista_tasks_arista_backup__running_config_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+          tags:
+            - always
+            - rescue
+
+        - name: "arista/tasks/arista_backup__running_config | Rescue | Report the failure"
+          ansible.builtin.debug:
+            msg: >-
+              arista/tasks/arista_backup__running_config: FAILED at '{{ fe_arista_tasks_arista_backup__running_config_failed_task }}' on
+              {{ inventory_hostname }} - {{ fe_arista_tasks_arista_backup__running_config_error }}
+          tags:
+            - always
+            - rescue
+
+        - name: "arista/tasks/arista_backup__running_config | Always | Publish the validation result with set_stats"
+          ansible.builtin.set_stats:
+            data:
+              fe_validation_results:
+                "arista/tasks/arista_backup__running_config":
+                  component: "arista/tasks/arista_backup__running_config"
+                  type: "playbook"
+                  platform: "arista"
+                  host: "{{ inventory_hostname }}"
+                  status: "{{ fe_arista_tasks_arista_backup__running_config_status | default('unknown') }}"
+                  preflight_passed: "{{ fe_arista_tasks_arista_backup__running_config_preflight_passed | default(false) | bool }}"
+                  postflight_passed: "{{ fe_arista_tasks_arista_backup__running_config_postflight_passed | default(false) | bool }}"
+                  started_at: "{{ fe_arista_tasks_arista_backup__running_config_started_at | default('') }}"
+                  ended_at: "{{ fe_arista_tasks_arista_backup__running_config_ended_at | default('') }}"
+                  duration_seconds: "{{ fe_arista_tasks_arista_backup__running_config_duration_seconds | default(0) | int }}"
+                  failed_task: "{{ fe_arista_tasks_arista_backup__running_config_failed_task | default('') }}"
+                  error: "{{ fe_arista_tasks_arista_backup__running_config_error | default('') }}"
+                  check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+              fe_validation_executions: 1
+              fe_validation_succeeded: "{{ 1 if fe_arista_tasks_arista_backup__running_config_status | default('') == 'succeeded' else 0 }}"
+              fe_validation_failed: "{{ 0 if fe_arista_tasks_arista_backup__running_config_status | default('') == 'succeeded' else 1 }}"
+              fe_validation_duration_seconds: "{{ fe_arista_tasks_arista_backup__running_config_duration_seconds | default(0) | int }}"
+              fe_validation_failed_components: >-
+                {{ [] if fe_arista_tasks_arista_backup__running_config_status | default('') == 'succeeded' else ['arista/tasks/arista_backup__running_config'] }}
+            aggregate: true
+            per_host: false
+          tags:
+            - always
+
+        - name: "arista/tasks/arista_backup__running_config | Always | Mark the validation statistics as published"
+          ansible.builtin.set_fact:
+            fe_arista_tasks_arista_backup__running_config_stats_published: true
+          tags:
+            - always
+
+        - name: "arista/tasks/arista_backup__running_config | Rescue | Re-raise the failure unless the caller opted to continue"
+          ansible.builtin.fail:
+            msg: >-
+              arista/tasks/arista_backup__running_config failed at '{{ fe_arista_tasks_arista_backup__running_config_failed_task }}': {{ fe_arista_tasks_arista_backup__running_config_error }}
+          when: not (fe_validation_continue_on_error | default(false) | bool)
+          tags:
+            - always
+            - rescue
+
+      always:
+
+        - name: "arista/tasks/arista_backup__running_config | Always | Report the preflight outcome"
+          ansible.builtin.debug:
+            msg: >-
+              arista/tasks/arista_backup__running_config: preflight
+              {{ 'passed' if fe_arista_tasks_arista_backup__running_config_preflight_passed | default(false) | bool else 'FAILED' }}
+              on {{ inventory_hostname }}.
+          tags:
+            - always
     - name: Ensure artifacts dir
       ansible.builtin.file:
         path: "{{ artifacts_dir }}"
@@ -18,21 +169,219 @@
         mode: "0755"
 
   tasks:
-    - name: Ensure backup dir
-      ansible.builtin.file:
-        path: "{{ backup_dir }}"
-        state: directory
-        mode: "0750"
+    - name: "arista/tasks/arista_backup__running_config | Guarded execution with rescue and always handling"
+      block:
 
-    - name: Show running-config
-      when: apply_changes | bool
-      arista.eos.eos_command:
-        commands: ["show running-config"]
-      register: run_cfg
+        - name: Ensure backup dir
+          ansible.builtin.file:
+            path: "{{ backup_dir }}"
+            state: directory
+            mode: "0750"
 
-    - name: Save file
-      when: apply_changes | bool and run_cfg.stdout is defined
-      ansible.builtin.copy:
-        dest: "{{ backup_dir }}/{{ inventory_hostname }}.cfg"
-        content: "{{ run_cfg.stdout[0] }}"
-        mode: "0640"
+        - name: Show running-config
+          when: apply_changes | bool
+          arista.eos.eos_command:
+            commands: ["show running-config"]
+          register: run_cfg
+
+        - name: Save file
+          when: apply_changes | bool and run_cfg.stdout is defined
+          ansible.builtin.copy:
+            dest: "{{ backup_dir }}/{{ inventory_hostname }}.cfg"
+            content: "{{ run_cfg.stdout[0] }}"
+            mode: "0640"
+
+      rescue:
+
+        - name: "arista/tasks/arista_backup__running_config | Rescue | Capture the failing task and error detail"
+          ansible.builtin.set_fact:
+            fe_arista_tasks_arista_backup__running_config_status: "failed"
+            fe_arista_tasks_arista_backup__running_config_postflight_passed: false
+            fe_arista_tasks_arista_backup__running_config_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+            fe_arista_tasks_arista_backup__running_config_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+          tags:
+            - always
+            - rescue
+
+        - name: "arista/tasks/arista_backup__running_config | Rescue | Report the failure"
+          ansible.builtin.debug:
+            msg: >-
+              arista/tasks/arista_backup__running_config: FAILED at '{{ fe_arista_tasks_arista_backup__running_config_failed_task }}' on
+              {{ inventory_hostname }} - {{ fe_arista_tasks_arista_backup__running_config_error }}
+          tags:
+            - always
+            - rescue
+
+        - name: "arista/tasks/arista_backup__running_config | Rescue | Re-raise the failure unless the caller opted to continue"
+          ansible.builtin.fail:
+            msg: >-
+              arista/tasks/arista_backup__running_config failed at '{{ fe_arista_tasks_arista_backup__running_config_failed_task }}': {{ fe_arista_tasks_arista_backup__running_config_error }}
+          when: not (fe_validation_continue_on_error | default(false) | bool)
+          tags:
+            - always
+            - rescue
+
+      always:
+
+        - name: "arista/tasks/arista_backup__running_config | Always | Compute the execution duration"
+          ansible.builtin.set_fact:
+            fe_arista_tasks_arista_backup__running_config_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+            fe_arista_tasks_arista_backup__running_config_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_arista_tasks_arista_backup__running_config_start_epoch | default(0) | int) }}"
+          tags:
+            - always
+
+        - name: "arista/tasks/arista_backup__running_config | Always | Publish the validation result with set_stats"
+          ansible.builtin.set_stats:
+            data:
+              fe_validation_results:
+                "arista/tasks/arista_backup__running_config":
+                  component: "arista/tasks/arista_backup__running_config"
+                  type: "playbook"
+                  platform: "arista"
+                  host: "{{ inventory_hostname }}"
+                  status: "{{ fe_arista_tasks_arista_backup__running_config_status | default('unknown') }}"
+                  preflight_passed: "{{ fe_arista_tasks_arista_backup__running_config_preflight_passed | default(false) | bool }}"
+                  postflight_passed: "{{ fe_arista_tasks_arista_backup__running_config_postflight_passed | default(false) | bool }}"
+                  started_at: "{{ fe_arista_tasks_arista_backup__running_config_started_at | default('') }}"
+                  ended_at: "{{ fe_arista_tasks_arista_backup__running_config_ended_at | default('') }}"
+                  duration_seconds: "{{ fe_arista_tasks_arista_backup__running_config_duration_seconds | default(0) | int }}"
+                  failed_task: "{{ fe_arista_tasks_arista_backup__running_config_failed_task | default('') }}"
+                  error: "{{ fe_arista_tasks_arista_backup__running_config_error | default('') }}"
+                  check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+              fe_validation_executions: 1
+              fe_validation_succeeded: "{{ 1 if fe_arista_tasks_arista_backup__running_config_status | default('') == 'succeeded' else 0 }}"
+              fe_validation_failed: "{{ 0 if fe_arista_tasks_arista_backup__running_config_status | default('') == 'succeeded' else 1 }}"
+              fe_validation_duration_seconds: "{{ fe_arista_tasks_arista_backup__running_config_duration_seconds | default(0) | int }}"
+              fe_validation_failed_components: >-
+                {{ [] if fe_arista_tasks_arista_backup__running_config_status | default('') == 'succeeded' else ['arista/tasks/arista_backup__running_config'] }}
+            aggregate: true
+            per_host: false
+          when:
+            - fe_arista_tasks_arista_backup__running_config_status | default('') == 'failed'
+            - not (fe_arista_tasks_arista_backup__running_config_stats_published | default(false) | bool)
+          tags:
+            - always
+
+        - name: "arista/tasks/arista_backup__running_config | Always | Mark the validation statistics as published"
+          ansible.builtin.set_fact:
+            fe_arista_tasks_arista_backup__running_config_stats_published: true
+          when:
+            - fe_arista_tasks_arista_backup__running_config_status | default('') == 'failed'
+          tags:
+            - always
+  post_tasks:
+    - name: "arista/tasks/arista_backup__running_config | Postflight validation"
+      tags:
+        - always
+        - postflight
+        - validation
+      block:
+
+        - name: "arista/tasks/arista_backup__running_config | Postflight | Verify the guarded body ran after a passing preflight"
+          ansible.builtin.assert:
+            that:
+              - fe_arista_tasks_arista_backup__running_config_preflight_passed | bool
+              - fe_arista_tasks_arista_backup__running_config_status in ['running', 'succeeded']
+            fail_msg: >-
+              arista/tasks/arista_backup__running_config: postflight validation failed - preflight passed
+              ={{ fe_arista_tasks_arista_backup__running_config_preflight_passed | default(false) }},
+              status={{ fe_arista_tasks_arista_backup__running_config_status | default('unknown') }}.
+            success_msg: "arista/tasks/arista_backup__running_config: postflight validation passed."
+            quiet: true
+          tags:
+            - always
+            - postflight
+            - validation
+
+        - name: "arista/tasks/arista_backup__running_config | Postflight | Record the successful outcome"
+          ansible.builtin.set_fact:
+            fe_arista_tasks_arista_backup__running_config_postflight_passed: true
+            fe_arista_tasks_arista_backup__running_config_status: "succeeded"
+          tags:
+            - always
+            - postflight
+            - validation
+
+      rescue:
+
+        - name: "arista/tasks/arista_backup__running_config | Rescue | Capture the failing task and error detail"
+          ansible.builtin.set_fact:
+            fe_arista_tasks_arista_backup__running_config_status: "failed"
+            fe_arista_tasks_arista_backup__running_config_postflight_passed: false
+            fe_arista_tasks_arista_backup__running_config_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+            fe_arista_tasks_arista_backup__running_config_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+          tags:
+            - always
+            - rescue
+
+        - name: "arista/tasks/arista_backup__running_config | Rescue | Report the failure"
+          ansible.builtin.debug:
+            msg: >-
+              arista/tasks/arista_backup__running_config: FAILED at '{{ fe_arista_tasks_arista_backup__running_config_failed_task }}' on
+              {{ inventory_hostname }} - {{ fe_arista_tasks_arista_backup__running_config_error }}
+          tags:
+            - always
+            - rescue
+
+        - name: "arista/tasks/arista_backup__running_config | Rescue | Re-raise the failure unless the caller opted to continue"
+          ansible.builtin.fail:
+            msg: >-
+              arista/tasks/arista_backup__running_config failed at '{{ fe_arista_tasks_arista_backup__running_config_failed_task }}': {{ fe_arista_tasks_arista_backup__running_config_error }}
+          when: not (fe_validation_continue_on_error | default(false) | bool)
+          tags:
+            - always
+            - rescue
+
+      always:
+
+        - name: "arista/tasks/arista_backup__running_config | Always | Compute the execution duration"
+          ansible.builtin.set_fact:
+            fe_arista_tasks_arista_backup__running_config_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+            fe_arista_tasks_arista_backup__running_config_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_arista_tasks_arista_backup__running_config_start_epoch | default(0) | int) }}"
+          tags:
+            - always
+
+        - name: "arista/tasks/arista_backup__running_config | Always | Publish the validation result with set_stats"
+          ansible.builtin.set_stats:
+            data:
+              fe_validation_results:
+                "arista/tasks/arista_backup__running_config":
+                  component: "arista/tasks/arista_backup__running_config"
+                  type: "playbook"
+                  platform: "arista"
+                  host: "{{ inventory_hostname }}"
+                  status: "{{ fe_arista_tasks_arista_backup__running_config_status | default('unknown') }}"
+                  preflight_passed: "{{ fe_arista_tasks_arista_backup__running_config_preflight_passed | default(false) | bool }}"
+                  postflight_passed: "{{ fe_arista_tasks_arista_backup__running_config_postflight_passed | default(false) | bool }}"
+                  started_at: "{{ fe_arista_tasks_arista_backup__running_config_started_at | default('') }}"
+                  ended_at: "{{ fe_arista_tasks_arista_backup__running_config_ended_at | default('') }}"
+                  duration_seconds: "{{ fe_arista_tasks_arista_backup__running_config_duration_seconds | default(0) | int }}"
+                  failed_task: "{{ fe_arista_tasks_arista_backup__running_config_failed_task | default('') }}"
+                  error: "{{ fe_arista_tasks_arista_backup__running_config_error | default('') }}"
+                  check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+              fe_validation_executions: 1
+              fe_validation_succeeded: "{{ 1 if fe_arista_tasks_arista_backup__running_config_status | default('') == 'succeeded' else 0 }}"
+              fe_validation_failed: "{{ 0 if fe_arista_tasks_arista_backup__running_config_status | default('') == 'succeeded' else 1 }}"
+              fe_validation_duration_seconds: "{{ fe_arista_tasks_arista_backup__running_config_duration_seconds | default(0) | int }}"
+              fe_validation_failed_components: >-
+                {{ [] if fe_arista_tasks_arista_backup__running_config_status | default('') == 'succeeded' else ['arista/tasks/arista_backup__running_config'] }}
+            aggregate: true
+            per_host: false
+          when:
+            - not (fe_arista_tasks_arista_backup__running_config_stats_published | default(false) | bool)
+          tags:
+            - always
+
+        - name: "arista/tasks/arista_backup__running_config | Always | Mark the validation statistics as published"
+          ansible.builtin.set_fact:
+            fe_arista_tasks_arista_backup__running_config_stats_published: true
+          tags:
+            - always
+
+        - name: "arista/tasks/arista_backup__running_config | Always | Report the run summary"
+          ansible.builtin.debug:
+            msg: >-
+              arista/tasks/arista_backup__running_config: {{ fe_arista_tasks_arista_backup__running_config_status | default('unknown') }} in
+              {{ fe_arista_tasks_arista_backup__running_config_duration_seconds | default(0) }}s on {{ inventory_hostname }}.
+          tags:
+            - always

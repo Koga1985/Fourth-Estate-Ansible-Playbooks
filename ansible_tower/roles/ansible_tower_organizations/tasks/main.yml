@@ -1,1 +1,190 @@
 ---
+
+# ---------------------------------------------------------------------------
+# Fourth Estate preflight / postflight validation harness
+#
+# The task file body below is wrapped in an Ansible block/rescue/always structure:
+#
+#   block   preflight validation runs first, then the original task file body, then
+#           postflight validation. Any failure transfers control to rescue.
+#   rescue  records which task failed and why, then re-raises so a failure is
+#           never silently swallowed. Set fe_validation_continue_on_error=true
+#           to record the failure and keep going instead.
+#   always  computes the run duration and publishes the outcome through
+#           ansible.builtin.set_stats, so a wrapping playbook, AWX/AAP or CI can
+#           consume the result without scraping log output.
+#
+# Published stats (see docs/VALIDATION_AND_STATS.md):
+#   fe_validation_results['ansible_tower/ansible_tower_organizations']  per-component record
+#   fe_validation_executions / _succeeded / _failed / _duration_seconds
+#   fe_validation_failed_components
+#
+# Add component-specific preflight checks without editing this file by setting
+#   fe_ansible_tower_ansible_tower_organizations_required_vars: [var_one, var_two]
+# ---------------------------------------------------------------------------
+
+- name: "ansible_tower/ansible_tower_organizations | Initialize validation state"
+  ansible.builtin.set_fact:
+    fe_ansible_tower_ansible_tower_organizations_start_epoch: "{{ now(fmt='%s') | int }}"
+    fe_ansible_tower_ansible_tower_organizations_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+    fe_ansible_tower_ansible_tower_organizations_status: "running"
+    fe_ansible_tower_ansible_tower_organizations_preflight_passed: false
+    fe_ansible_tower_ansible_tower_organizations_postflight_passed: false
+    fe_ansible_tower_ansible_tower_organizations_failed_task: ""
+    fe_ansible_tower_ansible_tower_organizations_error: ""
+    fe_ansible_tower_ansible_tower_organizations_stats_published: false
+  tags:
+    - always
+
+- name: "ansible_tower/ansible_tower_organizations | Guarded execution with preflight and postflight validation"
+  block:
+
+    # ----------------------------- preflight --------------------
+
+    - name: "ansible_tower/ansible_tower_organizations | Preflight | Verify the control node meets the minimum ansible-core version"
+      ansible.builtin.assert:
+        that:
+          - ansible_version.full is version(fe_validation_min_ansible_version | default('2.12'), '>=')
+        fail_msg: >-
+          ansible_tower/ansible_tower_organizations: requires ansible-core
+          {{ fe_validation_min_ansible_version | default('2.12') }} or newer,
+          found {{ ansible_version.full }}.
+        success_msg: >-
+          ansible_tower/ansible_tower_organizations: ansible-core {{ ansible_version.full }} satisfies the minimum.
+        quiet: true
+      tags:
+        - always
+        - preflight
+        - validation
+
+    - name: "ansible_tower/ansible_tower_organizations | Preflight | Verify every declared required variable is defined"
+      ansible.builtin.assert:
+        that:
+          - vars[item] is defined
+        fail_msg: "ansible_tower/ansible_tower_organizations: required variable '{{ item }}' is not defined."
+        success_msg: "ansible_tower/ansible_tower_organizations: required variable '{{ item }}' is defined."
+        quiet: true
+      loop: "{{ fe_ansible_tower_ansible_tower_organizations_required_vars | default([]) }}"
+      loop_control:
+        label: "{{ item }}"
+      tags:
+        - always
+        - preflight
+        - validation
+
+    - name: "ansible_tower/ansible_tower_organizations | Preflight | Record that preflight validation passed"
+      ansible.builtin.set_fact:
+        fe_ansible_tower_ansible_tower_organizations_preflight_passed: true
+      tags:
+        - always
+        - preflight
+        - validation
+
+    # ----------------------------- execute ----------------------
+
+    - name: "ansible_tower/ansible_tower_organizations | No tasks are defined for this component"
+      ansible.builtin.debug:
+        msg: "ansible_tower/ansible_tower_organizations: nothing to execute; the component is a placeholder."
+      tags:
+        - always
+
+    # ----------------------------- postflight -------------------
+
+    - name: "ansible_tower/ansible_tower_organizations | Postflight | Verify the guarded body ran after a passing preflight"
+      ansible.builtin.assert:
+        that:
+          - fe_ansible_tower_ansible_tower_organizations_preflight_passed | bool
+          - fe_ansible_tower_ansible_tower_organizations_status in ['running', 'succeeded']
+        fail_msg: >-
+          ansible_tower/ansible_tower_organizations: postflight validation failed - preflight passed
+          ={{ fe_ansible_tower_ansible_tower_organizations_preflight_passed | default(false) }},
+          status={{ fe_ansible_tower_ansible_tower_organizations_status | default('unknown') }}.
+        success_msg: "ansible_tower/ansible_tower_organizations: postflight validation passed."
+        quiet: true
+      tags:
+        - always
+        - postflight
+        - validation
+
+    - name: "ansible_tower/ansible_tower_organizations | Postflight | Record the successful outcome"
+      ansible.builtin.set_fact:
+        fe_ansible_tower_ansible_tower_organizations_postflight_passed: true
+        fe_ansible_tower_ansible_tower_organizations_status: "succeeded"
+      tags:
+        - always
+        - postflight
+        - validation
+
+  rescue:
+
+    - name: "ansible_tower/ansible_tower_organizations | Rescue | Capture the failing task and error detail"
+      ansible.builtin.set_fact:
+        fe_ansible_tower_ansible_tower_organizations_status: "failed"
+        fe_ansible_tower_ansible_tower_organizations_postflight_passed: false
+        fe_ansible_tower_ansible_tower_organizations_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+        fe_ansible_tower_ansible_tower_organizations_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+      tags:
+        - always
+        - rescue
+
+    - name: "ansible_tower/ansible_tower_organizations | Rescue | Report the failure"
+      ansible.builtin.debug:
+        msg: >-
+          ansible_tower/ansible_tower_organizations: FAILED at '{{ fe_ansible_tower_ansible_tower_organizations_failed_task }}' on
+          {{ inventory_hostname }} - {{ fe_ansible_tower_ansible_tower_organizations_error }}
+      tags:
+        - always
+        - rescue
+
+    - name: "ansible_tower/ansible_tower_organizations | Rescue | Re-raise the failure unless the caller opted to continue"
+      ansible.builtin.fail:
+        msg: >-
+          ansible_tower/ansible_tower_organizations failed at '{{ fe_ansible_tower_ansible_tower_organizations_failed_task }}': {{ fe_ansible_tower_ansible_tower_organizations_error }}
+      when: not (fe_validation_continue_on_error | default(false) | bool)
+      tags:
+        - always
+        - rescue
+
+  always:
+
+    - name: "ansible_tower/ansible_tower_organizations | Always | Compute the execution duration"
+      ansible.builtin.set_fact:
+        fe_ansible_tower_ansible_tower_organizations_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+        fe_ansible_tower_ansible_tower_organizations_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_ansible_tower_ansible_tower_organizations_start_epoch | default(0) | int) }}"
+      tags:
+        - always
+
+    - name: "ansible_tower/ansible_tower_organizations | Always | Publish the validation result with set_stats"
+      ansible.builtin.set_stats:
+        data:
+          fe_validation_results:
+            "ansible_tower/ansible_tower_organizations":
+              component: "ansible_tower/ansible_tower_organizations"
+              type: "role"
+              platform: "ansible_tower"
+              host: "{{ inventory_hostname }}"
+              status: "{{ fe_ansible_tower_ansible_tower_organizations_status | default('unknown') }}"
+              preflight_passed: "{{ fe_ansible_tower_ansible_tower_organizations_preflight_passed | default(false) | bool }}"
+              postflight_passed: "{{ fe_ansible_tower_ansible_tower_organizations_postflight_passed | default(false) | bool }}"
+              started_at: "{{ fe_ansible_tower_ansible_tower_organizations_started_at | default('') }}"
+              ended_at: "{{ fe_ansible_tower_ansible_tower_organizations_ended_at | default('') }}"
+              duration_seconds: "{{ fe_ansible_tower_ansible_tower_organizations_duration_seconds | default(0) | int }}"
+              failed_task: "{{ fe_ansible_tower_ansible_tower_organizations_failed_task | default('') }}"
+              error: "{{ fe_ansible_tower_ansible_tower_organizations_error | default('') }}"
+              check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+          fe_validation_executions: 1
+          fe_validation_succeeded: "{{ 1 if fe_ansible_tower_ansible_tower_organizations_status | default('') == 'succeeded' else 0 }}"
+          fe_validation_failed: "{{ 0 if fe_ansible_tower_ansible_tower_organizations_status | default('') == 'succeeded' else 1 }}"
+          fe_validation_duration_seconds: "{{ fe_ansible_tower_ansible_tower_organizations_duration_seconds | default(0) | int }}"
+          fe_validation_failed_components: >-
+            {{ [] if fe_ansible_tower_ansible_tower_organizations_status | default('') == 'succeeded' else ['ansible_tower/ansible_tower_organizations'] }}
+        aggregate: true
+        per_host: false
+      tags:
+        - always
+
+    - name: "ansible_tower/ansible_tower_organizations | Always | Mark the validation statistics as published"
+      ansible.builtin.set_fact:
+        fe_ansible_tower_ansible_tower_organizations_stats_published: true
+      tags:
+        - always

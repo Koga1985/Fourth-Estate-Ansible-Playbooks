@@ -1,38 +1,221 @@
 ---
 # Infrastructure-as-Code scan (checkov) - APSC-DV-003180 and related CM controls
 
-- name: Run IaC scan
-  ansible.builtin.command: "{{ appsec_tools.iac.cmd }}"
-  args:
-    chdir: "{{ app_src_dir }}"
-  register: iac_run
-  changed_when: false
-  failed_when: false
-  tags: [iac]
+# ---------------------------------------------------------------------------
+# Fourth Estate preflight / postflight validation harness
+#
+# The task file body below is wrapped in an Ansible block/rescue/always structure:
+#
+#   block   preflight validation runs first, then the original task file body, then
+#           postflight validation. Any failure transfers control to rescue.
+#   rescue  records which task failed and why, then re-raises so a failure is
+#           never silently swallowed. Set fe_validation_continue_on_error=true
+#           to record the failure and keep going instead.
+#   always  computes the run duration and publishes the outcome through
+#           ansible.builtin.set_stats, so a wrapping playbook, AWX/AAP or CI can
+#           consume the result without scraping log output.
+#
+# Published stats (see docs/VALIDATION_AND_STATS.md):
+#   fe_validation_results['policy_as_code/app_sec_dev_stig/scan_iac']  per-component record
+#   fe_validation_executions / _succeeded / _failed / _duration_seconds
+#   fe_validation_failed_components
+#
+# Add component-specific preflight checks without editing this file by setting
+#   fe_policy_as_code_app_sec_dev_stig_scan_iac_required_vars: [var_one, var_two]
+# ---------------------------------------------------------------------------
 
-- name: Read IaC report
-  ansible.builtin.slurp:
-    src: "{{ appsec_tools.iac.report }}/results_json.json"
-  register: iac_report_raw
-  failed_when: false
-  changed_when: false
-  tags: [iac]
-
-- name: Record IaC findings
+- name: "policy_as_code/app_sec_dev_stig/scan_iac | Initialize validation state"
   ansible.builtin.set_fact:
-    appsec_findings: >-
-      {{ appsec_findings | default({}) | combine({
-           'iac': {
-             'tool': appsec_tools.iac.bin,
-             'ran': true,
-             'count': failed | length,
-             'high': failed | length,
-             'critical': 0,
-             'report': appsec_tools.iac.report
-           }}) }}
-  vars:
-    parsed: >-
-      {{ (iac_report_raw.content | b64decode | from_json)
-         if (iac_report_raw.content is defined) else {} }}
-    failed: "{{ parsed.results.failed_checks | default([]) if parsed.results is defined else [] }}"
-  tags: [iac]
+    fe_policy_as_code_app_sec_dev_stig_scan_iac_start_epoch: "{{ now(fmt='%s') | int }}"
+    fe_policy_as_code_app_sec_dev_stig_scan_iac_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+    fe_policy_as_code_app_sec_dev_stig_scan_iac_status: "running"
+    fe_policy_as_code_app_sec_dev_stig_scan_iac_preflight_passed: false
+    fe_policy_as_code_app_sec_dev_stig_scan_iac_postflight_passed: false
+    fe_policy_as_code_app_sec_dev_stig_scan_iac_failed_task: ""
+    fe_policy_as_code_app_sec_dev_stig_scan_iac_error: ""
+    fe_policy_as_code_app_sec_dev_stig_scan_iac_stats_published: false
+  tags:
+    - always
+
+- name: "policy_as_code/app_sec_dev_stig/scan_iac | Guarded execution with preflight and postflight validation"
+  block:
+
+    # ----------------------------- preflight --------------------
+
+    - name: "policy_as_code/app_sec_dev_stig/scan_iac | Preflight | Verify the control node meets the minimum ansible-core version"
+      ansible.builtin.assert:
+        that:
+          - ansible_version.full is version(fe_validation_min_ansible_version | default('2.12'), '>=')
+        fail_msg: >-
+          policy_as_code/app_sec_dev_stig/scan_iac: requires ansible-core
+          {{ fe_validation_min_ansible_version | default('2.12') }} or newer,
+          found {{ ansible_version.full }}.
+        success_msg: >-
+          policy_as_code/app_sec_dev_stig/scan_iac: ansible-core {{ ansible_version.full }} satisfies the minimum.
+        quiet: true
+      tags:
+        - always
+        - preflight
+        - validation
+
+    - name: "policy_as_code/app_sec_dev_stig/scan_iac | Preflight | Verify every declared required variable is defined"
+      ansible.builtin.assert:
+        that:
+          - vars[item] is defined
+        fail_msg: "policy_as_code/app_sec_dev_stig/scan_iac: required variable '{{ item }}' is not defined."
+        success_msg: "policy_as_code/app_sec_dev_stig/scan_iac: required variable '{{ item }}' is defined."
+        quiet: true
+      loop: "{{ fe_policy_as_code_app_sec_dev_stig_scan_iac_required_vars | default([]) }}"
+      loop_control:
+        label: "{{ item }}"
+      tags:
+        - always
+        - preflight
+        - validation
+
+    - name: "policy_as_code/app_sec_dev_stig/scan_iac | Preflight | Record that preflight validation passed"
+      ansible.builtin.set_fact:
+        fe_policy_as_code_app_sec_dev_stig_scan_iac_preflight_passed: true
+      tags:
+        - always
+        - preflight
+        - validation
+
+    # ----------------------------- execute ----------------------
+
+    - name: Run IaC scan
+      ansible.builtin.command: "{{ appsec_tools.iac.cmd }}"
+      args:
+        chdir: "{{ app_src_dir }}"
+      register: iac_run
+      changed_when: false
+      failed_when: false
+      tags: [iac]
+
+    - name: Read IaC report
+      ansible.builtin.slurp:
+        src: "{{ appsec_tools.iac.report }}/results_json.json"
+      register: iac_report_raw
+      failed_when: false
+      changed_when: false
+      tags: [iac]
+
+    - name: Record IaC findings
+      ansible.builtin.set_fact:
+        appsec_findings: >-
+          {{ appsec_findings | default({}) | combine({
+               'iac': {
+                 'tool': appsec_tools.iac.bin,
+                 'ran': true,
+                 'count': failed | length,
+                 'high': failed | length,
+                 'critical': 0,
+                 'report': appsec_tools.iac.report
+               }}) }}
+      vars:
+        parsed: >-
+          {{ (iac_report_raw.content | b64decode | from_json)
+             if (iac_report_raw.content is defined) else {} }}
+        failed: "{{ parsed.results.failed_checks | default([]) if parsed.results is defined else [] }}"
+      tags: [iac]
+
+    # ----------------------------- postflight -------------------
+
+    - name: "policy_as_code/app_sec_dev_stig/scan_iac | Postflight | Verify the guarded body ran after a passing preflight"
+      ansible.builtin.assert:
+        that:
+          - fe_policy_as_code_app_sec_dev_stig_scan_iac_preflight_passed | bool
+          - fe_policy_as_code_app_sec_dev_stig_scan_iac_status in ['running', 'succeeded']
+        fail_msg: >-
+          policy_as_code/app_sec_dev_stig/scan_iac: postflight validation failed - preflight passed
+          ={{ fe_policy_as_code_app_sec_dev_stig_scan_iac_preflight_passed | default(false) }},
+          status={{ fe_policy_as_code_app_sec_dev_stig_scan_iac_status | default('unknown') }}.
+        success_msg: "policy_as_code/app_sec_dev_stig/scan_iac: postflight validation passed."
+        quiet: true
+      tags:
+        - always
+        - postflight
+        - validation
+
+    - name: "policy_as_code/app_sec_dev_stig/scan_iac | Postflight | Record the successful outcome"
+      ansible.builtin.set_fact:
+        fe_policy_as_code_app_sec_dev_stig_scan_iac_postflight_passed: true
+        fe_policy_as_code_app_sec_dev_stig_scan_iac_status: "succeeded"
+      tags:
+        - always
+        - postflight
+        - validation
+
+  rescue:
+
+    - name: "policy_as_code/app_sec_dev_stig/scan_iac | Rescue | Capture the failing task and error detail"
+      ansible.builtin.set_fact:
+        fe_policy_as_code_app_sec_dev_stig_scan_iac_status: "failed"
+        fe_policy_as_code_app_sec_dev_stig_scan_iac_postflight_passed: false
+        fe_policy_as_code_app_sec_dev_stig_scan_iac_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+        fe_policy_as_code_app_sec_dev_stig_scan_iac_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+      tags:
+        - always
+        - rescue
+
+    - name: "policy_as_code/app_sec_dev_stig/scan_iac | Rescue | Report the failure"
+      ansible.builtin.debug:
+        msg: >-
+          policy_as_code/app_sec_dev_stig/scan_iac: FAILED at '{{ fe_policy_as_code_app_sec_dev_stig_scan_iac_failed_task }}' on
+          {{ inventory_hostname }} - {{ fe_policy_as_code_app_sec_dev_stig_scan_iac_error }}
+      tags:
+        - always
+        - rescue
+
+    - name: "policy_as_code/app_sec_dev_stig/scan_iac | Rescue | Re-raise the failure unless the caller opted to continue"
+      ansible.builtin.fail:
+        msg: >-
+          policy_as_code/app_sec_dev_stig/scan_iac failed at '{{ fe_policy_as_code_app_sec_dev_stig_scan_iac_failed_task }}': {{ fe_policy_as_code_app_sec_dev_stig_scan_iac_error }}
+      when: not (fe_validation_continue_on_error | default(false) | bool)
+      tags:
+        - always
+        - rescue
+
+  always:
+
+    - name: "policy_as_code/app_sec_dev_stig/scan_iac | Always | Compute the execution duration"
+      ansible.builtin.set_fact:
+        fe_policy_as_code_app_sec_dev_stig_scan_iac_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+        fe_policy_as_code_app_sec_dev_stig_scan_iac_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_policy_as_code_app_sec_dev_stig_scan_iac_start_epoch | default(0) | int) }}"
+      tags:
+        - always
+
+    - name: "policy_as_code/app_sec_dev_stig/scan_iac | Always | Publish the validation result with set_stats"
+      ansible.builtin.set_stats:
+        data:
+          fe_validation_results:
+            "policy_as_code/app_sec_dev_stig/scan_iac":
+              component: "policy_as_code/app_sec_dev_stig/scan_iac"
+              type: "role-tasks"
+              platform: "policy_as_code"
+              host: "{{ inventory_hostname }}"
+              status: "{{ fe_policy_as_code_app_sec_dev_stig_scan_iac_status | default('unknown') }}"
+              preflight_passed: "{{ fe_policy_as_code_app_sec_dev_stig_scan_iac_preflight_passed | default(false) | bool }}"
+              postflight_passed: "{{ fe_policy_as_code_app_sec_dev_stig_scan_iac_postflight_passed | default(false) | bool }}"
+              started_at: "{{ fe_policy_as_code_app_sec_dev_stig_scan_iac_started_at | default('') }}"
+              ended_at: "{{ fe_policy_as_code_app_sec_dev_stig_scan_iac_ended_at | default('') }}"
+              duration_seconds: "{{ fe_policy_as_code_app_sec_dev_stig_scan_iac_duration_seconds | default(0) | int }}"
+              failed_task: "{{ fe_policy_as_code_app_sec_dev_stig_scan_iac_failed_task | default('') }}"
+              error: "{{ fe_policy_as_code_app_sec_dev_stig_scan_iac_error | default('') }}"
+              check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+          fe_validation_executions: 1
+          fe_validation_succeeded: "{{ 1 if fe_policy_as_code_app_sec_dev_stig_scan_iac_status | default('') == 'succeeded' else 0 }}"
+          fe_validation_failed: "{{ 0 if fe_policy_as_code_app_sec_dev_stig_scan_iac_status | default('') == 'succeeded' else 1 }}"
+          fe_validation_duration_seconds: "{{ fe_policy_as_code_app_sec_dev_stig_scan_iac_duration_seconds | default(0) | int }}"
+          fe_validation_failed_components: >-
+            {{ [] if fe_policy_as_code_app_sec_dev_stig_scan_iac_status | default('') == 'succeeded' else ['policy_as_code/app_sec_dev_stig/scan_iac'] }}
+        aggregate: true
+        per_host: false
+      tags:
+        - always
+
+    - name: "policy_as_code/app_sec_dev_stig/scan_iac | Always | Mark the validation statistics as published"
+      ansible.builtin.set_fact:
+        fe_policy_as_code_app_sec_dev_stig_scan_iac_stats_published: true
+      tags:
+        - always

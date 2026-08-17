@@ -2,137 +2,320 @@
 # Protocol security hardening tasks
 # STIG V-238207
 
-- name: Disable SMBv1 protocol (Critical STIG finding)
-  ansible.builtin.uri:
-    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/protocols/smb"
-    method: PATCH
-    user: "{{ vast_mgmt_user }}"
-    password: "{{ vast_mgmt_password }}"
-    force_basic_auth: true
-    validate_certs: "{{ vast_verify_ssl }}"
-    body_format: json
-    body:
-      smb1_enabled: false
-    status_code: [200, 204]
-  no_log: true
-  delegate_to: localhost
-  when: vast_disable_smb1 | bool
-  tags:
-    - smb
-    - stig_critical
+# ---------------------------------------------------------------------------
+# Fourth Estate preflight / postflight validation harness
+#
+# The task file body below is wrapped in an Ansible block/rescue/always structure:
+#
+#   block   preflight validation runs first, then the original task file body, then
+#           postflight validation. Any failure transfers control to rescue.
+#   rescue  records which task failed and why, then re-raises so a failure is
+#           never silently swallowed. Set fe_validation_continue_on_error=true
+#           to record the failure and keep going instead.
+#   always  computes the run duration and publishes the outcome through
+#           ansible.builtin.set_stats, so a wrapping playbook, AWX/AAP or CI can
+#           consume the result without scraping log output.
+#
+# Published stats (see docs/VALIDATION_AND_STATS.md):
+#   fe_validation_results['vast/vast_security_hardening/protocol_security']  per-component record
+#   fe_validation_executions / _succeeded / _failed / _duration_seconds
+#   fe_validation_failed_components
+#
+# Add component-specific preflight checks without editing this file by setting
+#   fe_vast_vast_security_hardening_protocol_security_required_vars: [var_one, var_two]
+# ---------------------------------------------------------------------------
 
-- name: Require SMB signing (STIG V-238207)
-  ansible.builtin.uri:
-    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/protocols/smb"
-    method: PATCH
-    user: "{{ vast_mgmt_user }}"
-    password: "{{ vast_mgmt_password }}"
-    force_basic_auth: true
-    validate_certs: "{{ vast_verify_ssl }}"
-    body_format: json
-    body:
-      signing_required: "{{ vast_smb_signing_required }}"
-    status_code: [200, 204]
-  no_log: true
-  delegate_to: localhost
-  when: vast_smb_signing_required | bool
+- name: "vast/vast_security_hardening/protocol_security | Initialize validation state"
+  ansible.builtin.set_fact:
+    fe_vast_vast_security_hardening_protocol_security_start_epoch: "{{ now(fmt='%s') | int }}"
+    fe_vast_vast_security_hardening_protocol_security_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+    fe_vast_vast_security_hardening_protocol_security_status: "running"
+    fe_vast_vast_security_hardening_protocol_security_preflight_passed: false
+    fe_vast_vast_security_hardening_protocol_security_postflight_passed: false
+    fe_vast_vast_security_hardening_protocol_security_failed_task: ""
+    fe_vast_vast_security_hardening_protocol_security_error: ""
+    fe_vast_vast_security_hardening_protocol_security_stats_published: false
   tags:
-    - smb
-    - signing
+    - always
 
-- name: Require SMB encryption (DoD requirement)
-  ansible.builtin.uri:
-    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/protocols/smb"
-    method: PATCH
-    user: "{{ vast_mgmt_user }}"
-    password: "{{ vast_mgmt_password }}"
-    force_basic_auth: true
-    validate_certs: "{{ vast_verify_ssl }}"
-    body_format: json
-    body:
-      encryption_required: "{{ vast_smb_encryption_required }}"
-    status_code: [200, 204]
-  no_log: true
-  delegate_to: localhost
-  when: vast_smb_encryption_required | bool
-  tags:
-    - smb
-    - encryption
+- name: "vast/vast_security_hardening/protocol_security | Guarded execution with preflight and postflight validation"
+  block:
 
-- name: Configure NFS to use secure ports only (STIG)
-  ansible.builtin.uri:
-    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/protocols/nfs"
-    method: PATCH
-    user: "{{ vast_mgmt_user }}"
-    password: "{{ vast_mgmt_password }}"
-    force_basic_auth: true
-    validate_certs: "{{ vast_verify_ssl }}"
-    body_format: json
-    body:
-      require_secure_port: "{{ vast_nfs_require_secure_port }}"
-    status_code: [200, 204]
-  no_log: true
-  delegate_to: localhost
-  when: vast_nfs_require_secure_port | bool
-  tags:
-    - nfs
-    - secure_ports
+    # ----------------------------- preflight --------------------
 
-- name: Enable NFS Kerberos authentication
-  ansible.builtin.uri:
-    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/protocols/nfs"
-    method: PATCH
-    user: "{{ vast_mgmt_user }}"
-    password: "{{ vast_mgmt_password }}"
-    force_basic_auth: true
-    validate_certs: "{{ vast_verify_ssl }}"
-    body_format: json
-    body:
-      kerberos_only: "{{ vast_nfs_kerberos_only }}"
-      allowed_security_modes: ["krb5", "krb5i", "krb5p"]
-    status_code: [200, 204]
-  no_log: true
-  delegate_to: localhost
-  when: vast_nfs_kerberos_only | bool
-  tags:
-    - nfs
-    - kerberos
+    - name: "vast/vast_security_hardening/protocol_security | Preflight | Verify the control node meets the minimum ansible-core version"
+      ansible.builtin.assert:
+        that:
+          - ansible_version.full is version(fe_validation_min_ansible_version | default('2.12'), '>=')
+        fail_msg: >-
+          vast/vast_security_hardening/protocol_security: requires ansible-core
+          {{ fe_validation_min_ansible_version | default('2.12') }} or newer,
+          found {{ ansible_version.full }}.
+        success_msg: >-
+          vast/vast_security_hardening/protocol_security: ansible-core {{ ansible_version.full }} satisfies the minimum.
+        quiet: true
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: Configure S3 to enforce HTTPS only
-  ansible.builtin.uri:
-    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/protocols/s3"
-    method: PATCH
-    user: "{{ vast_mgmt_user }}"
-    password: "{{ vast_mgmt_password }}"
-    force_basic_auth: true
-    validate_certs: "{{ vast_verify_ssl }}"
-    body_format: json
-    body:
-      enforce_https: true
-      signature_version: "v4"
-    status_code: [200, 204]
-  no_log: true
-  delegate_to: localhost
-  tags:
-    - s3
-    - https
+    - name: "vast/vast_security_hardening/protocol_security | Preflight | Verify every declared required variable is defined"
+      ansible.builtin.assert:
+        that:
+          - vars[item] is defined
+        fail_msg: "vast/vast_security_hardening/protocol_security: required variable '{{ item }}' is not defined."
+        success_msg: "vast/vast_security_hardening/protocol_security: required variable '{{ item }}' is defined."
+        quiet: true
+      loop: "{{ fe_vast_vast_security_hardening_protocol_security_required_vars | default([]) }}"
+      loop_control:
+        label: "{{ item }}"
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: Disable insecure protocols (FTP, Telnet, HTTP)
-  ansible.builtin.uri:
-    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/protocols/insecure"
-    method: PATCH
-    user: "{{ vast_mgmt_user }}"
-    password: "{{ vast_mgmt_password }}"
-    force_basic_auth: true
-    validate_certs: "{{ vast_verify_ssl }}"
-    body_format: json
-    body:
-      ftp_enabled: false
-      telnet_enabled: false
-      http_enabled: false
-    status_code: [200, 204]
-  no_log: true
-  delegate_to: localhost
-  tags:
-    - insecure_protocols
-    - stig
+    - name: "vast/vast_security_hardening/protocol_security | Preflight | Record that preflight validation passed"
+      ansible.builtin.set_fact:
+        fe_vast_vast_security_hardening_protocol_security_preflight_passed: true
+      tags:
+        - always
+        - preflight
+        - validation
+
+    # ----------------------------- execute ----------------------
+
+    - name: Disable SMBv1 protocol (Critical STIG finding)
+      ansible.builtin.uri:
+        url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/protocols/smb"
+        method: PATCH
+        user: "{{ vast_mgmt_user }}"
+        password: "{{ vast_mgmt_password }}"
+        force_basic_auth: true
+        validate_certs: "{{ vast_verify_ssl }}"
+        body_format: json
+        body:
+          smb1_enabled: false
+        status_code: [200, 204]
+      no_log: true
+      delegate_to: localhost
+      when: vast_disable_smb1 | bool
+      tags:
+        - smb
+        - stig_critical
+
+    - name: Require SMB signing (STIG V-238207)
+      ansible.builtin.uri:
+        url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/protocols/smb"
+        method: PATCH
+        user: "{{ vast_mgmt_user }}"
+        password: "{{ vast_mgmt_password }}"
+        force_basic_auth: true
+        validate_certs: "{{ vast_verify_ssl }}"
+        body_format: json
+        body:
+          signing_required: "{{ vast_smb_signing_required }}"
+        status_code: [200, 204]
+      no_log: true
+      delegate_to: localhost
+      when: vast_smb_signing_required | bool
+      tags:
+        - smb
+        - signing
+
+    - name: Require SMB encryption (DoD requirement)
+      ansible.builtin.uri:
+        url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/protocols/smb"
+        method: PATCH
+        user: "{{ vast_mgmt_user }}"
+        password: "{{ vast_mgmt_password }}"
+        force_basic_auth: true
+        validate_certs: "{{ vast_verify_ssl }}"
+        body_format: json
+        body:
+          encryption_required: "{{ vast_smb_encryption_required }}"
+        status_code: [200, 204]
+      no_log: true
+      delegate_to: localhost
+      when: vast_smb_encryption_required | bool
+      tags:
+        - smb
+        - encryption
+
+    - name: Configure NFS to use secure ports only (STIG)
+      ansible.builtin.uri:
+        url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/protocols/nfs"
+        method: PATCH
+        user: "{{ vast_mgmt_user }}"
+        password: "{{ vast_mgmt_password }}"
+        force_basic_auth: true
+        validate_certs: "{{ vast_verify_ssl }}"
+        body_format: json
+        body:
+          require_secure_port: "{{ vast_nfs_require_secure_port }}"
+        status_code: [200, 204]
+      no_log: true
+      delegate_to: localhost
+      when: vast_nfs_require_secure_port | bool
+      tags:
+        - nfs
+        - secure_ports
+
+    - name: Enable NFS Kerberos authentication
+      ansible.builtin.uri:
+        url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/protocols/nfs"
+        method: PATCH
+        user: "{{ vast_mgmt_user }}"
+        password: "{{ vast_mgmt_password }}"
+        force_basic_auth: true
+        validate_certs: "{{ vast_verify_ssl }}"
+        body_format: json
+        body:
+          kerberos_only: "{{ vast_nfs_kerberos_only }}"
+          allowed_security_modes: ["krb5", "krb5i", "krb5p"]
+        status_code: [200, 204]
+      no_log: true
+      delegate_to: localhost
+      when: vast_nfs_kerberos_only | bool
+      tags:
+        - nfs
+        - kerberos
+
+    - name: Configure S3 to enforce HTTPS only
+      ansible.builtin.uri:
+        url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/protocols/s3"
+        method: PATCH
+        user: "{{ vast_mgmt_user }}"
+        password: "{{ vast_mgmt_password }}"
+        force_basic_auth: true
+        validate_certs: "{{ vast_verify_ssl }}"
+        body_format: json
+        body:
+          enforce_https: true
+          signature_version: "v4"
+        status_code: [200, 204]
+      no_log: true
+      delegate_to: localhost
+      tags:
+        - s3
+        - https
+
+    - name: Disable insecure protocols (FTP, Telnet, HTTP)
+      ansible.builtin.uri:
+        url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/protocols/insecure"
+        method: PATCH
+        user: "{{ vast_mgmt_user }}"
+        password: "{{ vast_mgmt_password }}"
+        force_basic_auth: true
+        validate_certs: "{{ vast_verify_ssl }}"
+        body_format: json
+        body:
+          ftp_enabled: false
+          telnet_enabled: false
+          http_enabled: false
+        status_code: [200, 204]
+      no_log: true
+      delegate_to: localhost
+      tags:
+        - insecure_protocols
+        - stig
+
+    # ----------------------------- postflight -------------------
+
+    - name: "vast/vast_security_hardening/protocol_security | Postflight | Verify the guarded body ran after a passing preflight"
+      ansible.builtin.assert:
+        that:
+          - fe_vast_vast_security_hardening_protocol_security_preflight_passed | bool
+          - fe_vast_vast_security_hardening_protocol_security_status in ['running', 'succeeded']
+        fail_msg: >-
+          vast/vast_security_hardening/protocol_security: postflight validation failed - preflight passed
+          ={{ fe_vast_vast_security_hardening_protocol_security_preflight_passed | default(false) }},
+          status={{ fe_vast_vast_security_hardening_protocol_security_status | default('unknown') }}.
+        success_msg: "vast/vast_security_hardening/protocol_security: postflight validation passed."
+        quiet: true
+      tags:
+        - always
+        - postflight
+        - validation
+
+    - name: "vast/vast_security_hardening/protocol_security | Postflight | Record the successful outcome"
+      ansible.builtin.set_fact:
+        fe_vast_vast_security_hardening_protocol_security_postflight_passed: true
+        fe_vast_vast_security_hardening_protocol_security_status: "succeeded"
+      tags:
+        - always
+        - postflight
+        - validation
+
+  rescue:
+
+    - name: "vast/vast_security_hardening/protocol_security | Rescue | Capture the failing task and error detail"
+      ansible.builtin.set_fact:
+        fe_vast_vast_security_hardening_protocol_security_status: "failed"
+        fe_vast_vast_security_hardening_protocol_security_postflight_passed: false
+        fe_vast_vast_security_hardening_protocol_security_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+        fe_vast_vast_security_hardening_protocol_security_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+      tags:
+        - always
+        - rescue
+
+    - name: "vast/vast_security_hardening/protocol_security | Rescue | Report the failure"
+      ansible.builtin.debug:
+        msg: >-
+          vast/vast_security_hardening/protocol_security: FAILED at '{{ fe_vast_vast_security_hardening_protocol_security_failed_task }}' on
+          {{ inventory_hostname }} - {{ fe_vast_vast_security_hardening_protocol_security_error }}
+      tags:
+        - always
+        - rescue
+
+    - name: "vast/vast_security_hardening/protocol_security | Rescue | Re-raise the failure unless the caller opted to continue"
+      ansible.builtin.fail:
+        msg: >-
+          vast/vast_security_hardening/protocol_security failed at '{{ fe_vast_vast_security_hardening_protocol_security_failed_task }}': {{ fe_vast_vast_security_hardening_protocol_security_error }}
+      when: not (fe_validation_continue_on_error | default(false) | bool)
+      tags:
+        - always
+        - rescue
+
+  always:
+
+    - name: "vast/vast_security_hardening/protocol_security | Always | Compute the execution duration"
+      ansible.builtin.set_fact:
+        fe_vast_vast_security_hardening_protocol_security_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+        fe_vast_vast_security_hardening_protocol_security_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_vast_vast_security_hardening_protocol_security_start_epoch | default(0) | int) }}"
+      tags:
+        - always
+
+    - name: "vast/vast_security_hardening/protocol_security | Always | Publish the validation result with set_stats"
+      ansible.builtin.set_stats:
+        data:
+          fe_validation_results:
+            "vast/vast_security_hardening/protocol_security":
+              component: "vast/vast_security_hardening/protocol_security"
+              type: "role-tasks"
+              platform: "vast"
+              host: "{{ inventory_hostname }}"
+              status: "{{ fe_vast_vast_security_hardening_protocol_security_status | default('unknown') }}"
+              preflight_passed: "{{ fe_vast_vast_security_hardening_protocol_security_preflight_passed | default(false) | bool }}"
+              postflight_passed: "{{ fe_vast_vast_security_hardening_protocol_security_postflight_passed | default(false) | bool }}"
+              started_at: "{{ fe_vast_vast_security_hardening_protocol_security_started_at | default('') }}"
+              ended_at: "{{ fe_vast_vast_security_hardening_protocol_security_ended_at | default('') }}"
+              duration_seconds: "{{ fe_vast_vast_security_hardening_protocol_security_duration_seconds | default(0) | int }}"
+              failed_task: "{{ fe_vast_vast_security_hardening_protocol_security_failed_task | default('') }}"
+              error: "{{ fe_vast_vast_security_hardening_protocol_security_error | default('') }}"
+              check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+          fe_validation_executions: 1
+          fe_validation_succeeded: "{{ 1 if fe_vast_vast_security_hardening_protocol_security_status | default('') == 'succeeded' else 0 }}"
+          fe_validation_failed: "{{ 0 if fe_vast_vast_security_hardening_protocol_security_status | default('') == 'succeeded' else 1 }}"
+          fe_validation_duration_seconds: "{{ fe_vast_vast_security_hardening_protocol_security_duration_seconds | default(0) | int }}"
+          fe_validation_failed_components: >-
+            {{ [] if fe_vast_vast_security_hardening_protocol_security_status | default('') == 'succeeded' else ['vast/vast_security_hardening/protocol_security'] }}
+        aggregate: true
+        per_host: false
+      tags:
+        - always
+
+    - name: "vast/vast_security_hardening/protocol_security | Always | Mark the validation statistics as published"
+      ansible.builtin.set_fact:
+        fe_vast_vast_security_hardening_protocol_security_stats_published: true
+      tags:
+        - always

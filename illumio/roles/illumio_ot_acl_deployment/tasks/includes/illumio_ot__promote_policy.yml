@@ -11,120 +11,303 @@
 # This is gated in the calling playbook — this file should not be included
 # directly.
 
-- name: Set common PCE API headers
+# ---------------------------------------------------------------------------
+# Fourth Estate preflight / postflight validation harness
+#
+# The task file body below is wrapped in an Ansible block/rescue/always structure:
+#
+#   block   preflight validation runs first, then the original task file body, then
+#           postflight validation. Any failure transfers control to rescue.
+#   rescue  records which task failed and why, then re-raises so a failure is
+#           never silently swallowed. Set fe_validation_continue_on_error=true
+#           to record the failure and keep going instead.
+#   always  computes the run duration and publishes the outcome through
+#           ansible.builtin.set_stats, so a wrapping playbook, AWX/AAP or CI can
+#           consume the result without scraping log output.
+#
+# Published stats (see docs/VALIDATION_AND_STATS.md):
+#   fe_validation_results['illumio/illumio_ot_acl_deployment/includes/illumio_ot__promote_policy']  per-component record
+#   fe_validation_executions / _succeeded / _failed / _duration_seconds
+#   fe_validation_failed_components
+#
+# Add component-specific preflight checks without editing this file by setting
+#   fe_illumio_illumio_ot_acl_deployment_includes_illumio_ot__promote_policy_required_vars: [var_one, var_two]
+# ---------------------------------------------------------------------------
+
+- name: "illumio/illumio_ot_acl_deployment/includes/illumio_ot__promote_policy | Initialize validation state"
   ansible.builtin.set_fact:
-    illumio_headers:
-      Accept: "application/json"
-      Content-Type: "application/json"
-      X-Illumio-Org: "{{ org_id }}"
+    fe_illumio_illumio_ot_acl_deployment_includes_illumio_ot__promote_policy_start_epoch: "{{ now(fmt='%s') | int }}"
+    fe_illumio_illumio_ot_acl_deployment_includes_illumio_ot__promote_policy_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+    fe_illumio_illumio_ot_acl_deployment_includes_illumio_ot__promote_policy_status: "running"
+    fe_illumio_illumio_ot_acl_deployment_includes_illumio_ot__promote_policy_preflight_passed: false
+    fe_illumio_illumio_ot_acl_deployment_includes_illumio_ot__promote_policy_postflight_passed: false
+    fe_illumio_illumio_ot_acl_deployment_includes_illumio_ot__promote_policy_failed_task: ""
+    fe_illumio_illumio_ot_acl_deployment_includes_illumio_ot__promote_policy_error: ""
+    fe_illumio_illumio_ot_acl_deployment_includes_illumio_ot__promote_policy_stats_published: false
+  tags:
+    - always
 
-# ── Brownout / traffic impact check ──────────────────────────────────────────
-- name: Query PCE for traffic impact of pending rules (brownout check)
-  ansible.builtin.uri:
-    url: "{{ pce_url }}/api/v2/orgs/{{ org_id }}/sec_policy/pending/rule_coverage"
-    method: GET
-    user: "{{ api_user }}"
-    password: "{{ api_key }}"
-    force_basic_auth: true
-    validate_certs: "{{ verify_ssl | default(true) }}"
-    headers: "{{ illumio_headers }}"
-    return_content: true
-    status_code: [200, 404]
-  no_log: true
-  register: _brownout_result
-  when: brownout_enabled | default(true) | bool
-  ignore_errors: true
+- name: "illumio/illumio_ot_acl_deployment/includes/illumio_ot__promote_policy | Guarded execution with preflight and postflight validation"
+  block:
 
-- name: Parse brownout impact data
-  ansible.builtin.set_fact:
-    _blocked_flows: >-
-      {{
-        (_brownout_result.json.blocked_connection_count | default(0))
-        if (_brownout_result is not skipped and _brownout_result.status == 200)
-        else 0
-      }}
-  when: brownout_enabled | default(true) | bool
+    # ----------------------------- preflight --------------------
 
-- name: Display traffic impact summary
-  ansible.builtin.debug:
-    msg: |-
-      ═══ Brownout / Traffic Impact Check ═══
-      Newly blocked flows : {{ _blocked_flows | default(0) }}
-      Deny threshold      : {{ deny_threshold }}
-      {% if (_blocked_flows | default(0) | int) > (deny_threshold | int) %}
-      !! IMPACT EXCEEDS THRESHOLD — promotion will be aborted
-      {% else %}
-      Impact within threshold — safe to promote
-      {% endif %}
-  when: brownout_enabled | default(true) | bool
+    - name: "illumio/illumio_ot_acl_deployment/includes/illumio_ot__promote_policy | Preflight | Verify the control node meets the minimum ansible-core version"
+      ansible.builtin.assert:
+        that:
+          - ansible_version.full is version(fe_validation_min_ansible_version | default('2.12'), '>=')
+        fail_msg: >-
+          illumio/illumio_ot_acl_deployment/includes/illumio_ot__promote_policy: requires ansible-core
+          {{ fe_validation_min_ansible_version | default('2.12') }} or newer,
+          found {{ ansible_version.full }}.
+        success_msg: >-
+          illumio/illumio_ot_acl_deployment/includes/illumio_ot__promote_policy: ansible-core {{ ansible_version.full }} satisfies the minimum.
+        quiet: true
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: Abort promotion — blocked flows exceed deny_threshold
-  ansible.builtin.fail:
-    msg: >
-      Promotion aborted. The pending policy would block {{ _blocked_flows }} flows,
-      which exceeds the configured deny_threshold of {{ deny_threshold }}.
-      Review the pending rules and adjust, or raise deny_threshold if intentional.
-      Run without promote_policy=true to leave rules in draft for manual review.
-  when:
-    - brownout_enabled | default(true) | bool
-    - (_blocked_flows | default(0) | int) > (deny_threshold | int)
+    - name: "illumio/illumio_ot_acl_deployment/includes/illumio_ot__promote_policy | Preflight | Verify every declared required variable is defined"
+      ansible.builtin.assert:
+        that:
+          - vars[item] is defined
+        fail_msg: "illumio/illumio_ot_acl_deployment/includes/illumio_ot__promote_policy: required variable '{{ item }}' is not defined."
+        success_msg: "illumio/illumio_ot_acl_deployment/includes/illumio_ot__promote_policy: required variable '{{ item }}' is defined."
+        quiet: true
+      loop: "{{ fe_illumio_illumio_ot_acl_deployment_includes_illumio_ot__promote_policy_required_vars | default([]) }}"
+      loop_control:
+        label: "{{ item }}"
+      tags:
+        - always
+        - preflight
+        - validation
 
-# ── Promote ───────────────────────────────────────────────────────────────────
-- name: Provision pending policy to active enforcement
-  ansible.builtin.uri:
-    url: "{{ pce_url }}/api/v2/orgs/{{ org_id }}/sec_policy"
-    method: POST
-    user: "{{ api_user }}"
-    password: "{{ api_key }}"
-    force_basic_auth: true
-    validate_certs: "{{ verify_ssl | default(true) }}"
-    headers: "{{ illumio_headers }}"
-    body_format: json
-    body:
-      update_description: "{{ ot_provision_comment }}"
-    return_content: true
-    status_code: [200, 201]
-  no_log: true
-  register: _promotion_result
-  retries: 3
-  delay: 10
-  until: _promotion_result.status in [200, 201]
+    - name: "illumio/illumio_ot_acl_deployment/includes/illumio_ot__promote_policy | Preflight | Record that preflight validation passed"
+      ansible.builtin.set_fact:
+        fe_illumio_illumio_ot_acl_deployment_includes_illumio_ot__promote_policy_preflight_passed: true
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: Parse promotion response
-  ansible.builtin.set_fact:
-    _promotion_version: "{{ _promotion_result.json.version | default('unknown') }}"
-    _promotion_href: "{{ _promotion_result.json.href | default('') }}"
+    # ----------------------------- execute ----------------------
 
-- name: Save promotion artifact
-  ansible.builtin.copy:
-    dest: "{{ ot_artifacts_dir }}/acl_promotion_{{ ansible_date_time.date }}.json"
-    mode: '0640'
-    content: >-
-      {{
-        {
-          'promotion_time': ansible_date_time.iso8601,
-          'operator': ansible_user_id,
-          'pce_url': pce_url,
-          'org_id': org_id,
-          'policy_version': _promotion_version,
-          'policy_href': _promotion_href,
-          'provision_comment': ot_provision_comment,
-          'blocked_flows_at_promotion': _blocked_flows | default(0),
-          'deny_threshold': deny_threshold,
-          'acls_promoted': ot_acls_applied | default(0)
-        } | to_nice_json
-      }}
+    - name: Set common PCE API headers
+      ansible.builtin.set_fact:
+        illumio_headers:
+          Accept: "application/json"
+          Content-Type: "application/json"
+          X-Illumio-Org: "{{ org_id }}"
 
-- name: Display promotion summary
-  ansible.builtin.debug:
-    msg:
-      - "══════════════════════════════════════════════════════════════════════"
-      - " POLICY PROMOTED TO ACTIVE ENFORCEMENT"
-      - " Policy version : {{ _promotion_version }}"
-      - " Policy href    : {{ _promotion_href }}"
-      - " Promoted at    : {{ ansible_date_time.iso8601 }}"
-      - " Operator       : {{ ansible_user_id }}"
-      - " Comment        : {{ ot_provision_comment }}"
-      - "══════════════════════════════════════════════════════════════════════"
-      - " OT network traffic is NOW subject to the new rules."
-      - "══════════════════════════════════════════════════════════════════════"
+    # ── Brownout / traffic impact check ──────────────────────────────────────────
+    - name: Query PCE for traffic impact of pending rules (brownout check)
+      ansible.builtin.uri:
+        url: "{{ pce_url }}/api/v2/orgs/{{ org_id }}/sec_policy/pending/rule_coverage"
+        method: GET
+        user: "{{ api_user }}"
+        password: "{{ api_key }}"
+        force_basic_auth: true
+        validate_certs: "{{ verify_ssl | default(true) }}"
+        headers: "{{ illumio_headers }}"
+        return_content: true
+        status_code: [200, 404]
+      no_log: true
+      register: _brownout_result
+      when: brownout_enabled | default(true) | bool
+      ignore_errors: true
+
+    - name: Parse brownout impact data
+      ansible.builtin.set_fact:
+        _blocked_flows: >-
+          {{
+            (_brownout_result.json.blocked_connection_count | default(0))
+            if (_brownout_result is not skipped and _brownout_result.status == 200)
+            else 0
+          }}
+      when: brownout_enabled | default(true) | bool
+
+    - name: Display traffic impact summary
+      ansible.builtin.debug:
+        msg: |-
+          ═══ Brownout / Traffic Impact Check ═══
+          Newly blocked flows : {{ _blocked_flows | default(0) }}
+          Deny threshold      : {{ deny_threshold }}
+          {% if (_blocked_flows | default(0) | int) > (deny_threshold | int) %}
+          !! IMPACT EXCEEDS THRESHOLD — promotion will be aborted
+          {% else %}
+          Impact within threshold — safe to promote
+          {% endif %}
+      when: brownout_enabled | default(true) | bool
+
+    - name: Abort promotion — blocked flows exceed deny_threshold
+      ansible.builtin.fail:
+        msg: >
+          Promotion aborted. The pending policy would block {{ _blocked_flows }} flows,
+          which exceeds the configured deny_threshold of {{ deny_threshold }}.
+          Review the pending rules and adjust, or raise deny_threshold if intentional.
+          Run without promote_policy=true to leave rules in draft for manual review.
+      when:
+        - brownout_enabled | default(true) | bool
+        - (_blocked_flows | default(0) | int) > (deny_threshold | int)
+
+    # ── Promote ───────────────────────────────────────────────────────────────────
+    - name: Provision pending policy to active enforcement
+      ansible.builtin.uri:
+        url: "{{ pce_url }}/api/v2/orgs/{{ org_id }}/sec_policy"
+        method: POST
+        user: "{{ api_user }}"
+        password: "{{ api_key }}"
+        force_basic_auth: true
+        validate_certs: "{{ verify_ssl | default(true) }}"
+        headers: "{{ illumio_headers }}"
+        body_format: json
+        body:
+          update_description: "{{ ot_provision_comment }}"
+        return_content: true
+        status_code: [200, 201]
+      no_log: true
+      register: _promotion_result
+      retries: 3
+      delay: 10
+      until: _promotion_result.status in [200, 201]
+
+    - name: Parse promotion response
+      ansible.builtin.set_fact:
+        _promotion_version: "{{ _promotion_result.json.version | default('unknown') }}"
+        _promotion_href: "{{ _promotion_result.json.href | default('') }}"
+
+    - name: Save promotion artifact
+      ansible.builtin.copy:
+        dest: "{{ ot_artifacts_dir }}/acl_promotion_{{ ansible_date_time.date }}.json"
+        mode: '0640'
+        content: >-
+          {{
+            {
+              'promotion_time': ansible_date_time.iso8601,
+              'operator': ansible_user_id,
+              'pce_url': pce_url,
+              'org_id': org_id,
+              'policy_version': _promotion_version,
+              'policy_href': _promotion_href,
+              'provision_comment': ot_provision_comment,
+              'blocked_flows_at_promotion': _blocked_flows | default(0),
+              'deny_threshold': deny_threshold,
+              'acls_promoted': ot_acls_applied | default(0)
+            } | to_nice_json
+          }}
+
+    - name: Display promotion summary
+      ansible.builtin.debug:
+        msg:
+          - "══════════════════════════════════════════════════════════════════════"
+          - " POLICY PROMOTED TO ACTIVE ENFORCEMENT"
+          - " Policy version : {{ _promotion_version }}"
+          - " Policy href    : {{ _promotion_href }}"
+          - " Promoted at    : {{ ansible_date_time.iso8601 }}"
+          - " Operator       : {{ ansible_user_id }}"
+          - " Comment        : {{ ot_provision_comment }}"
+          - "══════════════════════════════════════════════════════════════════════"
+          - " OT network traffic is NOW subject to the new rules."
+          - "══════════════════════════════════════════════════════════════════════"
+
+    # ----------------------------- postflight -------------------
+
+    - name: "illumio/illumio_ot_acl_deployment/includes/illumio_ot__promote_policy | Postflight | Verify the guarded body ran after a passing preflight"
+      ansible.builtin.assert:
+        that:
+          - fe_illumio_illumio_ot_acl_deployment_includes_illumio_ot__promote_policy_preflight_passed | bool
+          - fe_illumio_illumio_ot_acl_deployment_includes_illumio_ot__promote_policy_status in ['running', 'succeeded']
+        fail_msg: >-
+          illumio/illumio_ot_acl_deployment/includes/illumio_ot__promote_policy: postflight validation failed - preflight passed
+          ={{ fe_illumio_illumio_ot_acl_deployment_includes_illumio_ot__promote_policy_preflight_passed | default(false) }},
+          status={{ fe_illumio_illumio_ot_acl_deployment_includes_illumio_ot__promote_policy_status | default('unknown') }}.
+        success_msg: "illumio/illumio_ot_acl_deployment/includes/illumio_ot__promote_policy: postflight validation passed."
+        quiet: true
+      tags:
+        - always
+        - postflight
+        - validation
+
+    - name: "illumio/illumio_ot_acl_deployment/includes/illumio_ot__promote_policy | Postflight | Record the successful outcome"
+      ansible.builtin.set_fact:
+        fe_illumio_illumio_ot_acl_deployment_includes_illumio_ot__promote_policy_postflight_passed: true
+        fe_illumio_illumio_ot_acl_deployment_includes_illumio_ot__promote_policy_status: "succeeded"
+      tags:
+        - always
+        - postflight
+        - validation
+
+  rescue:
+
+    - name: "illumio/illumio_ot_acl_deployment/includes/illumio_ot__promote_policy | Rescue | Capture the failing task and error detail"
+      ansible.builtin.set_fact:
+        fe_illumio_illumio_ot_acl_deployment_includes_illumio_ot__promote_policy_status: "failed"
+        fe_illumio_illumio_ot_acl_deployment_includes_illumio_ot__promote_policy_postflight_passed: false
+        fe_illumio_illumio_ot_acl_deployment_includes_illumio_ot__promote_policy_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+        fe_illumio_illumio_ot_acl_deployment_includes_illumio_ot__promote_policy_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+      tags:
+        - always
+        - rescue
+
+    - name: "illumio/illumio_ot_acl_deployment/includes/illumio_ot__promote_policy | Rescue | Report the failure"
+      ansible.builtin.debug:
+        msg: >-
+          illumio/illumio_ot_acl_deployment/includes/illumio_ot__promote_policy: FAILED at '{{ fe_illumio_illumio_ot_acl_deployment_includes_illumio_ot__promote_policy_failed_task }}' on
+          {{ inventory_hostname }} - {{ fe_illumio_illumio_ot_acl_deployment_includes_illumio_ot__promote_policy_error }}
+      tags:
+        - always
+        - rescue
+
+    - name: "illumio/illumio_ot_acl_deployment/includes/illumio_ot__promote_policy | Rescue | Re-raise the failure unless the caller opted to continue"
+      ansible.builtin.fail:
+        msg: >-
+          illumio/illumio_ot_acl_deployment/includes/illumio_ot__promote_policy failed at '{{ fe_illumio_illumio_ot_acl_deployment_includes_illumio_ot__promote_policy_failed_task }}': {{ fe_illumio_illumio_ot_acl_deployment_includes_illumio_ot__promote_policy_error }}
+      when: not (fe_validation_continue_on_error | default(false) | bool)
+      tags:
+        - always
+        - rescue
+
+  always:
+
+    - name: "illumio/illumio_ot_acl_deployment/includes/illumio_ot__promote_policy | Always | Compute the execution duration"
+      ansible.builtin.set_fact:
+        fe_illumio_illumio_ot_acl_deployment_includes_illumio_ot__promote_policy_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+        fe_illumio_illumio_ot_acl_deployment_includes_illumio_ot__promote_policy_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_illumio_illumio_ot_acl_deployment_includes_illumio_ot__promote_policy_start_epoch | default(0) | int) }}"
+      tags:
+        - always
+
+    - name: "illumio/illumio_ot_acl_deployment/includes/illumio_ot__promote_policy | Always | Publish the validation result with set_stats"
+      ansible.builtin.set_stats:
+        data:
+          fe_validation_results:
+            "illumio/illumio_ot_acl_deployment/includes/illumio_ot__promote_policy":
+              component: "illumio/illumio_ot_acl_deployment/includes/illumio_ot__promote_policy"
+              type: "role-tasks"
+              platform: "illumio"
+              host: "{{ inventory_hostname }}"
+              status: "{{ fe_illumio_illumio_ot_acl_deployment_includes_illumio_ot__promote_policy_status | default('unknown') }}"
+              preflight_passed: "{{ fe_illumio_illumio_ot_acl_deployment_includes_illumio_ot__promote_policy_preflight_passed | default(false) | bool }}"
+              postflight_passed: "{{ fe_illumio_illumio_ot_acl_deployment_includes_illumio_ot__promote_policy_postflight_passed | default(false) | bool }}"
+              started_at: "{{ fe_illumio_illumio_ot_acl_deployment_includes_illumio_ot__promote_policy_started_at | default('') }}"
+              ended_at: "{{ fe_illumio_illumio_ot_acl_deployment_includes_illumio_ot__promote_policy_ended_at | default('') }}"
+              duration_seconds: "{{ fe_illumio_illumio_ot_acl_deployment_includes_illumio_ot__promote_policy_duration_seconds | default(0) | int }}"
+              failed_task: "{{ fe_illumio_illumio_ot_acl_deployment_includes_illumio_ot__promote_policy_failed_task | default('') }}"
+              error: "{{ fe_illumio_illumio_ot_acl_deployment_includes_illumio_ot__promote_policy_error | default('') }}"
+              check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+          fe_validation_executions: 1
+          fe_validation_succeeded: "{{ 1 if fe_illumio_illumio_ot_acl_deployment_includes_illumio_ot__promote_policy_status | default('') == 'succeeded' else 0 }}"
+          fe_validation_failed: "{{ 0 if fe_illumio_illumio_ot_acl_deployment_includes_illumio_ot__promote_policy_status | default('') == 'succeeded' else 1 }}"
+          fe_validation_duration_seconds: "{{ fe_illumio_illumio_ot_acl_deployment_includes_illumio_ot__promote_policy_duration_seconds | default(0) | int }}"
+          fe_validation_failed_components: >-
+            {{ [] if fe_illumio_illumio_ot_acl_deployment_includes_illumio_ot__promote_policy_status | default('') == 'succeeded' else ['illumio/illumio_ot_acl_deployment/includes/illumio_ot__promote_policy'] }}
+        aggregate: true
+        per_host: false
+      tags:
+        - always
+
+    - name: "illumio/illumio_ot_acl_deployment/includes/illumio_ot__promote_policy | Always | Mark the validation statistics as published"
+      ansible.builtin.set_fact:
+        fe_illumio_illumio_ot_acl_deployment_includes_illumio_ot__promote_policy_stats_published: true
+      tags:
+        - always

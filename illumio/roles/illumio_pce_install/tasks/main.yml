@@ -3,91 +3,274 @@
 # Illumio Policy Compute Engine (PCE) Installation Role
 # Supports: RHEL/CentOS 7/8/9, Multi-node HA clusters
 
-- name: Validate PCE installation prerequisites
-  include_tasks: prerequisites.yml
-  tags:
-    - illumio
-    - pce
-    - prerequisites
+# ---------------------------------------------------------------------------
+# Fourth Estate preflight / postflight validation harness
+#
+# The task file body below is wrapped in an Ansible block/rescue/always structure:
+#
+#   block   preflight validation runs first, then the original task file body, then
+#           postflight validation. Any failure transfers control to rescue.
+#   rescue  records which task failed and why, then re-raises so a failure is
+#           never silently swallowed. Set fe_validation_continue_on_error=true
+#           to record the failure and keep going instead.
+#   always  computes the run duration and publishes the outcome through
+#           ansible.builtin.set_stats, so a wrapping playbook, AWX/AAP or CI can
+#           consume the result without scraping log output.
+#
+# Published stats (see docs/VALIDATION_AND_STATS.md):
+#   fe_validation_results['illumio/illumio_pce_install']  per-component record
+#   fe_validation_executions / _succeeded / _failed / _duration_seconds
+#   fe_validation_failed_components
+#
+# Add component-specific preflight checks without editing this file by setting
+#   fe_illumio_illumio_pce_install_required_vars: [var_one, var_two]
+# ---------------------------------------------------------------------------
 
-- name: Configure system requirements
-  include_tasks: system_config.yml
+- name: "illumio/illumio_pce_install | Initialize validation state"
+  ansible.builtin.set_fact:
+    fe_illumio_illumio_pce_install_start_epoch: "{{ now(fmt='%s') | int }}"
+    fe_illumio_illumio_pce_install_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+    fe_illumio_illumio_pce_install_status: "running"
+    fe_illumio_illumio_pce_install_preflight_passed: false
+    fe_illumio_illumio_pce_install_postflight_passed: false
+    fe_illumio_illumio_pce_install_failed_task: ""
+    fe_illumio_illumio_pce_install_error: ""
+    fe_illumio_illumio_pce_install_stats_published: false
   tags:
-    - illumio
-    - pce
-    - system
+    - always
 
-- name: Install PostgreSQL for PCE
-  include_tasks: database.yml
-  when: illumio_pce_install_database | bool
-  tags:
-    - illumio
-    - pce
-    - database
+- name: "illumio/illumio_pce_install | Guarded execution with preflight and postflight validation"
+  block:
 
-- name: Install Illumio PCE packages
-  include_tasks: install_pce.yml
-  tags:
-    - illumio
-    - pce
-    - install
+    # ----------------------------- preflight --------------------
 
-- name: Configure PCE cluster (HA mode)
-  include_tasks: cluster_setup.yml
-  when: illumio_pce_cluster_mode | bool
-  tags:
-    - illumio
-    - pce
-    - cluster
+    - name: "illumio/illumio_pce_install | Preflight | Verify the control node meets the minimum ansible-core version"
+      ansible.builtin.assert:
+        that:
+          - ansible_version.full is version(fe_validation_min_ansible_version | default('2.12'), '>=')
+        fail_msg: >-
+          illumio/illumio_pce_install: requires ansible-core
+          {{ fe_validation_min_ansible_version | default('2.12') }} or newer,
+          found {{ ansible_version.full }}.
+        success_msg: >-
+          illumio/illumio_pce_install: ansible-core {{ ansible_version.full }} satisfies the minimum.
+        quiet: true
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: Configure SSL/TLS certificates
-  include_tasks: certificates.yml
-  tags:
-    - illumio
-    - pce
-    - certificates
+    - name: "illumio/illumio_pce_install | Preflight | Verify every declared required variable is defined"
+      ansible.builtin.assert:
+        that:
+          - vars[item] is defined
+        fail_msg: "illumio/illumio_pce_install: required variable '{{ item }}' is not defined."
+        success_msg: "illumio/illumio_pce_install: required variable '{{ item }}' is defined."
+        quiet: true
+      loop: "{{ fe_illumio_illumio_pce_install_required_vars | default([]) }}"
+      loop_control:
+        label: "{{ item }}"
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: Configure load balancer
-  include_tasks: load_balancer.yml
-  when: illumio_pce_use_loadbalancer | bool
-  tags:
-    - illumio
-    - pce
-    - loadbalancer
+    - name: "illumio/illumio_pce_install | Preflight | Record that preflight validation passed"
+      ansible.builtin.set_fact:
+        fe_illumio_illumio_pce_install_preflight_passed: true
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: Configure firewall rules
-  include_tasks: firewall.yml
-  tags:
-    - illumio
-    - pce
-    - firewall
+    # ----------------------------- execute ----------------------
 
-- name: Initialize PCE
-  include_tasks: initialize.yml
-  tags:
-    - illumio
-    - pce
-    - initialize
+    - name: Validate PCE installation prerequisites
+      include_tasks: prerequisites.yml
+      tags:
+        - illumio
+        - pce
+        - prerequisites
 
-- name: Activate PCE license
-  include_tasks: license.yml
-  when: illumio_pce_license_file is defined
-  tags:
-    - illumio
-    - pce
-    - license
+    - name: Configure system requirements
+      include_tasks: system_config.yml
+      tags:
+        - illumio
+        - pce
+        - system
 
-- name: Configure SELinux for PCE
-  include_tasks: selinux.yml
-  when: ansible_selinux.status == "enabled"
-  tags:
-    - illumio
-    - pce
-    - selinux
+    - name: Install PostgreSQL for PCE
+      include_tasks: database.yml
+      when: illumio_pce_install_database | bool
+      tags:
+        - illumio
+        - pce
+        - database
 
-- name: Verify PCE installation
-  include_tasks: verify.yml
-  tags:
-    - illumio
-    - pce
-    - verify
+    - name: Install Illumio PCE packages
+      include_tasks: install_pce.yml
+      tags:
+        - illumio
+        - pce
+        - install
+
+    - name: Configure PCE cluster (HA mode)
+      include_tasks: cluster_setup.yml
+      when: illumio_pce_cluster_mode | bool
+      tags:
+        - illumio
+        - pce
+        - cluster
+
+    - name: Configure SSL/TLS certificates
+      include_tasks: certificates.yml
+      tags:
+        - illumio
+        - pce
+        - certificates
+
+    - name: Configure load balancer
+      include_tasks: load_balancer.yml
+      when: illumio_pce_use_loadbalancer | bool
+      tags:
+        - illumio
+        - pce
+        - loadbalancer
+
+    - name: Configure firewall rules
+      include_tasks: firewall.yml
+      tags:
+        - illumio
+        - pce
+        - firewall
+
+    - name: Initialize PCE
+      include_tasks: initialize.yml
+      tags:
+        - illumio
+        - pce
+        - initialize
+
+    - name: Activate PCE license
+      include_tasks: license.yml
+      when: illumio_pce_license_file is defined
+      tags:
+        - illumio
+        - pce
+        - license
+
+    - name: Configure SELinux for PCE
+      include_tasks: selinux.yml
+      when: ansible_selinux.status == "enabled"
+      tags:
+        - illumio
+        - pce
+        - selinux
+
+    - name: Verify PCE installation
+      include_tasks: verify.yml
+      tags:
+        - illumio
+        - pce
+        - verify
+
+    # ----------------------------- postflight -------------------
+
+    - name: "illumio/illumio_pce_install | Postflight | Verify the guarded body ran after a passing preflight"
+      ansible.builtin.assert:
+        that:
+          - fe_illumio_illumio_pce_install_preflight_passed | bool
+          - fe_illumio_illumio_pce_install_status in ['running', 'succeeded']
+        fail_msg: >-
+          illumio/illumio_pce_install: postflight validation failed - preflight passed
+          ={{ fe_illumio_illumio_pce_install_preflight_passed | default(false) }},
+          status={{ fe_illumio_illumio_pce_install_status | default('unknown') }}.
+        success_msg: "illumio/illumio_pce_install: postflight validation passed."
+        quiet: true
+      tags:
+        - always
+        - postflight
+        - validation
+
+    - name: "illumio/illumio_pce_install | Postflight | Record the successful outcome"
+      ansible.builtin.set_fact:
+        fe_illumio_illumio_pce_install_postflight_passed: true
+        fe_illumio_illumio_pce_install_status: "succeeded"
+      tags:
+        - always
+        - postflight
+        - validation
+
+  rescue:
+
+    - name: "illumio/illumio_pce_install | Rescue | Capture the failing task and error detail"
+      ansible.builtin.set_fact:
+        fe_illumio_illumio_pce_install_status: "failed"
+        fe_illumio_illumio_pce_install_postflight_passed: false
+        fe_illumio_illumio_pce_install_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+        fe_illumio_illumio_pce_install_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+      tags:
+        - always
+        - rescue
+
+    - name: "illumio/illumio_pce_install | Rescue | Report the failure"
+      ansible.builtin.debug:
+        msg: >-
+          illumio/illumio_pce_install: FAILED at '{{ fe_illumio_illumio_pce_install_failed_task }}' on
+          {{ inventory_hostname }} - {{ fe_illumio_illumio_pce_install_error }}
+      tags:
+        - always
+        - rescue
+
+    - name: "illumio/illumio_pce_install | Rescue | Re-raise the failure unless the caller opted to continue"
+      ansible.builtin.fail:
+        msg: >-
+          illumio/illumio_pce_install failed at '{{ fe_illumio_illumio_pce_install_failed_task }}': {{ fe_illumio_illumio_pce_install_error }}
+      when: not (fe_validation_continue_on_error | default(false) | bool)
+      tags:
+        - always
+        - rescue
+
+  always:
+
+    - name: "illumio/illumio_pce_install | Always | Compute the execution duration"
+      ansible.builtin.set_fact:
+        fe_illumio_illumio_pce_install_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+        fe_illumio_illumio_pce_install_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_illumio_illumio_pce_install_start_epoch | default(0) | int) }}"
+      tags:
+        - always
+
+    - name: "illumio/illumio_pce_install | Always | Publish the validation result with set_stats"
+      ansible.builtin.set_stats:
+        data:
+          fe_validation_results:
+            "illumio/illumio_pce_install":
+              component: "illumio/illumio_pce_install"
+              type: "role"
+              platform: "illumio"
+              host: "{{ inventory_hostname }}"
+              status: "{{ fe_illumio_illumio_pce_install_status | default('unknown') }}"
+              preflight_passed: "{{ fe_illumio_illumio_pce_install_preflight_passed | default(false) | bool }}"
+              postflight_passed: "{{ fe_illumio_illumio_pce_install_postflight_passed | default(false) | bool }}"
+              started_at: "{{ fe_illumio_illumio_pce_install_started_at | default('') }}"
+              ended_at: "{{ fe_illumio_illumio_pce_install_ended_at | default('') }}"
+              duration_seconds: "{{ fe_illumio_illumio_pce_install_duration_seconds | default(0) | int }}"
+              failed_task: "{{ fe_illumio_illumio_pce_install_failed_task | default('') }}"
+              error: "{{ fe_illumio_illumio_pce_install_error | default('') }}"
+              check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+          fe_validation_executions: 1
+          fe_validation_succeeded: "{{ 1 if fe_illumio_illumio_pce_install_status | default('') == 'succeeded' else 0 }}"
+          fe_validation_failed: "{{ 0 if fe_illumio_illumio_pce_install_status | default('') == 'succeeded' else 1 }}"
+          fe_validation_duration_seconds: "{{ fe_illumio_illumio_pce_install_duration_seconds | default(0) | int }}"
+          fe_validation_failed_components: >-
+            {{ [] if fe_illumio_illumio_pce_install_status | default('') == 'succeeded' else ['illumio/illumio_pce_install'] }}
+        aggregate: true
+        per_host: false
+      tags:
+        - always
+
+    - name: "illumio/illumio_pce_install | Always | Mark the validation statistics as published"
+      ansible.builtin.set_fact:
+        fe_illumio_illumio_pce_install_stats_published: true
+      tags:
+        - always

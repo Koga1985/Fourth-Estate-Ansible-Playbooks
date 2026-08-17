@@ -1,120 +1,303 @@
 ---
 # Prerequisites validation for PCE installation
 
-- name: Check if running on supported OS
-  assert:
-    that:
-      - ansible_os_family == "RedHat"
-      - ansible_distribution_major_version in ["7", "8", "9"]
-    fail_msg: "Illumio PCE requires RHEL/CentOS 7, 8, or 9"
-    success_msg: "Operating system check passed"
+# ---------------------------------------------------------------------------
+# Fourth Estate preflight / postflight validation harness
+#
+# The task file body below is wrapped in an Ansible block/rescue/always structure:
+#
+#   block   preflight validation runs first, then the original task file body, then
+#           postflight validation. Any failure transfers control to rescue.
+#   rescue  records which task failed and why, then re-raises so a failure is
+#           never silently swallowed. Set fe_validation_continue_on_error=true
+#           to record the failure and keep going instead.
+#   always  computes the run duration and publishes the outcome through
+#           ansible.builtin.set_stats, so a wrapping playbook, AWX/AAP or CI can
+#           consume the result without scraping log output.
+#
+# Published stats (see docs/VALIDATION_AND_STATS.md):
+#   fe_validation_results['illumio/illumio_pce_install/prerequisites']  per-component record
+#   fe_validation_executions / _succeeded / _failed / _duration_seconds
+#   fe_validation_failed_components
+#
+# Add component-specific preflight checks without editing this file by setting
+#   fe_illumio_illumio_pce_install_prerequisites_required_vars: [var_one, var_two]
+# ---------------------------------------------------------------------------
 
-- name: Check system resources - CPU
-  assert:
-    that:
-      - ansible_processor_vcpus >= illumio_pce_min_cpu
-    fail_msg: "Minimum {{ illumio_pce_min_cpu }} vCPUs required, found {{ ansible_processor_vcpus }}"
-    success_msg: "CPU requirements met"
+- name: "illumio/illumio_pce_install/prerequisites | Initialize validation state"
+  ansible.builtin.set_fact:
+    fe_illumio_illumio_pce_install_prerequisites_start_epoch: "{{ now(fmt='%s') | int }}"
+    fe_illumio_illumio_pce_install_prerequisites_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+    fe_illumio_illumio_pce_install_prerequisites_status: "running"
+    fe_illumio_illumio_pce_install_prerequisites_preflight_passed: false
+    fe_illumio_illumio_pce_install_prerequisites_postflight_passed: false
+    fe_illumio_illumio_pce_install_prerequisites_failed_task: ""
+    fe_illumio_illumio_pce_install_prerequisites_error: ""
+    fe_illumio_illumio_pce_install_prerequisites_stats_published: false
+  tags:
+    - always
 
-- name: Check system resources - Memory
-  assert:
-    that:
-      - ansible_memtotal_mb >= illumio_pce_min_memory_mb
-    fail_msg: "Minimum {{ illumio_pce_min_memory_mb }}MB RAM required, found {{ ansible_memtotal_mb }}MB"
-    success_msg: "Memory requirements met"
+- name: "illumio/illumio_pce_install/prerequisites | Guarded execution with preflight and postflight validation"
+  block:
 
-- name: Check disk space for PCE data directory
-  shell: df -m {{ illumio_pce_data_dir | dirname }} | tail -1 | awk '{print $4}'
-  register: pce_data_disk_space
-  changed_when: false
+    # ----------------------------- preflight --------------------
 
-- name: Validate disk space
-  assert:
-    that:
-      - pce_data_disk_space.stdout | int >= illumio_pce_min_disk_gb * 1024
-    fail_msg: "Minimum {{ illumio_pce_min_disk_gb }}GB disk space required"
-    success_msg: "Disk space requirements met"
+    - name: "illumio/illumio_pce_install/prerequisites | Preflight | Verify the control node meets the minimum ansible-core version"
+      ansible.builtin.assert:
+        that:
+          - ansible_version.full is version(fe_validation_min_ansible_version | default('2.12'), '>=')
+        fail_msg: >-
+          illumio/illumio_pce_install/prerequisites: requires ansible-core
+          {{ fe_validation_min_ansible_version | default('2.12') }} or newer,
+          found {{ ansible_version.full }}.
+        success_msg: >-
+          illumio/illumio_pce_install/prerequisites: ansible-core {{ ansible_version.full }} satisfies the minimum.
+        quiet: true
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: Check if PCE is already installed
-  stat:
-    path: /opt/illumio-pce
-  register: pce_install_check
+    - name: "illumio/illumio_pce_install/prerequisites | Preflight | Verify every declared required variable is defined"
+      ansible.builtin.assert:
+        that:
+          - vars[item] is defined
+        fail_msg: "illumio/illumio_pce_install/prerequisites: required variable '{{ item }}' is not defined."
+        success_msg: "illumio/illumio_pce_install/prerequisites: required variable '{{ item }}' is defined."
+        quiet: true
+      loop: "{{ fe_illumio_illumio_pce_install_prerequisites_required_vars | default([]) }}"
+      loop_control:
+        label: "{{ item }}"
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: Get current PCE version if installed
-  shell: /opt/illumio-pce/illumio-pce-ctl version 2>/dev/null || echo "not_installed"
-  register: current_pce_version
-  changed_when: false
-  when: pce_install_check.stat.exists
+    - name: "illumio/illumio_pce_install/prerequisites | Preflight | Record that preflight validation passed"
+      ansible.builtin.set_fact:
+        fe_illumio_illumio_pce_install_prerequisites_preflight_passed: true
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: Check network connectivity to Illumio repositories
-  uri:
-    url: "{{ illumio_pce_repo_url }}"
-    method: HEAD
-    timeout: 10
-  register: repo_check
-  failed_when: false
-  when: illumio_pce_online_install | bool
+    # ----------------------------- execute ----------------------
 
-- name: Verify hostname resolution
-  command: hostname -f
-  register: hostname_fqdn
-  changed_when: false
+    - name: Check if running on supported OS
+      assert:
+        that:
+          - ansible_os_family == "RedHat"
+          - ansible_distribution_major_version in ["7", "8", "9"]
+        fail_msg: "Illumio PCE requires RHEL/CentOS 7, 8, or 9"
+        success_msg: "Operating system check passed"
 
-- name: Validate FQDN format
-  assert:
-    that:
-      - hostname_fqdn.stdout is match("^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$")
-    fail_msg: "Invalid FQDN format: {{ hostname_fqdn.stdout }}"
-    success_msg: "FQDN validation passed"
+    - name: Check system resources - CPU
+      assert:
+        that:
+          - ansible_processor_vcpus >= illumio_pce_min_cpu
+        fail_msg: "Minimum {{ illumio_pce_min_cpu }} vCPUs required, found {{ ansible_processor_vcpus }}"
+        success_msg: "CPU requirements met"
 
-- name: Check required ports availability
-  wait_for:
-    port: "{{ item }}"
-    state: stopped
-    timeout: 1
-  loop: "{{ illumio_pce_required_ports }}"
-  register: port_check
-  failed_when: false
+    - name: Check system resources - Memory
+      assert:
+        that:
+          - ansible_memtotal_mb >= illumio_pce_min_memory_mb
+        fail_msg: "Minimum {{ illumio_pce_min_memory_mb }}MB RAM required, found {{ ansible_memtotal_mb }}MB"
+        success_msg: "Memory requirements met"
 
-- name: Display port check results
-  debug:
-    msg: "Port {{ item.item }} is {{ 'available' if item.state == 'stopped' else 'in use' }}"
-  loop: "{{ port_check.results }}"
-  when: not item.failed
+    - name: Check disk space for PCE data directory
+      shell: df -m {{ illumio_pce_data_dir | dirname }} | tail -1 | awk '{print $4}'
+      register: pce_data_disk_space
+      changed_when: false
 
-- name: Check if PostgreSQL is installed (for database node)
-  shell: which psql
-  register: psql_check
-  failed_when: false
-  changed_when: false
-  when: illumio_pce_install_database | bool
+    - name: Validate disk space
+      assert:
+        that:
+          - pce_data_disk_space.stdout | int >= illumio_pce_min_disk_gb * 1024
+        fail_msg: "Minimum {{ illumio_pce_min_disk_gb }}GB disk space required"
+        success_msg: "Disk space requirements met"
 
-- name: Create prerequisite check report
-  copy:
-    content: |
-      Illumio PCE Installation Prerequisites Check
-      ============================================
-      Date: {{ ansible_date_time.iso8601 }}
-      Hostname: {{ ansible_hostname }}
-      FQDN: {{ hostname_fqdn.stdout }}
+    - name: Check if PCE is already installed
+      stat:
+        path: /opt/illumio-pce
+      register: pce_install_check
 
-      System Resources:
-      - OS: {{ ansible_distribution }} {{ ansible_distribution_version }}
-      - CPUs: {{ ansible_processor_vcpus }}
-      - Memory: {{ ansible_memtotal_mb }}MB
-      - Disk Space: {{ pce_data_disk_space.stdout }}MB
+    - name: Get current PCE version if installed
+      shell: /opt/illumio-pce/illumio-pce-ctl version 2>/dev/null || echo "not_installed"
+      register: current_pce_version
+      changed_when: false
+      when: pce_install_check.stat.exists
 
-      PCE Installation Status:
-      - PCE Installed: {{ pce_install_check.stat.exists | default(false) }}
-      {% if pce_install_check.stat.exists and current_pce_version is defined %}
-      - Current Version: {{ current_pce_version.stdout }}
-      {% endif %}
+    - name: Check network connectivity to Illumio repositories
+      uri:
+        url: "{{ illumio_pce_repo_url }}"
+        method: HEAD
+        timeout: 10
+      register: repo_check
+      failed_when: false
+      when: illumio_pce_online_install | bool
 
-      Network:
-      - Repository Access: {{ 'OK' if (repo_check.status | default(0)) == 200 else 'FAILED' }}
+    - name: Verify hostname resolution
+      command: hostname -f
+      register: hostname_fqdn
+      changed_when: false
 
-      All checks passed successfully.
-    dest: /tmp/illumio_pce_prerequisites_{{ ansible_date_time.epoch }}.txt
-    mode: '0644'
-  delegate_to: localhost
-  become: false
+    - name: Validate FQDN format
+      assert:
+        that:
+          - hostname_fqdn.stdout is match("^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$")
+        fail_msg: "Invalid FQDN format: {{ hostname_fqdn.stdout }}"
+        success_msg: "FQDN validation passed"
+
+    - name: Check required ports availability
+      wait_for:
+        port: "{{ item }}"
+        state: stopped
+        timeout: 1
+      loop: "{{ illumio_pce_required_ports }}"
+      register: port_check
+      failed_when: false
+
+    - name: Display port check results
+      debug:
+        msg: "Port {{ item.item }} is {{ 'available' if item.state == 'stopped' else 'in use' }}"
+      loop: "{{ port_check.results }}"
+      when: not item.failed
+
+    - name: Check if PostgreSQL is installed (for database node)
+      shell: which psql
+      register: psql_check
+      failed_when: false
+      changed_when: false
+      when: illumio_pce_install_database | bool
+
+    - name: Create prerequisite check report
+      copy:
+        content: |
+          Illumio PCE Installation Prerequisites Check
+          ============================================
+          Date: {{ ansible_date_time.iso8601 }}
+          Hostname: {{ ansible_hostname }}
+          FQDN: {{ hostname_fqdn.stdout }}
+
+          System Resources:
+          - OS: {{ ansible_distribution }} {{ ansible_distribution_version }}
+          - CPUs: {{ ansible_processor_vcpus }}
+          - Memory: {{ ansible_memtotal_mb }}MB
+          - Disk Space: {{ pce_data_disk_space.stdout }}MB
+
+          PCE Installation Status:
+          - PCE Installed: {{ pce_install_check.stat.exists | default(false) }}
+          {% if pce_install_check.stat.exists and current_pce_version is defined %}
+          - Current Version: {{ current_pce_version.stdout }}
+          {% endif %}
+
+          Network:
+          - Repository Access: {{ 'OK' if (repo_check.status | default(0)) == 200 else 'FAILED' }}
+
+          All checks passed successfully.
+        dest: /tmp/illumio_pce_prerequisites_{{ ansible_date_time.epoch }}.txt
+        mode: '0644'
+      delegate_to: localhost
+      become: false
+
+    # ----------------------------- postflight -------------------
+
+    - name: "illumio/illumio_pce_install/prerequisites | Postflight | Verify the guarded body ran after a passing preflight"
+      ansible.builtin.assert:
+        that:
+          - fe_illumio_illumio_pce_install_prerequisites_preflight_passed | bool
+          - fe_illumio_illumio_pce_install_prerequisites_status in ['running', 'succeeded']
+        fail_msg: >-
+          illumio/illumio_pce_install/prerequisites: postflight validation failed - preflight passed
+          ={{ fe_illumio_illumio_pce_install_prerequisites_preflight_passed | default(false) }},
+          status={{ fe_illumio_illumio_pce_install_prerequisites_status | default('unknown') }}.
+        success_msg: "illumio/illumio_pce_install/prerequisites: postflight validation passed."
+        quiet: true
+      tags:
+        - always
+        - postflight
+        - validation
+
+    - name: "illumio/illumio_pce_install/prerequisites | Postflight | Record the successful outcome"
+      ansible.builtin.set_fact:
+        fe_illumio_illumio_pce_install_prerequisites_postflight_passed: true
+        fe_illumio_illumio_pce_install_prerequisites_status: "succeeded"
+      tags:
+        - always
+        - postflight
+        - validation
+
+  rescue:
+
+    - name: "illumio/illumio_pce_install/prerequisites | Rescue | Capture the failing task and error detail"
+      ansible.builtin.set_fact:
+        fe_illumio_illumio_pce_install_prerequisites_status: "failed"
+        fe_illumio_illumio_pce_install_prerequisites_postflight_passed: false
+        fe_illumio_illumio_pce_install_prerequisites_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+        fe_illumio_illumio_pce_install_prerequisites_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+      tags:
+        - always
+        - rescue
+
+    - name: "illumio/illumio_pce_install/prerequisites | Rescue | Report the failure"
+      ansible.builtin.debug:
+        msg: >-
+          illumio/illumio_pce_install/prerequisites: FAILED at '{{ fe_illumio_illumio_pce_install_prerequisites_failed_task }}' on
+          {{ inventory_hostname }} - {{ fe_illumio_illumio_pce_install_prerequisites_error }}
+      tags:
+        - always
+        - rescue
+
+    - name: "illumio/illumio_pce_install/prerequisites | Rescue | Re-raise the failure unless the caller opted to continue"
+      ansible.builtin.fail:
+        msg: >-
+          illumio/illumio_pce_install/prerequisites failed at '{{ fe_illumio_illumio_pce_install_prerequisites_failed_task }}': {{ fe_illumio_illumio_pce_install_prerequisites_error }}
+      when: not (fe_validation_continue_on_error | default(false) | bool)
+      tags:
+        - always
+        - rescue
+
+  always:
+
+    - name: "illumio/illumio_pce_install/prerequisites | Always | Compute the execution duration"
+      ansible.builtin.set_fact:
+        fe_illumio_illumio_pce_install_prerequisites_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+        fe_illumio_illumio_pce_install_prerequisites_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_illumio_illumio_pce_install_prerequisites_start_epoch | default(0) | int) }}"
+      tags:
+        - always
+
+    - name: "illumio/illumio_pce_install/prerequisites | Always | Publish the validation result with set_stats"
+      ansible.builtin.set_stats:
+        data:
+          fe_validation_results:
+            "illumio/illumio_pce_install/prerequisites":
+              component: "illumio/illumio_pce_install/prerequisites"
+              type: "role-tasks"
+              platform: "illumio"
+              host: "{{ inventory_hostname }}"
+              status: "{{ fe_illumio_illumio_pce_install_prerequisites_status | default('unknown') }}"
+              preflight_passed: "{{ fe_illumio_illumio_pce_install_prerequisites_preflight_passed | default(false) | bool }}"
+              postflight_passed: "{{ fe_illumio_illumio_pce_install_prerequisites_postflight_passed | default(false) | bool }}"
+              started_at: "{{ fe_illumio_illumio_pce_install_prerequisites_started_at | default('') }}"
+              ended_at: "{{ fe_illumio_illumio_pce_install_prerequisites_ended_at | default('') }}"
+              duration_seconds: "{{ fe_illumio_illumio_pce_install_prerequisites_duration_seconds | default(0) | int }}"
+              failed_task: "{{ fe_illumio_illumio_pce_install_prerequisites_failed_task | default('') }}"
+              error: "{{ fe_illumio_illumio_pce_install_prerequisites_error | default('') }}"
+              check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+          fe_validation_executions: 1
+          fe_validation_succeeded: "{{ 1 if fe_illumio_illumio_pce_install_prerequisites_status | default('') == 'succeeded' else 0 }}"
+          fe_validation_failed: "{{ 0 if fe_illumio_illumio_pce_install_prerequisites_status | default('') == 'succeeded' else 1 }}"
+          fe_validation_duration_seconds: "{{ fe_illumio_illumio_pce_install_prerequisites_duration_seconds | default(0) | int }}"
+          fe_validation_failed_components: >-
+            {{ [] if fe_illumio_illumio_pce_install_prerequisites_status | default('') == 'succeeded' else ['illumio/illumio_pce_install/prerequisites'] }}
+        aggregate: true
+        per_host: false
+      tags:
+        - always
+
+    - name: "illumio/illumio_pce_install/prerequisites | Always | Mark the validation statistics as published"
+      ansible.builtin.set_fact:
+        fe_illumio_illumio_pce_install_prerequisites_stats_published: true
+      tags:
+        - always

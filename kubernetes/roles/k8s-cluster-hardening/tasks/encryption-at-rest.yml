@@ -2,124 +2,307 @@
 # Encryption at Rest Configuration
 # STIG V-242462, V-242463 and NIST SP 800-190
 
-- name: Generate encryption key if not exists
-  ansible.builtin.shell: |
-    head -c 32 /dev/urandom | base64
-  register: encryption_key
-  changed_when: false
-  no_log: true
+# ---------------------------------------------------------------------------
+# Fourth Estate preflight / postflight validation harness
+#
+# The task file body below is wrapped in an Ansible block/rescue/always structure:
+#
+#   block   preflight validation runs first, then the original task file body, then
+#           postflight validation. Any failure transfers control to rescue.
+#   rescue  records which task failed and why, then re-raises so a failure is
+#           never silently swallowed. Set fe_validation_continue_on_error=true
+#           to record the failure and keep going instead.
+#   always  computes the run duration and publishes the outcome through
+#           ansible.builtin.set_stats, so a wrapping playbook, AWX/AAP or CI can
+#           consume the result without scraping log output.
+#
+# Published stats (see docs/VALIDATION_AND_STATS.md):
+#   fe_validation_results['kubernetes/k8s-cluster-hardening/encryption-at-rest']  per-component record
+#   fe_validation_executions / _succeeded / _failed / _duration_seconds
+#   fe_validation_failed_components
+#
+# Add component-specific preflight checks without editing this file by setting
+#   fe_kubernetes_k8s_cluster_hardening_encryption_at_rest_required_vars: [var_one, var_two]
+# ---------------------------------------------------------------------------
 
-- name: Deploy encryption configuration
-  ansible.builtin.template:
-    src: encryption-config.yaml.j2
-    dest: "{{ k8s_encryption_provider_config }}"
-    owner: root
-    group: root
-    mode: '0600'
-    backup: true
-  notify: restart kube-apiserver
+- name: "kubernetes/k8s-cluster-hardening/encryption-at-rest | Initialize validation state"
+  ansible.builtin.set_fact:
+    fe_kubernetes_k8s_cluster_hardening_encryption_at_rest_start_epoch: "{{ now(fmt='%s') | int }}"
+    fe_kubernetes_k8s_cluster_hardening_encryption_at_rest_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+    fe_kubernetes_k8s_cluster_hardening_encryption_at_rest_status: "running"
+    fe_kubernetes_k8s_cluster_hardening_encryption_at_rest_preflight_passed: false
+    fe_kubernetes_k8s_cluster_hardening_encryption_at_rest_postflight_passed: false
+    fe_kubernetes_k8s_cluster_hardening_encryption_at_rest_failed_task: ""
+    fe_kubernetes_k8s_cluster_hardening_encryption_at_rest_error: ""
+    fe_kubernetes_k8s_cluster_hardening_encryption_at_rest_stats_published: false
+  tags:
+    - always
 
-- name: Verify encryption config file permissions (STIG V-242462)
-  ansible.builtin.file:
-    path: "{{ k8s_encryption_provider_config }}"
-    owner: root
-    group: root
-    mode: '0600'
-
-- name: Check if API server is configured with encryption
-  ansible.builtin.shell: |
-    grep -q "encryption-provider-config" /etc/kubernetes/manifests/kube-apiserver.yaml
-  register: encryption_enabled
-  changed_when: false
-  failed_when: false
-
-- name: Add encryption provider config to API server
-  when: encryption_enabled.rc != 0
+- name: "kubernetes/k8s-cluster-hardening/encryption-at-rest | Guarded execution with preflight and postflight validation"
   block:
-    - name: Backup API server manifest
-      ansible.builtin.copy:
-        src: /etc/kubernetes/manifests/kube-apiserver.yaml
-        dest: /etc/kubernetes/manifests/kube-apiserver.yaml.backup
-        owner: root
-        group: root
-        mode: '0600'
-        remote_src: true
 
-    - name: Update API server manifest with encryption config
-      ansible.builtin.replace:
-        path: /etc/kubernetes/manifests/kube-apiserver.yaml
-        regexp: '(- kube-apiserver)'
-        replace: |
-          \1
-              - --encryption-provider-config={{ k8s_encryption_provider_config }}
-      notify: restart kube-apiserver
+    # ----------------------------- preflight --------------------
 
-- name: Wait for API server to be ready
-  ansible.builtin.command: >
-    kubectl get --raw /healthz
-  register: api_health
-  retries: 30
-  delay: 10
-  until: api_health.rc == 0
-  changed_when: false
+    - name: "kubernetes/k8s-cluster-hardening/encryption-at-rest | Preflight | Verify the control node meets the minimum ansible-core version"
+      ansible.builtin.assert:
+        that:
+          - ansible_version.full is version(fe_validation_min_ansible_version | default('2.12'), '>=')
+        fail_msg: >-
+          kubernetes/k8s-cluster-hardening/encryption-at-rest: requires ansible-core
+          {{ fe_validation_min_ansible_version | default('2.12') }} or newer,
+          found {{ ansible_version.full }}.
+        success_msg: >-
+          kubernetes/k8s-cluster-hardening/encryption-at-rest: ansible-core {{ ansible_version.full }} satisfies the minimum.
+        quiet: true
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: Test encryption by creating a secret
-  ansible.builtin.shell: |
-    kubectl create secret generic encryption-test \
-      --from-literal=key=testvalue \
-      -n kube-system \
-      --dry-run=client -o yaml | kubectl apply -f -
-  register: test_secret
-  changed_when: false
-  failed_when: false
+    - name: "kubernetes/k8s-cluster-hardening/encryption-at-rest | Preflight | Verify every declared required variable is defined"
+      ansible.builtin.assert:
+        that:
+          - vars[item] is defined
+        fail_msg: "kubernetes/k8s-cluster-hardening/encryption-at-rest: required variable '{{ item }}' is not defined."
+        success_msg: "kubernetes/k8s-cluster-hardening/encryption-at-rest: required variable '{{ item }}' is defined."
+        quiet: true
+      loop: "{{ fe_kubernetes_k8s_cluster_hardening_encryption_at_rest_required_vars | default([]) }}"
+      loop_control:
+        label: "{{ item }}"
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: Verify secret is encrypted in etcd
-  ansible.builtin.shell: |
-    ETCDCTL_API=3 etcdctl \
-      --cacert=/etc/kubernetes/pki/etcd/ca.crt \
-      --cert=/etc/kubernetes/pki/etcd/server.crt \
-      --key=/etc/kubernetes/pki/etcd/server.key \
-      get /registry/secrets/kube-system/encryption-test | hexdump -C | grep -q "k8s:enc:aescbc"
-  register: etcd_encryption_check
-  changed_when: false
-  failed_when: false
-  when: etcd_manifest.stat.exists | default(false)
+    - name: "kubernetes/k8s-cluster-hardening/encryption-at-rest | Preflight | Record that preflight validation passed"
+      ansible.builtin.set_fact:
+        fe_kubernetes_k8s_cluster_hardening_encryption_at_rest_preflight_passed: true
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: Clean up test secret
-  ansible.builtin.command: >
-    kubectl delete secret encryption-test -n kube-system
-  changed_when: false
-  failed_when: false
+    # ----------------------------- execute ----------------------
 
-- name: Rotate encryption keys (if requested)
-  when: k8s_rotate_encryption_keys | default(false)
-  block:
-    - name: Generate new encryption key
+    - name: Generate encryption key if not exists
       ansible.builtin.shell: |
         head -c 32 /dev/urandom | base64
-      register: new_encryption_key
+      register: encryption_key
       changed_when: false
       no_log: true
 
-    - name: Add new key to encryption config
+    - name: Deploy encryption configuration
       ansible.builtin.template:
-        src: encryption-config-rotated.yaml.j2
+        src: encryption-config.yaml.j2
         dest: "{{ k8s_encryption_provider_config }}"
         owner: root
         group: root
         mode: '0600'
+        backup: true
       notify: restart kube-apiserver
 
-    - name: Re-encrypt all secrets with new key
+    - name: Verify encryption config file permissions (STIG V-242462)
+      ansible.builtin.file:
+        path: "{{ k8s_encryption_provider_config }}"
+        owner: root
+        group: root
+        mode: '0600'
+
+    - name: Check if API server is configured with encryption
       ansible.builtin.shell: |
-        kubectl get secrets --all-namespaces -o json | \
-        kubectl replace -f -
+        grep -q "encryption-provider-config" /etc/kubernetes/manifests/kube-apiserver.yaml
+      register: encryption_enabled
+      changed_when: false
+      failed_when: false
+
+    - name: Add encryption provider config to API server
+      when: encryption_enabled.rc != 0
+      block:
+        - name: Backup API server manifest
+          ansible.builtin.copy:
+            src: /etc/kubernetes/manifests/kube-apiserver.yaml
+            dest: /etc/kubernetes/manifests/kube-apiserver.yaml.backup
+            owner: root
+            group: root
+            mode: '0600'
+            remote_src: true
+
+        - name: Update API server manifest with encryption config
+          ansible.builtin.replace:
+            path: /etc/kubernetes/manifests/kube-apiserver.yaml
+            regexp: '(- kube-apiserver)'
+            replace: |
+              \1
+                  - --encryption-provider-config={{ k8s_encryption_provider_config }}
+          notify: restart kube-apiserver
+
+    - name: Wait for API server to be ready
+      ansible.builtin.command: >
+        kubectl get --raw /healthz
+      register: api_health
+      retries: 30
+      delay: 10
+      until: api_health.rc == 0
       changed_when: false
 
-- name: Display encryption status
-  ansible.builtin.debug:
-    msg:
-      - "Encryption at rest configured"
-      - "Encryption config: {{ k8s_encryption_provider_config }}"
-      - "Provider: AES-CBC"
-      - "Encryption test: {{ 'Passed' if etcd_encryption_check.rc == 0 else 'Manual verification required' }}"
+    - name: Test encryption by creating a secret
+      ansible.builtin.shell: |
+        kubectl create secret generic encryption-test \
+          --from-literal=key=testvalue \
+          -n kube-system \
+          --dry-run=client -o yaml | kubectl apply -f -
+      register: test_secret
+      changed_when: false
+      failed_when: false
+
+    - name: Verify secret is encrypted in etcd
+      ansible.builtin.shell: |
+        ETCDCTL_API=3 etcdctl \
+          --cacert=/etc/kubernetes/pki/etcd/ca.crt \
+          --cert=/etc/kubernetes/pki/etcd/server.crt \
+          --key=/etc/kubernetes/pki/etcd/server.key \
+          get /registry/secrets/kube-system/encryption-test | hexdump -C | grep -q "k8s:enc:aescbc"
+      register: etcd_encryption_check
+      changed_when: false
+      failed_when: false
+      when: etcd_manifest.stat.exists | default(false)
+
+    - name: Clean up test secret
+      ansible.builtin.command: >
+        kubectl delete secret encryption-test -n kube-system
+      changed_when: false
+      failed_when: false
+
+    - name: Rotate encryption keys (if requested)
+      when: k8s_rotate_encryption_keys | default(false)
+      block:
+        - name: Generate new encryption key
+          ansible.builtin.shell: |
+            head -c 32 /dev/urandom | base64
+          register: new_encryption_key
+          changed_when: false
+          no_log: true
+
+        - name: Add new key to encryption config
+          ansible.builtin.template:
+            src: encryption-config-rotated.yaml.j2
+            dest: "{{ k8s_encryption_provider_config }}"
+            owner: root
+            group: root
+            mode: '0600'
+          notify: restart kube-apiserver
+
+        - name: Re-encrypt all secrets with new key
+          ansible.builtin.shell: |
+            kubectl get secrets --all-namespaces -o json | \
+            kubectl replace -f -
+          changed_when: false
+
+    - name: Display encryption status
+      ansible.builtin.debug:
+        msg:
+          - "Encryption at rest configured"
+          - "Encryption config: {{ k8s_encryption_provider_config }}"
+          - "Provider: AES-CBC"
+          - "Encryption test: {{ 'Passed' if etcd_encryption_check.rc == 0 else 'Manual verification required' }}"
+
+    # ----------------------------- postflight -------------------
+
+    - name: "kubernetes/k8s-cluster-hardening/encryption-at-rest | Postflight | Verify the guarded body ran after a passing preflight"
+      ansible.builtin.assert:
+        that:
+          - fe_kubernetes_k8s_cluster_hardening_encryption_at_rest_preflight_passed | bool
+          - fe_kubernetes_k8s_cluster_hardening_encryption_at_rest_status in ['running', 'succeeded']
+        fail_msg: >-
+          kubernetes/k8s-cluster-hardening/encryption-at-rest: postflight validation failed - preflight passed
+          ={{ fe_kubernetes_k8s_cluster_hardening_encryption_at_rest_preflight_passed | default(false) }},
+          status={{ fe_kubernetes_k8s_cluster_hardening_encryption_at_rest_status | default('unknown') }}.
+        success_msg: "kubernetes/k8s-cluster-hardening/encryption-at-rest: postflight validation passed."
+        quiet: true
+      tags:
+        - always
+        - postflight
+        - validation
+
+    - name: "kubernetes/k8s-cluster-hardening/encryption-at-rest | Postflight | Record the successful outcome"
+      ansible.builtin.set_fact:
+        fe_kubernetes_k8s_cluster_hardening_encryption_at_rest_postflight_passed: true
+        fe_kubernetes_k8s_cluster_hardening_encryption_at_rest_status: "succeeded"
+      tags:
+        - always
+        - postflight
+        - validation
+
+  rescue:
+
+    - name: "kubernetes/k8s-cluster-hardening/encryption-at-rest | Rescue | Capture the failing task and error detail"
+      ansible.builtin.set_fact:
+        fe_kubernetes_k8s_cluster_hardening_encryption_at_rest_status: "failed"
+        fe_kubernetes_k8s_cluster_hardening_encryption_at_rest_postflight_passed: false
+        fe_kubernetes_k8s_cluster_hardening_encryption_at_rest_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+        fe_kubernetes_k8s_cluster_hardening_encryption_at_rest_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+      tags:
+        - always
+        - rescue
+
+    - name: "kubernetes/k8s-cluster-hardening/encryption-at-rest | Rescue | Report the failure"
+      ansible.builtin.debug:
+        msg: >-
+          kubernetes/k8s-cluster-hardening/encryption-at-rest: FAILED at '{{ fe_kubernetes_k8s_cluster_hardening_encryption_at_rest_failed_task }}' on
+          {{ inventory_hostname }} - {{ fe_kubernetes_k8s_cluster_hardening_encryption_at_rest_error }}
+      tags:
+        - always
+        - rescue
+
+    - name: "kubernetes/k8s-cluster-hardening/encryption-at-rest | Rescue | Re-raise the failure unless the caller opted to continue"
+      ansible.builtin.fail:
+        msg: >-
+          kubernetes/k8s-cluster-hardening/encryption-at-rest failed at '{{ fe_kubernetes_k8s_cluster_hardening_encryption_at_rest_failed_task }}': {{ fe_kubernetes_k8s_cluster_hardening_encryption_at_rest_error }}
+      when: not (fe_validation_continue_on_error | default(false) | bool)
+      tags:
+        - always
+        - rescue
+
+  always:
+
+    - name: "kubernetes/k8s-cluster-hardening/encryption-at-rest | Always | Compute the execution duration"
+      ansible.builtin.set_fact:
+        fe_kubernetes_k8s_cluster_hardening_encryption_at_rest_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+        fe_kubernetes_k8s_cluster_hardening_encryption_at_rest_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_kubernetes_k8s_cluster_hardening_encryption_at_rest_start_epoch | default(0) | int) }}"
+      tags:
+        - always
+
+    - name: "kubernetes/k8s-cluster-hardening/encryption-at-rest | Always | Publish the validation result with set_stats"
+      ansible.builtin.set_stats:
+        data:
+          fe_validation_results:
+            "kubernetes/k8s-cluster-hardening/encryption-at-rest":
+              component: "kubernetes/k8s-cluster-hardening/encryption-at-rest"
+              type: "role-tasks"
+              platform: "kubernetes"
+              host: "{{ inventory_hostname }}"
+              status: "{{ fe_kubernetes_k8s_cluster_hardening_encryption_at_rest_status | default('unknown') }}"
+              preflight_passed: "{{ fe_kubernetes_k8s_cluster_hardening_encryption_at_rest_preflight_passed | default(false) | bool }}"
+              postflight_passed: "{{ fe_kubernetes_k8s_cluster_hardening_encryption_at_rest_postflight_passed | default(false) | bool }}"
+              started_at: "{{ fe_kubernetes_k8s_cluster_hardening_encryption_at_rest_started_at | default('') }}"
+              ended_at: "{{ fe_kubernetes_k8s_cluster_hardening_encryption_at_rest_ended_at | default('') }}"
+              duration_seconds: "{{ fe_kubernetes_k8s_cluster_hardening_encryption_at_rest_duration_seconds | default(0) | int }}"
+              failed_task: "{{ fe_kubernetes_k8s_cluster_hardening_encryption_at_rest_failed_task | default('') }}"
+              error: "{{ fe_kubernetes_k8s_cluster_hardening_encryption_at_rest_error | default('') }}"
+              check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+          fe_validation_executions: 1
+          fe_validation_succeeded: "{{ 1 if fe_kubernetes_k8s_cluster_hardening_encryption_at_rest_status | default('') == 'succeeded' else 0 }}"
+          fe_validation_failed: "{{ 0 if fe_kubernetes_k8s_cluster_hardening_encryption_at_rest_status | default('') == 'succeeded' else 1 }}"
+          fe_validation_duration_seconds: "{{ fe_kubernetes_k8s_cluster_hardening_encryption_at_rest_duration_seconds | default(0) | int }}"
+          fe_validation_failed_components: >-
+            {{ [] if fe_kubernetes_k8s_cluster_hardening_encryption_at_rest_status | default('') == 'succeeded' else ['kubernetes/k8s-cluster-hardening/encryption-at-rest'] }}
+        aggregate: true
+        per_host: false
+      tags:
+        - always
+
+    - name: "kubernetes/k8s-cluster-hardening/encryption-at-rest | Always | Mark the validation statistics as published"
+      ansible.builtin.set_fact:
+        fe_kubernetes_k8s_cluster_hardening_encryption_at_rest_stats_published: true
+      tags:
+        - always

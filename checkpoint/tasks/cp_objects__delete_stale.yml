@@ -9,137 +9,320 @@
 #   cp_allow_delete: false (MUST be true to proceed)
 #   publish_changes: true|false
 
-- name: Guardrail — explicit opt-in required
-  ansible.builtin.assert:
-    that: [ cp_allow_delete | default(false) | bool ]
-    fail_msg: "Deletion blocked. Set cp_allow_delete: true to proceed."
+# ---------------------------------------------------------------------------
+# Fourth Estate preflight / postflight validation harness
+#
+# The task file body below is wrapped in an Ansible block/rescue/always structure:
+#
+#   block   preflight validation runs first, then the original task file body, then
+#           postflight validation. Any failure transfers control to rescue.
+#   rescue  records which task failed and why, then re-raises so a failure is
+#           never silently swallowed. Set fe_validation_continue_on_error=true
+#           to record the failure and keep going instead.
+#   always  computes the run duration and publishes the outcome through
+#           ansible.builtin.set_stats, so a wrapping playbook, AWX/AAP or CI can
+#           consume the result without scraping log output.
+#
+# Published stats (see docs/VALIDATION_AND_STATS.md):
+#   fe_validation_results['checkpoint/cp_objects__delete_stale']  per-component record
+#   fe_validation_executions / _succeeded / _failed / _duration_seconds
+#   fe_validation_failed_components
+#
+# Add component-specific preflight checks without editing this file by setting
+#   fe_checkpoint_cp_objects__delete_stale_required_vars: [var_one, var_two]
+# ---------------------------------------------------------------------------
 
-- name: Defaults for protection and artifacts
+- name: "checkpoint/cp_objects__delete_stale | Initialize validation state"
   ansible.builtin.set_fact:
-    _protected: "{{ protected_names | default(['Any','Internet','External','LocalNetwork']) }}"
+    fe_checkpoint_cp_objects__delete_stale_start_epoch: "{{ now(fmt='%s') | int }}"
+    fe_checkpoint_cp_objects__delete_stale_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+    fe_checkpoint_cp_objects__delete_stale_status: "running"
+    fe_checkpoint_cp_objects__delete_stale_preflight_passed: false
+    fe_checkpoint_cp_objects__delete_stale_postflight_passed: false
+    fe_checkpoint_cp_objects__delete_stale_failed_task: ""
+    fe_checkpoint_cp_objects__delete_stale_error: ""
+    fe_checkpoint_cp_objects__delete_stale_stats_published: false
+  tags:
+    - always
 
-# --- HOSTS ---
-- name: Get existing hosts
-  check_point.mgmt.cp_mgmt_show_objects:
-    type: host
-    limit: 500
-  register: _hosts_all
+- name: "checkpoint/cp_objects__delete_stale | Guarded execution with preflight and postflight validation"
+  block:
 
-- name: Compute stale hosts
-  ansible.builtin.set_fact:
-    _hosts_desired: "{{ (cp_hosts | default([])) | map(attribute='name') | list }}"
-    _hosts_stale: >-
-      {{ (_hosts_all.objects | map(attribute='name') | list)
-          | difference(_hosts_desired)
-          | difference(_protected) }}
+    # ----------------------------- preflight --------------------
 
-- name: Delete stale hosts
-  when: _hosts_stale | length > 0
-  check_point.mgmt.cp_mgmt_host:
-    state: absent
-    name: "{{ item }}"
-  loop: "{{ _hosts_stale }}"
+    - name: "checkpoint/cp_objects__delete_stale | Preflight | Verify the control node meets the minimum ansible-core version"
+      ansible.builtin.assert:
+        that:
+          - ansible_version.full is version(fe_validation_min_ansible_version | default('2.12'), '>=')
+        fail_msg: >-
+          checkpoint/cp_objects__delete_stale: requires ansible-core
+          {{ fe_validation_min_ansible_version | default('2.12') }} or newer,
+          found {{ ansible_version.full }}.
+        success_msg: >-
+          checkpoint/cp_objects__delete_stale: ansible-core {{ ansible_version.full }} satisfies the minimum.
+        quiet: true
+      tags:
+        - always
+        - preflight
+        - validation
 
-# --- NETWORKS ---
-- name: Get existing networks
-  check_point.mgmt.cp_mgmt_show_objects:
-    type: network
-    limit: 500
-  register: _nets_all
+    - name: "checkpoint/cp_objects__delete_stale | Preflight | Verify every declared required variable is defined"
+      ansible.builtin.assert:
+        that:
+          - vars[item] is defined
+        fail_msg: "checkpoint/cp_objects__delete_stale: required variable '{{ item }}' is not defined."
+        success_msg: "checkpoint/cp_objects__delete_stale: required variable '{{ item }}' is defined."
+        quiet: true
+      loop: "{{ fe_checkpoint_cp_objects__delete_stale_required_vars | default([]) }}"
+      loop_control:
+        label: "{{ item }}"
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: Compute stale networks
-  ansible.builtin.set_fact:
-    _nets_desired: "{{ (cp_networks | default([])) | map(attribute='name') | list }}"
-    _nets_stale: >-
-      {{ (_nets_all.objects | map(attribute='name') | list)
-          | difference(_nets_desired)
-          | difference(_protected) }}
+    - name: "checkpoint/cp_objects__delete_stale | Preflight | Record that preflight validation passed"
+      ansible.builtin.set_fact:
+        fe_checkpoint_cp_objects__delete_stale_preflight_passed: true
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: Delete stale networks
-  when: _nets_stale | length > 0
-  check_point.mgmt.cp_mgmt_network:
-    state: absent
-    name: "{{ item }}"
-  loop: "{{ _nets_stale }}"
+    # ----------------------------- execute ----------------------
 
-# --- ADDRESS RANGES ---
-- name: Get address ranges
-  check_point.mgmt.cp_mgmt_show_objects:
-    type: address-range
-    limit: 500
-  register: _ranges_all
+    - name: Guardrail — explicit opt-in required
+      ansible.builtin.assert:
+        that: [ cp_allow_delete | default(false) | bool ]
+        fail_msg: "Deletion blocked. Set cp_allow_delete: true to proceed."
 
-- name: Compute stale ranges
-  ansible.builtin.set_fact:
-    _ranges_desired: "{{ (cp_address_ranges | default([])) | map(attribute='name') | list }}"
-    _ranges_stale: >-
-      {{ (_ranges_all.objects | map(attribute='name') | list)
-          | difference(_ranges_desired)
-          | difference(_protected) }}
+    - name: Defaults for protection and artifacts
+      ansible.builtin.set_fact:
+        _protected: "{{ protected_names | default(['Any','Internet','External','LocalNetwork']) }}"
 
-- name: Delete stale address ranges
-  when: _ranges_stale | length > 0
-  check_point.mgmt.cp_mgmt_address_range:
-    state: absent
-    name: "{{ item }}"
-  loop: "{{ _ranges_stale }}"
+    # --- HOSTS ---
+    - name: Get existing hosts
+      check_point.mgmt.cp_mgmt_show_objects:
+        type: host
+        limit: 500
+      register: _hosts_all
 
-# --- GROUPS ---
-- name: Get groups
-  check_point.mgmt.cp_mgmt_show_objects:
-    type: group
-    limit: 500
-  register: _groups_all
+    - name: Compute stale hosts
+      ansible.builtin.set_fact:
+        _hosts_desired: "{{ (cp_hosts | default([])) | map(attribute='name') | list }}"
+        _hosts_stale: >-
+          {{ (_hosts_all.objects | map(attribute='name') | list)
+              | difference(_hosts_desired)
+              | difference(_protected) }}
 
-- name: Compute stale groups
-  ansible.builtin.set_fact:
-    _groups_desired: "{{ (cp_groups | default([])) | map(attribute='name') | list }}"
-    _groups_stale: >-
-      {{ (_groups_all.objects | map(attribute='name') | list)
-          | difference(_groups_desired)
-          | difference(_protected) }}
+    - name: Delete stale hosts
+      when: _hosts_stale | length > 0
+      check_point.mgmt.cp_mgmt_host:
+        state: absent
+        name: "{{ item }}"
+      loop: "{{ _hosts_stale }}"
 
-- name: Delete stale groups
-  when: _groups_stale | length > 0
-  check_point.mgmt.cp_mgmt_group:
-    state: absent
-    name: "{{ item }}"
-  loop: "{{ _groups_stale }}"
+    # --- NETWORKS ---
+    - name: Get existing networks
+      check_point.mgmt.cp_mgmt_show_objects:
+        type: network
+        limit: 500
+      register: _nets_all
 
-# --- SERVICES TCP/UDP ---
-- name: Get TCP services
-  check_point.mgmt.cp_mgmt_show_objects:
-    type: service-tcp
-    limit: 500
-  register: _svc_tcp_all
+    - name: Compute stale networks
+      ansible.builtin.set_fact:
+        _nets_desired: "{{ (cp_networks | default([])) | map(attribute='name') | list }}"
+        _nets_stale: >-
+          {{ (_nets_all.objects | map(attribute='name') | list)
+              | difference(_nets_desired)
+              | difference(_protected) }}
 
-- name: Get UDP services
-  check_point.mgmt.cp_mgmt_show_objects:
-    type: service-udp
-    limit: 500
-  register: _svc_udp_all
+    - name: Delete stale networks
+      when: _nets_stale | length > 0
+      check_point.mgmt.cp_mgmt_network:
+        state: absent
+        name: "{{ item }}"
+      loop: "{{ _nets_stale }}"
 
-- name: Compute stale TCP/UDP
-  ansible.builtin.set_fact:
-    _svc_tcp_desired: "{{ (cp_services_tcp | default([])) | map(attribute='name') | list }}"
-    _svc_udp_desired: "{{ (cp_services_udp | default([])) | map(attribute='name') | list }}"
-    _svc_tcp_stale: "{{ (_svc_tcp_all.objects | map(attribute='name') | list) | difference(_svc_tcp_desired) | difference(_protected) }}"
-    _svc_udp_stale: "{{ (_svc_udp_all.objects | map(attribute='name') | list) | difference(_svc_udp_desired) | difference(_protected) }}"
+    # --- ADDRESS RANGES ---
+    - name: Get address ranges
+      check_point.mgmt.cp_mgmt_show_objects:
+        type: address-range
+        limit: 500
+      register: _ranges_all
 
-- name: Delete stale TCP services
-  when: _svc_tcp_stale | length > 0
-  check_point.mgmt.cp_mgmt_service_tcp:
-    state: absent
-    name: "{{ item }}"
-  loop: "{{ _svc_tcp_stale }}"
+    - name: Compute stale ranges
+      ansible.builtin.set_fact:
+        _ranges_desired: "{{ (cp_address_ranges | default([])) | map(attribute='name') | list }}"
+        _ranges_stale: >-
+          {{ (_ranges_all.objects | map(attribute='name') | list)
+              | difference(_ranges_desired)
+              | difference(_protected) }}
 
-- name: Delete stale UDP services
-  when: _svc_udp_stale | length > 0
-  check_point.mgmt.cp_mgmt_service_udp:
-    state: absent
-    name: "{{ item }}"
-  loop: "{{ _svc_udp_stale }}"
+    - name: Delete stale address ranges
+      when: _ranges_stale | length > 0
+      check_point.mgmt.cp_mgmt_address_range:
+        state: absent
+        name: "{{ item }}"
+      loop: "{{ _ranges_stale }}"
 
-- name: Publish deletions
-  when: publish_changes | default(false) | bool
-  check_point.mgmt.cp_mgmt_publish:
+    # --- GROUPS ---
+    - name: Get groups
+      check_point.mgmt.cp_mgmt_show_objects:
+        type: group
+        limit: 500
+      register: _groups_all
+
+    - name: Compute stale groups
+      ansible.builtin.set_fact:
+        _groups_desired: "{{ (cp_groups | default([])) | map(attribute='name') | list }}"
+        _groups_stale: >-
+          {{ (_groups_all.objects | map(attribute='name') | list)
+              | difference(_groups_desired)
+              | difference(_protected) }}
+
+    - name: Delete stale groups
+      when: _groups_stale | length > 0
+      check_point.mgmt.cp_mgmt_group:
+        state: absent
+        name: "{{ item }}"
+      loop: "{{ _groups_stale }}"
+
+    # --- SERVICES TCP/UDP ---
+    - name: Get TCP services
+      check_point.mgmt.cp_mgmt_show_objects:
+        type: service-tcp
+        limit: 500
+      register: _svc_tcp_all
+
+    - name: Get UDP services
+      check_point.mgmt.cp_mgmt_show_objects:
+        type: service-udp
+        limit: 500
+      register: _svc_udp_all
+
+    - name: Compute stale TCP/UDP
+      ansible.builtin.set_fact:
+        _svc_tcp_desired: "{{ (cp_services_tcp | default([])) | map(attribute='name') | list }}"
+        _svc_udp_desired: "{{ (cp_services_udp | default([])) | map(attribute='name') | list }}"
+        _svc_tcp_stale: "{{ (_svc_tcp_all.objects | map(attribute='name') | list) | difference(_svc_tcp_desired) | difference(_protected) }}"
+        _svc_udp_stale: "{{ (_svc_udp_all.objects | map(attribute='name') | list) | difference(_svc_udp_desired) | difference(_protected) }}"
+
+    - name: Delete stale TCP services
+      when: _svc_tcp_stale | length > 0
+      check_point.mgmt.cp_mgmt_service_tcp:
+        state: absent
+        name: "{{ item }}"
+      loop: "{{ _svc_tcp_stale }}"
+
+    - name: Delete stale UDP services
+      when: _svc_udp_stale | length > 0
+      check_point.mgmt.cp_mgmt_service_udp:
+        state: absent
+        name: "{{ item }}"
+      loop: "{{ _svc_udp_stale }}"
+
+    - name: Publish deletions
+      when: publish_changes | default(false) | bool
+      check_point.mgmt.cp_mgmt_publish:
+
+    # ----------------------------- postflight -------------------
+
+    - name: "checkpoint/cp_objects__delete_stale | Postflight | Verify the guarded body ran after a passing preflight"
+      ansible.builtin.assert:
+        that:
+          - fe_checkpoint_cp_objects__delete_stale_preflight_passed | bool
+          - fe_checkpoint_cp_objects__delete_stale_status in ['running', 'succeeded']
+        fail_msg: >-
+          checkpoint/cp_objects__delete_stale: postflight validation failed - preflight passed
+          ={{ fe_checkpoint_cp_objects__delete_stale_preflight_passed | default(false) }},
+          status={{ fe_checkpoint_cp_objects__delete_stale_status | default('unknown') }}.
+        success_msg: "checkpoint/cp_objects__delete_stale: postflight validation passed."
+        quiet: true
+      tags:
+        - always
+        - postflight
+        - validation
+
+    - name: "checkpoint/cp_objects__delete_stale | Postflight | Record the successful outcome"
+      ansible.builtin.set_fact:
+        fe_checkpoint_cp_objects__delete_stale_postflight_passed: true
+        fe_checkpoint_cp_objects__delete_stale_status: "succeeded"
+      tags:
+        - always
+        - postflight
+        - validation
+
+  rescue:
+
+    - name: "checkpoint/cp_objects__delete_stale | Rescue | Capture the failing task and error detail"
+      ansible.builtin.set_fact:
+        fe_checkpoint_cp_objects__delete_stale_status: "failed"
+        fe_checkpoint_cp_objects__delete_stale_postflight_passed: false
+        fe_checkpoint_cp_objects__delete_stale_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+        fe_checkpoint_cp_objects__delete_stale_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+      tags:
+        - always
+        - rescue
+
+    - name: "checkpoint/cp_objects__delete_stale | Rescue | Report the failure"
+      ansible.builtin.debug:
+        msg: >-
+          checkpoint/cp_objects__delete_stale: FAILED at '{{ fe_checkpoint_cp_objects__delete_stale_failed_task }}' on
+          {{ inventory_hostname }} - {{ fe_checkpoint_cp_objects__delete_stale_error }}
+      tags:
+        - always
+        - rescue
+
+    - name: "checkpoint/cp_objects__delete_stale | Rescue | Re-raise the failure unless the caller opted to continue"
+      ansible.builtin.fail:
+        msg: >-
+          checkpoint/cp_objects__delete_stale failed at '{{ fe_checkpoint_cp_objects__delete_stale_failed_task }}': {{ fe_checkpoint_cp_objects__delete_stale_error }}
+      when: not (fe_validation_continue_on_error | default(false) | bool)
+      tags:
+        - always
+        - rescue
+
+  always:
+
+    - name: "checkpoint/cp_objects__delete_stale | Always | Compute the execution duration"
+      ansible.builtin.set_fact:
+        fe_checkpoint_cp_objects__delete_stale_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+        fe_checkpoint_cp_objects__delete_stale_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_checkpoint_cp_objects__delete_stale_start_epoch | default(0) | int) }}"
+      tags:
+        - always
+
+    - name: "checkpoint/cp_objects__delete_stale | Always | Publish the validation result with set_stats"
+      ansible.builtin.set_stats:
+        data:
+          fe_validation_results:
+            "checkpoint/cp_objects__delete_stale":
+              component: "checkpoint/cp_objects__delete_stale"
+              type: "tasks"
+              platform: "checkpoint"
+              host: "{{ inventory_hostname }}"
+              status: "{{ fe_checkpoint_cp_objects__delete_stale_status | default('unknown') }}"
+              preflight_passed: "{{ fe_checkpoint_cp_objects__delete_stale_preflight_passed | default(false) | bool }}"
+              postflight_passed: "{{ fe_checkpoint_cp_objects__delete_stale_postflight_passed | default(false) | bool }}"
+              started_at: "{{ fe_checkpoint_cp_objects__delete_stale_started_at | default('') }}"
+              ended_at: "{{ fe_checkpoint_cp_objects__delete_stale_ended_at | default('') }}"
+              duration_seconds: "{{ fe_checkpoint_cp_objects__delete_stale_duration_seconds | default(0) | int }}"
+              failed_task: "{{ fe_checkpoint_cp_objects__delete_stale_failed_task | default('') }}"
+              error: "{{ fe_checkpoint_cp_objects__delete_stale_error | default('') }}"
+              check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+          fe_validation_executions: 1
+          fe_validation_succeeded: "{{ 1 if fe_checkpoint_cp_objects__delete_stale_status | default('') == 'succeeded' else 0 }}"
+          fe_validation_failed: "{{ 0 if fe_checkpoint_cp_objects__delete_stale_status | default('') == 'succeeded' else 1 }}"
+          fe_validation_duration_seconds: "{{ fe_checkpoint_cp_objects__delete_stale_duration_seconds | default(0) | int }}"
+          fe_validation_failed_components: >-
+            {{ [] if fe_checkpoint_cp_objects__delete_stale_status | default('') == 'succeeded' else ['checkpoint/cp_objects__delete_stale'] }}
+        aggregate: true
+        per_host: false
+      tags:
+        - always
+
+    - name: "checkpoint/cp_objects__delete_stale | Always | Mark the validation statistics as published"
+      ansible.builtin.set_fact:
+        fe_checkpoint_cp_objects__delete_stale_stats_published: true
+      tags:
+        - always

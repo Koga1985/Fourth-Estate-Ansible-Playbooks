@@ -3,299 +3,482 @@
 # DoD STIG CAT I - Centralized authentication and password policy
 # NIST IA-2, IA-5 | STIG CISC-ND-001190, CISC-ND-000530, CISC-ND-000570
 
-- name: PHASE 4 - CISC-ND-000530 - Configure password strength policy
-  cisco.aci.aci_rest:
-    host: "{{ aci_host }}"
-    username: "{{ aci_username }}"
-    password: "{{ aci_password }}"
-    validate_certs: "{{ aci_verify_ssl }}"
-    use_proxy: "{{ aci_use_proxy }}"
-    path: /api/mo/uni/userext/pwdprofile.json
-    method: "{{ 'post' if apply_changes | bool else 'get' }}"
-    content:
-      aaaPwdProfile:
-        attributes:
-          dn: uni/userext/pwdprofile
-          changeCount: "{{ aci_password_history_count | string }}"
-          changeDuringInterval: "{{ 'enable' if aci_password_no_change_interval | int > 0 else 'disable' }}"
-          changeInterval: "{{ aci_password_no_change_interval | string }}"
-          expirationWarnTime: "7"
-          graceLoginCount: "0"
-          historyCount: "{{ aci_password_history_count | string }}"
-          noChangeInterval: "{{ aci_password_no_change_interval | string }}"
-          passwordStrengthCheck: "{{ 'yes' if aci_password_strength_check else 'no' }}"
-          pwdStrengthProfileDn: ""
-  no_log: true
-  register: password_profile_result
-  tags:
-    - aci
-    - security
-    - stig
-    - stig_cat1
-    - nist_ia
-    - authentication
-    - phase4
+# ---------------------------------------------------------------------------
+# Fourth Estate preflight / postflight validation harness
+#
+# The task file body below is wrapped in an Ansible block/rescue/always structure:
+#
+#   block   preflight validation runs first, then the original task file body, then
+#           postflight validation. Any failure transfers control to rescue.
+#   rescue  records which task failed and why, then re-raises so a failure is
+#           never silently swallowed. Set fe_validation_continue_on_error=true
+#           to record the failure and keep going instead.
+#   always  computes the run duration and publishes the outcome through
+#           ansible.builtin.set_stats, so a wrapping playbook, AWX/AAP or CI can
+#           consume the result without scraping log output.
+#
+# Published stats (see docs/VALIDATION_AND_STATS.md):
+#   fe_validation_results['cisco/aci_security_hardening/authentication']  per-component record
+#   fe_validation_executions / _succeeded / _failed / _duration_seconds
+#   fe_validation_failed_components
+#
+# Add component-specific preflight checks without editing this file by setting
+#   fe_cisco_aci_security_hardening_authentication_required_vars: [var_one, var_two]
+# ---------------------------------------------------------------------------
 
-- name: PHASE 4 - CISC-ND-000570 - Set minimum password length to {{ aci_password_min_length }}
-  cisco.aci.aci_rest:
-    host: "{{ aci_host }}"
-    username: "{{ aci_username }}"
-    password: "{{ aci_password }}"
-    validate_certs: "{{ aci_verify_ssl }}"
-    use_proxy: "{{ aci_use_proxy }}"
-    path: /api/mo/uni/userext/pwdprofile.json
-    method: "{{ 'post' if apply_changes | bool else 'get' }}"
-    content:
-      aaaPwdProfile:
-        attributes:
-          dn: uni/userext/pwdprofile
-          minLength: "{{ aci_password_min_length | string }}"
-          maxLength: "64"
-          classFlags: >-
-            {{
-              ['lowercase'] * (aci_password_min_lowercase | int > 0) |
-              union(['uppercase'] * (aci_password_min_uppercase | int > 0)) |
-              union(['digit'] * (aci_password_min_digits | int > 0)) |
-              union(['punctuation'] * (aci_password_min_special | int > 0)) |
-              join(',')
-            }}
-  no_log: true
-  register: password_length_result
+- name: "cisco/aci_security_hardening/authentication | Initialize validation state"
+  ansible.builtin.set_fact:
+    fe_cisco_aci_security_hardening_authentication_start_epoch: "{{ now(fmt='%s') | int }}"
+    fe_cisco_aci_security_hardening_authentication_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+    fe_cisco_aci_security_hardening_authentication_status: "running"
+    fe_cisco_aci_security_hardening_authentication_preflight_passed: false
+    fe_cisco_aci_security_hardening_authentication_postflight_passed: false
+    fe_cisco_aci_security_hardening_authentication_failed_task: ""
+    fe_cisco_aci_security_hardening_authentication_error: ""
+    fe_cisco_aci_security_hardening_authentication_stats_published: false
   tags:
-    - aci
-    - security
-    - stig
-    - stig_cat1
-    - nist_ia
-    - authentication
-    - phase4
+    - always
 
-- name: PHASE 4 - CISC-ND-000196 - Configure password expiration policy ({{ aci_password_expiry_days }} days)
-  cisco.aci.aci_rest:
-    host: "{{ aci_host }}"
-    username: "{{ aci_username }}"
-    password: "{{ aci_password }}"
-    validate_certs: "{{ aci_verify_ssl }}"
-    use_proxy: "{{ aci_use_proxy }}"
-    path: /api/mo/uni/userext/pwdprofile.json
-    method: "{{ 'post' if apply_changes | bool else 'get' }}"
-    content:
-      aaaPwdProfile:
-        attributes:
-          dn: uni/userext/pwdprofile
-          expirationInDays: "{{ aci_password_expiry_days | string }}"
-          pwdExpirationEnabled: "yes"
-  no_log: true
-  register: password_expiry_result
-  tags:
-    - aci
-    - security
-    - stig
-    - stig_cat1
-    - nist_ia
-    - authentication
-    - phase4
+- name: "cisco/aci_security_hardening/authentication | Guarded execution with preflight and postflight validation"
+  block:
 
-- name: PHASE 4 - CISC-ND-001190 - Configure LDAP authentication providers
-  cisco.aci.aci_rest:
-    host: "{{ aci_host }}"
-    username: "{{ aci_username }}"
-    password: "{{ aci_password }}"
-    validate_certs: "{{ aci_verify_ssl }}"
-    use_proxy: "{{ aci_use_proxy }}"
-    path: "/api/mo/uni/userext/ldapext/ldapprovider-{{ item.host }}.json"
-    method: "{{ 'post' if apply_changes | bool else 'get' }}"
-    content:
-      aaaLdapProvider:
-        attributes:
-          dn: "uni/userext/ldapext/ldapprovider-{{ item.host }}"
-          name: "{{ item.host }}"
-          descr: "{{ item.description | default('') }}"
-          port: "{{ item.port | string }}"
-          sslValidation: "{{ 'yes' if item.use_ssl | default(true) else 'no' }}"
-          enableSSL: "{{ 'yes' if item.use_ssl | default(true) else 'no' }}"
-          rootdn: "{{ item.bind_dn }}"
-          key: "{{ item.bind_password }}"
-          basedn: "{{ item.base_dn }}"
-          filterDn: "{{ item.filter_type | default('default') }}"
-          timeout: "{{ item.timeout | default(30) | string }}"
-          retries: "{{ item.retries | default(1) | string }}"
-          monitoringUser: ""
-  no_log: true
-  loop: "{{ aci_ldap_servers }}"
-  loop_control:
-    label: "LDAP server {{ item.host }}"
-  register: ldap_provider_results
-  when: aci_auth_realm_type == 'ldap'
-  tags:
-    - aci
-    - security
-    - stig
-    - stig_cat1
-    - nist_ia
-    - authentication
-    - ldap
-    - phase4
+    # ----------------------------- preflight --------------------
 
-- name: PHASE 4 - CISC-ND-001190 - Configure RADIUS authentication providers
-  cisco.aci.aci_rest:
-    host: "{{ aci_host }}"
-    username: "{{ aci_username }}"
-    password: "{{ aci_password }}"
-    validate_certs: "{{ aci_verify_ssl }}"
-    use_proxy: "{{ aci_use_proxy }}"
-    path: "/api/mo/uni/userext/radiusext/radiusprovider-{{ item.host }}.json"
-    method: "{{ 'post' if apply_changes | bool else 'get' }}"
-    content:
-      aaaRadiusProvider:
-        attributes:
-          dn: "uni/userext/radiusext/radiusprovider-{{ item.host }}"
-          name: "{{ item.host }}"
-          descr: "{{ item.description | default('') }}"
-          authPort: "{{ item.auth_port | default(1812) | string }}"
-          key: "{{ item.key }}"
-          timeout: "{{ item.timeout | default(5) | string }}"
-          retries: "{{ item.retries | default(1) | string }}"
-  no_log: true
-  loop: "{{ aci_radius_servers }}"
-  loop_control:
-    label: "RADIUS server {{ item.host }}"
-  register: radius_provider_results
-  when: aci_auth_realm_type == 'radius' and aci_radius_servers | length > 0
-  tags:
-    - aci
-    - security
-    - stig
-    - stig_cat1
-    - nist_ia
-    - authentication
-    - radius
-    - phase4
+    - name: "cisco/aci_security_hardening/authentication | Preflight | Verify the control node meets the minimum ansible-core version"
+      ansible.builtin.assert:
+        that:
+          - ansible_version.full is version(fe_validation_min_ansible_version | default('2.12'), '>=')
+        fail_msg: >-
+          cisco/aci_security_hardening/authentication: requires ansible-core
+          {{ fe_validation_min_ansible_version | default('2.12') }} or newer,
+          found {{ ansible_version.full }}.
+        success_msg: >-
+          cisco/aci_security_hardening/authentication: ansible-core {{ ansible_version.full }} satisfies the minimum.
+        quiet: true
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: PHASE 4 - CISC-ND-001190 - Configure TACACS+ authentication providers
-  cisco.aci.aci_rest:
-    host: "{{ aci_host }}"
-    username: "{{ aci_username }}"
-    password: "{{ aci_password }}"
-    validate_certs: "{{ aci_verify_ssl }}"
-    use_proxy: "{{ aci_use_proxy }}"
-    path: "/api/mo/uni/userext/tacacsext/tacacsprovider-{{ item.host }}.json"
-    method: "{{ 'post' if apply_changes | bool else 'get' }}"
-    content:
-      aaaTacacsPlusProvider:
-        attributes:
-          dn: "uni/userext/tacacsext/tacacsprovider-{{ item.host }}"
-          name: "{{ item.host }}"
-          descr: "{{ item.description | default('') }}"
-          port: "{{ item.port | default(49) | string }}"
-          key: "{{ item.key }}"
-          timeout: "{{ item.timeout | default(5) | string }}"
-          retries: "{{ item.retries | default(1) | string }}"
-  no_log: true
-  loop: "{{ aci_tacacs_servers }}"
-  loop_control:
-    label: "TACACS+ server {{ item.host }}"
-  register: tacacs_provider_results
-  when: aci_auth_realm_type == 'tacacs' and aci_tacacs_servers | length > 0
-  tags:
-    - aci
-    - security
-    - stig
-    - stig_cat1
-    - nist_ia
-    - authentication
-    - tacacs
-    - phase4
+    - name: "cisco/aci_security_hardening/authentication | Preflight | Verify every declared required variable is defined"
+      ansible.builtin.assert:
+        that:
+          - vars[item] is defined
+        fail_msg: "cisco/aci_security_hardening/authentication: required variable '{{ item }}' is not defined."
+        success_msg: "cisco/aci_security_hardening/authentication: required variable '{{ item }}' is defined."
+        quiet: true
+      loop: "{{ fe_cisco_aci_security_hardening_authentication_required_vars | default([]) }}"
+      loop_control:
+        label: "{{ item }}"
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: PHASE 4 - CISC-ND-001190 - Configure authentication login domain
-  cisco.aci.aci_rest:
-    host: "{{ aci_host }}"
-    username: "{{ aci_username }}"
-    password: "{{ aci_password }}"
-    validate_certs: "{{ aci_verify_ssl }}"
-    use_proxy: "{{ aci_use_proxy }}"
-    path: "/api/mo/uni/userext/logindomain-{{ aci_auth_login_domain }}.json"
-    method: "{{ 'post' if apply_changes | bool else 'get' }}"
-    content:
-      aaaDomain:
-        attributes:
-          dn: "uni/userext/logindomain-{{ aci_auth_login_domain }}"
-          name: "{{ aci_auth_login_domain }}"
-          descr: "Fourth Estate centralized authentication domain"
-        children:
-          - aaaDomainRef:
-              attributes:
-                name: "{{ aci_auth_login_domain }}"
-                providerGroup: "{{ aci_auth_login_domain }}"
-  no_log: true
-  register: login_domain_result
-  tags:
-    - aci
-    - security
-    - stig
-    - stig_cat1
-    - nist_ia
-    - authentication
-    - phase4
+    - name: "cisco/aci_security_hardening/authentication | Preflight | Record that preflight validation passed"
+      ansible.builtin.set_fact:
+        fe_cisco_aci_security_hardening_authentication_preflight_passed: true
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: PHASE 4 - CISC-ND-001190 - Configure default authentication realm
-  cisco.aci.aci_rest:
-    host: "{{ aci_host }}"
-    username: "{{ aci_username }}"
-    password: "{{ aci_password }}"
-    validate_certs: "{{ aci_verify_ssl }}"
-    use_proxy: "{{ aci_use_proxy }}"
-    path: /api/mo/uni/userext.json
-    method: "{{ 'post' if apply_changes | bool else 'get' }}"
-    content:
-      aaaUserEp:
-        attributes:
-          dn: uni/userext
-          defaultLoginDomain: "{{ aci_auth_login_domain }}"
-          remoteUserLoginPolicy: "no-login"
-  no_log: true
-  register: default_realm_result
-  tags:
-    - aci
-    - security
-    - stig
-    - stig_cat1
-    - nist_ia
-    - authentication
-    - phase4
+    # ----------------------------- execute ----------------------
 
-- name: PHASE 4 - Save authentication configuration artifact
-  ansible.builtin.copy:
-    dest: "{{ artifacts_dir }}/aci_stig_authentication.json"
-    mode: "0640"
-    content: "{{ auth_artifact | to_nice_json }}"
-  vars:
-    auth_artifact:
-      timestamp: "{{ ansible_date_time.iso8601 }}"
-      apic_host: "{{ aci_host }}"
-      apply_changes: "{{ apply_changes | bool }}"
-      stig_controls:
-        - id: "CISC-ND-000530"
-          description: "Password strength policy configured"
-          status: "configured"
-        - id: "CISC-ND-000570"
-          description: "Minimum password length set to {{ aci_password_min_length }}"
-          status: "configured"
-        - id: "CISC-ND-001190"
-          description: "Centralized authentication ({{ aci_auth_realm_type | upper }}) configured"
-          status: "configured"
-      auth_realm_type: "{{ aci_auth_realm_type }}"
-      ldap_servers: "{{ aci_ldap_servers | map(attribute='host') | list }}"
-      login_domain: "{{ aci_auth_login_domain }}"
-      password_min_length: "{{ aci_password_min_length }}"
-      password_expiry_days: "{{ aci_password_expiry_days }}"
-      password_history_count: "{{ aci_password_history_count }}"
-      compliance_frameworks: "{{ compliance_frameworks }}"
-  tags:
-    - aci
-    - security
-    - stig
-    - stig_cat1
-    - nist_ia
-    - authentication
-    - phase4
+    - name: PHASE 4 - CISC-ND-000530 - Configure password strength policy
+      cisco.aci.aci_rest:
+        host: "{{ aci_host }}"
+        username: "{{ aci_username }}"
+        password: "{{ aci_password }}"
+        validate_certs: "{{ aci_verify_ssl }}"
+        use_proxy: "{{ aci_use_proxy }}"
+        path: /api/mo/uni/userext/pwdprofile.json
+        method: "{{ 'post' if apply_changes | bool else 'get' }}"
+        content:
+          aaaPwdProfile:
+            attributes:
+              dn: uni/userext/pwdprofile
+              changeCount: "{{ aci_password_history_count | string }}"
+              changeDuringInterval: "{{ 'enable' if aci_password_no_change_interval | int > 0 else 'disable' }}"
+              changeInterval: "{{ aci_password_no_change_interval | string }}"
+              expirationWarnTime: "7"
+              graceLoginCount: "0"
+              historyCount: "{{ aci_password_history_count | string }}"
+              noChangeInterval: "{{ aci_password_no_change_interval | string }}"
+              passwordStrengthCheck: "{{ 'yes' if aci_password_strength_check else 'no' }}"
+              pwdStrengthProfileDn: ""
+      no_log: true
+      register: password_profile_result
+      tags:
+        - aci
+        - security
+        - stig
+        - stig_cat1
+        - nist_ia
+        - authentication
+        - phase4
+
+    - name: PHASE 4 - CISC-ND-000570 - Set minimum password length to {{ aci_password_min_length }}
+      cisco.aci.aci_rest:
+        host: "{{ aci_host }}"
+        username: "{{ aci_username }}"
+        password: "{{ aci_password }}"
+        validate_certs: "{{ aci_verify_ssl }}"
+        use_proxy: "{{ aci_use_proxy }}"
+        path: /api/mo/uni/userext/pwdprofile.json
+        method: "{{ 'post' if apply_changes | bool else 'get' }}"
+        content:
+          aaaPwdProfile:
+            attributes:
+              dn: uni/userext/pwdprofile
+              minLength: "{{ aci_password_min_length | string }}"
+              maxLength: "64"
+              classFlags: >-
+                {{
+                  ['lowercase'] * (aci_password_min_lowercase | int > 0) |
+                  union(['uppercase'] * (aci_password_min_uppercase | int > 0)) |
+                  union(['digit'] * (aci_password_min_digits | int > 0)) |
+                  union(['punctuation'] * (aci_password_min_special | int > 0)) |
+                  join(',')
+                }}
+      no_log: true
+      register: password_length_result
+      tags:
+        - aci
+        - security
+        - stig
+        - stig_cat1
+        - nist_ia
+        - authentication
+        - phase4
+
+    - name: PHASE 4 - CISC-ND-000196 - Configure password expiration policy ({{ aci_password_expiry_days }} days)
+      cisco.aci.aci_rest:
+        host: "{{ aci_host }}"
+        username: "{{ aci_username }}"
+        password: "{{ aci_password }}"
+        validate_certs: "{{ aci_verify_ssl }}"
+        use_proxy: "{{ aci_use_proxy }}"
+        path: /api/mo/uni/userext/pwdprofile.json
+        method: "{{ 'post' if apply_changes | bool else 'get' }}"
+        content:
+          aaaPwdProfile:
+            attributes:
+              dn: uni/userext/pwdprofile
+              expirationInDays: "{{ aci_password_expiry_days | string }}"
+              pwdExpirationEnabled: "yes"
+      no_log: true
+      register: password_expiry_result
+      tags:
+        - aci
+        - security
+        - stig
+        - stig_cat1
+        - nist_ia
+        - authentication
+        - phase4
+
+    - name: PHASE 4 - CISC-ND-001190 - Configure LDAP authentication providers
+      cisco.aci.aci_rest:
+        host: "{{ aci_host }}"
+        username: "{{ aci_username }}"
+        password: "{{ aci_password }}"
+        validate_certs: "{{ aci_verify_ssl }}"
+        use_proxy: "{{ aci_use_proxy }}"
+        path: "/api/mo/uni/userext/ldapext/ldapprovider-{{ item.host }}.json"
+        method: "{{ 'post' if apply_changes | bool else 'get' }}"
+        content:
+          aaaLdapProvider:
+            attributes:
+              dn: "uni/userext/ldapext/ldapprovider-{{ item.host }}"
+              name: "{{ item.host }}"
+              descr: "{{ item.description | default('') }}"
+              port: "{{ item.port | string }}"
+              sslValidation: "{{ 'yes' if item.use_ssl | default(true) else 'no' }}"
+              enableSSL: "{{ 'yes' if item.use_ssl | default(true) else 'no' }}"
+              rootdn: "{{ item.bind_dn }}"
+              key: "{{ item.bind_password }}"
+              basedn: "{{ item.base_dn }}"
+              filterDn: "{{ item.filter_type | default('default') }}"
+              timeout: "{{ item.timeout | default(30) | string }}"
+              retries: "{{ item.retries | default(1) | string }}"
+              monitoringUser: ""
+      no_log: true
+      loop: "{{ aci_ldap_servers }}"
+      loop_control:
+        label: "LDAP server {{ item.host }}"
+      register: ldap_provider_results
+      when: aci_auth_realm_type == 'ldap'
+      tags:
+        - aci
+        - security
+        - stig
+        - stig_cat1
+        - nist_ia
+        - authentication
+        - ldap
+        - phase4
+
+    - name: PHASE 4 - CISC-ND-001190 - Configure RADIUS authentication providers
+      cisco.aci.aci_rest:
+        host: "{{ aci_host }}"
+        username: "{{ aci_username }}"
+        password: "{{ aci_password }}"
+        validate_certs: "{{ aci_verify_ssl }}"
+        use_proxy: "{{ aci_use_proxy }}"
+        path: "/api/mo/uni/userext/radiusext/radiusprovider-{{ item.host }}.json"
+        method: "{{ 'post' if apply_changes | bool else 'get' }}"
+        content:
+          aaaRadiusProvider:
+            attributes:
+              dn: "uni/userext/radiusext/radiusprovider-{{ item.host }}"
+              name: "{{ item.host }}"
+              descr: "{{ item.description | default('') }}"
+              authPort: "{{ item.auth_port | default(1812) | string }}"
+              key: "{{ item.key }}"
+              timeout: "{{ item.timeout | default(5) | string }}"
+              retries: "{{ item.retries | default(1) | string }}"
+      no_log: true
+      loop: "{{ aci_radius_servers }}"
+      loop_control:
+        label: "RADIUS server {{ item.host }}"
+      register: radius_provider_results
+      when: aci_auth_realm_type == 'radius' and aci_radius_servers | length > 0
+      tags:
+        - aci
+        - security
+        - stig
+        - stig_cat1
+        - nist_ia
+        - authentication
+        - radius
+        - phase4
+
+    - name: PHASE 4 - CISC-ND-001190 - Configure TACACS+ authentication providers
+      cisco.aci.aci_rest:
+        host: "{{ aci_host }}"
+        username: "{{ aci_username }}"
+        password: "{{ aci_password }}"
+        validate_certs: "{{ aci_verify_ssl }}"
+        use_proxy: "{{ aci_use_proxy }}"
+        path: "/api/mo/uni/userext/tacacsext/tacacsprovider-{{ item.host }}.json"
+        method: "{{ 'post' if apply_changes | bool else 'get' }}"
+        content:
+          aaaTacacsPlusProvider:
+            attributes:
+              dn: "uni/userext/tacacsext/tacacsprovider-{{ item.host }}"
+              name: "{{ item.host }}"
+              descr: "{{ item.description | default('') }}"
+              port: "{{ item.port | default(49) | string }}"
+              key: "{{ item.key }}"
+              timeout: "{{ item.timeout | default(5) | string }}"
+              retries: "{{ item.retries | default(1) | string }}"
+      no_log: true
+      loop: "{{ aci_tacacs_servers }}"
+      loop_control:
+        label: "TACACS+ server {{ item.host }}"
+      register: tacacs_provider_results
+      when: aci_auth_realm_type == 'tacacs' and aci_tacacs_servers | length > 0
+      tags:
+        - aci
+        - security
+        - stig
+        - stig_cat1
+        - nist_ia
+        - authentication
+        - tacacs
+        - phase4
+
+    - name: PHASE 4 - CISC-ND-001190 - Configure authentication login domain
+      cisco.aci.aci_rest:
+        host: "{{ aci_host }}"
+        username: "{{ aci_username }}"
+        password: "{{ aci_password }}"
+        validate_certs: "{{ aci_verify_ssl }}"
+        use_proxy: "{{ aci_use_proxy }}"
+        path: "/api/mo/uni/userext/logindomain-{{ aci_auth_login_domain }}.json"
+        method: "{{ 'post' if apply_changes | bool else 'get' }}"
+        content:
+          aaaDomain:
+            attributes:
+              dn: "uni/userext/logindomain-{{ aci_auth_login_domain }}"
+              name: "{{ aci_auth_login_domain }}"
+              descr: "Fourth Estate centralized authentication domain"
+            children:
+              - aaaDomainRef:
+                  attributes:
+                    name: "{{ aci_auth_login_domain }}"
+                    providerGroup: "{{ aci_auth_login_domain }}"
+      no_log: true
+      register: login_domain_result
+      tags:
+        - aci
+        - security
+        - stig
+        - stig_cat1
+        - nist_ia
+        - authentication
+        - phase4
+
+    - name: PHASE 4 - CISC-ND-001190 - Configure default authentication realm
+      cisco.aci.aci_rest:
+        host: "{{ aci_host }}"
+        username: "{{ aci_username }}"
+        password: "{{ aci_password }}"
+        validate_certs: "{{ aci_verify_ssl }}"
+        use_proxy: "{{ aci_use_proxy }}"
+        path: /api/mo/uni/userext.json
+        method: "{{ 'post' if apply_changes | bool else 'get' }}"
+        content:
+          aaaUserEp:
+            attributes:
+              dn: uni/userext
+              defaultLoginDomain: "{{ aci_auth_login_domain }}"
+              remoteUserLoginPolicy: "no-login"
+      no_log: true
+      register: default_realm_result
+      tags:
+        - aci
+        - security
+        - stig
+        - stig_cat1
+        - nist_ia
+        - authentication
+        - phase4
+
+    - name: PHASE 4 - Save authentication configuration artifact
+      ansible.builtin.copy:
+        dest: "{{ artifacts_dir }}/aci_stig_authentication.json"
+        mode: "0640"
+        content: "{{ auth_artifact | to_nice_json }}"
+      vars:
+        auth_artifact:
+          timestamp: "{{ ansible_date_time.iso8601 }}"
+          apic_host: "{{ aci_host }}"
+          apply_changes: "{{ apply_changes | bool }}"
+          stig_controls:
+            - id: "CISC-ND-000530"
+              description: "Password strength policy configured"
+              status: "configured"
+            - id: "CISC-ND-000570"
+              description: "Minimum password length set to {{ aci_password_min_length }}"
+              status: "configured"
+            - id: "CISC-ND-001190"
+              description: "Centralized authentication ({{ aci_auth_realm_type | upper }}) configured"
+              status: "configured"
+          auth_realm_type: "{{ aci_auth_realm_type }}"
+          ldap_servers: "{{ aci_ldap_servers | map(attribute='host') | list }}"
+          login_domain: "{{ aci_auth_login_domain }}"
+          password_min_length: "{{ aci_password_min_length }}"
+          password_expiry_days: "{{ aci_password_expiry_days }}"
+          password_history_count: "{{ aci_password_history_count }}"
+          compliance_frameworks: "{{ compliance_frameworks }}"
+      tags:
+        - aci
+        - security
+        - stig
+        - stig_cat1
+        - nist_ia
+        - authentication
+        - phase4
+
+    # ----------------------------- postflight -------------------
+
+    - name: "cisco/aci_security_hardening/authentication | Postflight | Verify the guarded body ran after a passing preflight"
+      ansible.builtin.assert:
+        that:
+          - fe_cisco_aci_security_hardening_authentication_preflight_passed | bool
+          - fe_cisco_aci_security_hardening_authentication_status in ['running', 'succeeded']
+        fail_msg: >-
+          cisco/aci_security_hardening/authentication: postflight validation failed - preflight passed
+          ={{ fe_cisco_aci_security_hardening_authentication_preflight_passed | default(false) }},
+          status={{ fe_cisco_aci_security_hardening_authentication_status | default('unknown') }}.
+        success_msg: "cisco/aci_security_hardening/authentication: postflight validation passed."
+        quiet: true
+      tags:
+        - always
+        - postflight
+        - validation
+
+    - name: "cisco/aci_security_hardening/authentication | Postflight | Record the successful outcome"
+      ansible.builtin.set_fact:
+        fe_cisco_aci_security_hardening_authentication_postflight_passed: true
+        fe_cisco_aci_security_hardening_authentication_status: "succeeded"
+      tags:
+        - always
+        - postflight
+        - validation
+
+  rescue:
+
+    - name: "cisco/aci_security_hardening/authentication | Rescue | Capture the failing task and error detail"
+      ansible.builtin.set_fact:
+        fe_cisco_aci_security_hardening_authentication_status: "failed"
+        fe_cisco_aci_security_hardening_authentication_postflight_passed: false
+        fe_cisco_aci_security_hardening_authentication_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+        fe_cisco_aci_security_hardening_authentication_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+      tags:
+        - always
+        - rescue
+
+    - name: "cisco/aci_security_hardening/authentication | Rescue | Report the failure"
+      ansible.builtin.debug:
+        msg: >-
+          cisco/aci_security_hardening/authentication: FAILED at '{{ fe_cisco_aci_security_hardening_authentication_failed_task }}' on
+          {{ inventory_hostname }} - {{ fe_cisco_aci_security_hardening_authentication_error }}
+      tags:
+        - always
+        - rescue
+
+    - name: "cisco/aci_security_hardening/authentication | Rescue | Re-raise the failure unless the caller opted to continue"
+      ansible.builtin.fail:
+        msg: >-
+          cisco/aci_security_hardening/authentication failed at '{{ fe_cisco_aci_security_hardening_authentication_failed_task }}': {{ fe_cisco_aci_security_hardening_authentication_error }}
+      when: not (fe_validation_continue_on_error | default(false) | bool)
+      tags:
+        - always
+        - rescue
+
+  always:
+
+    - name: "cisco/aci_security_hardening/authentication | Always | Compute the execution duration"
+      ansible.builtin.set_fact:
+        fe_cisco_aci_security_hardening_authentication_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+        fe_cisco_aci_security_hardening_authentication_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_cisco_aci_security_hardening_authentication_start_epoch | default(0) | int) }}"
+      tags:
+        - always
+
+    - name: "cisco/aci_security_hardening/authentication | Always | Publish the validation result with set_stats"
+      ansible.builtin.set_stats:
+        data:
+          fe_validation_results:
+            "cisco/aci_security_hardening/authentication":
+              component: "cisco/aci_security_hardening/authentication"
+              type: "role-tasks"
+              platform: "cisco"
+              host: "{{ inventory_hostname }}"
+              status: "{{ fe_cisco_aci_security_hardening_authentication_status | default('unknown') }}"
+              preflight_passed: "{{ fe_cisco_aci_security_hardening_authentication_preflight_passed | default(false) | bool }}"
+              postflight_passed: "{{ fe_cisco_aci_security_hardening_authentication_postflight_passed | default(false) | bool }}"
+              started_at: "{{ fe_cisco_aci_security_hardening_authentication_started_at | default('') }}"
+              ended_at: "{{ fe_cisco_aci_security_hardening_authentication_ended_at | default('') }}"
+              duration_seconds: "{{ fe_cisco_aci_security_hardening_authentication_duration_seconds | default(0) | int }}"
+              failed_task: "{{ fe_cisco_aci_security_hardening_authentication_failed_task | default('') }}"
+              error: "{{ fe_cisco_aci_security_hardening_authentication_error | default('') }}"
+              check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+          fe_validation_executions: 1
+          fe_validation_succeeded: "{{ 1 if fe_cisco_aci_security_hardening_authentication_status | default('') == 'succeeded' else 0 }}"
+          fe_validation_failed: "{{ 0 if fe_cisco_aci_security_hardening_authentication_status | default('') == 'succeeded' else 1 }}"
+          fe_validation_duration_seconds: "{{ fe_cisco_aci_security_hardening_authentication_duration_seconds | default(0) | int }}"
+          fe_validation_failed_components: >-
+            {{ [] if fe_cisco_aci_security_hardening_authentication_status | default('') == 'succeeded' else ['cisco/aci_security_hardening/authentication'] }}
+        aggregate: true
+        per_host: false
+      tags:
+        - always
+
+    - name: "cisco/aci_security_hardening/authentication | Always | Mark the validation statistics as published"
+      ansible.builtin.set_fact:
+        fe_cisco_aci_security_hardening_authentication_stats_published: true
+      tags:
+        - always

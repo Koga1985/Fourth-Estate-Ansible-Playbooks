@@ -1,144 +1,327 @@
 ---
 # Active Directory integration tasks for VAST
 
-- name: Get current Active Directory configuration
-  ansible.builtin.uri:
-    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/activedirectory"
-    method: GET
-    user: "{{ vast_mgmt_user }}"
-    password: "{{ vast_mgmt_password }}"
-    force_basic_auth: true
-    validate_certs: "{{ vast_verify_ssl }}"
-    return_content: true
-    status_code: [200, 404]
-  no_log: true
-  register: vast_ad_current
-  delegate_to: localhost
-  changed_when: false
-  tags:
-    - ad
-    - discovery
+# ---------------------------------------------------------------------------
+# Fourth Estate preflight / postflight validation harness
+#
+# The task file body below is wrapped in an Ansible block/rescue/always structure:
+#
+#   block   preflight validation runs first, then the original task file body, then
+#           postflight validation. Any failure transfers control to rescue.
+#   rescue  records which task failed and why, then re-raises so a failure is
+#           never silently swallowed. Set fe_validation_continue_on_error=true
+#           to record the failure and keep going instead.
+#   always  computes the run duration and publishes the outcome through
+#           ansible.builtin.set_stats, so a wrapping playbook, AWX/AAP or CI can
+#           consume the result without scraping log output.
+#
+# Published stats (see docs/VALIDATION_AND_STATS.md):
+#   fe_validation_results['vast/vast_config/ad_integration']  per-component record
+#   fe_validation_executions / _succeeded / _failed / _duration_seconds
+#   fe_validation_failed_components
+#
+# Add component-specific preflight checks without editing this file by setting
+#   fe_vast_vast_config_ad_integration_required_vars: [var_one, var_two]
+# ---------------------------------------------------------------------------
 
-- name: Configure Active Directory integration
-  ansible.builtin.uri:
-    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/activedirectory"
-    method: "{{ 'POST' if vast_ad_current.status == 404 else 'PATCH' }}"
-    user: "{{ vast_mgmt_user }}"
-    password: "{{ vast_mgmt_password }}"
-    force_basic_auth: true
-    validate_certs: "{{ vast_verify_ssl }}"
-    body_format: json
-    body:
-      domain: "{{ vast_ad_domain }}"
-      server: "{{ vast_ad_server }}"
-      organizational_unit: "{{ vast_ad_ou }}"
-      username: "{{ vast_ad_username }}"
-      password: "{{ vast_ad_password }}"
-      use_ldaps: "{{ vast_ad_use_ldaps }}"
-      enabled: true
-    status_code: [200, 201, 204]
-  no_log: true
-  delegate_to: localhost
-  when:
-    - vast_ad_domain != ''
-    - vast_ad_server != ''
+- name: "vast/vast_config/ad_integration | Initialize validation state"
+  ansible.builtin.set_fact:
+    fe_vast_vast_config_ad_integration_start_epoch: "{{ now(fmt='%s') | int }}"
+    fe_vast_vast_config_ad_integration_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+    fe_vast_vast_config_ad_integration_status: "running"
+    fe_vast_vast_config_ad_integration_preflight_passed: false
+    fe_vast_vast_config_ad_integration_postflight_passed: false
+    fe_vast_vast_config_ad_integration_failed_task: ""
+    fe_vast_vast_config_ad_integration_error: ""
+    fe_vast_vast_config_ad_integration_stats_published: false
   tags:
-    - ad
-    - authentication
-  notify: Verify AD connectivity
+    - always
 
-- name: Join VAST cluster to Active Directory domain
-  ansible.builtin.uri:
-    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/activedirectory/join"
-    method: POST
-    user: "{{ vast_mgmt_user }}"
-    password: "{{ vast_mgmt_password }}"
-    force_basic_auth: true
-    validate_certs: "{{ vast_verify_ssl }}"
-    body_format: json
-    body:
-      domain: "{{ vast_ad_domain }}"
-      username: "{{ vast_ad_username }}"
-      password: "{{ vast_ad_password }}"
-    status_code: [200, 202]
-    timeout: 120
-  no_log: true
-  register: vast_ad_join_result
-  delegate_to: localhost
-  when:
-    - vast_ad_domain != ''
-    - vast_ad_current.status == 404 or (vast_ad_current.json.joined | default(false)) == false
-  tags:
-    - ad
-    - domain_join
+- name: "vast/vast_config/ad_integration | Guarded execution with preflight and postflight validation"
+  block:
 
-- name: Wait for AD domain join to complete
-  ansible.builtin.uri:
-    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/activedirectory/status"
-    method: GET
-    user: "{{ vast_mgmt_user }}"
-    password: "{{ vast_mgmt_password }}"
-    force_basic_auth: true
-    validate_certs: "{{ vast_verify_ssl }}"
-    return_content: true
-  no_log: true
-  register: vast_ad_status
-  until: vast_ad_status.json.status == "joined"
-  retries: 30
-  delay: 10
-  delegate_to: localhost
-  when: vast_ad_join_result is changed
-  tags:
-    - ad
-    - domain_join
+    # ----------------------------- preflight --------------------
 
-- name: Configure SMB to use Active Directory authentication
-  ansible.builtin.uri:
-    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/smb"
-    method: PATCH
-    user: "{{ vast_mgmt_user }}"
-    password: "{{ vast_mgmt_password }}"
-    force_basic_auth: true
-    validate_certs: "{{ vast_verify_ssl }}"
-    body_format: json
-    body:
-      use_active_directory: true
-      workgroup: "{{ vast_ad_domain.split('.')[0] | upper }}"
-    status_code: [200, 204]
-  no_log: true
-  delegate_to: localhost
-  tags:
-    - ad
-    - smb
+    - name: "vast/vast_config/ad_integration | Preflight | Verify the control node meets the minimum ansible-core version"
+      ansible.builtin.assert:
+        that:
+          - ansible_version.full is version(fe_validation_min_ansible_version | default('2.12'), '>=')
+        fail_msg: >-
+          vast/vast_config/ad_integration: requires ansible-core
+          {{ fe_validation_min_ansible_version | default('2.12') }} or newer,
+          found {{ ansible_version.full }}.
+        success_msg: >-
+          vast/vast_config/ad_integration: ansible-core {{ ansible_version.full }} satisfies the minimum.
+        quiet: true
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: Enable Kerberos for NFS with Active Directory
-  ansible.builtin.uri:
-    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/nfs"
-    method: PATCH
-    user: "{{ vast_mgmt_user }}"
-    password: "{{ vast_mgmt_password }}"
-    force_basic_auth: true
-    validate_certs: "{{ vast_verify_ssl }}"
-    body_format: json
-    body:
-      kerberos_enabled: true
-      kerberos_realm: "{{ vast_ad_domain | upper }}"
-    status_code: [200, 204]
-  no_log: true
-  delegate_to: localhost
-  when: vast_nfs_kerberos_required | bool
-  tags:
-    - ad
-    - nfs
-    - kerberos
+    - name: "vast/vast_config/ad_integration | Preflight | Verify every declared required variable is defined"
+      ansible.builtin.assert:
+        that:
+          - vars[item] is defined
+        fail_msg: "vast/vast_config/ad_integration: required variable '{{ item }}' is not defined."
+        success_msg: "vast/vast_config/ad_integration: required variable '{{ item }}' is defined."
+        quiet: true
+      loop: "{{ fe_vast_vast_config_ad_integration_required_vars | default([]) }}"
+      loop_control:
+        label: "{{ item }}"
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: Display Active Directory configuration status
-  ansible.builtin.debug:
-    msg:
-      - "Active Directory Domain: {{ vast_ad_domain }}"
-      - "AD Server: {{ vast_ad_server }}"
-      - "Domain Join Status: {{ vast_ad_status.json.status | default('unknown') }}"
-      - "LDAPS Enabled: {{ vast_ad_use_ldaps }}"
-  when: vast_ad_status is defined and vast_ad_status.json is defined
-  tags:
-    - ad
+    - name: "vast/vast_config/ad_integration | Preflight | Record that preflight validation passed"
+      ansible.builtin.set_fact:
+        fe_vast_vast_config_ad_integration_preflight_passed: true
+      tags:
+        - always
+        - preflight
+        - validation
+
+    # ----------------------------- execute ----------------------
+
+    - name: Get current Active Directory configuration
+      ansible.builtin.uri:
+        url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/activedirectory"
+        method: GET
+        user: "{{ vast_mgmt_user }}"
+        password: "{{ vast_mgmt_password }}"
+        force_basic_auth: true
+        validate_certs: "{{ vast_verify_ssl }}"
+        return_content: true
+        status_code: [200, 404]
+      no_log: true
+      register: vast_ad_current
+      delegate_to: localhost
+      changed_when: false
+      tags:
+        - ad
+        - discovery
+
+    - name: Configure Active Directory integration
+      ansible.builtin.uri:
+        url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/activedirectory"
+        method: "{{ 'POST' if vast_ad_current.status == 404 else 'PATCH' }}"
+        user: "{{ vast_mgmt_user }}"
+        password: "{{ vast_mgmt_password }}"
+        force_basic_auth: true
+        validate_certs: "{{ vast_verify_ssl }}"
+        body_format: json
+        body:
+          domain: "{{ vast_ad_domain }}"
+          server: "{{ vast_ad_server }}"
+          organizational_unit: "{{ vast_ad_ou }}"
+          username: "{{ vast_ad_username }}"
+          password: "{{ vast_ad_password }}"
+          use_ldaps: "{{ vast_ad_use_ldaps }}"
+          enabled: true
+        status_code: [200, 201, 204]
+      no_log: true
+      delegate_to: localhost
+      when:
+        - vast_ad_domain != ''
+        - vast_ad_server != ''
+      tags:
+        - ad
+        - authentication
+      notify: Verify AD connectivity
+
+    - name: Join VAST cluster to Active Directory domain
+      ansible.builtin.uri:
+        url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/activedirectory/join"
+        method: POST
+        user: "{{ vast_mgmt_user }}"
+        password: "{{ vast_mgmt_password }}"
+        force_basic_auth: true
+        validate_certs: "{{ vast_verify_ssl }}"
+        body_format: json
+        body:
+          domain: "{{ vast_ad_domain }}"
+          username: "{{ vast_ad_username }}"
+          password: "{{ vast_ad_password }}"
+        status_code: [200, 202]
+        timeout: 120
+      no_log: true
+      register: vast_ad_join_result
+      delegate_to: localhost
+      when:
+        - vast_ad_domain != ''
+        - vast_ad_current.status == 404 or (vast_ad_current.json.joined | default(false)) == false
+      tags:
+        - ad
+        - domain_join
+
+    - name: Wait for AD domain join to complete
+      ansible.builtin.uri:
+        url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/activedirectory/status"
+        method: GET
+        user: "{{ vast_mgmt_user }}"
+        password: "{{ vast_mgmt_password }}"
+        force_basic_auth: true
+        validate_certs: "{{ vast_verify_ssl }}"
+        return_content: true
+      no_log: true
+      register: vast_ad_status
+      until: vast_ad_status.json.status == "joined"
+      retries: 30
+      delay: 10
+      delegate_to: localhost
+      when: vast_ad_join_result is changed
+      tags:
+        - ad
+        - domain_join
+
+    - name: Configure SMB to use Active Directory authentication
+      ansible.builtin.uri:
+        url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/smb"
+        method: PATCH
+        user: "{{ vast_mgmt_user }}"
+        password: "{{ vast_mgmt_password }}"
+        force_basic_auth: true
+        validate_certs: "{{ vast_verify_ssl }}"
+        body_format: json
+        body:
+          use_active_directory: true
+          workgroup: "{{ vast_ad_domain.split('.')[0] | upper }}"
+        status_code: [200, 204]
+      no_log: true
+      delegate_to: localhost
+      tags:
+        - ad
+        - smb
+
+    - name: Enable Kerberos for NFS with Active Directory
+      ansible.builtin.uri:
+        url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port }}/api/{{ vast_api_version }}/nfs"
+        method: PATCH
+        user: "{{ vast_mgmt_user }}"
+        password: "{{ vast_mgmt_password }}"
+        force_basic_auth: true
+        validate_certs: "{{ vast_verify_ssl }}"
+        body_format: json
+        body:
+          kerberos_enabled: true
+          kerberos_realm: "{{ vast_ad_domain | upper }}"
+        status_code: [200, 204]
+      no_log: true
+      delegate_to: localhost
+      when: vast_nfs_kerberos_required | bool
+      tags:
+        - ad
+        - nfs
+        - kerberos
+
+    - name: Display Active Directory configuration status
+      ansible.builtin.debug:
+        msg:
+          - "Active Directory Domain: {{ vast_ad_domain }}"
+          - "AD Server: {{ vast_ad_server }}"
+          - "Domain Join Status: {{ vast_ad_status.json.status | default('unknown') }}"
+          - "LDAPS Enabled: {{ vast_ad_use_ldaps }}"
+      when: vast_ad_status is defined and vast_ad_status.json is defined
+      tags:
+        - ad
+
+    # ----------------------------- postflight -------------------
+
+    - name: "vast/vast_config/ad_integration | Postflight | Verify the guarded body ran after a passing preflight"
+      ansible.builtin.assert:
+        that:
+          - fe_vast_vast_config_ad_integration_preflight_passed | bool
+          - fe_vast_vast_config_ad_integration_status in ['running', 'succeeded']
+        fail_msg: >-
+          vast/vast_config/ad_integration: postflight validation failed - preflight passed
+          ={{ fe_vast_vast_config_ad_integration_preflight_passed | default(false) }},
+          status={{ fe_vast_vast_config_ad_integration_status | default('unknown') }}.
+        success_msg: "vast/vast_config/ad_integration: postflight validation passed."
+        quiet: true
+      tags:
+        - always
+        - postflight
+        - validation
+
+    - name: "vast/vast_config/ad_integration | Postflight | Record the successful outcome"
+      ansible.builtin.set_fact:
+        fe_vast_vast_config_ad_integration_postflight_passed: true
+        fe_vast_vast_config_ad_integration_status: "succeeded"
+      tags:
+        - always
+        - postflight
+        - validation
+
+  rescue:
+
+    - name: "vast/vast_config/ad_integration | Rescue | Capture the failing task and error detail"
+      ansible.builtin.set_fact:
+        fe_vast_vast_config_ad_integration_status: "failed"
+        fe_vast_vast_config_ad_integration_postflight_passed: false
+        fe_vast_vast_config_ad_integration_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+        fe_vast_vast_config_ad_integration_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+      tags:
+        - always
+        - rescue
+
+    - name: "vast/vast_config/ad_integration | Rescue | Report the failure"
+      ansible.builtin.debug:
+        msg: >-
+          vast/vast_config/ad_integration: FAILED at '{{ fe_vast_vast_config_ad_integration_failed_task }}' on
+          {{ inventory_hostname }} - {{ fe_vast_vast_config_ad_integration_error }}
+      tags:
+        - always
+        - rescue
+
+    - name: "vast/vast_config/ad_integration | Rescue | Re-raise the failure unless the caller opted to continue"
+      ansible.builtin.fail:
+        msg: >-
+          vast/vast_config/ad_integration failed at '{{ fe_vast_vast_config_ad_integration_failed_task }}': {{ fe_vast_vast_config_ad_integration_error }}
+      when: not (fe_validation_continue_on_error | default(false) | bool)
+      tags:
+        - always
+        - rescue
+
+  always:
+
+    - name: "vast/vast_config/ad_integration | Always | Compute the execution duration"
+      ansible.builtin.set_fact:
+        fe_vast_vast_config_ad_integration_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+        fe_vast_vast_config_ad_integration_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_vast_vast_config_ad_integration_start_epoch | default(0) | int) }}"
+      tags:
+        - always
+
+    - name: "vast/vast_config/ad_integration | Always | Publish the validation result with set_stats"
+      ansible.builtin.set_stats:
+        data:
+          fe_validation_results:
+            "vast/vast_config/ad_integration":
+              component: "vast/vast_config/ad_integration"
+              type: "role-tasks"
+              platform: "vast"
+              host: "{{ inventory_hostname }}"
+              status: "{{ fe_vast_vast_config_ad_integration_status | default('unknown') }}"
+              preflight_passed: "{{ fe_vast_vast_config_ad_integration_preflight_passed | default(false) | bool }}"
+              postflight_passed: "{{ fe_vast_vast_config_ad_integration_postflight_passed | default(false) | bool }}"
+              started_at: "{{ fe_vast_vast_config_ad_integration_started_at | default('') }}"
+              ended_at: "{{ fe_vast_vast_config_ad_integration_ended_at | default('') }}"
+              duration_seconds: "{{ fe_vast_vast_config_ad_integration_duration_seconds | default(0) | int }}"
+              failed_task: "{{ fe_vast_vast_config_ad_integration_failed_task | default('') }}"
+              error: "{{ fe_vast_vast_config_ad_integration_error | default('') }}"
+              check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+          fe_validation_executions: 1
+          fe_validation_succeeded: "{{ 1 if fe_vast_vast_config_ad_integration_status | default('') == 'succeeded' else 0 }}"
+          fe_validation_failed: "{{ 0 if fe_vast_vast_config_ad_integration_status | default('') == 'succeeded' else 1 }}"
+          fe_validation_duration_seconds: "{{ fe_vast_vast_config_ad_integration_duration_seconds | default(0) | int }}"
+          fe_validation_failed_components: >-
+            {{ [] if fe_vast_vast_config_ad_integration_status | default('') == 'succeeded' else ['vast/vast_config/ad_integration'] }}
+        aggregate: true
+        per_host: false
+      tags:
+        - always
+
+    - name: "vast/vast_config/ad_integration | Always | Mark the validation statistics as published"
+      ansible.builtin.set_fact:
+        fe_vast_vast_config_ad_integration_stats_published: true
+      tags:
+        - always

@@ -2,120 +2,303 @@
 # tasks file for aci_fabric_deploy - Prerequisites and Validation
 # Validates connectivity, required variables, and creates artifact directory
 
-- name: PHASE 1 - Display aci_fabric_deploy role banner
-  ansible.builtin.debug:
-    msg:
-      - "================================================================"
-      - " Cisco ACI Fabric Deployment - Fourth Estate"
-      - "================================================================"
-      - " Role:         aci_fabric_deploy"
-      - " APIC Host:    {{ aci_host }}"
-      - " Fabric Name:  {{ aci_fabric_name }}"
-      - " Pod ID:       {{ aci_pod_id }}"
-      - " Apply Changes: {{ apply_changes }}"
-      - " Artifacts:    {{ artifacts_dir }}"
-      - " Compliance:   {{ compliance_frameworks | join(', ') }}"
-      - "================================================================"
-      - " {{ 'DRY RUN MODE - No changes will be applied' if not (apply_changes | bool) else 'LIVE MODE - Changes WILL be applied' }}"
-      - "================================================================"
-  tags:
-    - always
-    - prerequisites
+# ---------------------------------------------------------------------------
+# Fourth Estate preflight / postflight validation harness
+#
+# The task file body below is wrapped in an Ansible block/rescue/always structure:
+#
+#   block   preflight validation runs first, then the original task file body, then
+#           postflight validation. Any failure transfers control to rescue.
+#   rescue  records which task failed and why, then re-raises so a failure is
+#           never silently swallowed. Set fe_validation_continue_on_error=true
+#           to record the failure and keep going instead.
+#   always  computes the run duration and publishes the outcome through
+#           ansible.builtin.set_stats, so a wrapping playbook, AWX/AAP or CI can
+#           consume the result without scraping log output.
+#
+# Published stats (see docs/VALIDATION_AND_STATS.md):
+#   fe_validation_results['cisco/aci_fabric_deploy/prerequisites']  per-component record
+#   fe_validation_executions / _succeeded / _failed / _duration_seconds
+#   fe_validation_failed_components
+#
+# Add component-specific preflight checks without editing this file by setting
+#   fe_cisco_aci_fabric_deploy_prerequisites_required_vars: [var_one, var_two]
+# ---------------------------------------------------------------------------
 
-- name: PHASE 1 - Validate required APIC connection variables are defined
-  ansible.builtin.assert:
-    that:
-      - aci_host is defined
-      - aci_host | length > 0
-      - aci_username is defined
-      - aci_username | length > 0
-      - aci_password is defined
-      - aci_password | length > 0
-    fail_msg: "Required APIC connection parameters (aci_host, aci_username, aci_password) must be defined"
-    quiet: true
-  tags:
-    - always
-    - prerequisites
-    - validation
-
-- name: PHASE 1 - Validate fabric configuration variables are defined
-  ansible.builtin.assert:
-    that:
-      - aci_fabric_name is defined
-      - aci_pod_id is defined
-      - aci_nodes is defined
-      - aci_nodes | length > 0
-    fail_msg: "Required fabric configuration variables (aci_fabric_name, aci_pod_id, aci_nodes) must be defined"
-    quiet: true
-  tags:
-    - always
-    - prerequisites
-    - validation
-
-- name: PHASE 1 - Test APIC connectivity
-  cisco.aci.aci_rest:
-    host: "{{ aci_host }}"
-    username: "{{ aci_username }}"
-    password: "{{ aci_password }}"
-    validate_certs: "{{ aci_verify_ssl }}"
-    use_proxy: "{{ aci_use_proxy }}"
-    path: /api/mo/uni.json
-    method: get
-  no_log: true
-  register: aci_connectivity_check
-  failed_when: false
-  tags:
-    - always
-    - prerequisites
-    - validation
-
-- name: PHASE 1 - Assert APIC is reachable
-  ansible.builtin.assert:
-    that:
-      - aci_connectivity_check is defined
-      - aci_connectivity_check.status is defined
-      - aci_connectivity_check.status == 200
-    fail_msg: "Unable to reach APIC at {{ aci_host }} - check connectivity and credentials"
-    quiet: true
-  tags:
-    - always
-    - prerequisites
-    - validation
-
-- name: PHASE 1 - Create artifacts directory
-  ansible.builtin.file:
-    path: "{{ artifacts_dir }}"
-    state: directory
-    mode: "0750"
-  tags:
-    - always
-    - prerequisites
-
-- name: PHASE 1 - Record deployment start time
+- name: "cisco/aci_fabric_deploy/prerequisites | Initialize validation state"
   ansible.builtin.set_fact:
-    aci_fabric_deploy_start_time: "{{ ansible_date_time.iso8601 }}"
-    aci_fabric_deploy_epoch: "{{ ansible_date_time.epoch }}"
+    fe_cisco_aci_fabric_deploy_prerequisites_start_epoch: "{{ now(fmt='%s') | int }}"
+    fe_cisco_aci_fabric_deploy_prerequisites_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+    fe_cisco_aci_fabric_deploy_prerequisites_status: "running"
+    fe_cisco_aci_fabric_deploy_prerequisites_preflight_passed: false
+    fe_cisco_aci_fabric_deploy_prerequisites_postflight_passed: false
+    fe_cisco_aci_fabric_deploy_prerequisites_failed_task: ""
+    fe_cisco_aci_fabric_deploy_prerequisites_error: ""
+    fe_cisco_aci_fabric_deploy_prerequisites_stats_published: false
   tags:
     - always
-    - prerequisites
 
-- name: PHASE 1 - Save deployment metadata artifact
-  ansible.builtin.copy:
-    dest: "{{ artifacts_dir }}/aci_fabric_deploy_metadata.json"
-    mode: "0640"
-    content: "{{ deployment_metadata | to_nice_json }}"
-  vars:
-    deployment_metadata:
-      role: "aci_fabric_deploy"
-      timestamp: "{{ aci_fabric_deploy_start_time }}"
-      apic_host: "{{ aci_host }}"
-      fabric_name: "{{ aci_fabric_name }}"
-      pod_id: "{{ aci_pod_id }}"
-      apply_changes: "{{ apply_changes | bool }}"
-      node_count: "{{ aci_nodes | length }}"
-      compliance_frameworks: "{{ compliance_frameworks }}"
-      fourth_estate_org: "{{ fourth_estate_org }}"
-      fourth_estate_environment: "{{ fourth_estate_environment }}"
-  tags:
-    - always
-    - prerequisites
+- name: "cisco/aci_fabric_deploy/prerequisites | Guarded execution with preflight and postflight validation"
+  block:
+
+    # ----------------------------- preflight --------------------
+
+    - name: "cisco/aci_fabric_deploy/prerequisites | Preflight | Verify the control node meets the minimum ansible-core version"
+      ansible.builtin.assert:
+        that:
+          - ansible_version.full is version(fe_validation_min_ansible_version | default('2.12'), '>=')
+        fail_msg: >-
+          cisco/aci_fabric_deploy/prerequisites: requires ansible-core
+          {{ fe_validation_min_ansible_version | default('2.12') }} or newer,
+          found {{ ansible_version.full }}.
+        success_msg: >-
+          cisco/aci_fabric_deploy/prerequisites: ansible-core {{ ansible_version.full }} satisfies the minimum.
+        quiet: true
+      tags:
+        - always
+        - preflight
+        - validation
+
+    - name: "cisco/aci_fabric_deploy/prerequisites | Preflight | Verify every declared required variable is defined"
+      ansible.builtin.assert:
+        that:
+          - vars[item] is defined
+        fail_msg: "cisco/aci_fabric_deploy/prerequisites: required variable '{{ item }}' is not defined."
+        success_msg: "cisco/aci_fabric_deploy/prerequisites: required variable '{{ item }}' is defined."
+        quiet: true
+      loop: "{{ fe_cisco_aci_fabric_deploy_prerequisites_required_vars | default([]) }}"
+      loop_control:
+        label: "{{ item }}"
+      tags:
+        - always
+        - preflight
+        - validation
+
+    - name: "cisco/aci_fabric_deploy/prerequisites | Preflight | Record that preflight validation passed"
+      ansible.builtin.set_fact:
+        fe_cisco_aci_fabric_deploy_prerequisites_preflight_passed: true
+      tags:
+        - always
+        - preflight
+        - validation
+
+    # ----------------------------- execute ----------------------
+
+    - name: PHASE 1 - Display aci_fabric_deploy role banner
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - " Cisco ACI Fabric Deployment - Fourth Estate"
+          - "================================================================"
+          - " Role:         aci_fabric_deploy"
+          - " APIC Host:    {{ aci_host }}"
+          - " Fabric Name:  {{ aci_fabric_name }}"
+          - " Pod ID:       {{ aci_pod_id }}"
+          - " Apply Changes: {{ apply_changes }}"
+          - " Artifacts:    {{ artifacts_dir }}"
+          - " Compliance:   {{ compliance_frameworks | join(', ') }}"
+          - "================================================================"
+          - " {{ 'DRY RUN MODE - No changes will be applied' if not (apply_changes | bool) else 'LIVE MODE - Changes WILL be applied' }}"
+          - "================================================================"
+      tags:
+        - always
+        - prerequisites
+
+    - name: PHASE 1 - Validate required APIC connection variables are defined
+      ansible.builtin.assert:
+        that:
+          - aci_host is defined
+          - aci_host | length > 0
+          - aci_username is defined
+          - aci_username | length > 0
+          - aci_password is defined
+          - aci_password | length > 0
+        fail_msg: "Required APIC connection parameters (aci_host, aci_username, aci_password) must be defined"
+        quiet: true
+      tags:
+        - always
+        - prerequisites
+        - validation
+
+    - name: PHASE 1 - Validate fabric configuration variables are defined
+      ansible.builtin.assert:
+        that:
+          - aci_fabric_name is defined
+          - aci_pod_id is defined
+          - aci_nodes is defined
+          - aci_nodes | length > 0
+        fail_msg: "Required fabric configuration variables (aci_fabric_name, aci_pod_id, aci_nodes) must be defined"
+        quiet: true
+      tags:
+        - always
+        - prerequisites
+        - validation
+
+    - name: PHASE 1 - Test APIC connectivity
+      cisco.aci.aci_rest:
+        host: "{{ aci_host }}"
+        username: "{{ aci_username }}"
+        password: "{{ aci_password }}"
+        validate_certs: "{{ aci_verify_ssl }}"
+        use_proxy: "{{ aci_use_proxy }}"
+        path: /api/mo/uni.json
+        method: get
+      no_log: true
+      register: aci_connectivity_check
+      failed_when: false
+      tags:
+        - always
+        - prerequisites
+        - validation
+
+    - name: PHASE 1 - Assert APIC is reachable
+      ansible.builtin.assert:
+        that:
+          - aci_connectivity_check is defined
+          - aci_connectivity_check.status is defined
+          - aci_connectivity_check.status == 200
+        fail_msg: "Unable to reach APIC at {{ aci_host }} - check connectivity and credentials"
+        quiet: true
+      tags:
+        - always
+        - prerequisites
+        - validation
+
+    - name: PHASE 1 - Create artifacts directory
+      ansible.builtin.file:
+        path: "{{ artifacts_dir }}"
+        state: directory
+        mode: "0750"
+      tags:
+        - always
+        - prerequisites
+
+    - name: PHASE 1 - Record deployment start time
+      ansible.builtin.set_fact:
+        aci_fabric_deploy_start_time: "{{ ansible_date_time.iso8601 }}"
+        aci_fabric_deploy_epoch: "{{ ansible_date_time.epoch }}"
+      tags:
+        - always
+        - prerequisites
+
+    - name: PHASE 1 - Save deployment metadata artifact
+      ansible.builtin.copy:
+        dest: "{{ artifacts_dir }}/aci_fabric_deploy_metadata.json"
+        mode: "0640"
+        content: "{{ deployment_metadata | to_nice_json }}"
+      vars:
+        deployment_metadata:
+          role: "aci_fabric_deploy"
+          timestamp: "{{ aci_fabric_deploy_start_time }}"
+          apic_host: "{{ aci_host }}"
+          fabric_name: "{{ aci_fabric_name }}"
+          pod_id: "{{ aci_pod_id }}"
+          apply_changes: "{{ apply_changes | bool }}"
+          node_count: "{{ aci_nodes | length }}"
+          compliance_frameworks: "{{ compliance_frameworks }}"
+          fourth_estate_org: "{{ fourth_estate_org }}"
+          fourth_estate_environment: "{{ fourth_estate_environment }}"
+      tags:
+        - always
+        - prerequisites
+
+    # ----------------------------- postflight -------------------
+
+    - name: "cisco/aci_fabric_deploy/prerequisites | Postflight | Verify the guarded body ran after a passing preflight"
+      ansible.builtin.assert:
+        that:
+          - fe_cisco_aci_fabric_deploy_prerequisites_preflight_passed | bool
+          - fe_cisco_aci_fabric_deploy_prerequisites_status in ['running', 'succeeded']
+        fail_msg: >-
+          cisco/aci_fabric_deploy/prerequisites: postflight validation failed - preflight passed
+          ={{ fe_cisco_aci_fabric_deploy_prerequisites_preflight_passed | default(false) }},
+          status={{ fe_cisco_aci_fabric_deploy_prerequisites_status | default('unknown') }}.
+        success_msg: "cisco/aci_fabric_deploy/prerequisites: postflight validation passed."
+        quiet: true
+      tags:
+        - always
+        - postflight
+        - validation
+
+    - name: "cisco/aci_fabric_deploy/prerequisites | Postflight | Record the successful outcome"
+      ansible.builtin.set_fact:
+        fe_cisco_aci_fabric_deploy_prerequisites_postflight_passed: true
+        fe_cisco_aci_fabric_deploy_prerequisites_status: "succeeded"
+      tags:
+        - always
+        - postflight
+        - validation
+
+  rescue:
+
+    - name: "cisco/aci_fabric_deploy/prerequisites | Rescue | Capture the failing task and error detail"
+      ansible.builtin.set_fact:
+        fe_cisco_aci_fabric_deploy_prerequisites_status: "failed"
+        fe_cisco_aci_fabric_deploy_prerequisites_postflight_passed: false
+        fe_cisco_aci_fabric_deploy_prerequisites_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+        fe_cisco_aci_fabric_deploy_prerequisites_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+      tags:
+        - always
+        - rescue
+
+    - name: "cisco/aci_fabric_deploy/prerequisites | Rescue | Report the failure"
+      ansible.builtin.debug:
+        msg: >-
+          cisco/aci_fabric_deploy/prerequisites: FAILED at '{{ fe_cisco_aci_fabric_deploy_prerequisites_failed_task }}' on
+          {{ inventory_hostname }} - {{ fe_cisco_aci_fabric_deploy_prerequisites_error }}
+      tags:
+        - always
+        - rescue
+
+    - name: "cisco/aci_fabric_deploy/prerequisites | Rescue | Re-raise the failure unless the caller opted to continue"
+      ansible.builtin.fail:
+        msg: >-
+          cisco/aci_fabric_deploy/prerequisites failed at '{{ fe_cisco_aci_fabric_deploy_prerequisites_failed_task }}': {{ fe_cisco_aci_fabric_deploy_prerequisites_error }}
+      when: not (fe_validation_continue_on_error | default(false) | bool)
+      tags:
+        - always
+        - rescue
+
+  always:
+
+    - name: "cisco/aci_fabric_deploy/prerequisites | Always | Compute the execution duration"
+      ansible.builtin.set_fact:
+        fe_cisco_aci_fabric_deploy_prerequisites_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+        fe_cisco_aci_fabric_deploy_prerequisites_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_cisco_aci_fabric_deploy_prerequisites_start_epoch | default(0) | int) }}"
+      tags:
+        - always
+
+    - name: "cisco/aci_fabric_deploy/prerequisites | Always | Publish the validation result with set_stats"
+      ansible.builtin.set_stats:
+        data:
+          fe_validation_results:
+            "cisco/aci_fabric_deploy/prerequisites":
+              component: "cisco/aci_fabric_deploy/prerequisites"
+              type: "role-tasks"
+              platform: "cisco"
+              host: "{{ inventory_hostname }}"
+              status: "{{ fe_cisco_aci_fabric_deploy_prerequisites_status | default('unknown') }}"
+              preflight_passed: "{{ fe_cisco_aci_fabric_deploy_prerequisites_preflight_passed | default(false) | bool }}"
+              postflight_passed: "{{ fe_cisco_aci_fabric_deploy_prerequisites_postflight_passed | default(false) | bool }}"
+              started_at: "{{ fe_cisco_aci_fabric_deploy_prerequisites_started_at | default('') }}"
+              ended_at: "{{ fe_cisco_aci_fabric_deploy_prerequisites_ended_at | default('') }}"
+              duration_seconds: "{{ fe_cisco_aci_fabric_deploy_prerequisites_duration_seconds | default(0) | int }}"
+              failed_task: "{{ fe_cisco_aci_fabric_deploy_prerequisites_failed_task | default('') }}"
+              error: "{{ fe_cisco_aci_fabric_deploy_prerequisites_error | default('') }}"
+              check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+          fe_validation_executions: 1
+          fe_validation_succeeded: "{{ 1 if fe_cisco_aci_fabric_deploy_prerequisites_status | default('') == 'succeeded' else 0 }}"
+          fe_validation_failed: "{{ 0 if fe_cisco_aci_fabric_deploy_prerequisites_status | default('') == 'succeeded' else 1 }}"
+          fe_validation_duration_seconds: "{{ fe_cisco_aci_fabric_deploy_prerequisites_duration_seconds | default(0) | int }}"
+          fe_validation_failed_components: >-
+            {{ [] if fe_cisco_aci_fabric_deploy_prerequisites_status | default('') == 'succeeded' else ['cisco/aci_fabric_deploy/prerequisites'] }}
+        aggregate: true
+        per_host: false
+      tags:
+        - always
+
+    - name: "cisco/aci_fabric_deploy/prerequisites | Always | Mark the validation statistics as published"
+      ansible.builtin.set_fact:
+        fe_cisco_aci_fabric_deploy_prerequisites_stats_published: true
+      tags:
+        - always

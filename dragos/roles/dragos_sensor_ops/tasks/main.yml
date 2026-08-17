@@ -2,61 +2,244 @@
 # Dragos Platform Sensor Operations for Fourth Estate
 # Purpose-built for OT/ICS threat detection and response
 
-- name: Ensure artifacts directory exists
-  ansible.builtin.file:
-    path: "{{ artifacts_dir }}"
-    state: directory
-    mode: "0755"
+# ---------------------------------------------------------------------------
+# Fourth Estate preflight / postflight validation harness
+#
+# The task file body below is wrapped in an Ansible block/rescue/always structure:
+#
+#   block   preflight validation runs first, then the original task file body, then
+#           postflight validation. Any failure transfers control to rescue.
+#   rescue  records which task failed and why, then re-raises so a failure is
+#           never silently swallowed. Set fe_validation_continue_on_error=true
+#           to record the failure and keep going instead.
+#   always  computes the run duration and publishes the outcome through
+#           ansible.builtin.set_stats, so a wrapping playbook, AWX/AAP or CI can
+#           consume the result without scraping log output.
+#
+# Published stats (see docs/VALIDATION_AND_STATS.md):
+#   fe_validation_results['dragos/dragos_sensor_ops']  per-component record
+#   fe_validation_executions / _succeeded / _failed / _duration_seconds
+#   fe_validation_failed_components
+#
+# Add component-specific preflight checks without editing this file by setting
+#   fe_dragos_dragos_sensor_ops_required_vars: [var_one, var_two]
+# ---------------------------------------------------------------------------
 
-- name: Export sensor inventory
-  ansible.builtin.include_tasks: sensor_inventory.yml
-  tags: [inventory, always]
+- name: "dragos/dragos_sensor_ops | Initialize validation state"
+  ansible.builtin.set_fact:
+    fe_dragos_dragos_sensor_ops_start_epoch: "{{ now(fmt='%s') | int }}"
+    fe_dragos_dragos_sensor_ops_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+    fe_dragos_dragos_sensor_ops_status: "running"
+    fe_dragos_dragos_sensor_ops_preflight_passed: false
+    fe_dragos_dragos_sensor_ops_postflight_passed: false
+    fe_dragos_dragos_sensor_ops_failed_task: ""
+    fe_dragos_dragos_sensor_ops_error: ""
+    fe_dragos_dragos_sensor_ops_stats_published: false
+  tags:
+    - always
 
-- name: Deploy/register sensors
-  when: sensor_operation == 'deploy' and sensors | length > 0
-  ansible.builtin.include_tasks: sensor_deploy.yml
-  tags: [deploy]
+- name: "dragos/dragos_sensor_ops | Guarded execution with preflight and postflight validation"
+  block:
 
-- name: Configure sensor networking
-  when: sensor_operation in ['deploy', 'configure'] and configure_networking
-  ansible.builtin.include_tasks: sensor_networking.yml
-  tags: [networking, configure]
+    # ----------------------------- preflight --------------------
 
-- name: Configure sensor monitoring interfaces
-  when: sensor_operation in ['deploy', 'configure'] and monitor_interfaces | length > 0
-  ansible.builtin.include_tasks: sensor_monitoring.yml
-  tags: [monitoring, configure]
+    - name: "dragos/dragos_sensor_ops | Preflight | Verify the control node meets the minimum ansible-core version"
+      ansible.builtin.assert:
+        that:
+          - ansible_version.full is version(fe_validation_min_ansible_version | default('2.12'), '>=')
+        fail_msg: >-
+          dragos/dragos_sensor_ops: requires ansible-core
+          {{ fe_validation_min_ansible_version | default('2.12') }} or newer,
+          found {{ ansible_version.full }}.
+        success_msg: >-
+          dragos/dragos_sensor_ops: ansible-core {{ ansible_version.full }} satisfies the minimum.
+        quiet: true
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: Perform sensor health check
-  when: sensor_operation in ['health', 'monitor']
-  ansible.builtin.include_tasks: sensor_health.yml
-  tags: [health, monitor]
+    - name: "dragos/dragos_sensor_ops | Preflight | Verify every declared required variable is defined"
+      ansible.builtin.assert:
+        that:
+          - vars[item] is defined
+        fail_msg: "dragos/dragos_sensor_ops: required variable '{{ item }}' is not defined."
+        success_msg: "dragos/dragos_sensor_ops: required variable '{{ item }}' is defined."
+        quiet: true
+      loop: "{{ fe_dragos_dragos_sensor_ops_required_vars | default([]) }}"
+      loop_control:
+        label: "{{ item }}"
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: Update sensor software
-  when: sensor_operation == 'update' and sensor_update_version is defined
-  ansible.builtin.include_tasks: sensor_update.yml
-  tags: [update, maintenance]
+    - name: "dragos/dragos_sensor_ops | Preflight | Record that preflight validation passed"
+      ansible.builtin.set_fact:
+        fe_dragos_dragos_sensor_ops_preflight_passed: true
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: Configure sensor storage
-  when: sensor_operation in ['deploy', 'configure'] and configure_storage
-  ansible.builtin.include_tasks: sensor_storage.yml
-  tags: [storage, configure]
+    # ----------------------------- execute ----------------------
 
-- name: Optimize sensor performance
-  when: sensor_operation == 'optimize' or performance_tuning
-  ansible.builtin.include_tasks: sensor_performance.yml
-  tags: [performance, optimize]
+    - name: Ensure artifacts directory exists
+      ansible.builtin.file:
+        path: "{{ artifacts_dir }}"
+        state: directory
+        mode: "0755"
 
-- name: Configure sensor high availability
-  when: sensor_operation in ['deploy', 'configure'] and enable_ha
-  ansible.builtin.include_tasks: sensor_ha.yml
-  tags: [ha, configure]
+    - name: Export sensor inventory
+      ansible.builtin.include_tasks: sensor_inventory.yml
+      tags: [inventory, always]
 
-- name: Backup sensor configuration
-  when: sensor_operation == 'backup'
-  ansible.builtin.include_tasks: sensor_backup.yml
-  tags: [backup]
+    - name: Deploy/register sensors
+      when: sensor_operation == 'deploy' and sensors | length > 0
+      ansible.builtin.include_tasks: sensor_deploy.yml
+      tags: [deploy]
 
-- name: Generate sensor operations report
-  ansible.builtin.include_tasks: sensor_report.yml
-  tags: [report, always]
+    - name: Configure sensor networking
+      when: sensor_operation in ['deploy', 'configure'] and configure_networking
+      ansible.builtin.include_tasks: sensor_networking.yml
+      tags: [networking, configure]
+
+    - name: Configure sensor monitoring interfaces
+      when: sensor_operation in ['deploy', 'configure'] and monitor_interfaces | length > 0
+      ansible.builtin.include_tasks: sensor_monitoring.yml
+      tags: [monitoring, configure]
+
+    - name: Perform sensor health check
+      when: sensor_operation in ['health', 'monitor']
+      ansible.builtin.include_tasks: sensor_health.yml
+      tags: [health, monitor]
+
+    - name: Update sensor software
+      when: sensor_operation == 'update' and sensor_update_version is defined
+      ansible.builtin.include_tasks: sensor_update.yml
+      tags: [update, maintenance]
+
+    - name: Configure sensor storage
+      when: sensor_operation in ['deploy', 'configure'] and configure_storage
+      ansible.builtin.include_tasks: sensor_storage.yml
+      tags: [storage, configure]
+
+    - name: Optimize sensor performance
+      when: sensor_operation == 'optimize' or performance_tuning
+      ansible.builtin.include_tasks: sensor_performance.yml
+      tags: [performance, optimize]
+
+    - name: Configure sensor high availability
+      when: sensor_operation in ['deploy', 'configure'] and enable_ha
+      ansible.builtin.include_tasks: sensor_ha.yml
+      tags: [ha, configure]
+
+    - name: Backup sensor configuration
+      when: sensor_operation == 'backup'
+      ansible.builtin.include_tasks: sensor_backup.yml
+      tags: [backup]
+
+    - name: Generate sensor operations report
+      ansible.builtin.include_tasks: sensor_report.yml
+      tags: [report, always]
+
+    # ----------------------------- postflight -------------------
+
+    - name: "dragos/dragos_sensor_ops | Postflight | Verify the guarded body ran after a passing preflight"
+      ansible.builtin.assert:
+        that:
+          - fe_dragos_dragos_sensor_ops_preflight_passed | bool
+          - fe_dragos_dragos_sensor_ops_status in ['running', 'succeeded']
+        fail_msg: >-
+          dragos/dragos_sensor_ops: postflight validation failed - preflight passed
+          ={{ fe_dragos_dragos_sensor_ops_preflight_passed | default(false) }},
+          status={{ fe_dragos_dragos_sensor_ops_status | default('unknown') }}.
+        success_msg: "dragos/dragos_sensor_ops: postflight validation passed."
+        quiet: true
+      tags:
+        - always
+        - postflight
+        - validation
+
+    - name: "dragos/dragos_sensor_ops | Postflight | Record the successful outcome"
+      ansible.builtin.set_fact:
+        fe_dragos_dragos_sensor_ops_postflight_passed: true
+        fe_dragos_dragos_sensor_ops_status: "succeeded"
+      tags:
+        - always
+        - postflight
+        - validation
+
+  rescue:
+
+    - name: "dragos/dragos_sensor_ops | Rescue | Capture the failing task and error detail"
+      ansible.builtin.set_fact:
+        fe_dragos_dragos_sensor_ops_status: "failed"
+        fe_dragos_dragos_sensor_ops_postflight_passed: false
+        fe_dragos_dragos_sensor_ops_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+        fe_dragos_dragos_sensor_ops_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+      tags:
+        - always
+        - rescue
+
+    - name: "dragos/dragos_sensor_ops | Rescue | Report the failure"
+      ansible.builtin.debug:
+        msg: >-
+          dragos/dragos_sensor_ops: FAILED at '{{ fe_dragos_dragos_sensor_ops_failed_task }}' on
+          {{ inventory_hostname }} - {{ fe_dragos_dragos_sensor_ops_error }}
+      tags:
+        - always
+        - rescue
+
+    - name: "dragos/dragos_sensor_ops | Rescue | Re-raise the failure unless the caller opted to continue"
+      ansible.builtin.fail:
+        msg: >-
+          dragos/dragos_sensor_ops failed at '{{ fe_dragos_dragos_sensor_ops_failed_task }}': {{ fe_dragos_dragos_sensor_ops_error }}
+      when: not (fe_validation_continue_on_error | default(false) | bool)
+      tags:
+        - always
+        - rescue
+
+  always:
+
+    - name: "dragos/dragos_sensor_ops | Always | Compute the execution duration"
+      ansible.builtin.set_fact:
+        fe_dragos_dragos_sensor_ops_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+        fe_dragos_dragos_sensor_ops_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_dragos_dragos_sensor_ops_start_epoch | default(0) | int) }}"
+      tags:
+        - always
+
+    - name: "dragos/dragos_sensor_ops | Always | Publish the validation result with set_stats"
+      ansible.builtin.set_stats:
+        data:
+          fe_validation_results:
+            "dragos/dragos_sensor_ops":
+              component: "dragos/dragos_sensor_ops"
+              type: "role"
+              platform: "dragos"
+              host: "{{ inventory_hostname }}"
+              status: "{{ fe_dragos_dragos_sensor_ops_status | default('unknown') }}"
+              preflight_passed: "{{ fe_dragos_dragos_sensor_ops_preflight_passed | default(false) | bool }}"
+              postflight_passed: "{{ fe_dragos_dragos_sensor_ops_postflight_passed | default(false) | bool }}"
+              started_at: "{{ fe_dragos_dragos_sensor_ops_started_at | default('') }}"
+              ended_at: "{{ fe_dragos_dragos_sensor_ops_ended_at | default('') }}"
+              duration_seconds: "{{ fe_dragos_dragos_sensor_ops_duration_seconds | default(0) | int }}"
+              failed_task: "{{ fe_dragos_dragos_sensor_ops_failed_task | default('') }}"
+              error: "{{ fe_dragos_dragos_sensor_ops_error | default('') }}"
+              check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+          fe_validation_executions: 1
+          fe_validation_succeeded: "{{ 1 if fe_dragos_dragos_sensor_ops_status | default('') == 'succeeded' else 0 }}"
+          fe_validation_failed: "{{ 0 if fe_dragos_dragos_sensor_ops_status | default('') == 'succeeded' else 1 }}"
+          fe_validation_duration_seconds: "{{ fe_dragos_dragos_sensor_ops_duration_seconds | default(0) | int }}"
+          fe_validation_failed_components: >-
+            {{ [] if fe_dragos_dragos_sensor_ops_status | default('') == 'succeeded' else ['dragos/dragos_sensor_ops'] }}
+        aggregate: true
+        per_host: false
+      tags:
+        - always
+
+    - name: "dragos/dragos_sensor_ops | Always | Mark the validation statistics as published"
+      ansible.builtin.set_fact:
+        fe_dragos_dragos_sensor_ops_stats_published: true
+      tags:
+        - always

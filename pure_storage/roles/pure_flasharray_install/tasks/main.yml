@@ -2,195 +2,378 @@
 # Pure Storage FlashArray Installation and Initial Setup
 # Handles initial array setup, Purity OS configuration, licensing, and SSL certificates
 
-- name: Validate FlashArray connectivity
-  purefa_info:
-    fa_url: "{{ flasharray_url }}"
-    api_token: "{{ flasharray_api_token }}"
-    gather_subset:
-      - minimum
-  register: array_info
-  retries: 3
-  delay: 10
+# ---------------------------------------------------------------------------
+# Fourth Estate preflight / postflight validation harness
+#
+# The task file body below is wrapped in an Ansible block/rescue/always structure:
+#
+#   block   preflight validation runs first, then the original task file body, then
+#           postflight validation. Any failure transfers control to rescue.
+#   rescue  records which task failed and why, then re-raises so a failure is
+#           never silently swallowed. Set fe_validation_continue_on_error=true
+#           to record the failure and keep going instead.
+#   always  computes the run duration and publishes the outcome through
+#           ansible.builtin.set_stats, so a wrapping playbook, AWX/AAP or CI can
+#           consume the result without scraping log output.
+#
+# Published stats (see docs/VALIDATION_AND_STATS.md):
+#   fe_validation_results['pure_storage/pure_flasharray_install']  per-component record
+#   fe_validation_executions / _succeeded / _failed / _duration_seconds
+#   fe_validation_failed_components
+#
+# Add component-specific preflight checks without editing this file by setting
+#   fe_pure_storage_pure_flasharray_install_required_vars: [var_one, var_two]
+# ---------------------------------------------------------------------------
 
-- name: Display array information
-  ansible.builtin.debug:
-    msg: "Connected to FlashArray: {{ array_info.purefa_info.default.array_name }} ({{ array_info.purefa_info.default.version }})"
+- name: "pure_storage/pure_flasharray_install | Initialize validation state"
+  ansible.builtin.set_fact:
+    fe_pure_storage_pure_flasharray_install_start_epoch: "{{ now(fmt='%s') | int }}"
+    fe_pure_storage_pure_flasharray_install_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+    fe_pure_storage_pure_flasharray_install_status: "running"
+    fe_pure_storage_pure_flasharray_install_preflight_passed: false
+    fe_pure_storage_pure_flasharray_install_postflight_passed: false
+    fe_pure_storage_pure_flasharray_install_failed_task: ""
+    fe_pure_storage_pure_flasharray_install_error: ""
+    fe_pure_storage_pure_flasharray_install_stats_published: false
+  tags:
+    - always
 
-- name: Set array name
-  purefa_arrayname:
-    fa_url: "{{ flasharray_url }}"
-    api_token: "{{ flasharray_api_token }}"
-    name: "{{ flasharray_name }}"
-  when: flasharray_name is defined
+- name: "pure_storage/pure_flasharray_install | Guarded execution with preflight and postflight validation"
+  block:
 
-- name: Configure management IP address
-  purefa_network:
-    fa_url: "{{ flasharray_url }}"
-    api_token: "{{ flasharray_api_token }}"
-    name: "{{ item.name }}"
-    address: "{{ item.address }}"
-    netmask: "{{ item.netmask }}"
-    gateway: "{{ item.gateway | default(omit) }}"
-    mtu: "{{ item.mtu | default(1500) }}"
-    state: present
-  loop: "{{ flasharray_management_interfaces }}"
-  when: flasharray_management_interfaces is defined
+    # ----------------------------- preflight --------------------
 
-- name: Configure DNS servers
-  purefa_dns:
-    fa_url: "{{ flasharray_url }}"
-    api_token: "{{ flasharray_api_token }}"
-    domain: "{{ flasharray_dns_domain }}"
-    nameservers: "{{ flasharray_dns_servers }}"
-    state: present
+    - name: "pure_storage/pure_flasharray_install | Preflight | Verify the control node meets the minimum ansible-core version"
+      ansible.builtin.assert:
+        that:
+          - ansible_version.full is version(fe_validation_min_ansible_version | default('2.12'), '>=')
+        fail_msg: >-
+          pure_storage/pure_flasharray_install: requires ansible-core
+          {{ fe_validation_min_ansible_version | default('2.12') }} or newer,
+          found {{ ansible_version.full }}.
+        success_msg: >-
+          pure_storage/pure_flasharray_install: ansible-core {{ ansible_version.full }} satisfies the minimum.
+        quiet: true
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: Configure NTP servers
-  purefa_ntp:
-    fa_url: "{{ flasharray_url }}"
-    api_token: "{{ flasharray_api_token }}"
-    ntp_servers: "{{ flasharray_ntp_servers }}"
-    state: present
+    - name: "pure_storage/pure_flasharray_install | Preflight | Verify every declared required variable is defined"
+      ansible.builtin.assert:
+        that:
+          - vars[item] is defined
+        fail_msg: "pure_storage/pure_flasharray_install: required variable '{{ item }}' is not defined."
+        success_msg: "pure_storage/pure_flasharray_install: required variable '{{ item }}' is defined."
+        quiet: true
+      loop: "{{ fe_pure_storage_pure_flasharray_install_required_vars | default([]) }}"
+      loop_control:
+        label: "{{ item }}"
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: Set timezone
-  purefa_timezone:
-    fa_url: "{{ flasharray_url }}"
-    api_token: "{{ flasharray_api_token }}"
-    timezone: "{{ flasharray_timezone }}"
+    - name: "pure_storage/pure_flasharray_install | Preflight | Record that preflight validation passed"
+      ansible.builtin.set_fact:
+        fe_pure_storage_pure_flasharray_install_preflight_passed: true
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: Install SSL certificate
-  purefa_cert:
-    fa_url: "{{ flasharray_url }}"
-    api_token: "{{ flasharray_api_token }}"
-    certificate: "{{ lookup('file', flasharray_ssl_certificate) }}"
-    key: "{{ lookup('file', flasharray_ssl_key) }}"
-    passphrase: "{{ flasharray_ssl_passphrase | default(omit) }}"
-    state: present
-  when:
-    - flasharray_ssl_certificate is defined
-    - flasharray_ssl_key is defined
-  no_log: true
+    # ----------------------------- execute ----------------------
 
-- name: Configure phone home (support connection)
-  purefa_phonehome:
-    fa_url: "{{ flasharray_url }}"
-    api_token: "{{ flasharray_api_token }}"
-    state: "{{ flasharray_phonehome_enabled | ternary('present', 'absent') }}"
+    - name: Validate FlashArray connectivity
+      purefa_info:
+        fa_url: "{{ flasharray_url }}"
+        api_token: "{{ flasharray_api_token }}"
+        gather_subset:
+          - minimum
+      register: array_info
+      retries: 3
+      delay: 10
 
-- name: Configure support proxy
-  purefa_proxy:
-    fa_url: "{{ flasharray_url }}"
-    api_token: "{{ flasharray_api_token }}"
-    host: "{{ flasharray_support_proxy_host }}"
-    port: "{{ flasharray_support_proxy_port | default(3128) }}"
-    state: present
-  when:
-    - flasharray_support_proxy_enabled | default(false)
-    - flasharray_support_proxy_host is defined
+    - name: Display array information
+      ansible.builtin.debug:
+        msg: "Connected to FlashArray: {{ array_info.purefa_info.default.array_name }} ({{ array_info.purefa_info.default.version }})"
 
-- name: Set directory service role
-  purefa_dsrole:
-    fa_url: "{{ flasharray_url }}"
-    api_token: "{{ flasharray_api_token }}"
-    role: "{{ item.role }}"
-    group: "{{ item.group }}"
-    group_base: "{{ item.group_base }}"
-    state: present
-  loop: "{{ flasharray_directory_roles }}"
-  when: flasharray_directory_roles is defined
+    - name: Set array name
+      purefa_arrayname:
+        fa_url: "{{ flasharray_url }}"
+        api_token: "{{ flasharray_api_token }}"
+        name: "{{ flasharray_name }}"
+      when: flasharray_name is defined
 
-- name: Check for Purity OS updates
-  purefa_info:
-    fa_url: "{{ flasharray_url }}"
-    api_token: "{{ flasharray_api_token }}"
-    gather_subset:
-      - network
-  register: current_version
-  when: flasharray_auto_update | default(false)
+    - name: Configure management IP address
+      purefa_network:
+        fa_url: "{{ flasharray_url }}"
+        api_token: "{{ flasharray_api_token }}"
+        name: "{{ item.name }}"
+        address: "{{ item.address }}"
+        netmask: "{{ item.netmask }}"
+        gateway: "{{ item.gateway | default(omit) }}"
+        mtu: "{{ item.mtu | default(1500) }}"
+        state: present
+      loop: "{{ flasharray_management_interfaces }}"
+      when: flasharray_management_interfaces is defined
 
-- name: Enable idle timeout
-  purefa_timeout:
-    fa_url: "{{ flasharray_url }}"
-    api_token: "{{ flasharray_api_token }}"
-    timeout: "{{ flasharray_idle_timeout }}"
-  when: flasharray_idle_timeout is defined
+    - name: Configure DNS servers
+      purefa_dns:
+        fa_url: "{{ flasharray_url }}"
+        api_token: "{{ flasharray_api_token }}"
+        domain: "{{ flasharray_dns_domain }}"
+        nameservers: "{{ flasharray_dns_servers }}"
+        state: present
 
-- name: Configure SMTP for email alerts
-  purefa_smtp:
-    fa_url: "{{ flasharray_url }}"
-    api_token: "{{ flasharray_api_token }}"
-    sender_domain: "{{ flasharray_smtp_sender_domain }}"
-    relay_host: "{{ flasharray_smtp_relay_host }}"
-    state: present
-  when:
-    - flasharray_smtp_enabled | default(true)
-    - flasharray_smtp_relay_host is defined
+    - name: Configure NTP servers
+      purefa_ntp:
+        fa_url: "{{ flasharray_url }}"
+        api_token: "{{ flasharray_api_token }}"
+        ntp_servers: "{{ flasharray_ntp_servers }}"
+        state: present
 
-- name: Create alert recipients
-  purefa_alert:
-    fa_url: "{{ flasharray_url }}"
-    api_token: "{{ flasharray_api_token }}"
-    address: "{{ item }}"
-    state: present
-  loop: "{{ flasharray_alert_recipients }}"
-  when: flasharray_alert_recipients is defined
+    - name: Set timezone
+      purefa_timezone:
+        fa_url: "{{ flasharray_url }}"
+        api_token: "{{ flasharray_api_token }}"
+        timezone: "{{ flasharray_timezone }}"
 
-- name: Configure syslog servers
-  purefa_syslog:
-    fa_url: "{{ flasharray_url }}"
-    api_token: "{{ flasharray_api_token }}"
-    address: "{{ item.address }}"
-    port: "{{ item.port | default(514) }}"
-    protocol: "{{ item.protocol | default('udp') }}"
-    state: present
-  loop: "{{ flasharray_syslog_servers }}"
-  when: flasharray_syslog_servers is defined
+    - name: Install SSL certificate
+      purefa_cert:
+        fa_url: "{{ flasharray_url }}"
+        api_token: "{{ flasharray_api_token }}"
+        certificate: "{{ lookup('file', flasharray_ssl_certificate) }}"
+        key: "{{ lookup('file', flasharray_ssl_key) }}"
+        passphrase: "{{ flasharray_ssl_passphrase | default(omit) }}"
+        state: present
+      when:
+        - flasharray_ssl_certificate is defined
+        - flasharray_ssl_key is defined
+      no_log: true
 
-- name: Enable hardware encryption
-  purefa_info:
-    fa_url: "{{ flasharray_url }}"
-    api_token: "{{ flasharray_api_token }}"
-    gather_subset:
-      - config
-  register: encryption_status
+    - name: Configure phone home (support connection)
+      purefa_phonehome:
+        fa_url: "{{ flasharray_url }}"
+        api_token: "{{ flasharray_api_token }}"
+        state: "{{ flasharray_phonehome_enabled | ternary('present', 'absent') }}"
 
-- name: Display encryption status
-  ansible.builtin.debug:
-    msg: "Data-at-rest encryption is enabled on array {{ array_info.purefa_info.default.array_name }}"
+    - name: Configure support proxy
+      purefa_proxy:
+        fa_url: "{{ flasharray_url }}"
+        api_token: "{{ flasharray_api_token }}"
+        host: "{{ flasharray_support_proxy_host }}"
+        port: "{{ flasharray_support_proxy_port | default(3128) }}"
+        state: present
+      when:
+        - flasharray_support_proxy_enabled | default(false)
+        - flasharray_support_proxy_host is defined
 
-- name: Create initial admin user backup
-  purefa_user:
-    fa_url: "{{ flasharray_url }}"
-    api_token: "{{ flasharray_api_token }}"
-    name: "{{ item.name }}"
-    password: "{{ item.password }}"
-    role: "{{ item.role }}"
-    state: present
-  loop: "{{ flasharray_admin_users }}"
-  when: flasharray_admin_users is defined
-  no_log: true
+    - name: Set directory service role
+      purefa_dsrole:
+        fa_url: "{{ flasharray_url }}"
+        api_token: "{{ flasharray_api_token }}"
+        role: "{{ item.role }}"
+        group: "{{ item.group }}"
+        group_base: "{{ item.group_base }}"
+        state: present
+      loop: "{{ flasharray_directory_roles }}"
+      when: flasharray_directory_roles is defined
 
-- name: Set array description
-  purefa_info:
-    fa_url: "{{ flasharray_url }}"
-    api_token: "{{ flasharray_api_token }}"
-    gather_subset:
-      - minimum
-  register: final_status
+    - name: Check for Purity OS updates
+      purefa_info:
+        fa_url: "{{ flasharray_url }}"
+        api_token: "{{ flasharray_api_token }}"
+        gather_subset:
+          - network
+      register: current_version
+      when: flasharray_auto_update | default(false)
 
-- name: Installation summary
-  ansible.builtin.debug:
-    msg:
-      - "FlashArray Installation Complete"
-      - "Array Name: {{ array_info.purefa_info.default.array_name }}"
-      - "Purity Version: {{ array_info.purefa_info.default.version }}"
-      - "Array ID: {{ array_info.purefa_info.default.id }}"
-      - "Management Interface Configured: Yes"
-      - "DNS Configured: Yes"
-      - "NTP Configured: Yes"
-      - "Phone Home: {{ flasharray_phonehome_enabled | ternary('Enabled', 'Disabled') }}"
-      - "Encryption: Enabled (AES-256)"
+    - name: Enable idle timeout
+      purefa_timeout:
+        fa_url: "{{ flasharray_url }}"
+        api_token: "{{ flasharray_api_token }}"
+        timeout: "{{ flasharray_idle_timeout }}"
+      when: flasharray_idle_timeout is defined
 
-- name: Trigger installation complete handler
-  ansible.builtin.command: /bin/true
-  changed_when: true
-  notify: flasharray installation complete
+    - name: Configure SMTP for email alerts
+      purefa_smtp:
+        fa_url: "{{ flasharray_url }}"
+        api_token: "{{ flasharray_api_token }}"
+        sender_domain: "{{ flasharray_smtp_sender_domain }}"
+        relay_host: "{{ flasharray_smtp_relay_host }}"
+        state: present
+      when:
+        - flasharray_smtp_enabled | default(true)
+        - flasharray_smtp_relay_host is defined
+
+    - name: Create alert recipients
+      purefa_alert:
+        fa_url: "{{ flasharray_url }}"
+        api_token: "{{ flasharray_api_token }}"
+        address: "{{ item }}"
+        state: present
+      loop: "{{ flasharray_alert_recipients }}"
+      when: flasharray_alert_recipients is defined
+
+    - name: Configure syslog servers
+      purefa_syslog:
+        fa_url: "{{ flasharray_url }}"
+        api_token: "{{ flasharray_api_token }}"
+        address: "{{ item.address }}"
+        port: "{{ item.port | default(514) }}"
+        protocol: "{{ item.protocol | default('udp') }}"
+        state: present
+      loop: "{{ flasharray_syslog_servers }}"
+      when: flasharray_syslog_servers is defined
+
+    - name: Enable hardware encryption
+      purefa_info:
+        fa_url: "{{ flasharray_url }}"
+        api_token: "{{ flasharray_api_token }}"
+        gather_subset:
+          - config
+      register: encryption_status
+
+    - name: Display encryption status
+      ansible.builtin.debug:
+        msg: "Data-at-rest encryption is enabled on array {{ array_info.purefa_info.default.array_name }}"
+
+    - name: Create initial admin user backup
+      purefa_user:
+        fa_url: "{{ flasharray_url }}"
+        api_token: "{{ flasharray_api_token }}"
+        name: "{{ item.name }}"
+        password: "{{ item.password }}"
+        role: "{{ item.role }}"
+        state: present
+      loop: "{{ flasharray_admin_users }}"
+      when: flasharray_admin_users is defined
+      no_log: true
+
+    - name: Set array description
+      purefa_info:
+        fa_url: "{{ flasharray_url }}"
+        api_token: "{{ flasharray_api_token }}"
+        gather_subset:
+          - minimum
+      register: final_status
+
+    - name: Installation summary
+      ansible.builtin.debug:
+        msg:
+          - "FlashArray Installation Complete"
+          - "Array Name: {{ array_info.purefa_info.default.array_name }}"
+          - "Purity Version: {{ array_info.purefa_info.default.version }}"
+          - "Array ID: {{ array_info.purefa_info.default.id }}"
+          - "Management Interface Configured: Yes"
+          - "DNS Configured: Yes"
+          - "NTP Configured: Yes"
+          - "Phone Home: {{ flasharray_phonehome_enabled | ternary('Enabled', 'Disabled') }}"
+          - "Encryption: Enabled (AES-256)"
+
+    - name: Trigger installation complete handler
+      ansible.builtin.command: /bin/true
+      changed_when: true
+      notify: flasharray installation complete
+
+    # ----------------------------- postflight -------------------
+
+    - name: "pure_storage/pure_flasharray_install | Postflight | Verify the guarded body ran after a passing preflight"
+      ansible.builtin.assert:
+        that:
+          - fe_pure_storage_pure_flasharray_install_preflight_passed | bool
+          - fe_pure_storage_pure_flasharray_install_status in ['running', 'succeeded']
+        fail_msg: >-
+          pure_storage/pure_flasharray_install: postflight validation failed - preflight passed
+          ={{ fe_pure_storage_pure_flasharray_install_preflight_passed | default(false) }},
+          status={{ fe_pure_storage_pure_flasharray_install_status | default('unknown') }}.
+        success_msg: "pure_storage/pure_flasharray_install: postflight validation passed."
+        quiet: true
+      tags:
+        - always
+        - postflight
+        - validation
+
+    - name: "pure_storage/pure_flasharray_install | Postflight | Record the successful outcome"
+      ansible.builtin.set_fact:
+        fe_pure_storage_pure_flasharray_install_postflight_passed: true
+        fe_pure_storage_pure_flasharray_install_status: "succeeded"
+      tags:
+        - always
+        - postflight
+        - validation
+
+  rescue:
+
+    - name: "pure_storage/pure_flasharray_install | Rescue | Capture the failing task and error detail"
+      ansible.builtin.set_fact:
+        fe_pure_storage_pure_flasharray_install_status: "failed"
+        fe_pure_storage_pure_flasharray_install_postflight_passed: false
+        fe_pure_storage_pure_flasharray_install_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+        fe_pure_storage_pure_flasharray_install_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+      tags:
+        - always
+        - rescue
+
+    - name: "pure_storage/pure_flasharray_install | Rescue | Report the failure"
+      ansible.builtin.debug:
+        msg: >-
+          pure_storage/pure_flasharray_install: FAILED at '{{ fe_pure_storage_pure_flasharray_install_failed_task }}' on
+          {{ inventory_hostname }} - {{ fe_pure_storage_pure_flasharray_install_error }}
+      tags:
+        - always
+        - rescue
+
+    - name: "pure_storage/pure_flasharray_install | Rescue | Re-raise the failure unless the caller opted to continue"
+      ansible.builtin.fail:
+        msg: >-
+          pure_storage/pure_flasharray_install failed at '{{ fe_pure_storage_pure_flasharray_install_failed_task }}': {{ fe_pure_storage_pure_flasharray_install_error }}
+      when: not (fe_validation_continue_on_error | default(false) | bool)
+      tags:
+        - always
+        - rescue
+
+  always:
+
+    - name: "pure_storage/pure_flasharray_install | Always | Compute the execution duration"
+      ansible.builtin.set_fact:
+        fe_pure_storage_pure_flasharray_install_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+        fe_pure_storage_pure_flasharray_install_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_pure_storage_pure_flasharray_install_start_epoch | default(0) | int) }}"
+      tags:
+        - always
+
+    - name: "pure_storage/pure_flasharray_install | Always | Publish the validation result with set_stats"
+      ansible.builtin.set_stats:
+        data:
+          fe_validation_results:
+            "pure_storage/pure_flasharray_install":
+              component: "pure_storage/pure_flasharray_install"
+              type: "role"
+              platform: "pure_storage"
+              host: "{{ inventory_hostname }}"
+              status: "{{ fe_pure_storage_pure_flasharray_install_status | default('unknown') }}"
+              preflight_passed: "{{ fe_pure_storage_pure_flasharray_install_preflight_passed | default(false) | bool }}"
+              postflight_passed: "{{ fe_pure_storage_pure_flasharray_install_postflight_passed | default(false) | bool }}"
+              started_at: "{{ fe_pure_storage_pure_flasharray_install_started_at | default('') }}"
+              ended_at: "{{ fe_pure_storage_pure_flasharray_install_ended_at | default('') }}"
+              duration_seconds: "{{ fe_pure_storage_pure_flasharray_install_duration_seconds | default(0) | int }}"
+              failed_task: "{{ fe_pure_storage_pure_flasharray_install_failed_task | default('') }}"
+              error: "{{ fe_pure_storage_pure_flasharray_install_error | default('') }}"
+              check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+          fe_validation_executions: 1
+          fe_validation_succeeded: "{{ 1 if fe_pure_storage_pure_flasharray_install_status | default('') == 'succeeded' else 0 }}"
+          fe_validation_failed: "{{ 0 if fe_pure_storage_pure_flasharray_install_status | default('') == 'succeeded' else 1 }}"
+          fe_validation_duration_seconds: "{{ fe_pure_storage_pure_flasharray_install_duration_seconds | default(0) | int }}"
+          fe_validation_failed_components: >-
+            {{ [] if fe_pure_storage_pure_flasharray_install_status | default('') == 'succeeded' else ['pure_storage/pure_flasharray_install'] }}
+        aggregate: true
+        per_host: false
+      tags:
+        - always
+
+    - name: "pure_storage/pure_flasharray_install | Always | Mark the validation statistics as published"
+      ansible.builtin.set_fact:
+        fe_pure_storage_pure_flasharray_install_stats_published: true
+      tags:
+        - always

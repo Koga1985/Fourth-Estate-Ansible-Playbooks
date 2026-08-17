@@ -2,232 +2,415 @@
 # tasks file for postgresql_replication
 # PostgreSQL streaming replication (async/sync) configuration
 
-- name: Include OS-specific variables
-  include_vars: "{{ ansible_os_family }}.yml"
-  when: ansible_os_family in ['RedHat', 'Debian']
-  failed_when: false
+# ---------------------------------------------------------------------------
+# Fourth Estate preflight / postflight validation harness
+#
+# The task file body below is wrapped in an Ansible block/rescue/always structure:
+#
+#   block   preflight validation runs first, then the original task file body, then
+#           postflight validation. Any failure transfers control to rescue.
+#   rescue  records which task failed and why, then re-raises so a failure is
+#           never silently swallowed. Set fe_validation_continue_on_error=true
+#           to record the failure and keep going instead.
+#   always  computes the run duration and publishes the outcome through
+#           ansible.builtin.set_stats, so a wrapping playbook, AWX/AAP or CI can
+#           consume the result without scraping log output.
+#
+# Published stats (see docs/VALIDATION_AND_STATS.md):
+#   fe_validation_results['databases/postgresql/postgresql_replication']  per-component record
+#   fe_validation_executions / _succeeded / _failed / _duration_seconds
+#   fe_validation_failed_components
+#
+# Add component-specific preflight checks without editing this file by setting
+#   fe_databases_postgresql_postgresql_replication_required_vars: [var_one, var_two]
+# ---------------------------------------------------------------------------
 
-- name: Determine replication role
+- name: "databases/postgresql/postgresql_replication | Initialize validation state"
   ansible.builtin.set_fact:
-    is_primary: "{{ postgresql_replication_role == 'primary' }}"
-    is_replica: "{{ postgresql_replication_role == 'replica' or postgresql_replication_role == 'standby' }}"
+    fe_databases_postgresql_postgresql_replication_start_epoch: "{{ now(fmt='%s') | int }}"
+    fe_databases_postgresql_postgresql_replication_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+    fe_databases_postgresql_postgresql_replication_status: "running"
+    fe_databases_postgresql_postgresql_replication_preflight_passed: false
+    fe_databases_postgresql_postgresql_replication_postflight_passed: false
+    fe_databases_postgresql_postgresql_replication_failed_task: ""
+    fe_databases_postgresql_postgresql_replication_error: ""
+    fe_databases_postgresql_postgresql_replication_stats_published: false
+  tags:
+    - always
 
-- name: Primary server configuration
-  when: is_primary
+- name: "databases/postgresql/postgresql_replication | Guarded execution with preflight and postflight validation"
   block:
-    - name: Create replication user on primary
-      community.postgresql.postgresql_user:
-        name: "{{ postgresql_replication_user }}"
-        password: "{{ postgresql_replication_password }}"
-        role_attr_flags: REPLICATION,LOGIN
-        state: present
-        login_host: localhost
-        login_user: postgres
-        port: "{{ postgresql_port }}"
-        encrypted: true
-      become: true
-      become_user: postgres
-      no_log: true
 
-    - name: Create replication slot on primary
+    # ----------------------------- preflight --------------------
+
+    - name: "databases/postgresql/postgresql_replication | Preflight | Verify the control node meets the minimum ansible-core version"
+      ansible.builtin.assert:
+        that:
+          - ansible_version.full is version(fe_validation_min_ansible_version | default('2.12'), '>=')
+        fail_msg: >-
+          databases/postgresql/postgresql_replication: requires ansible-core
+          {{ fe_validation_min_ansible_version | default('2.12') }} or newer,
+          found {{ ansible_version.full }}.
+        success_msg: >-
+          databases/postgresql/postgresql_replication: ansible-core {{ ansible_version.full }} satisfies the minimum.
+        quiet: true
+      tags:
+        - always
+        - preflight
+        - validation
+
+    - name: "databases/postgresql/postgresql_replication | Preflight | Verify every declared required variable is defined"
+      ansible.builtin.assert:
+        that:
+          - vars[item] is defined
+        fail_msg: "databases/postgresql/postgresql_replication: required variable '{{ item }}' is not defined."
+        success_msg: "databases/postgresql/postgresql_replication: required variable '{{ item }}' is defined."
+        quiet: true
+      loop: "{{ fe_databases_postgresql_postgresql_replication_required_vars | default([]) }}"
+      loop_control:
+        label: "{{ item }}"
+      tags:
+        - always
+        - preflight
+        - validation
+
+    - name: "databases/postgresql/postgresql_replication | Preflight | Record that preflight validation passed"
+      ansible.builtin.set_fact:
+        fe_databases_postgresql_postgresql_replication_preflight_passed: true
+      tags:
+        - always
+        - preflight
+        - validation
+
+    # ----------------------------- execute ----------------------
+
+    - name: Include OS-specific variables
+      include_vars: "{{ ansible_os_family }}.yml"
+      when: ansible_os_family in ['RedHat', 'Debian']
+      failed_when: false
+
+    - name: Determine replication role
+      ansible.builtin.set_fact:
+        is_primary: "{{ postgresql_replication_role == 'primary' }}"
+        is_replica: "{{ postgresql_replication_role == 'replica' or postgresql_replication_role == 'standby' }}"
+
+    - name: Primary server configuration
+      when: is_primary
+      block:
+        - name: Create replication user on primary
+          community.postgresql.postgresql_user:
+            name: "{{ postgresql_replication_user }}"
+            password: "{{ postgresql_replication_password }}"
+            role_attr_flags: REPLICATION,LOGIN
+            state: present
+            login_host: localhost
+            login_user: postgres
+            port: "{{ postgresql_port }}"
+            encrypted: true
+          become: true
+          become_user: postgres
+          no_log: true
+
+        - name: Create replication slot on primary
+          community.postgresql.postgresql_query:
+            login_host: localhost
+            login_user: postgres
+            port: "{{ postgresql_port }}"
+            db: postgres
+            query: "SELECT * FROM pg_create_physical_replication_slot('{{ item.name }}');"
+          loop: "{{ postgresql_replication_slots }}"
+          when: postgresql_replication_slots is defined
+          become: true
+          become_user: postgres
+          failed_when: false
+          register: replication_slot_create
+          changed_when: "'already exists' not in (replication_slot_create.msg | default(''))"
+
+        - name: Configure pg_hba.conf for replication on primary
+          ansible.builtin.lineinfile:
+            path: "{{ postgresql_config_directory }}/pg_hba.conf"
+            line: "host    replication     {{ postgresql_replication_user }}    {{ item }}/32    scram-sha-256"
+            state: present
+            create: false
+            owner: postgres
+            group: postgres
+            mode: '0600'
+          loop: "{{ postgresql_replication_allowed_hosts }}"
+          when: postgresql_replication_allowed_hosts is defined
+          notify: reload postgresql
+
+        - name: Ensure WAL archiving is configured on primary
+          ansible.builtin.lineinfile:
+            path: "{{ postgresql_config_directory }}/postgresql.conf"
+            regexp: "^archive_command = "
+            line: "archive_command = '{{ postgresql_archive_command }}'"
+            state: present
+            owner: postgres
+            group: postgres
+            mode: '0600'
+          notify: reload postgresql
+
+        - name: Configure synchronous replication (if enabled)
+          ansible.builtin.lineinfile:
+            path: "{{ postgresql_config_directory }}/postgresql.conf"
+            regexp: "^synchronous_standby_names = "
+            line: "synchronous_standby_names = '{{ postgresql_synchronous_standby_names }}'"
+            state: present
+            owner: postgres
+            group: postgres
+            mode: '0600'
+          when:
+            - postgresql_synchronous_replication_enabled
+            - postgresql_synchronous_standby_names is defined
+          notify: reload postgresql
+
+    - name: Check if replica is already configured
+      ansible.builtin.stat:
+        path: "{{ postgresql_data_directory }}/standby.signal"
+      register: replica_configured
+      when: is_replica
+
+    - name: Check if replica recovery.conf exists (PostgreSQL < 12)
+      ansible.builtin.stat:
+        path: "{{ postgresql_data_directory }}/recovery.conf"
+      register: replica_recovery_conf
+      when: is_replica
+
+    - name: Replica server configuration
+      when:
+        - is_replica
+        - not replica_configured.stat.exists | default(false)
+        - not replica_recovery_conf.stat.exists | default(false)
+      block:
+        - name: Stop PostgreSQL on replica
+          ansible.builtin.service:
+            name: "postgresql-{{ postgresql_version }}"
+            state: stopped
+
+        - name: Check if replica data directory is empty
+          ansible.builtin.find:
+            paths: "{{ postgresql_data_directory }}"
+            file_type: any
+          register: replica_data_check
+
+        - name: Backup existing data directory on replica
+          ansible.builtin.command: >
+            mv {{ postgresql_data_directory }} {{ postgresql_data_directory }}.backup.{{ ansible_date_time.epoch }}
+          when: replica_data_check.matched > 0
+          args:
+            removes: "{{ postgresql_data_directory }}"
+
+        - name: Create empty data directory on replica
+          ansible.builtin.file:
+            path: "{{ postgresql_data_directory }}"
+            state: directory
+            owner: postgres
+            group: postgres
+            mode: '0700'
+
+        - name: Run pg_basebackup from primary
+          ansible.builtin.command: >
+            {{ postgresql_bin_path }}/pg_basebackup
+            -h {{ postgresql_primary_host }}
+            -p {{ postgresql_primary_port | default(postgresql_port) }}
+            -U {{ postgresql_replication_user }}
+            -D {{ postgresql_data_directory }}
+            -Fp -Xs -P -R
+            {% if postgresql_replication_slot_name is defined %}-S {{ postgresql_replication_slot_name }}{% endif %}
+          environment:
+            PGPASSWORD: "{{ postgresql_replication_password }}"
+          become: true
+          become_user: postgres
+          register: pg_basebackup
+          no_log: true
+
+        - name: Configure recovery settings (PostgreSQL 12+)
+          when: postgresql_version | int >= 12
+          block:
+            - name: Create standby.signal file
+              ansible.builtin.file:
+                path: "{{ postgresql_data_directory }}/standby.signal"
+                state: touch
+                owner: postgres
+                group: postgres
+                mode: '0600'
+
+            - name: Configure primary_conninfo in postgresql.conf
+              ansible.builtin.lineinfile:
+                path: "{{ postgresql_data_directory }}/postgresql.auto.conf"
+                line: "primary_conninfo = 'host={{ postgresql_primary_host }} port={{ postgresql_primary_port | default(postgresql_port) }} user={{ postgresql_replication_user }} password={{ postgresql_replication_password }}'"
+                create: true
+                owner: postgres
+                group: postgres
+                mode: '0600'
+
+            - name: Configure restore_command
+              ansible.builtin.lineinfile:
+                path: "{{ postgresql_data_directory }}/postgresql.auto.conf"
+                line: "restore_command = '{{ postgresql_restore_command | default('cp ' + postgresql_wal_archive_directory + '/%f %p') }}'"
+                create: true
+                owner: postgres
+                group: postgres
+                mode: '0600'
+
+        - name: Configure recovery.conf (PostgreSQL < 12)
+          when: postgresql_version | int < 12
+          ansible.builtin.template:
+            src: recovery.conf.j2
+            dest: "{{ postgresql_data_directory }}/recovery.conf"
+            owner: postgres
+            group: postgres
+            mode: '0600'
+
+        - name: Start PostgreSQL on replica
+          ansible.builtin.service:
+            name: "postgresql-{{ postgresql_version }}"
+            state: started
+            enabled: true
+
+        - name: Wait for replica to be ready
+          ansible.builtin.wait_for:
+            port: "{{ postgresql_port }}"
+            host: localhost
+            timeout: 120
+            delay: 5
+
+    - name: Verify replication status
       community.postgresql.postgresql_query:
         login_host: localhost
         login_user: postgres
         port: "{{ postgresql_port }}"
         db: postgres
-        query: "SELECT * FROM pg_create_physical_replication_slot('{{ item.name }}');"
-      loop: "{{ postgresql_replication_slots }}"
-      when: postgresql_replication_slots is defined
+        query: |
+          SELECT client_addr, state, sync_state, replay_lag
+          FROM pg_stat_replication;
       become: true
       become_user: postgres
+      register: replication_status
+      when: is_primary
       failed_when: false
-      register: replication_slot_create
-      changed_when: "'already exists' not in (replication_slot_create.msg | default(''))"
 
-    - name: Configure pg_hba.conf for replication on primary
-      ansible.builtin.lineinfile:
-        path: "{{ postgresql_config_directory }}/pg_hba.conf"
-        line: "host    replication     {{ postgresql_replication_user }}    {{ item }}/32    scram-sha-256"
-        state: present
-        create: false
-        owner: postgres
-        group: postgres
-        mode: '0600'
-      loop: "{{ postgresql_replication_allowed_hosts }}"
-      when: postgresql_replication_allowed_hosts is defined
-      notify: reload postgresql
-
-    - name: Ensure WAL archiving is configured on primary
-      ansible.builtin.lineinfile:
-        path: "{{ postgresql_config_directory }}/postgresql.conf"
-        regexp: "^archive_command = "
-        line: "archive_command = '{{ postgresql_archive_command }}'"
-        state: present
-        owner: postgres
-        group: postgres
-        mode: '0600'
-      notify: reload postgresql
-
-    - name: Configure synchronous replication (if enabled)
-      ansible.builtin.lineinfile:
-        path: "{{ postgresql_config_directory }}/postgresql.conf"
-        regexp: "^synchronous_standby_names = "
-        line: "synchronous_standby_names = '{{ postgresql_synchronous_standby_names }}'"
-        state: present
-        owner: postgres
-        group: postgres
-        mode: '0600'
+    - name: Display replication status
+      ansible.builtin.debug:
+        var: replication_status.query_result
       when:
-        - postgresql_synchronous_replication_enabled
-        - postgresql_synchronous_standby_names is defined
-      notify: reload postgresql
+        - is_primary
+        - replication_status.query_result is defined
 
-- name: Check if replica is already configured
-  ansible.builtin.stat:
-    path: "{{ postgresql_data_directory }}/standby.signal"
-  register: replica_configured
-  when: is_replica
-
-- name: Check if replica recovery.conf exists (PostgreSQL < 12)
-  ansible.builtin.stat:
-    path: "{{ postgresql_data_directory }}/recovery.conf"
-  register: replica_recovery_conf
-  when: is_replica
-
-- name: Replica server configuration
-  when:
-    - is_replica
-    - not replica_configured.stat.exists | default(false)
-    - not replica_recovery_conf.stat.exists | default(false)
-  block:
-    - name: Stop PostgreSQL on replica
-      ansible.builtin.service:
-        name: "postgresql-{{ postgresql_version }}"
-        state: stopped
-
-    - name: Check if replica data directory is empty
-      ansible.builtin.find:
-        paths: "{{ postgresql_data_directory }}"
-        file_type: any
-      register: replica_data_check
-
-    - name: Backup existing data directory on replica
-      ansible.builtin.command: >
-        mv {{ postgresql_data_directory }} {{ postgresql_data_directory }}.backup.{{ ansible_date_time.epoch }}
-      when: replica_data_check.matched > 0
-      args:
-        removes: "{{ postgresql_data_directory }}"
-
-    - name: Create empty data directory on replica
-      ansible.builtin.file:
-        path: "{{ postgresql_data_directory }}"
-        state: directory
-        owner: postgres
-        group: postgres
-        mode: '0700'
-
-    - name: Run pg_basebackup from primary
-      ansible.builtin.command: >
-        {{ postgresql_bin_path }}/pg_basebackup
-        -h {{ postgresql_primary_host }}
-        -p {{ postgresql_primary_port | default(postgresql_port) }}
-        -U {{ postgresql_replication_user }}
-        -D {{ postgresql_data_directory }}
-        -Fp -Xs -P -R
-        {% if postgresql_replication_slot_name is defined %}-S {{ postgresql_replication_slot_name }}{% endif %}
-      environment:
-        PGPASSWORD: "{{ postgresql_replication_password }}"
-      become: true
-      become_user: postgres
-      register: pg_basebackup
-      no_log: true
-
-    - name: Configure recovery settings (PostgreSQL 12+)
-      when: postgresql_version | int >= 12
-      block:
-        - name: Create standby.signal file
-          ansible.builtin.file:
-            path: "{{ postgresql_data_directory }}/standby.signal"
-            state: touch
-            owner: postgres
-            group: postgres
-            mode: '0600'
-
-        - name: Configure primary_conninfo in postgresql.conf
-          ansible.builtin.lineinfile:
-            path: "{{ postgresql_data_directory }}/postgresql.auto.conf"
-            line: "primary_conninfo = 'host={{ postgresql_primary_host }} port={{ postgresql_primary_port | default(postgresql_port) }} user={{ postgresql_replication_user }} password={{ postgresql_replication_password }}'"
-            create: true
-            owner: postgres
-            group: postgres
-            mode: '0600'
-
-        - name: Configure restore_command
-          ansible.builtin.lineinfile:
-            path: "{{ postgresql_data_directory }}/postgresql.auto.conf"
-            line: "restore_command = '{{ postgresql_restore_command | default('cp ' + postgresql_wal_archive_directory + '/%f %p') }}'"
-            create: true
-            owner: postgres
-            group: postgres
-            mode: '0600'
-
-    - name: Configure recovery.conf (PostgreSQL < 12)
-      when: postgresql_version | int < 12
+    - name: Create replication monitoring script
       ansible.builtin.template:
-        src: recovery.conf.j2
-        dest: "{{ postgresql_data_directory }}/recovery.conf"
+        src: check_replication.sh.j2
+        dest: /usr/local/bin/check_replication.sh
         owner: postgres
         group: postgres
-        mode: '0600'
+        mode: '0755'
 
-    - name: Start PostgreSQL on replica
-      ansible.builtin.service:
-        name: "postgresql-{{ postgresql_version }}"
-        state: started
-        enabled: true
+    - name: Setup replication monitoring cron job
+      ansible.builtin.cron:
+        name: "Check PostgreSQL Replication Status"
+        minute: "*/5"
+        user: postgres
+        job: "/usr/local/bin/check_replication.sh >> /var/log/postgresql/replication_check.log 2>&1"
+        state: present
+      when: postgresql_replication_monitoring_enabled | default(true)
 
-    - name: Wait for replica to be ready
-      ansible.builtin.wait_for:
-        port: "{{ postgresql_port }}"
-        host: localhost
-        timeout: 120
-        delay: 5
+    # ----------------------------- postflight -------------------
 
-- name: Verify replication status
-  community.postgresql.postgresql_query:
-    login_host: localhost
-    login_user: postgres
-    port: "{{ postgresql_port }}"
-    db: postgres
-    query: |
-      SELECT client_addr, state, sync_state, replay_lag
-      FROM pg_stat_replication;
-  become: true
-  become_user: postgres
-  register: replication_status
-  when: is_primary
-  failed_when: false
+    - name: "databases/postgresql/postgresql_replication | Postflight | Verify the guarded body ran after a passing preflight"
+      ansible.builtin.assert:
+        that:
+          - fe_databases_postgresql_postgresql_replication_preflight_passed | bool
+          - fe_databases_postgresql_postgresql_replication_status in ['running', 'succeeded']
+        fail_msg: >-
+          databases/postgresql/postgresql_replication: postflight validation failed - preflight passed
+          ={{ fe_databases_postgresql_postgresql_replication_preflight_passed | default(false) }},
+          status={{ fe_databases_postgresql_postgresql_replication_status | default('unknown') }}.
+        success_msg: "databases/postgresql/postgresql_replication: postflight validation passed."
+        quiet: true
+      tags:
+        - always
+        - postflight
+        - validation
 
-- name: Display replication status
-  ansible.builtin.debug:
-    var: replication_status.query_result
-  when:
-    - is_primary
-    - replication_status.query_result is defined
+    - name: "databases/postgresql/postgresql_replication | Postflight | Record the successful outcome"
+      ansible.builtin.set_fact:
+        fe_databases_postgresql_postgresql_replication_postflight_passed: true
+        fe_databases_postgresql_postgresql_replication_status: "succeeded"
+      tags:
+        - always
+        - postflight
+        - validation
 
-- name: Create replication monitoring script
-  ansible.builtin.template:
-    src: check_replication.sh.j2
-    dest: /usr/local/bin/check_replication.sh
-    owner: postgres
-    group: postgres
-    mode: '0755'
+  rescue:
 
-- name: Setup replication monitoring cron job
-  ansible.builtin.cron:
-    name: "Check PostgreSQL Replication Status"
-    minute: "*/5"
-    user: postgres
-    job: "/usr/local/bin/check_replication.sh >> /var/log/postgresql/replication_check.log 2>&1"
-    state: present
-  when: postgresql_replication_monitoring_enabled | default(true)
+    - name: "databases/postgresql/postgresql_replication | Rescue | Capture the failing task and error detail"
+      ansible.builtin.set_fact:
+        fe_databases_postgresql_postgresql_replication_status: "failed"
+        fe_databases_postgresql_postgresql_replication_postflight_passed: false
+        fe_databases_postgresql_postgresql_replication_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+        fe_databases_postgresql_postgresql_replication_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+      tags:
+        - always
+        - rescue
+
+    - name: "databases/postgresql/postgresql_replication | Rescue | Report the failure"
+      ansible.builtin.debug:
+        msg: >-
+          databases/postgresql/postgresql_replication: FAILED at '{{ fe_databases_postgresql_postgresql_replication_failed_task }}' on
+          {{ inventory_hostname }} - {{ fe_databases_postgresql_postgresql_replication_error }}
+      tags:
+        - always
+        - rescue
+
+    - name: "databases/postgresql/postgresql_replication | Rescue | Re-raise the failure unless the caller opted to continue"
+      ansible.builtin.fail:
+        msg: >-
+          databases/postgresql/postgresql_replication failed at '{{ fe_databases_postgresql_postgresql_replication_failed_task }}': {{ fe_databases_postgresql_postgresql_replication_error }}
+      when: not (fe_validation_continue_on_error | default(false) | bool)
+      tags:
+        - always
+        - rescue
+
+  always:
+
+    - name: "databases/postgresql/postgresql_replication | Always | Compute the execution duration"
+      ansible.builtin.set_fact:
+        fe_databases_postgresql_postgresql_replication_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+        fe_databases_postgresql_postgresql_replication_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_databases_postgresql_postgresql_replication_start_epoch | default(0) | int) }}"
+      tags:
+        - always
+
+    - name: "databases/postgresql/postgresql_replication | Always | Publish the validation result with set_stats"
+      ansible.builtin.set_stats:
+        data:
+          fe_validation_results:
+            "databases/postgresql/postgresql_replication":
+              component: "databases/postgresql/postgresql_replication"
+              type: "role"
+              platform: "databases"
+              host: "{{ inventory_hostname }}"
+              status: "{{ fe_databases_postgresql_postgresql_replication_status | default('unknown') }}"
+              preflight_passed: "{{ fe_databases_postgresql_postgresql_replication_preflight_passed | default(false) | bool }}"
+              postflight_passed: "{{ fe_databases_postgresql_postgresql_replication_postflight_passed | default(false) | bool }}"
+              started_at: "{{ fe_databases_postgresql_postgresql_replication_started_at | default('') }}"
+              ended_at: "{{ fe_databases_postgresql_postgresql_replication_ended_at | default('') }}"
+              duration_seconds: "{{ fe_databases_postgresql_postgresql_replication_duration_seconds | default(0) | int }}"
+              failed_task: "{{ fe_databases_postgresql_postgresql_replication_failed_task | default('') }}"
+              error: "{{ fe_databases_postgresql_postgresql_replication_error | default('') }}"
+              check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+          fe_validation_executions: 1
+          fe_validation_succeeded: "{{ 1 if fe_databases_postgresql_postgresql_replication_status | default('') == 'succeeded' else 0 }}"
+          fe_validation_failed: "{{ 0 if fe_databases_postgresql_postgresql_replication_status | default('') == 'succeeded' else 1 }}"
+          fe_validation_duration_seconds: "{{ fe_databases_postgresql_postgresql_replication_duration_seconds | default(0) | int }}"
+          fe_validation_failed_components: >-
+            {{ [] if fe_databases_postgresql_postgresql_replication_status | default('') == 'succeeded' else ['databases/postgresql/postgresql_replication'] }}
+        aggregate: true
+        per_host: false
+      tags:
+        - always
+
+    - name: "databases/postgresql/postgresql_replication | Always | Mark the validation statistics as published"
+      ansible.builtin.set_fact:
+        fe_databases_postgresql_postgresql_replication_stats_published: true
+      tags:
+        - always

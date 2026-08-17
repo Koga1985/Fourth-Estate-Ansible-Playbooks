@@ -1,0 +1,272 @@
+# Preflight / Postflight Validation and Run Statistics
+
+Every task file, role and playbook in this repository is wrapped in a uniform
+`block` / `rescue` / `always` validation harness that publishes its outcome
+through `ansible.builtin.set_stats`.
+
+The goal is that **"did this run work?" is answerable from structured data**
+rather than by scraping console output — from a wrapping playbook, from AWX /
+Ansible Automation Platform (which surfaces `set_stats` data on the job), or
+from CI.
+
+---
+
+## Table of Contents
+
+- [What was applied where](#what-was-applied-where)
+- [The task-file / role shape](#the-task-file--role-shape)
+- [The playbook shape](#the-playbook-shape)
+- [Published statistics](#published-statistics)
+- [Consuming the statistics](#consuming-the-statistics)
+- [Control variables](#control-variables)
+- [Adding component-specific preflight checks](#adding-component-specific-preflight-checks)
+- [Tag behaviour](#tag-behaviour)
+- [Behaviour changes to be aware of](#behaviour-changes-to-be-aware-of)
+
+---
+
+## What was applied where
+
+| Scope | Files | Shape |
+|-------|-------|-------|
+| Role task entrypoints (`*/roles/*/tasks/main.yml`) | 572 | task-file wrapper |
+| Role sub-task files (`*/roles/*/tasks/*.yml`) | 848 | task-file wrapper |
+| Standalone task files (`<platform>/tasks/*.yml`) | 430 | task-file wrapper |
+| Playbooks (`site.yml`, `*/playbooks/*.yml`, `*/roles/*/playbooks/run.yml`) | 274 | playbook wrapper |
+| **Total** | **2,124** | |
+
+Deliberately **not** wrapped:
+
+- **Handler files** (`*/roles/*/handlers/main.yml`). Handlers are dispatched
+  individually by `notify`; wrapping them in a block changes when and whether
+  they fire. Handler failures surface through the notifying task, which is
+  already inside a wrapper.
+- **`defaults/`, `vars/`, `meta/`** and other non-task YAML — these are data,
+  not task lists.
+
+Every component is identified by a repo-relative id such as
+`cisco/ise_profiling__probes` or `splunk/site`, which is unique across the
+repository. Its facts are namespaced with a matching `fe_<sanitised_id>_`
+prefix, so nested execution (a playbook running a role that includes sub-task
+files) never collides.
+
+---
+
+## The task-file / role shape
+
+```yaml
+- name: "<component> | Initialize validation state"
+  ansible.builtin.set_fact: ...          # timestamps, status=running
+
+- name: "<component> | Guarded execution with preflight and postflight validation"
+  block:
+    # ---- preflight ----
+    #   - control node meets the minimum ansible-core version
+    #   - every variable named in <prefix>_required_vars is defined
+    #   - records preflight_passed=true
+    # ---- execute ----
+    #   ... the original tasks, untouched ...
+    # ---- postflight ----
+    #   - asserts preflight passed and no failure was recorded
+    #   - records status=succeeded
+  rescue:
+    #   - captures ansible_failed_task.name and ansible_failed_result.msg
+    #   - reports the failure
+    #   - re-raises unless fe_validation_continue_on_error is true
+  always:
+    #   - computes duration
+    #   - publishes the record with set_stats
+```
+
+`always` runs even when the `rescue` re-raises, so **statistics are published on
+both the success and the failure path**.
+
+---
+
+## The playbook shape
+
+Each play gains three sections:
+
+| Section | Contents |
+|---------|----------|
+| `pre_tasks` | `block`/`rescue`/`always` preflight. On failure it records the reason, publishes the record with `set_stats`, and aborts the play **before any role or task runs**. |
+| `tasks` | The original task list, wrapped in `block`/`rescue`/`always`. A failure is captured (which task, which error), published, and re-raised. |
+| `post_tasks` | `block`/`rescue`/`always` postflight validation, then the run record is published with `set_stats`. |
+
+Existing `pre_tasks` / `post_tasks` are preserved — the harness is prepended to
+`pre_tasks` and appended to `post_tasks`. Playbooks that only have `roles:` get
+`pre_tasks` and `post_tasks` added.
+
+The record is published exactly once per play, guarded by a
+`<prefix>_stats_published` fact:
+
+- preflight failed → published from the `pre_tasks` rescue,
+- `tasks` failed → published from the `tasks` always block,
+- otherwise → published from the `post_tasks` always block.
+
+---
+
+## Published statistics
+
+All values are published with `aggregate: true` and `per_host: false`, so
+counters sum and the results dictionary merges across every role, task file and
+play in a run.
+
+| Key | Type | Meaning |
+|-----|------|---------|
+| `fe_validation_results` | dict | One record per component, keyed by component id |
+| `fe_validation_executions` | int | Number of wrapped components that ran |
+| `fe_validation_succeeded` | int | How many finished with `status: succeeded` |
+| `fe_validation_failed` | int | How many did not |
+| `fe_validation_duration_seconds` | int | Summed wall-clock seconds |
+| `fe_validation_failed_components` | list | Component ids that failed |
+
+Each entry in `fe_validation_results` looks like:
+
+```json
+{
+  "component": "cloud_policy/cloud_computing_srg_assessment",
+  "type": "role",
+  "platform": "cloud_policy",
+  "host": "localhost",
+  "status": "succeeded",
+  "preflight_passed": true,
+  "postflight_passed": true,
+  "started_at": "2026-08-17T18:20:37Z",
+  "ended_at": "2026-08-17T18:20:40Z",
+  "duration_seconds": 3,
+  "failed_task": "",
+  "error": "",
+  "check_mode": false
+}
+```
+
+`type` is one of `role`, `role-tasks`, `tasks` or `playbook`.
+`status` is one of `succeeded`, `failed` or `preflight_failed`.
+
+---
+
+## Consuming the statistics
+
+### On the command line
+
+`set_stats` output is hidden by default. Enable it:
+
+```bash
+ANSIBLE_SHOW_CUSTOM_STATS=true ansible-playbook -i inventory site.yml
+```
+
+or in `ansible.cfg`:
+
+```ini
+[defaults]
+show_custom_stats = True
+```
+
+### In AWX / Ansible Automation Platform
+
+Nothing to configure — `set_stats` data is attached to the job and available to
+workflow nodes as `fe_validation_*` variables, so a downstream node can branch
+on `fe_validation_failed`.
+
+### From a wrapping playbook
+
+Statistics set by an inner play are available to later plays as ordinary
+variables:
+
+```yaml
+- name: Gate on the validation results
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Fail if any component failed
+      ansible.builtin.fail:
+        msg: >-
+          {{ fe_validation_failed }} of {{ fe_validation_executions }} components
+          failed: {{ fe_validation_failed_components | join(', ') }}
+      when: fe_validation_failed | default(0) | int > 0
+
+    - name: Write a machine-readable run report
+      ansible.builtin.copy:
+        dest: /tmp/fe_validation_report.json
+        mode: "0640"
+        content: "{{ fe_validation_results | default({}) | to_nice_json }}"
+```
+
+---
+
+## Control variables
+
+| Variable | Default | Effect |
+|----------|---------|--------|
+| `fe_validation_continue_on_error` | `false` | When `true`, a captured failure is recorded and published but **not** re-raised, so the run continues. Useful for assessment/reporting runs that should survey everything before reporting. |
+| `fe_validation_min_ansible_version` | `'2.12'` | Minimum ansible-core version asserted by every preflight. |
+| `<prefix>_required_vars` | `[]` | Variables the component's preflight requires to be defined. |
+
+Example:
+
+```bash
+# Survey every component, record failures, never abort
+ansible-playbook -i inventory site.yml -e fe_validation_continue_on_error=true
+```
+
+---
+
+## Adding component-specific preflight checks
+
+The generic preflight is intentionally minimal so it is safe everywhere. To
+require component-specific inputs, set the component's `_required_vars` list —
+no need to edit the harness. Put it in the role's `defaults/main.yml`, in group
+vars, or on the command line:
+
+```yaml
+# cisco/roles/ise_profiling__probes/defaults/main.yml
+fe_cisco_ise_profiling__probes_required_vars:
+  - ise_hostname
+  - ise_username
+  - ise_password
+```
+
+A missing variable then fails in preflight — before any change is attempted —
+and the published record names the exact variable.
+
+For richer checks (reachability, credentials, capacity), add tasks to the
+`preflight` section of the component's `block`.
+
+---
+
+## Tag behaviour
+
+Existing tags are untouched. The harness's own tasks are tagged
+`always` plus `preflight` / `postflight` / `rescue` / `validation`, and the
+wrapper block itself carries **no** tags, so tag inheritance cannot widen the
+selection of the original tasks.
+
+The practical consequences:
+
+- `--tags <existing_tag>` selects the same original tasks as before, and the
+  harness still runs and still publishes statistics.
+- `--tags validation` runs the preflight/postflight checks only.
+- `--skip-tags always` disables the harness (and anything else the repository
+  already tagged `always`).
+
+---
+
+## Behaviour changes to be aware of
+
+1. **Failures are still failures.** The `rescue` re-raises by default, so exit
+   codes and `PLAY RECAP` results are unchanged. What is new is the recorded
+   `rescued=1` in the recap, and a published record describing the failure.
+
+2. **`any_errors_fatal` aborts slightly later.** A rescued failure is not fatal
+   until the `rescue` re-raises, which happens a few harness tasks after the
+   original failing task. On a multi-host play, other hosts may progress a
+   little further than before the abort takes effect.
+
+3. **Each wrapped component adds ~10 bookkeeping tasks.** They are all
+   `set_fact` / `assert` / `debug` / `set_stats` and run on the control node, so
+   the cost is small, but task counts in `PLAY RECAP` are higher than before.
+
+4. **A role failure skips that play's `post_tasks`.** Ansible removes the failed
+   host, so the play-level record is not published for it — but the failing
+   role published its own record, which is where the useful detail lives.

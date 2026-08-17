@@ -16,6 +16,23 @@
 #   - provision: VM provisioning
 #   - stig: Security hardening
 
+# ---------------------------------------------------------------------------
+# Fourth Estate preflight / postflight validation harness
+#
+# Every play below carries a block/rescue/always validation wrapper:
+#
+#   pre_tasks   preflight validation. On failure it records the reason,
+#               publishes the outcome with set_stats and aborts the play
+#               before any role or task runs.
+#   tasks       the original task list, wrapped so a failure is captured
+#               (which task, which error) and then re-raised.
+#   post_tasks  postflight validation, then the run record is published with
+#               ansible.builtin.set_stats.
+#
+# Set fe_validation_continue_on_error=true to record failures and keep going.
+# See docs/VALIDATION_AND_STATS.md for the published stats schema.
+# ---------------------------------------------------------------------------
+
 - name: VMware vSphere Infrastructure Deployment
   hosts: vcenter
   connection: local
@@ -39,184 +56,517 @@
     # =========================================
     # Phase 1: vCenter Configuration
     # =========================================
-    - name: Phase 1 - vCenter Configuration
-      ansible.builtin.include_role:
-        name: vcenter_config
-      when: deploy_vcenter_config | bool
-      tags: ['vcenter', 'phase1']
+    - name: "vmware/site | Guarded execution with rescue and always handling"
+      block:
 
-    # =========================================
-    # Phase 2: ESXi Host Configuration
-    # =========================================
-    - name: Phase 2 - ESXi Host Configuration
-      ansible.builtin.include_role:
-        name: vsphere_esxi_config
-      when: deploy_esxi_config | bool
-      tags: ['esxi', 'phase2']
+        - name: Phase 1 - vCenter Configuration
+          ansible.builtin.include_role:
+            name: vcenter_config
+          when: deploy_vcenter_config | bool
+          tags: ['vcenter', 'phase1']
 
-    # =========================================
-    # Phase 3: Cluster Configuration
-    # =========================================
-    - name: Phase 3 - Cluster Baseline
-      ansible.builtin.include_role:
-        name: cluster_baseline
-      when: deploy_cluster_config | bool
-      tags: ['cluster', 'phase3']
+        # =========================================
+        # Phase 2: ESXi Host Configuration
+        # =========================================
+        - name: Phase 2 - ESXi Host Configuration
+          ansible.builtin.include_role:
+            name: vsphere_esxi_config
+          when: deploy_esxi_config | bool
+          tags: ['esxi', 'phase2']
 
-    - name: Phase 3 - Cluster Affinity Rules
-      ansible.builtin.include_role:
-        name: cluster_affinity_rules
-      when: deploy_cluster_config | bool
-      tags: ['cluster', 'phase3']
+        # =========================================
+        # Phase 3: Cluster Configuration
+        # =========================================
+        - name: Phase 3 - Cluster Baseline
+          ansible.builtin.include_role:
+            name: cluster_baseline
+          when: deploy_cluster_config | bool
+          tags: ['cluster', 'phase3']
 
-    - name: Phase 3 - Cluster Lifecycle (vLCM)
-      ansible.builtin.include_role:
-        name: cluster_lifecycle_vlcm
-      when: deploy_cluster_config | bool
-      tags: ['cluster', 'phase3']
+        - name: Phase 3 - Cluster Affinity Rules
+          ansible.builtin.include_role:
+            name: cluster_affinity_rules
+          when: deploy_cluster_config | bool
+          tags: ['cluster', 'phase3']
 
-    - name: Phase 3 - vSAN Cluster
-      ansible.builtin.include_role:
-        name: vsan_cluster
-      when: deploy_cluster_config | bool and (vsan_enabled | default(false) | bool)
-      tags: ['cluster', 'vsan', 'phase3']
+        - name: Phase 3 - Cluster Lifecycle (vLCM)
+          ansible.builtin.include_role:
+            name: cluster_lifecycle_vlcm
+          when: deploy_cluster_config | bool
+          tags: ['cluster', 'phase3']
 
-    - name: Phase 3 - vSAN Policies
-      ansible.builtin.include_role:
-        name: vsan_policies
-      when: deploy_cluster_config | bool and (vsan_enabled | default(false) | bool)
-      tags: ['cluster', 'vsan', 'phase3']
+        - name: Phase 3 - vSAN Cluster
+          ansible.builtin.include_role:
+            name: vsan_cluster
+          when: deploy_cluster_config | bool and (vsan_enabled | default(false) | bool)
+          tags: ['cluster', 'vsan', 'phase3']
 
-    # =========================================
-    # Phase 4: Networking
-    # =========================================
-    - name: Phase 4 - NSX-T Networking
-      ansible.builtin.include_role:
-        name: nsx_t_networking
-      when: deploy_network | bool
-      tags: ['network', 'nsx', 'phase4']
+        - name: Phase 3 - vSAN Policies
+          ansible.builtin.include_role:
+            name: vsan_policies
+          when: deploy_cluster_config | bool and (vsan_enabled | default(false) | bool)
+          tags: ['cluster', 'vsan', 'phase3']
 
-    - name: Phase 4 - NSX-T Security
-      ansible.builtin.include_role:
-        name: nsx_t_security
-      when: deploy_network | bool
-      tags: ['network', 'nsx', 'phase4']
+        # =========================================
+        # Phase 4: Networking
+        # =========================================
+        - name: Phase 4 - NSX-T Networking
+          ansible.builtin.include_role:
+            name: nsx_t_networking
+          when: deploy_network | bool
+          tags: ['network', 'nsx', 'phase4']
 
-    - name: Phase 4 - NSX-T Load Balancer
-      ansible.builtin.include_role:
-        name: nsx_t_load_balancer
-      when: deploy_network | bool
-      tags: ['network', 'nsx', 'phase4']
+        - name: Phase 4 - NSX-T Security
+          ansible.builtin.include_role:
+            name: nsx_t_security
+          when: deploy_network | bool
+          tags: ['network', 'nsx', 'phase4']
 
-    # =========================================
-    # Phase 5: Storage
-    # =========================================
-    - name: Phase 5 - Datastore Cluster (SDRS)
-      ansible.builtin.include_role:
-        name: datastore_cluster_sdrs
-      when: deploy_storage | bool
-      tags: ['storage', 'phase5']
+        - name: Phase 4 - NSX-T Load Balancer
+          ansible.builtin.include_role:
+            name: nsx_t_load_balancer
+          when: deploy_network | bool
+          tags: ['network', 'nsx', 'phase4']
 
-    - name: Phase 5 - Host Profiles
-      ansible.builtin.include_role:
-        name: host_profiles_enforce
-      when: deploy_storage | bool
-      tags: ['storage', 'phase5']
+        # =========================================
+        # Phase 5: Storage
+        # =========================================
+        - name: Phase 5 - Datastore Cluster (SDRS)
+          ansible.builtin.include_role:
+            name: datastore_cluster_sdrs
+          when: deploy_storage | bool
+          tags: ['storage', 'phase5']
 
-    # =========================================
-    # Phase 6: Templates & Customization
-    # =========================================
-    - name: Phase 6 - Template Pipeline
-      ansible.builtin.include_role:
-        name: template_pipeline
-      when: deploy_templates | bool
-      tags: ['templates', 'phase6']
+        - name: Phase 5 - Host Profiles
+          ansible.builtin.include_role:
+            name: host_profiles_enforce
+          when: deploy_storage | bool
+          tags: ['storage', 'phase5']
 
-    - name: Phase 6 - Guest Customization Specs
-      ansible.builtin.include_role:
-        name: guest_customization_specs
-      when: deploy_templates | bool
-      tags: ['templates', 'phase6']
+        # =========================================
+        # Phase 6: Templates & Customization
+        # =========================================
+        - name: Phase 6 - Template Pipeline
+          ansible.builtin.include_role:
+            name: template_pipeline
+          when: deploy_templates | bool
+          tags: ['templates', 'phase6']
 
-    # =========================================
-    # Phase 7: VM Provisioning (Optional)
-    # =========================================
-    - name: Phase 7 - Linux VM Provisioning
-      ansible.builtin.include_role:
-        name: linux_virtual_machine_provsion
-      when: deploy_vms_linux | bool
-      tags: ['provision', 'linux', 'phase7']
+        - name: Phase 6 - Guest Customization Specs
+          ansible.builtin.include_role:
+            name: guest_customization_specs
+          when: deploy_templates | bool
+          tags: ['templates', 'phase6']
 
-    - name: Phase 7 - Windows VM Provisioning
-      ansible.builtin.include_role:
-        name: windows_virtual_machine_provision_role
-      when: deploy_vms_windows | bool
-      tags: ['provision', 'windows', 'phase7']
+        # =========================================
+        # Phase 7: VM Provisioning (Optional)
+        # =========================================
+        - name: Phase 7 - Linux VM Provisioning
+          ansible.builtin.include_role:
+            name: linux_virtual_machine_provsion
+          when: deploy_vms_linux | bool
+          tags: ['provision', 'linux', 'phase7']
 
-    - name: Phase 7 - VM Tools Configuration
-      ansible.builtin.include_role:
-        name: vm_tools_config
-      when: deploy_vms_linux | bool or deploy_vms_windows | bool
-      tags: ['provision', 'phase7']
+        - name: Phase 7 - Windows VM Provisioning
+          ansible.builtin.include_role:
+            name: windows_virtual_machine_provision_role
+          when: deploy_vms_windows | bool
+          tags: ['provision', 'windows', 'phase7']
 
-    - name: Phase 7 - VM Placement Policies
-      ansible.builtin.include_role:
-        name: vm_placement_policies
-      when: deploy_vms_linux | bool or deploy_vms_windows | bool
-      tags: ['provision', 'phase7']
+        - name: Phase 7 - VM Tools Configuration
+          ansible.builtin.include_role:
+            name: vm_tools_config
+          when: deploy_vms_linux | bool or deploy_vms_windows | bool
+          tags: ['provision', 'phase7']
 
-    # =========================================
-    # Phase 8: STIG Hardening
-    # =========================================
-    - name: Phase 8 - ESXi STIG Hardening
-      ansible.builtin.include_role:
-        name: vsphere_esxi_stig_hardening
-      when: deploy_stig_hardening | bool
-      tags: ['stig', 'security', 'phase8']
+        - name: Phase 7 - VM Placement Policies
+          ansible.builtin.include_role:
+            name: vm_placement_policies
+          when: deploy_vms_linux | bool or deploy_vms_windows | bool
+          tags: ['provision', 'phase7']
 
-    - name: Phase 8 - VM STIG Hardening
-      ansible.builtin.include_role:
-        name: vsphere_vm_stig_hardening
-      when: deploy_stig_hardening | bool
-      tags: ['stig', 'security', 'phase8']
+        # =========================================
+        # Phase 8: STIG Hardening
+        # =========================================
+        - name: Phase 8 - ESXi STIG Hardening
+          ansible.builtin.include_role:
+            name: vsphere_esxi_stig_hardening
+          when: deploy_stig_hardening | bool
+          tags: ['stig', 'security', 'phase8']
 
-    # =========================================
-    # Phase 9: Reporting & Validation
-    # =========================================
-    - name: Phase 9 - Snapshot Management
-      ansible.builtin.include_role:
-        name: vsphere_snapshots_role
-      when: generate_reports | bool
-      tags: ['reports', 'phase9']
+        - name: Phase 8 - VM STIG Hardening
+          ansible.builtin.include_role:
+            name: vsphere_vm_stig_hardening
+          when: deploy_stig_hardening | bool
+          tags: ['stig', 'security', 'phase8']
 
-    - name: Phase 9 - Capacity Reports
-      ansible.builtin.include_role:
-        name: capacity_reports
-      when: generate_reports | bool
-      tags: ['reports', 'phase9']
+        # =========================================
+        # Phase 9: Reporting & Validation
+        # =========================================
+        - name: Phase 9 - Snapshot Management
+          ansible.builtin.include_role:
+            name: vsphere_snapshots_role
+          when: generate_reports | bool
+          tags: ['reports', 'phase9']
 
-    - name: Phase 9 - Drift Report
-      ansible.builtin.include_role:
-        name: drift_report
-      when: generate_reports | bool
-      tags: ['reports', 'phase9']
+        - name: Phase 9 - Capacity Reports
+          ansible.builtin.include_role:
+            name: capacity_reports
+          when: generate_reports | bool
+          tags: ['reports', 'phase9']
 
-    # =========================================
-    # Deployment Summary
-    # =========================================
-    - name: Display deployment summary
-      ansible.builtin.debug:
-        msg:
-          - "=== VMware vSphere Deployment Complete ==="
-          - "vCenter: {{ vcenter_hostname }}"
-          - "Datacenter: {{ vcenter_datacenter | default('DC1') }}"
-          - "Cluster: {{ vcenter_cluster | default('Production-Cluster') }}"
-          - "vCenter Config: {{ 'Configured' if deploy_vcenter_config else 'Skipped' }}"
-          - "ESXi Config: {{ 'Configured' if deploy_esxi_config else 'Skipped' }}"
-          - "Cluster Config: {{ 'Configured' if deploy_cluster_config else 'Skipped' }}"
-          - "Networking: {{ 'Configured' if deploy_network else 'Skipped' }}"
-          - "Storage: {{ 'Configured' if deploy_storage else 'Skipped' }}"
-          - "Templates: {{ 'Configured' if deploy_templates else 'Skipped' }}"
-          - "STIG Hardening: {{ 'Applied' if deploy_stig_hardening else 'Skipped' }}"
-          - "Reports: {{ 'Generated' if generate_reports else 'Skipped' }}"
-      tags: ['always']
+        - name: Phase 9 - Drift Report
+          ansible.builtin.include_role:
+            name: drift_report
+          when: generate_reports | bool
+          tags: ['reports', 'phase9']
+
+        # =========================================
+        # Deployment Summary
+        # =========================================
+        - name: Display deployment summary
+          ansible.builtin.debug:
+            msg:
+              - "=== VMware vSphere Deployment Complete ==="
+              - "vCenter: {{ vcenter_hostname }}"
+              - "Datacenter: {{ vcenter_datacenter | default('DC1') }}"
+              - "Cluster: {{ vcenter_cluster | default('Production-Cluster') }}"
+              - "vCenter Config: {{ 'Configured' if deploy_vcenter_config else 'Skipped' }}"
+              - "ESXi Config: {{ 'Configured' if deploy_esxi_config else 'Skipped' }}"
+              - "Cluster Config: {{ 'Configured' if deploy_cluster_config else 'Skipped' }}"
+              - "Networking: {{ 'Configured' if deploy_network else 'Skipped' }}"
+              - "Storage: {{ 'Configured' if deploy_storage else 'Skipped' }}"
+              - "Templates: {{ 'Configured' if deploy_templates else 'Skipped' }}"
+              - "STIG Hardening: {{ 'Applied' if deploy_stig_hardening else 'Skipped' }}"
+              - "Reports: {{ 'Generated' if generate_reports else 'Skipped' }}"
+          tags: ['always']
+
+      rescue:
+
+        - name: "vmware/site | Rescue | Capture the failing task and error detail"
+          ansible.builtin.set_fact:
+            fe_vmware_site_status: "failed"
+            fe_vmware_site_postflight_passed: false
+            fe_vmware_site_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+            fe_vmware_site_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+          tags:
+            - always
+            - rescue
+
+        - name: "vmware/site | Rescue | Report the failure"
+          ansible.builtin.debug:
+            msg: >-
+              vmware/site: FAILED at '{{ fe_vmware_site_failed_task }}' on
+              {{ inventory_hostname }} - {{ fe_vmware_site_error }}
+          tags:
+            - always
+            - rescue
+
+        - name: "vmware/site | Rescue | Re-raise the failure unless the caller opted to continue"
+          ansible.builtin.fail:
+            msg: >-
+              vmware/site failed at '{{ fe_vmware_site_failed_task }}': {{ fe_vmware_site_error }}
+          when: not (fe_validation_continue_on_error | default(false) | bool)
+          tags:
+            - always
+            - rescue
+
+      always:
+
+        - name: "vmware/site | Always | Compute the execution duration"
+          ansible.builtin.set_fact:
+            fe_vmware_site_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+            fe_vmware_site_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_vmware_site_start_epoch | default(0) | int) }}"
+          tags:
+            - always
+
+        - name: "vmware/site | Always | Publish the validation result with set_stats"
+          ansible.builtin.set_stats:
+            data:
+              fe_validation_results:
+                "vmware/site":
+                  component: "vmware/site"
+                  type: "playbook"
+                  platform: "vmware"
+                  host: "{{ inventory_hostname }}"
+                  status: "{{ fe_vmware_site_status | default('unknown') }}"
+                  preflight_passed: "{{ fe_vmware_site_preflight_passed | default(false) | bool }}"
+                  postflight_passed: "{{ fe_vmware_site_postflight_passed | default(false) | bool }}"
+                  started_at: "{{ fe_vmware_site_started_at | default('') }}"
+                  ended_at: "{{ fe_vmware_site_ended_at | default('') }}"
+                  duration_seconds: "{{ fe_vmware_site_duration_seconds | default(0) | int }}"
+                  failed_task: "{{ fe_vmware_site_failed_task | default('') }}"
+                  error: "{{ fe_vmware_site_error | default('') }}"
+                  check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+              fe_validation_executions: 1
+              fe_validation_succeeded: "{{ 1 if fe_vmware_site_status | default('') == 'succeeded' else 0 }}"
+              fe_validation_failed: "{{ 0 if fe_vmware_site_status | default('') == 'succeeded' else 1 }}"
+              fe_validation_duration_seconds: "{{ fe_vmware_site_duration_seconds | default(0) | int }}"
+              fe_validation_failed_components: >-
+                {{ [] if fe_vmware_site_status | default('') == 'succeeded' else ['vmware/site'] }}
+            aggregate: true
+            per_host: false
+          when:
+            - fe_vmware_site_status | default('') == 'failed'
+            - not (fe_vmware_site_stats_published | default(false) | bool)
+          tags:
+            - always
+
+        - name: "vmware/site | Always | Mark the validation statistics as published"
+          ansible.builtin.set_fact:
+            fe_vmware_site_stats_published: true
+          when:
+            - fe_vmware_site_status | default('') == 'failed'
+          tags:
+            - always
+  pre_tasks:
+    - name: "vmware/site | Preflight validation"
+      tags:
+        - always
+        - preflight
+        - validation
+      block:
+
+        - name: "vmware/site | Initialize validation state"
+          ansible.builtin.set_fact:
+            fe_vmware_site_start_epoch: "{{ now(fmt='%s') | int }}"
+            fe_vmware_site_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+            fe_vmware_site_status: "running"
+            fe_vmware_site_preflight_passed: false
+            fe_vmware_site_postflight_passed: false
+            fe_vmware_site_failed_task: ""
+            fe_vmware_site_error: ""
+            fe_vmware_site_stats_published: false
+          tags:
+            - always
+
+        - name: "vmware/site | Preflight | Verify the control node meets the minimum ansible-core version"
+          ansible.builtin.assert:
+            that:
+              - ansible_version.full is version(fe_validation_min_ansible_version | default('2.12'), '>=')
+            fail_msg: >-
+              vmware/site: requires ansible-core
+              {{ fe_validation_min_ansible_version | default('2.12') }} or newer,
+              found {{ ansible_version.full }}.
+            success_msg: >-
+              vmware/site: ansible-core {{ ansible_version.full }} satisfies the minimum.
+            quiet: true
+          tags:
+            - always
+            - preflight
+            - validation
+
+        - name: "vmware/site | Preflight | Verify every declared required variable is defined"
+          ansible.builtin.assert:
+            that:
+              - vars[item] is defined
+            fail_msg: "vmware/site: required variable '{{ item }}' is not defined."
+            success_msg: "vmware/site: required variable '{{ item }}' is defined."
+            quiet: true
+          loop: "{{ fe_vmware_site_required_vars | default([]) }}"
+          loop_control:
+            label: "{{ item }}"
+          tags:
+            - always
+            - preflight
+            - validation
+
+        - name: "vmware/site | Preflight | Record that preflight validation passed"
+          ansible.builtin.set_fact:
+            fe_vmware_site_preflight_passed: true
+          tags:
+            - always
+            - preflight
+            - validation
+
+      rescue:
+
+        - name: "vmware/site | Rescue | Capture the failing task and error detail"
+          ansible.builtin.set_fact:
+            fe_vmware_site_status: "preflight_failed"
+            fe_vmware_site_postflight_passed: false
+            fe_vmware_site_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+            fe_vmware_site_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+          tags:
+            - always
+            - rescue
+
+        - name: "vmware/site | Rescue | Report the failure"
+          ansible.builtin.debug:
+            msg: >-
+              vmware/site: FAILED at '{{ fe_vmware_site_failed_task }}' on
+              {{ inventory_hostname }} - {{ fe_vmware_site_error }}
+          tags:
+            - always
+            - rescue
+
+        - name: "vmware/site | Always | Publish the validation result with set_stats"
+          ansible.builtin.set_stats:
+            data:
+              fe_validation_results:
+                "vmware/site":
+                  component: "vmware/site"
+                  type: "playbook"
+                  platform: "vmware"
+                  host: "{{ inventory_hostname }}"
+                  status: "{{ fe_vmware_site_status | default('unknown') }}"
+                  preflight_passed: "{{ fe_vmware_site_preflight_passed | default(false) | bool }}"
+                  postflight_passed: "{{ fe_vmware_site_postflight_passed | default(false) | bool }}"
+                  started_at: "{{ fe_vmware_site_started_at | default('') }}"
+                  ended_at: "{{ fe_vmware_site_ended_at | default('') }}"
+                  duration_seconds: "{{ fe_vmware_site_duration_seconds | default(0) | int }}"
+                  failed_task: "{{ fe_vmware_site_failed_task | default('') }}"
+                  error: "{{ fe_vmware_site_error | default('') }}"
+                  check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+              fe_validation_executions: 1
+              fe_validation_succeeded: "{{ 1 if fe_vmware_site_status | default('') == 'succeeded' else 0 }}"
+              fe_validation_failed: "{{ 0 if fe_vmware_site_status | default('') == 'succeeded' else 1 }}"
+              fe_validation_duration_seconds: "{{ fe_vmware_site_duration_seconds | default(0) | int }}"
+              fe_validation_failed_components: >-
+                {{ [] if fe_vmware_site_status | default('') == 'succeeded' else ['vmware/site'] }}
+            aggregate: true
+            per_host: false
+          tags:
+            - always
+
+        - name: "vmware/site | Always | Mark the validation statistics as published"
+          ansible.builtin.set_fact:
+            fe_vmware_site_stats_published: true
+          tags:
+            - always
+
+        - name: "vmware/site | Rescue | Re-raise the failure unless the caller opted to continue"
+          ansible.builtin.fail:
+            msg: >-
+              vmware/site failed at '{{ fe_vmware_site_failed_task }}': {{ fe_vmware_site_error }}
+          when: not (fe_validation_continue_on_error | default(false) | bool)
+          tags:
+            - always
+            - rescue
+
+      always:
+
+        - name: "vmware/site | Always | Report the preflight outcome"
+          ansible.builtin.debug:
+            msg: >-
+              vmware/site: preflight
+              {{ 'passed' if fe_vmware_site_preflight_passed | default(false) | bool else 'FAILED' }}
+              on {{ inventory_hostname }}.
+          tags:
+            - always
+  post_tasks:
+    - name: "vmware/site | Postflight validation"
+      tags:
+        - always
+        - postflight
+        - validation
+      block:
+
+        - name: "vmware/site | Postflight | Verify the guarded body ran after a passing preflight"
+          ansible.builtin.assert:
+            that:
+              - fe_vmware_site_preflight_passed | bool
+              - fe_vmware_site_status in ['running', 'succeeded']
+            fail_msg: >-
+              vmware/site: postflight validation failed - preflight passed
+              ={{ fe_vmware_site_preflight_passed | default(false) }},
+              status={{ fe_vmware_site_status | default('unknown') }}.
+            success_msg: "vmware/site: postflight validation passed."
+            quiet: true
+          tags:
+            - always
+            - postflight
+            - validation
+
+        - name: "vmware/site | Postflight | Record the successful outcome"
+          ansible.builtin.set_fact:
+            fe_vmware_site_postflight_passed: true
+            fe_vmware_site_status: "succeeded"
+          tags:
+            - always
+            - postflight
+            - validation
+
+      rescue:
+
+        - name: "vmware/site | Rescue | Capture the failing task and error detail"
+          ansible.builtin.set_fact:
+            fe_vmware_site_status: "failed"
+            fe_vmware_site_postflight_passed: false
+            fe_vmware_site_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+            fe_vmware_site_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+          tags:
+            - always
+            - rescue
+
+        - name: "vmware/site | Rescue | Report the failure"
+          ansible.builtin.debug:
+            msg: >-
+              vmware/site: FAILED at '{{ fe_vmware_site_failed_task }}' on
+              {{ inventory_hostname }} - {{ fe_vmware_site_error }}
+          tags:
+            - always
+            - rescue
+
+        - name: "vmware/site | Rescue | Re-raise the failure unless the caller opted to continue"
+          ansible.builtin.fail:
+            msg: >-
+              vmware/site failed at '{{ fe_vmware_site_failed_task }}': {{ fe_vmware_site_error }}
+          when: not (fe_validation_continue_on_error | default(false) | bool)
+          tags:
+            - always
+            - rescue
+
+      always:
+
+        - name: "vmware/site | Always | Compute the execution duration"
+          ansible.builtin.set_fact:
+            fe_vmware_site_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+            fe_vmware_site_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_vmware_site_start_epoch | default(0) | int) }}"
+          tags:
+            - always
+
+        - name: "vmware/site | Always | Publish the validation result with set_stats"
+          ansible.builtin.set_stats:
+            data:
+              fe_validation_results:
+                "vmware/site":
+                  component: "vmware/site"
+                  type: "playbook"
+                  platform: "vmware"
+                  host: "{{ inventory_hostname }}"
+                  status: "{{ fe_vmware_site_status | default('unknown') }}"
+                  preflight_passed: "{{ fe_vmware_site_preflight_passed | default(false) | bool }}"
+                  postflight_passed: "{{ fe_vmware_site_postflight_passed | default(false) | bool }}"
+                  started_at: "{{ fe_vmware_site_started_at | default('') }}"
+                  ended_at: "{{ fe_vmware_site_ended_at | default('') }}"
+                  duration_seconds: "{{ fe_vmware_site_duration_seconds | default(0) | int }}"
+                  failed_task: "{{ fe_vmware_site_failed_task | default('') }}"
+                  error: "{{ fe_vmware_site_error | default('') }}"
+                  check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+              fe_validation_executions: 1
+              fe_validation_succeeded: "{{ 1 if fe_vmware_site_status | default('') == 'succeeded' else 0 }}"
+              fe_validation_failed: "{{ 0 if fe_vmware_site_status | default('') == 'succeeded' else 1 }}"
+              fe_validation_duration_seconds: "{{ fe_vmware_site_duration_seconds | default(0) | int }}"
+              fe_validation_failed_components: >-
+                {{ [] if fe_vmware_site_status | default('') == 'succeeded' else ['vmware/site'] }}
+            aggregate: true
+            per_host: false
+          when:
+            - not (fe_vmware_site_stats_published | default(false) | bool)
+          tags:
+            - always
+
+        - name: "vmware/site | Always | Mark the validation statistics as published"
+          ansible.builtin.set_fact:
+            fe_vmware_site_stats_published: true
+          tags:
+            - always
+
+        - name: "vmware/site | Always | Report the run summary"
+          ansible.builtin.debug:
+            msg: >-
+              vmware/site: {{ fe_vmware_site_status | default('unknown') }} in
+              {{ fe_vmware_site_duration_seconds | default(0) }}s on {{ inventory_hostname }}.
+          tags:
+            - always
