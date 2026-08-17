@@ -13,18 +13,10 @@ This directory contains **12 Ansible roles** for automating **F5 BIG-IP** load b
 
 ### Load Balancing Core (4 roles)
 - **f5_bigip_node** - Node (server) management
-- **f5_bigip_pool** - Server pool configuration
-- **f5_bigip_monitor** - Health monitor configuration
-- **f5_bigip_virtual_server** - Virtual server (VIP) management
 
 ### Advanced Features (3 roles)
-- **f5_bigip_profiles** - Profile management (HTTP, TCP, client SSL)
-- **f5_bigip_irules** - iRules for traffic manipulation
-- **f5_bigip_persistence** - Session persistence configuration
 
 ### High Availability & Security (2 roles)
-- **f5_bigip_ha** - High availability (active/standby, active/active)
-- **f5_bigip_asm** - Application Security Manager (WAF)
 
 ## 🚀 Quick Start
 

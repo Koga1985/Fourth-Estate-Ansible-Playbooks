@@ -9,22 +9,12 @@ This directory contains **12 Ansible roles** for automating **Fortinet FortiGate
 - **fortigate_interfaces** - Network interface configuration (physical, VLANs, loopbacks)
 
 ### Policy & Objects (4 roles)
-- **fortigate_zones** - Security zone definition and management
-- **fortigate_addresses** - Address object and group management
-- **fortigate_firewall_policy** - Firewall policy rule creation and ordering
-- **fortigate_nat** - NAT (source NAT, destination NAT, VIP) configuration
 
 ### Security Profiles (1 role)
-- **fortigate_security_profiles** - AV, IPS, web filter, application control profiles
 
 ### VPN (2 roles)
-- **fortigate_vpn_ipsec** - IPsec VPN tunnel configuration
-- **fortigate_ssl_vpn** - SSL VPN portal and user access
 
 ### Infrastructure (3 roles)
-- **fortigate_routing** - Static and dynamic routing (BGP, OSPF)
-- **fortigate_ha** - High availability (active-passive, active-active) clustering
-- **fortigate_logging** - Syslog, FortiAnalyzer, and local logging configuration
 
 ## 🚀 Quick Start
 

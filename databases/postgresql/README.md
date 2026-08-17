@@ -10,15 +10,11 @@ This directory contains **8 Ansible roles** for automating **PostgreSQL** databa
 
 ### High Availability & Replication (2 roles)
 - **postgresql_replication** - Streaming replication setup
-- **postgresql_pgpool** - PgPool-II for connection pooling and load balancing
 
 ### Backup & Recovery (2 roles)
 - **postgresql_backup** - Automated backup with pg_dump/pg_basebackup
-- **postgresql_barman** - Barman backup and recovery manager
 
 ### Security & Compliance (2 roles)
-- **postgresql_security** - Security hardening and SSL/TLS
-- **postgresql_audit** - pgAudit for compliance logging
 
 ## 🚀 Quick Start (Drop-In Deployment)
 

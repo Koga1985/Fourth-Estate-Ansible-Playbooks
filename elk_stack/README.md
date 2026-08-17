@@ -6,23 +6,14 @@ This directory contains **12 Ansible roles** for deploying and configuring the *
 
 ### Elasticsearch (5 roles)
 - **elasticsearch_install** - Elasticsearch cluster installation and node setup
-- **elasticsearch_cluster** - Multi-node cluster configuration and management
 - **elasticsearch_config** - Cluster configuration, index lifecycle, and tuning
-- **elasticsearch_indices** - Index template and lifecycle policy management
 - **elasticsearch_security** - TLS/SSL, X-Pack security, built-in user configuration
 
 ### Kibana (2 roles)
-- **kibana_server** - Kibana server installation and configuration
-- **kibana_dashboards** - Dashboard and visualization provisioning
 
 ### Logstash (2 roles)
-- **logstash_pipelines** - Logstash pipeline configuration and management
-- **logstash_filters** - Filter plugin configuration (grok, mutate, geoip)
 
 ### Fleet & Metrics (3 roles)
-- **elastic_fleet** - Fleet Server deployment and agent policy management
-- **elastic_security** - Elastic Security (SIEM) rules and detections
-- **metricbeat** - Metricbeat deployment for infrastructure metrics collection
 
 ## 🚀 Quick Start (Drop-In Deployment)
 

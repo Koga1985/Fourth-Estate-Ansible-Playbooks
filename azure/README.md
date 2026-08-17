@@ -11,67 +11,28 @@ Comprehensive Azure automation covering Azure AD/Entra ID, Virtual Networks, Vir
 ### Identity & Access Management (6 roles)
 - **azure_ad** - Azure Active Directory (Entra ID) management
 - **azure_rbac** - Role-Based Access Control
-- **azure_managed_identity** - Managed identities for Azure resources
 - **azure_conditional_access** - Conditional access policies
-- **azure_privileged_identity** - PIM (Privileged Identity Management)
 - **azure_service_principals** - Service principal automation
 
 ### Networking (6 roles)
 - **azure_vnet** - Virtual Network creation and management
 - **azure_subnets** - Subnet configuration
-- **azure_nsg** - Network Security Groups
-- **azure_application_gateway** - Application Gateway and WAF
-- **azure_vpn_gateway** - VPN Gateway configuration
-- **azure_firewall** - Azure Firewall deployment
 
 ### Compute (5 roles)
-- **azure_vm** - Virtual Machine lifecycle
-- **azure_vmss** - Virtual Machine Scale Sets
-- **azure_availability_sets** - Availability Set management
-- **azure_disk** - Managed Disk operations
-- **azure_image** - Custom image management
 
 ### Container & Kubernetes (4 roles)
-- **azure_aks** - Azure Kubernetes Service
-- **azure_acr** - Azure Container Registry
-- **azure_aci** - Azure Container Instances
-- **azure_service_fabric** - Service Fabric clusters
 
 ### Storage (4 roles)
-- **azure_storage_account** - Storage Account management
-- **azure_blob_storage** - Blob storage and lifecycle
-- **azure_file_share** - Azure Files (SMB/NFS)
-- **azure_disk_storage** - Premium/Ultra disk storage
 
 ### Databases (4 roles)
-- **azure_sql_database** - Azure SQL Database
-- **azure_cosmos_db** - Cosmos DB management
-- **azure_postgresql** - Azure Database for PostgreSQL
-- **azure_mysql** - Azure Database for MySQL
 
 ### Serverless & Integration (3 roles)
-- **azure_functions** - Azure Functions deployment
-- **azure_logic_apps** - Logic Apps automation
-- **azure_event_grid** - Event Grid configuration
 
 ### Security & Compliance (6 roles)
-- **azure_key_vault** - Key Vault secrets and keys
-- **azure_security_center** - Security Center configuration
-- **azure_sentinel** - Azure Sentinel SIEM
-- **azure_policy** - Azure Policy enforcement
-- **azure_defender** - Microsoft Defender for Cloud
-- **azure_compliance** - FedRAMP/NIST compliance
 
 ### Monitoring & Management (4 roles)
-- **azure_monitor** - Azure Monitor configuration
-- **azure_log_analytics** - Log Analytics workspace
-- **azure_application_insights** - Application monitoring
-- **azure_automation** - Azure Automation accounts
 
 ### Azure Government & Compliance (3 roles)
-- **azure_gov_cloud** - Azure Government Cloud configuration
-- **azure_fedramp_compliance** - FedRAMP baseline controls
-- **azure_nist_compliance** - NIST 800-53 implementation
 
 ## 🚀 Quick Start (Drop-In Deployment)
 

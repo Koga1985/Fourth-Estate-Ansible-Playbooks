@@ -11,14 +11,10 @@ This directory contains **8 Ansible roles** for automating **Tenable Security Ce
 ### Scanning Infrastructure (3 roles)
 - **tenable_scan_zones** - Scan zone configuration
 - **tenable_scan_policies** - Scan policy management
-- **tenable_scan_schedules** - Automated scan scheduling
 
 ### Vulnerability & Compliance (2 roles)
-- **tenable_vulnerability_management** - Vulnerability tracking and remediation
-- **tenable_compliance_checks** - NIST 800-53, STIG, CIS compliance
 
 ### Reporting (1 role)
-- **tenable_reporting** - Automated report generation and distribution
 
 ## 🚀 Quick Start (Drop-In Deployment)
 

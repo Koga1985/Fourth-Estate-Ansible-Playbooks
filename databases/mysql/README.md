@@ -5,20 +5,12 @@ This directory contains **8 Ansible roles** for automating **MySQL** and **Maria
 ## 📋 Roles
 
 ### Installation & Configuration (2 roles)
-- **mysql_install** - MySQL/MariaDB server installation
-- **mysql_config** - Server configuration and tuning
 
 ### High Availability & Replication (2 roles)
-- **mysql_replication** - Master-replica replication setup
-- **mysql_galera_cluster** - Galera cluster for MariaDB
 
 ### Backup & Recovery (2 roles)
-- **mysql_backup** - Automated backup with mysqldump/Percona XtraBackup
-- **mysql_binlog_backup** - Binary log backup and point-in-time recovery
 
 ### Security & Compliance (2 roles)
-- **mysql_security** - Security hardening and SSL/TLS
-- **mysql_audit** - Audit plugin for compliance logging
 
 ## 🚀 Quick Start (Drop-In Deployment)
 

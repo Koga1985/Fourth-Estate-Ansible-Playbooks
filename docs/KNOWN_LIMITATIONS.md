@@ -7,17 +7,18 @@ This document describes known limitations, operational constraints, and caveats 
 ## Table of Contents
 
 1. [General Operational Safeguards](#1-general-operational-safeguards)
-2. [Non-Idempotent Operations](#2-non-idempotent-operations)
-3. [Destructive Operations](#3-destructive-operations)
-4. [Mandatory Dry-Run Requirement](#4-mandatory-dry-run-requirement)
-5. [Reboot and Service Restart Requirements](#5-reboot-and-service-restart-requirements)
-6. [Operational Technology (OT/ICS) Environments](#6-operational-technology-otics-environments)
-7. [Platform-Specific Limitations](#7-platform-specific-limitations)
-8. [Version and Compatibility Constraints](#8-version-and-compatibility-constraints)
-9. [Air-Gapped and Offline Deployment Constraints](#9-air-gapped-and-offline-deployment-constraints)
-10. [STIG and Compliance Caveats](#10-stig-and-compliance-caveats)
-11. [Python and Collection Dependencies](#11-python-and-collection-dependencies)
-12. [Network and Connectivity Requirements](#12-network-and-connectivity-requirements)
+2. [Unimplemented Platforms](#2-unimplemented-platforms)
+3. [Non-Idempotent Operations](#3-non-idempotent-operations)
+4. [Destructive Operations](#4-destructive-operations)
+5. [Mandatory Dry-Run Requirement](#5-mandatory-dry-run-requirement)
+6. [Reboot and Service Restart Requirements](#6-reboot-and-service-restart-requirements)
+7. [Operational Technology (OT/ICS) Environments](#7-operational-technology-otics-environments)
+8. [Platform-Specific Limitations](#8-platform-specific-limitations)
+9. [Version and Compatibility Constraints](#9-version-and-compatibility-constraints)
+10. [Air-Gapped and Offline Deployment Constraints](#10-air-gapped-and-offline-deployment-constraints)
+11. [STIG and Compliance Caveats](#11-stig-and-compliance-caveats)
+12. [Python and Collection Dependencies](#12-python-and-collection-dependencies)
+13. [Network and Connectivity Requirements](#13-network-and-connectivity-requirements)
 
 ---
 
@@ -33,7 +34,38 @@ These safeguards apply to all platforms and roles.
 
 ---
 
-## 2. Non-Idempotent Operations
+## 2. Unimplemented Platforms
+
+155 roles in this repository contained no tasks at all. They had the complete
+role layout -- `README.md`, `defaults/main.yml`, `meta/main.yml`, sometimes
+handlers and templates -- but an empty `tasks/main.yml`. 114 of them were
+invoked by playbooks, so a "phase" such as `Phase 1 - Tower Installation` ran,
+reported success, and changed nothing.
+
+Those roles and the 120 playbook invocations that called them have been
+removed, so no playbook now claims a phase it does not perform. The
+consequence is that several platforms have little or no automation:
+
+| Platform | Roles remaining | Status |
+|----------|-----------------|--------|
+| Ansible Tower / AAP | 0 | `site.yml` performs no changes and says so |
+| MySQL / MariaDB | 0 | `site.yml` performs no changes and says so |
+| Oracle Database | 0 | `site.yml` performs no changes and says so |
+| Windows Server | 1 | only `win_server2022_stig`, which `site.yml` does not invoke -- run it directly |
+| Fortinet FortiGate | 1 | |
+| Cohesity, ServiceNow, Prometheus/Grafana | 2 each | |
+| NetApp ONTAP, Veeam, ELK Stack | 3 each | |
+| Tenable, HashiCorp Vault, F5 BIG-IP | 4 each | |
+| Microsoft Azure | 7 | reduced from a claimed 46 |
+
+Do not assume a platform directory implies working automation. Check the
+platform README and the roles that actually exist before planning work around
+it. The repository statistics in the top-level README now count only roles
+that do something.
+
+---
+
+## 3. Non-Idempotent Operations
 
 The following roles or platforms have operations that are **not idempotent**. Running them more than once may cause duplicate or unintended actions.
 
@@ -46,7 +78,7 @@ The following roles or platforms have operations that are **not idempotent**. Ru
 
 ---
 
-## 3. Destructive Operations
+## 4. Destructive Operations
 
 Roles that can delete or permanently alter data are gated behind explicit flags. These flags are `false` by default. Enabling them without review may cause irreversible damage.
 
@@ -75,7 +107,7 @@ Roles that can delete or permanently alter data are gated behind explicit flags.
 
 ---
 
-## 4. Mandatory Dry-Run Requirement
+## 5. Mandatory Dry-Run Requirement
 
 All playbooks default to `apply_changes: false` (dry-run mode). This is intentional.
 
@@ -89,7 +121,7 @@ Skipping the dry-run step is the leading cause of unintended configuration chang
 
 ---
 
-## 5. Reboot and Service Restart Requirements
+## 6. Reboot and Service Restart Requirements
 
 The following operations require a system reboot or cause service restarts. Schedule accordingly.
 
@@ -100,7 +132,7 @@ The following operations require a system reboot or cause service restarts. Sche
 
 ---
 
-## 6. Operational Technology (OT/ICS) Environments
+## 7. Operational Technology (OT/ICS) Environments
 
 OT environments require additional precautions beyond standard IT deployments.
 
@@ -124,7 +156,7 @@ OT environments require additional precautions beyond standard IT deployments.
 
 ---
 
-## 7. Platform-Specific Limitations
+## 8. Platform-Specific Limitations
 
 ### Cisco — ACI Fabric Health Blocking
 - **Role:** `aci_monitoring`
@@ -171,7 +203,7 @@ OT environments require additional precautions beyond standard IT deployments.
 
 ---
 
-## 8. Version and Compatibility Constraints
+## 9. Version and Compatibility Constraints
 
 ### Minimum Requirements
 
@@ -200,7 +232,7 @@ OT environments require additional precautions beyond standard IT deployments.
 
 ---
 
-## 9. Air-Gapped and Offline Deployment Constraints
+## 10. Air-Gapped and Offline Deployment Constraints
 
 For environments without internet access, agent/sensor installers cannot be automatically downloaded.
 
@@ -213,7 +245,7 @@ Both roles will fail if the download URL is unreachable and no local URL is prov
 
 ---
 
-## 10. STIG and Compliance Caveats
+## 11. STIG and Compliance Caveats
 
 - **Not all STIG findings apply to all environments.** Review each finding for applicability before applying hardening.
 - **Policy-as-Code compliance controls may impact service availability.** Review `policy_as_code/DEPLOYMENT_GUIDE.md` for pre-deployment warnings.
@@ -222,7 +254,7 @@ Both roles will fail if the download URL is unreachable and no local URL is prov
 
 ---
 
-## 11. Python and Collection Dependencies
+## 12. Python and Collection Dependencies
 
 Missing Python packages or Ansible collections will cause playbook failures. The following Python libraries are required per platform and must be installed on the Ansible control node.
 
@@ -240,7 +272,7 @@ Refer to each platform's `requirements.txt` or `requirements.yml` for the comple
 
 ---
 
-## 12. Network and Connectivity Requirements
+## 13. Network and Connectivity Requirements
 
 - The Ansible control host must have network access to each target system's management API endpoint.
 - Verify connectivity before running: `curl -k https://<management-ip>/api/`
@@ -250,7 +282,7 @@ Refer to each platform's `requirements.txt` or `requirements.yml` for the comple
 
 ---
 
-## 13. Advanced Features Not Yet Implemented
+## 14. Advanced Features Not Yet Implemented
 
 The following optional/advanced workflows ship as **fail-fast placeholders**: the role
 loads and the default path runs, but enabling the feature stops with a clear, actionable
@@ -270,7 +302,7 @@ them.
 > role. They are not yet validated against live hosts — test in a non-production
 > environment and confirm installer versions/arguments for your environment first.
 
-## 14. Templates Requiring Site Review
+## 15. Templates Requiring Site Review
 
 Most previously-missing templates were implemented with working, variable-driven content
 (postgres backup/restore scripts, splunk `.conf` files, report/inventory artifacts, kubelet

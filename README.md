@@ -1,6 +1,6 @@
 # Fourth Estate Ansible Playbooks
 
-An enterprise-grade collection of **604 roles** and **3,688 YAML files** for infrastructure automation across **41 technology platforms** with emphasis on **DoD STIG, NIST 800-53, NIST 800-171, FedRAMP, and FISMA compliance**.
+An enterprise-grade collection of **422 roles** and **3,162 YAML files** for infrastructure automation across **41 technology platforms** with emphasis on **DoD STIG, NIST 800-53, NIST 800-171, FedRAMP, and FISMA compliance**.
 
 > **New:** 21 dedicated DoD STIG / SRG roles were added covering Cisco network
 > devices (IOS XE L2, NX-OS, ASA, FTD, ACI Router, ISE), RHEL 9, Windows Server
@@ -14,17 +14,23 @@ This repository provides production-ready Ansible automation for network infrast
 
 ## 📊 Repository Statistics
 
-- **Total Roles:** 604
-- **Total YAML Files:** 3,688
-- **README Documentation Files:** 651
+- **Total Roles:** 422
+- **Total YAML Files:** 3,162
+- **README Documentation Files:** 506
 - **Technology Platforms:** 41
 - **Dedicated DoD STIG / SRG roles:** 21 (see [STIG_COVERAGE_MATRIX.md](./docs/STIG_COVERAGE_MATRIX.md))
 - **Compliance Frameworks:** DoD STIG, DoD Cloud Computing SRG, NIST 800-53 Rev 5, NIST 800-171, FedRAMP, FISMA, CIS Benchmarks
 - **Cloud Platforms:** 4 (AWS, Azure, GCP, VMware vSphere)
 - **Database Platforms:** 5 (PostgreSQL, MySQL, Oracle, IBM DB2, Cloud Databases)
-- **Jinja2 Templates:** 320
+- **Jinja2 Templates:** 291
 - **Inventory Examples:** 63
 
+> **Note:** 155 roles that contained no tasks were removed, along with the 120
+> playbook invocations that called them. They had the full role layout (README,
+> defaults, meta) but an empty `tasks/main.yml`, so any playbook "phase" that
+> invoked one silently performed no changes. The counts above reflect roles that
+> actually do something.
+>
 > Repository statistics are verified in CI (`yamllint` + a YAML parse check over all
 > files). See [`PRODUCTION_READINESS_ASSESSMENT.md`](./docs/PRODUCTION_READINESS_ASSESSMENT.md)
 > for the current validation status and known follow-ups.
@@ -71,32 +77,32 @@ Each top-level directory focuses on a specific technology platform and contains 
 - **Cisco UCS** (Unified Computing System) - 5 roles for infrastructure, security, networking, monitoring, DR
 - **Cisco ACI** (Application Centric Infrastructure) - 5 roles for fabric deploy, tenant config, L3Out/L2Out, DoD STIG/NIST hardening, monitoring
 - **Palo Alto Networks** - PAN-OS firewalls, Panorama management, VPN, QoS (13 roles)
-- **Check Point** - Firewalls, access policies, threat prevention, identity awareness (6 roles)
+- **Check Point** - Firewalls, access policies, threat prevention, identity awareness (12 roles)
 - **Arista EOS** - Network switches, CVP, routing, fabric, baseline configuration (6 roles)
 - **Illumio** - Zero-trust micro-segmentation, policy lifecycle, VEN management (5 roles)
-- **Infoblox** - DNS/DHCP infrastructure, grid operations, RPZ policies (12 roles)
+- **Infoblox** - DNS/DHCP infrastructure, grid operations, RPZ policies (20 roles)
 - **Claroty** - OT security, inventory, secure access, segmentation (11 roles)
 
 ### ☁️ Cloud Platforms (4 platforms)
-- **Amazon Web Services (AWS)** - IAM, VPC, EC2, EKS, S3, RDS, Lambda, FedRAMP (30 roles)
-- **Microsoft Azure** - Azure AD, VNets, AKS, SQL, Key Vault, Sentinel, Gov Cloud (46 roles)
+- **Amazon Web Services (AWS)** - IAM, VPC, EC2, EKS, S3, RDS, Lambda, FedRAMP (23 roles)
+- **Microsoft Azure** - Azure AD, VNets, AKS, SQL, Key Vault, Sentinel, Gov Cloud (7 roles)
 - **Google Cloud Platform** - GCP IAM, VPCs, GKE, BigQuery, Cloud Run, compliance (30 roles)
-- **VMware vSphere** - vCenter, ESXi, vSAN, NSX-T SDN, STIG hardening (32 roles)
+- **VMware vSphere** - vCenter, ESXi, vSAN, NSX-T SDN, STIG hardening (21 roles)
 
 ### 🔄 Container & Orchestration (2 platforms)
 - **Kubernetes** - Cluster hardening (STIG V1R11), RBAC, namespaces, secrets (8 roles)
-- **Red Hat OpenShift** - Full OCP lifecycle, operators, GitOps, monitoring (45 roles)
+- **Red Hat OpenShift** - Full OCP lifecycle, operators, GitOps, monitoring (46 roles)
 
 ### 🐧 Operating Systems (2 platforms)
-- **Red Hat Enterprise Linux** - Hardening, patching, audit logging, firewall, SELinux (5 roles)
-- **Microsoft Windows Server** - STIG hardening, Active Directory, Group Policy, DHCP/DNS, IIS (10 roles)
+- **Red Hat Enterprise Linux** - Hardening, patching, audit logging, firewall, SELinux (6 roles)
+- **Microsoft Windows Server** - STIG hardening, Active Directory, Group Policy, DHCP/DNS, IIS (1 roles)
 
 ### 💾 Storage & Backup (6 platforms)
 - **Pure Storage** - FlashArray, FlashBlade, provisioning, protection (14 roles)
 - **VAST Data** - All-flash NAS storage, monitoring, security hardening (4 roles)
-- **NetApp ONTAP** - Cluster, SVM, volumes, SnapMirror, SnapVault (10 roles)
-- **Veeam** - Backup & recovery, replication, cloud tier, SureBackup (8 roles)
-- **Cohesity** - Cluster config, protection policies, recovery, cloud archive (7 roles)
+- **NetApp ONTAP** - Cluster, SVM, volumes, SnapMirror, SnapVault (3 roles)
+- **Veeam** - Backup & recovery, replication, cloud tier, SureBackup (3 roles)
+- **Cohesity** - Cluster config, protection policies, recovery, cloud archive (2 roles)
 - **Splunk** - Log aggregation, forwarder, monitoring, security (6 roles)
 
 ### 🗄️ Database Platforms (3 platforms)
@@ -107,17 +113,17 @@ Each top-level directory focuses on a specific technology platform and contains 
 ### 📊 Monitoring & Observability (4 platforms)
 - **ScienceLogic SL1** - Platform monitoring, RBA, powerflow, governance (33 roles)
 - **Dragos** - OT threat detection, inventory, topology, integration (12 roles)
-- **Prometheus/Grafana** - Metrics collection, alerting, dashboarding (11 roles)
-- **ELK Stack** - Elasticsearch, Logstash, Kibana, Filebeat, Metricbeat (12 roles)
+- **Prometheus/Grafana** - Metrics collection, alerting, dashboarding (2 roles)
+- **ELK Stack** - Elasticsearch, Logstash, Kibana, Filebeat, Metricbeat (3 roles)
 
 ### 🔐 Security & Compliance (2 platforms)
-- **Tenable Security Center** - Vulnerability scanning, compliance checks, reporting (8 roles)
-- **HashiCorp Vault** - Secrets management, PKI, dynamic credentials, audit (10 roles)
+- **Tenable Security Center** - Vulnerability scanning, compliance checks, reporting (4 roles)
+- **HashiCorp Vault** - Secrets management, PKI, dynamic credentials, audit (4 roles)
 
 ### 🔧 Enterprise Integration (3 platforms)
-- **F5 BIG-IP** - Load balancing, SSL, WAF, iRules, high availability (12 roles)
-- **ServiceNow** - CMDB integration, incident/change management, asset tracking (8 roles)
-- **Fortinet FortiGate** - Firewall, VPN, IPS/AV, high availability (12 roles)
+- **F5 BIG-IP** - Load balancing, SSL, WAF, iRules, high availability (4 roles)
+- **ServiceNow** - CMDB integration, incident/change management, asset tracking (2 roles)
+- **Fortinet FortiGate** - Firewall, VPN, IPS/AV, high availability (1 roles)
 
 ### 🛡️ Endpoint Security (2 platforms)
 - **CrowdStrike** - EDR agent deployment, management, and monitoring
@@ -511,6 +517,26 @@ See `policy_as_code/DEPLOYMENT_GUIDE.md` for detailed deployment procedures.
       ansible.builtin.package:
         # Runs on remote host
 ```
+
+### Collection Dependencies
+
+Every collection a playbook or role calls must be declared in a
+`requirements.yml` -- the repo-root one, or the platform's own. This is enforced
+in CI by `scripts/check_collections.py`, which fails the build on a gap:
+
+```bash
+python3 scripts/check_collections.py .
+```
+
+This exists because the enforced `ansible-lint` gate runs `--offline` with no
+collections installed, so its `syntax-check[unknown-module]` rule fires for
+every non-builtin module and is permanently baselined in `.ansible-lint-ignore`.
+That rule therefore cannot catch the failure it is named after -- a module the
+user cannot install. This check can, and does so deterministically without
+network access.
+
+It does **not** verify that a module exists *inside* a collection (a typo in a
+module name). That needs Galaxy and is exercised by the informational CI job.
 
 ### Preflight / Postflight Validation
 

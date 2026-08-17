@@ -65,17 +65,14 @@ applicable **DISA Security Technical Implementation Guide (STIG)** findings and
 | Control | Title | Implementing Roles / Task Files | Platform |
 |---------|-------|--------------------------------|----------|
 | AC-2 | Account Management | `ansible/roles/ans_access_sso_directory` | AAP |
-| AC-2 | Account Management | `ansible_tower/roles/ansible_tower_organizations`, `ansible_tower_rbac` | Ansible Tower |
-| AC-2 | Account Management | `windows/roles/win_active_directory`, `win_user_management` | Windows Server |
 | AC-2 | Account Management | `vmware/tasks/add_vsphere_users.yml`, `enforce_vsphere_rbac.yml` | VMware |
-| AC-2 | Account Management | `ansible/tasks/ans_ctrl__orgs_teams.yml`, `ans_ctrl__rbac_baseline.yml` | AAP |
-| AC-3 | Access Enforcement | `ansible/tasks/ans_ctrl__rbac_baseline.yml` | AAP |
-| AC-3 | Access Enforcement | `ansible_tower/roles/ansible_tower_rbac` | Ansible Tower |
+| AC-2 | Account Management | `ansible/playbooks/ans_ctrl__orgs_teams.yml`, `ans_ctrl__rbac_baseline.yml` | AAP |
+| AC-3 | Access Enforcement | `ansible/playbooks/ans_ctrl__rbac_baseline.yml` | AAP |
 | AC-3 | Access Enforcement | `vmware/tasks/enforce_vsphere_rbac.yml`, `import_vsphere_permissions.yml` | VMware |
 | AC-5 | Separation of Duties | `ansible/roles/ans_ctrl_policy_guardrails` | AAP |
-| AC-5 | Separation of Duties | `ansible/tasks/ans_ctrl__approvals.yml` | AAP |
+| AC-5 | Separation of Duties | `ansible/playbooks/ans_ctrl__approvals.yml` | AAP |
 | AC-6 | Least Privilege | `ansible/roles/ans_access_sso_directory` (team-scoped RBAC) | AAP |
-| AC-6 | Least Privilege | `ansible/tasks/ans_ctrl__rbac_baseline.yml` | AAP |
+| AC-6 | Least Privilege | `ansible/playbooks/ans_ctrl__rbac_baseline.yml` | AAP |
 | AC-6 | Least Privilege | `vmware/tasks/enforce_vsphere_rbac.yml` | VMware |
 | AC-12 | Session Termination | `policy_as_code/policies/access_control/session_timeout.yml` | Policy as Code |
 | AC-12 | Session Termination | STIG findings V-230286, V-230287 | RHEL 8 |
@@ -101,7 +98,7 @@ applicable **DISA Security Technical Implementation Guide (STIG)** findings and
 | Control | Title | Implementing Roles / Task Files | Platform |
 |---------|-------|--------------------------------|----------|
 | AU-2 | Event Logging | `ansible/roles/ans_ctrl_backup_and_audit` | AAP |
-| AU-2 | Event Logging | `ansible/tasks/ans_ctrl__audit_export.yml` | AAP |
+| AU-2 | Event Logging | `ansible/playbooks/ans_ctrl__audit_export.yml` | AAP |
 | AU-2 | Event Logging | `vmware/roles/vsphere_esxi_stig_hardening` (remote syslog) | VMware ESXi |
 | AU-2 | Event Logging | `cisco/roles/aci_monitoring` (syslog remote destinations, fault management) | Cisco ACI |
 | AU-2 | Event Logging | `cisco/roles/aci_security_hardening` (audit logging, syslog forwarding) | Cisco ACI |
@@ -111,16 +108,16 @@ applicable **DISA Security Technical Implementation Guide (STIG)** findings and
 | AU-2 | Event Logging | `elk_stack/roles` | ELK Stack |
 | AU-2 | Event Logging | `sciencelogic/roles` | ScienceLogic |
 | AU-2 | Event Logging | `policy_as_code/policies/audit_accountability/audit_logging.yml` | Policy as Code |
-| AU-3 | Content of Audit Records | `ansible/tasks/ans_ctrl__audit_export.yml` | AAP |
+| AU-3 | Content of Audit Records | `ansible/playbooks/ans_ctrl__audit_export.yml` | AAP |
 | AU-3 | Content of Audit Records | `splunk/roles` | Splunk |
 | AU-3 | Content of Audit Records | STIG findings V-230315, V-230316, V-230317, V-230318 | RHEL 8 |
 | AU-4 | Audit Log Storage Capacity | `ansible/roles/ans_ops_artifacts_retention` | AAP |
 | AU-5 | Response to Audit Processing Failures | `sciencelogic/roles` (alerting on log gaps) | ScienceLogic |
-| AU-6 | Audit Record Review | `ansible/tasks/ans_ctrl__analytics_usage.yml` | AAP |
+| AU-6 | Audit Record Review | `ansible/playbooks/ans_ctrl__analytics_usage.yml` | AAP |
 | AU-6 | Audit Record Review | `sciencelogic/roles` | ScienceLogic |
 | AU-9 | Protection of Audit Information | `ansible/roles/ans_ctrl_backup_and_audit` (0640 mode, read-only export) | AAP |
 | AU-11 | Audit Record Retention | `ansible/roles/ans_ops_artifacts_retention` | AAP |
-| AU-11 | Audit Record Retention | `ansible/tasks/ans_ops__artifacts_retention.yml` | AAP |
+| AU-11 | Audit Record Retention | `ansible/playbooks/ans_ops__artifacts_retention.yml` | AAP |
 | AU-12 | Audit Record Generation | `policy_as_code/policies/audit_accountability/audit_logging.yml` | Policy as Code |
 | AU-12 | Audit Record Generation | `vmware/roles/vsphere_esxi_stig_hardening` (syslog, logDirUnique) | VMware ESXi |
 | AU-12 | Audit Record Generation | `cisco/roles/aci_monitoring` (Call Home, fault severity reporting) | Cisco ACI |
@@ -156,24 +153,21 @@ applicable **DISA Security Technical Implementation Guide (STIG)** findings and
 | CM-2 | Baseline Configuration | `vmware/roles/cluster_baseline` | VMware |
 | CM-2 | Baseline Configuration | `arista/roles/arista_baseline_config` | Arista |
 | CM-2 | Baseline Configuration | `rhel/roles` | RHEL |
-| CM-2 | Baseline Configuration | `windows/roles/win_group_policy` | Windows |
 | CM-2 | Baseline Configuration | `kubernetes/playbook-cluster-hardening.yml` | Kubernetes |
-| CM-3 | Configuration Change Control | `ansible/tasks/ans_ctrl__approvals.yml` | AAP |
+| CM-3 | Configuration Change Control | `ansible/playbooks/ans_ctrl__approvals.yml` | AAP |
 | CM-3 | Configuration Change Control | `ansible/roles/ans_content_qa_ci` | AAP |
 | CM-3 | Configuration Change Control | `vmware/roles/drift_report` | VMware |
 | CM-3 | Configuration Change Control | `servicenow/roles` (change ticket integration) | ServiceNow |
 | CM-5 | Access Restrictions for Change | `ansible/roles/ans_ctrl_policy_guardrails` | AAP |
-| CM-5 | Access Restrictions for Change | `ansible/tasks/ans_ctrl__approvals.yml` | AAP |
+| CM-5 | Access Restrictions for Change | `ansible/playbooks/ans_ctrl__approvals.yml` | AAP |
 | CM-6 | Configuration Settings | `vmware/roles/vsphere_esxi_stig_hardening` | VMware ESXi |
 | CM-6 | Configuration Settings | `vmware/roles/vsphere_vm_stig_hardening` | VMware VM |
 | CM-6 | Configuration Settings | `cisco/roles/aci_security_hardening` (STIG Cat I/II/III, password/TLS/RBAC) | Cisco ACI |
 | CM-6 | Configuration Settings | `cisco/roles/ucs_security_hardening` (STIG Cat I/II/III) | Cisco UCS |
 | CM-6 | Configuration Settings | `rhel/roles` (hardening baseline) | RHEL |
-| CM-6 | Configuration Settings | `windows/roles/win_stig_hardening` | Windows |
 | CM-6 | Configuration Settings | `kubernetes/playbook-cluster-hardening.yml` | Kubernetes |
-| CM-6 | Configuration Settings | `ansible/tasks/ans_core__ansible_cfg_enforce.yml` | AAP |
+| CM-6 | Configuration Settings | `ansible/playbooks/ans_core__ansible_cfg_enforce.yml` | AAP |
 | CM-7 | Least Functionality | `vmware/roles/vsphere_esxi_stig_hardening` (disable TSM/TSM-SSH) | VMware ESXi |
-| CM-7 | Least Functionality | `windows/roles/win_stig_hardening` | Windows |
 | CM-7 | Least Functionality | `rhel/roles` (disable unused services) | RHEL |
 | CM-7 | Least Functionality | `arista/roles/arista_acl_qos_security` (ACL hardening) | Arista |
 | CM-6 | Configuration Settings | `cisco/roles/sdwan_vmanage_deploy` (baseline system config), `cisco/roles/sdwan_vmanage_config` (STIG-embedded templates) | Cisco SD-WAN |
@@ -184,7 +178,7 @@ applicable **DISA Security Technical Implementation Guide (STIG)** findings and
 | CM-8 | System Component Inventory | `vmware/roles/vcenter_tags` | VMware |
 | CM-9 | Configuration Management Plan | `policy_as_code/` | Policy as Code |
 | CM-10 | Software Usage Restrictions | `ansible/roles/ans_content_trust_and_lock` (collection signing/lock) | AAP |
-| CM-11 | User-Installed Software | `ansible/tasks/ans_content__allowlist.yml` | AAP |
+| CM-11 | User-Installed Software | `ansible/playbooks/ans_content__allowlist.yml` | AAP |
 
 ---
 
@@ -204,10 +198,9 @@ applicable **DISA Security Technical Implementation Guide (STIG)** findings and
 | CP-9 | System Backup | `netapp/roles` (SnapVault) | NetApp |
 | CP-9 | System Backup | `pure_storage/roles` (snapshots/protection) | Pure Storage |
 | CP-9 | System Backup | `vast/roles` (snapshot policies) | VAST Data |
-| CP-9 | System Backup | `windows/roles/win_backup` | Windows |
 | CP-10 | System Recovery | `veeam/roles` (SureBackup, instant recovery) | Veeam |
 | CP-10 | System Recovery | `cohesity/roles` (instant recovery) | Cohesity |
-| CP-10 | System Recovery | `ansible/tasks/ans_ctrl__restore_sandbox.yml` | AAP |
+| CP-10 | System Recovery | `ansible/playbooks/ans_ctrl__restore_sandbox.yml` | AAP |
 | CP-10 | System Recovery | `vmware/roles/vsphere_snapshots_role` | VMware |
 
 ---
@@ -217,7 +210,6 @@ applicable **DISA Security Technical Implementation Guide (STIG)** findings and
 | Control | Title | Implementing Roles / Task Files | Platform |
 |---------|-------|--------------------------------|----------|
 | IA-2 | Identification and Authentication (Users) | `ansible/roles/ans_access_sso_directory` (LDAP/SAML/OIDC) | AAP |
-| IA-2 | Identification and Authentication (Users) | `windows/roles/win_active_directory` | Windows |
 | IA-2 | Identification and Authentication (Users) | `cisco/roles` (ISE identity policy) | Cisco ISE |
 | IA-2(1) | MFA for Privileged Accounts | `ansible/roles/ans_ctrl_policy_guardrails` (`fourth_estate_mandatory_mfa`) | AAP |
 | IA-2(1) | MFA for Privileged Accounts | `cisco/roles` (ISE MFA) | Cisco ISE |
@@ -252,7 +244,7 @@ applicable **DISA Security Technical Implementation Guide (STIG)** findings and
 | IR-5 | Incident Monitoring | `prometheus_grafana/roles` | Prometheus/Grafana |
 | IR-5 | Incident Monitoring | `splunk/roles` | Splunk |
 | IR-6 | Incident Reporting | `servicenow/roles` (incident ticket creation) | ServiceNow |
-| IR-6 | Incident Reporting | `ansible/tasks/ans_ctrl__notifications.yml` | AAP |
+| IR-6 | Incident Reporting | `ansible/playbooks/ans_ctrl__notifications.yml` | AAP |
 | IR-7 | Incident Response Assistance | `servicenow/roles` | ServiceNow |
 
 ---
@@ -262,7 +254,7 @@ applicable **DISA Security Technical Implementation Guide (STIG)** findings and
 | Control | Title | Implementing Roles / Task Files | Platform |
 |---------|-------|--------------------------------|----------|
 | RA-5 | Vulnerability Monitoring and Scanning | `tenable/roles` | Tenable |
-| RA-5 | Vulnerability Monitoring and Scanning | `ansible/tasks/ans_content__sbom_vuln_scan.yml` (Syft + Grype) | AAP |
+| RA-5 | Vulnerability Monitoring and Scanning | `ansible/playbooks/ans_content__sbom_vuln_scan.yml` (Syft + Grype) | AAP |
 | RA-5 | Vulnerability Monitoring and Scanning | `crowdstrike/roles` | CrowdStrike |
 | RA-5 | Vulnerability Monitoring and Scanning | `sentinelone/roles` | SentinelOne |
 | RA-5(2) | Update Vulnerabilities to Be Scanned | `tenable/roles` (feed updates) | Tenable |
@@ -276,13 +268,13 @@ applicable **DISA Security Technical Implementation Guide (STIG)** findings and
 |---------|-------|--------------------------------|----------|
 | SA-10 | Developer Configuration Management | `ansible/roles/ans_ci_pipelines` | AAP |
 | SA-10 | Developer Configuration Management | `ansible/roles/ans_content_qa_ci` | AAP |
-| SA-10 | Developer Configuration Management | `ansible/tasks/ans_ci__pipeline_scaffold.yml` | AAP |
-| SA-10 | Developer Configuration Management | `ansible/tasks/ans_ci__precommit.yml` | AAP |
+| SA-10 | Developer Configuration Management | `ansible/playbooks/ans_ci__pipeline_scaffold.yml` | AAP |
+| SA-10 | Developer Configuration Management | `ansible/playbooks/ans_ci__precommit.yml` | AAP |
 | SA-11 | Developer Testing and Evaluation | `ansible/roles/ans_content_qa_ci` (molecule/lint) | AAP |
 | SA-12 | Supply Chain Protection | `ansible/roles/ans_content_trust_and_lock` (GPG signing, sig verify) | AAP |
-| SA-12 | Supply Chain Protection | `ansible/tasks/ans_content__sync_and_sign.yml` | AAP |
-| SA-12 | Supply Chain Protection | `ansible/tasks/ans_ctrl__content_signed_only.yml` | AAP |
-| SA-12 | Supply Chain Protection | `ansible/tasks/ans_content__mirror_lock.yml` | AAP |
+| SA-12 | Supply Chain Protection | `ansible/playbooks/ans_content__sync_and_sign.yml` | AAP |
+| SA-12 | Supply Chain Protection | `ansible/playbooks/ans_ctrl__content_signed_only.yml` | AAP |
+| SA-12 | Supply Chain Protection | `ansible/playbooks/ans_content__mirror_lock.yml` | AAP |
 | SA-15 | Development Process, Standards, and Tools | `ansible/roles/ans_ci_pipelines` | AAP |
 
 ---
@@ -298,13 +290,11 @@ applicable **DISA Security Technical Implementation Guide (STIG)** findings and
 | SC-7 | Boundary Protection | `checkpoint/roles` | Check Point |
 | SC-7 | Boundary Protection | `fortinet/roles` | Fortinet |
 | SC-7 | Boundary Protection | `illumio/roles` (micro-segmentation) | Illumio |
-| SC-7 | Boundary Protection | `vmware/roles/nsx_t_security` | VMware NSX-T |
 | SC-7 | Boundary Protection | `arista/roles/arista_acl_qos_security` | Arista |
 | SC-7 | Boundary Protection | `f5_bigip/roles` (WAF/virtual servers) | F5 BIG-IP |
 | SC-7 | Boundary Protection | `cisco/roles/aci_security_hardening` (contract enforcement, EPG isolation) | Cisco ACI |
 | SC-7 | Boundary Protection | `cisco/roles/aci_tenant_config` (intra-EPG isolation, contracts) | Cisco ACI |
 | SC-7 | Boundary Protection | `cisco/roles/ise_anc__quarantine_rules` (adaptive network quarantine) | Cisco ISE |
-| SC-7 | Boundary Protection | `windows/roles/win_firewall` | Windows |
 | SC-7 | Boundary Protection | `vmware/roles/vsphere_esxi_stig_hardening` (firewall rulesets) | VMware ESXi |
 | SC-8 | Transmission Confidentiality and Integrity | `policy_as_code/policies/system_communications/cryptographic_protection.yml` | Policy as Code |
 | SC-8 | Transmission Confidentiality and Integrity | STIG findings V-230273, V-230274, V-230275, V-230276, V-230277 | RHEL 8 |
@@ -314,7 +304,7 @@ applicable **DISA Security Technical Implementation Guide (STIG)** findings and
 | SC-8 | Transmission Confidentiality and Integrity | `arista/roles/arista_acl_qos_security` | Arista |
 | SC-12 | Cryptographic Key Establishment and Management | `hashicorp_vault/roles` (PKI, key management) | HashiCorp Vault |
 | SC-12 | Cryptographic Key Establishment and Management | `vmware/roles/vcenter_kms` | VMware |
-| SC-12 | Cryptographic Key Establishment and Management | `ansible/tasks/ans_secrets__vault_rotate.yml` | AAP |
+| SC-12 | Cryptographic Key Establishment and Management | `ansible/playbooks/ans_secrets__vault_rotate.yml` | AAP |
 | SC-13 | Cryptographic Protection | `policy_as_code/policies/system_communications/cryptographic_protection.yml` | Policy as Code |
 | SC-13 | Cryptographic Protection | `ansible/roles/ans_core_runtime_baseline` (FIPS mode) | AAP |
 | SC-13 | Cryptographic Protection | `hashicorp_vault/roles` | HashiCorp Vault |
@@ -339,7 +329,6 @@ applicable **DISA Security Technical Implementation Guide (STIG)** findings and
 | Control | Title | Implementing Roles / Task Files | Platform |
 |---------|-------|--------------------------------|----------|
 | SI-2 | Flaw Remediation | `rhel/roles` (patching) | RHEL |
-| SI-2 | Flaw Remediation | `windows/roles/win_updates`, `win_wsus` | Windows |
 | SI-2 | Flaw Remediation | `vmware/roles/cluster_lifecycle_vlcm` | VMware |
 | SI-2 | Flaw Remediation | `openshift/roles` (patch management) | OpenShift |
 | SI-2 | Flaw Remediation | `ansible/roles/ans_ops_upgrade_window` | AAP |
@@ -355,9 +344,9 @@ applicable **DISA Security Technical Implementation Guide (STIG)** findings and
 | SI-4 | System Monitoring | `claroty/roles` (OT monitoring) | Claroty |
 | SI-4 | System Monitoring | `tenable/roles` | Tenable |
 | SI-7 | Software, Firmware, and Information Integrity | `ansible/roles/ans_content_trust_and_lock` (collection signing/verify) | AAP |
-| SI-7 | Software, Firmware, and Information Integrity | `ansible/tasks/ans_content__sbom_vuln_scan.yml` (SBOM + SHA-256) | AAP |
-| SI-7 | Software, Firmware, and Information Integrity | `ansible/tasks/ans_content__sync_and_sign.yml` | AAP |
-| SI-7 | Software, Firmware, and Information Integrity | `ansible/tasks/ans_ctrl__content_signed_only.yml` | AAP |
+| SI-7 | Software, Firmware, and Information Integrity | `ansible/playbooks/ans_content__sbom_vuln_scan.yml` (SBOM + SHA-256) | AAP |
+| SI-7 | Software, Firmware, and Information Integrity | `ansible/playbooks/ans_content__sync_and_sign.yml` | AAP |
+| SI-7 | Software, Firmware, and Information Integrity | `ansible/playbooks/ans_ctrl__content_signed_only.yml` | AAP |
 | SI-10 | Information Input Validation | `ansible/roles/ans_content_qa_ci` | AAP |
 | SI-10 | Information Input Validation | `policy_as_code/` | Policy as Code |
 | SI-12 | Information Management and Retention | `ansible/roles/ans_ops_artifacts_retention` | AAP |
@@ -661,7 +650,7 @@ Roles under `ansible/` and `ansible_tower/`
 | RHEL-08-010550 | Cat I | Privileged account auditing | `ans_ctrl__audit_export.yml` |
 | RHEL-08-020230 | Cat II | No shared credentials | `ans_core_secrets_identity` |
 | AC-2 | — | Account lifecycle management | `ans_access_sso_directory`, `ans_ctrl__orgs_teams.yml` |
-| AC-3 | — | Role-based access enforcement | `ans_ctrl__rbac_baseline.yml`, `ansible_tower_rbac` |
+| AC-3 | — | Role-based access enforcement | `ans_ctrl__rbac_baseline.yml` |
 | AC-5 | — | Separation of duties | `ans_ctrl__approvals.yml`, `ans_ctrl_policy_guardrails` |
 | AU-2 | — | Audit log collection | `ans_ctrl_backup_and_audit`, `ans_ctrl__audit_export.yml` |
 | CM-3 | — | Change control with approvals | `ans_ctrl__approvals.yml` |
@@ -699,7 +688,7 @@ control families for rapid lookup.
 | Platform Directory | Primary DISA STIG | NIST 800-53 Families | Key Roles / Task Files |
 |--------------------|-------------------|---------------------|------------------------|
 | `ansible/` | RHEL 8 App STIG | AC, AU, CM, IA, SA, SC, SI | `ans_access_sso_directory`, `ans_ctrl_backup_and_audit`, `ans_ctrl_policy_guardrails`, `ans_core_secrets_identity`, `ans_content_trust_and_lock`, `ans_core_runtime_baseline` |
-| `ansible_tower/` | RHEL 8 App STIG | AC, AU, CM, IA | `ansible_tower_rbac`, `ansible_tower_organizations`, `ansible_tower_config` |
+| `ansible_tower/` | RHEL 8 App STIG | AC, AU, CM, IA | `ansible_tower_config` |
 | `arista/` | Network Device STIG | AU, CM, CP, SC | `arista_acl_qos_security`, `arista_baseline_config`, `arista_backup_restore` |
 | `aws/` | DoD CC SRG / FedRAMP | AC, AU, CM, IA, SC, SI | IAM, VPC, EC2, EKS, S3 roles |
 | `azure/` | DoD CC SRG / FedRAMP | AC, AU, CM, IA, SC, SI | Azure AD, AKS, Key Vault, Sentinel roles |
@@ -779,16 +768,16 @@ the following NIST 800-171 requirements are addressed:
 |---------------------|-------------|----------------------|
 | 3.1.1 | Limit system access to authorized users | `ans_access_sso_directory`, `ans_ctrl__rbac_baseline.yml` |
 | 3.1.2 | Limit system access to authorized transactions | `ans_ctrl_policy_guardrails`, `ans_ctrl__approvals.yml` |
-| 3.1.3 | Control CUI flow | `illumio/roles`, `palo_alto/roles`, `vmware/roles/nsx_t_security` |
+| 3.1.3 | Control CUI flow | `illumio/roles`, `palo_alto/roles` |
 | 3.3.1 | Create and retain audit logs | `ans_ctrl_backup_and_audit`, `splunk/roles`, `elk_stack/roles` |
 | 3.3.2 | Ensure individual actions are traceable | `ans_ctrl__audit_export.yml`, `sciencelogic/roles` |
-| 3.5.2 | Authenticate organizational users | `ans_access_sso_directory`, `windows/roles/win_active_directory` |
+| 3.5.2 | Authenticate organizational users | `ans_access_sso_directory` |
 | 3.5.3 | MFA for local/network access to privileged accounts | `ans_ctrl_policy_guardrails` (mandatory MFA flag) |
 | 3.13.1 | Monitor, control, and protect communications | `palo_alto/roles`, `checkpoint/roles`, `fortinet/roles` |
-| 3.13.2 | Employ architectural designs for security | `vmware/roles/nsx_t_networking`, `illumio/roles` |
+| 3.13.2 | Employ architectural designs for security | `illumio/roles` |
 | 3.13.8 | Protect CUI in transit | `policy_as_code/policies/system_communications/cryptographic_protection.yml` |
 | 3.13.10 | Establish/manage cryptographic keys | `hashicorp_vault/roles`, `vmware/roles/vcenter_kms` |
-| 3.14.1 | Identify, report, and correct information flaws | `tenable/roles`, `rhel/roles`, `windows/roles/win_updates` |
+| 3.14.1 | Identify, report, and correct information flaws | `tenable/roles`, `rhel/roles` |
 | 3.14.2 | Protect against malicious code | `crowdstrike/roles`, `sentinelone/roles` |
 | 3.14.6 | Monitor systems for security alerts | `sciencelogic/roles`, `splunk/roles`, `dragos/roles` |
 
