@@ -1,84 +1,268 @@
 ---
-- name: Check if SL1 installer package exists
-  ansible.builtin.stat:
-    path: "{{ sl1_package_path }}"
-  register: sl1_installer_stat
-  failed_when: not sl1_installer_stat.stat.exists
 
-- name: Check system requirements - CPU
-  ansible.builtin.assert:
-    that:
-      - ansible_processor_vcpus >= 8
-    fail_msg: "Minimum 8 CPUs required for SL1 installation"
-    success_msg: "CPU requirements met: {{ ansible_processor_vcpus }} CPUs"
+# ---------------------------------------------------------------------------
+# Fourth Estate preflight / postflight validation harness
+#
+# The task file body below is wrapped in an Ansible block/rescue/always structure:
+#
+#   block   preflight validation runs first, then the original task file body, then
+#           postflight validation. Any failure transfers control to rescue.
+#   rescue  records which task failed and why, then re-raises so a failure is
+#           never silently swallowed. Set fe_validation_continue_on_error=true
+#           to record the failure and keep going instead.
+#   always  computes the run duration and publishes the outcome through
+#           ansible.builtin.set_stats, so a wrapping playbook, AWX/AAP or CI can
+#           consume the result without scraping log output.
+#
+# Published stats (see docs/VALIDATION_AND_STATS.md):
+#   fe_validation_results['sciencelogic/sl1_platform_install/10_pre_install_checks']  per-component record
+#   fe_validation_executions / _succeeded / _failed / _duration_seconds
+#   fe_validation_failed_components
+#
+# Add component-specific preflight checks without editing this file by setting
+#   fe_sciencelogic_sl1_platform_install_10_pre_install_checks_required_vars: [var_one, var_two]
+# ---------------------------------------------------------------------------
 
-- name: Check system requirements - Memory
-  ansible.builtin.assert:
-    that:
-      - ansible_memtotal_mb >= 16384
-    fail_msg: "Minimum 16GB RAM required for SL1 installation"
-    success_msg: "Memory requirements met: {{ ansible_memtotal_mb }}MB"
+- name: "sciencelogic/sl1_platform_install/10_pre_install_checks | Initialize validation state"
+  ansible.builtin.set_fact:
+    fe_sciencelogic_sl1_platform_install_10_pre_install_checks_start_epoch: "{{ now(fmt='%s') | int }}"
+    fe_sciencelogic_sl1_platform_install_10_pre_install_checks_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+    fe_sciencelogic_sl1_platform_install_10_pre_install_checks_status: "running"
+    fe_sciencelogic_sl1_platform_install_10_pre_install_checks_preflight_passed: false
+    fe_sciencelogic_sl1_platform_install_10_pre_install_checks_postflight_passed: false
+    fe_sciencelogic_sl1_platform_install_10_pre_install_checks_failed_task: ""
+    fe_sciencelogic_sl1_platform_install_10_pre_install_checks_error: ""
+    fe_sciencelogic_sl1_platform_install_10_pre_install_checks_stats_published: false
+  tags:
+    - always
 
-- name: Check system requirements - Disk Space
-  ansible.builtin.shell: |
-    df -BG / | awk 'NR==2 {print $4}' | sed 's/G//'
-  register: available_disk_space
-  changed_when: false
+- name: "sciencelogic/sl1_platform_install/10_pre_install_checks | Guarded execution with preflight and postflight validation"
+  block:
 
-- name: Validate disk space
-  ansible.builtin.assert:
-    that:
-      - available_disk_space.stdout | int >= 100
-    fail_msg: "Minimum 100GB disk space required for SL1 installation"
-    success_msg: "Disk space requirements met: {{ available_disk_space.stdout }}GB available"
+    # ----------------------------- preflight --------------------
 
-- name: Check OS compatibility
-  ansible.builtin.assert:
-    that:
-      - ansible_os_family == 'RedHat'
-      - ansible_distribution_major_version | int >= 7
-    fail_msg: "SL1 requires RHEL/CentOS 7 or later"
-    success_msg: "OS compatibility verified: {{ ansible_distribution }} {{ ansible_distribution_version }}"
+    - name: "sciencelogic/sl1_platform_install/10_pre_install_checks | Preflight | Verify the control node meets the minimum ansible-core version"
+      ansible.builtin.assert:
+        that:
+          - ansible_version.full is version(fe_validation_min_ansible_version | default('2.12'), '>=')
+        fail_msg: >-
+          sciencelogic/sl1_platform_install/10_pre_install_checks: requires ansible-core
+          {{ fe_validation_min_ansible_version | default('2.12') }} or newer,
+          found {{ ansible_version.full }}.
+        success_msg: >-
+          sciencelogic/sl1_platform_install/10_pre_install_checks: ansible-core {{ ansible_version.full }} satisfies the minimum.
+        quiet: true
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: Check network connectivity to SL1 repository
-  ansible.builtin.uri:
-    url: "https://updates.sciencelogic.com"
-    method: GET
-    timeout: 10
-    validate_certs: "{{ sl1_ssl.enabled }}"
-  register: repo_check
-  failed_when: false
-  changed_when: false
+    - name: "sciencelogic/sl1_platform_install/10_pre_install_checks | Preflight | Verify every declared required variable is defined"
+      ansible.builtin.assert:
+        that:
+          - vars[item] is defined
+        fail_msg: "sciencelogic/sl1_platform_install/10_pre_install_checks: required variable '{{ item }}' is not defined."
+        success_msg: "sciencelogic/sl1_platform_install/10_pre_install_checks: required variable '{{ item }}' is defined."
+        quiet: true
+      loop: "{{ fe_sciencelogic_sl1_platform_install_10_pre_install_checks_required_vars | default([]) }}"
+      loop_control:
+        label: "{{ item }}"
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: Check if SL1 is already installed
-  ansible.builtin.stat:
-    path: /opt/em7
-  register: sl1_existing_install
+    - name: "sciencelogic/sl1_platform_install/10_pre_install_checks | Preflight | Record that preflight validation passed"
+      ansible.builtin.set_fact:
+        fe_sciencelogic_sl1_platform_install_10_pre_install_checks_preflight_passed: true
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: Fail if SL1 is already installed and force not set
-  ansible.builtin.fail:
-    msg: "SL1 is already installed at /opt/em7. Use force_reinstall to override."
-  when:
-    - sl1_existing_install.stat.exists
-    - not (sl1_install_options.force_reinstall | default(false))
+    # ----------------------------- execute ----------------------
 
-- name: Check license file
-  ansible.builtin.stat:
-    path: "{{ sl1_license_file }}"
-  register: license_file_stat
-  when: sl1_license.activate
+    - name: Check if SL1 installer package exists
+      ansible.builtin.stat:
+        path: "{{ sl1_package_path }}"
+      register: sl1_installer_stat
+      failed_when: not sl1_installer_stat.stat.exists
 
-- name: Validate license file exists
-  ansible.builtin.fail:
-    msg: "License file not found at {{ sl1_license_file }}"
-  when:
-    - sl1_license.activate
-    - not license_file_stat.stat.exists
+    - name: Check system requirements - CPU
+      ansible.builtin.assert:
+        that:
+          - ansible_processor_vcpus >= 8
+        fail_msg: "Minimum 8 CPUs required for SL1 installation"
+        success_msg: "CPU requirements met: {{ ansible_processor_vcpus }} CPUs"
 
-- name: Pre-installation checks summary
-  ansible.builtin.debug:
-    msg:
-      - "Pre-installation validation completed successfully"
-      - "Install Mode: {{ sl1_install_mode }}"
-      - "SL1 Version: {{ sl1_version }}"
-      - "Target Hostname: {{ sl1_aio.hostname if sl1_install_mode == 'all_in_one' else sl1_db_server.hostname }}"
+    - name: Check system requirements - Memory
+      ansible.builtin.assert:
+        that:
+          - ansible_memtotal_mb >= 16384
+        fail_msg: "Minimum 16GB RAM required for SL1 installation"
+        success_msg: "Memory requirements met: {{ ansible_memtotal_mb }}MB"
+
+    - name: Check system requirements - Disk Space
+      ansible.builtin.shell: |
+        df -BG / | awk 'NR==2 {print $4}' | sed 's/G//'
+      register: available_disk_space
+      changed_when: false
+
+    - name: Validate disk space
+      ansible.builtin.assert:
+        that:
+          - available_disk_space.stdout | int >= 100
+        fail_msg: "Minimum 100GB disk space required for SL1 installation"
+        success_msg: "Disk space requirements met: {{ available_disk_space.stdout }}GB available"
+
+    - name: Check OS compatibility
+      ansible.builtin.assert:
+        that:
+          - ansible_os_family == 'RedHat'
+          - ansible_distribution_major_version | int >= 7
+        fail_msg: "SL1 requires RHEL/CentOS 7 or later"
+        success_msg: "OS compatibility verified: {{ ansible_distribution }} {{ ansible_distribution_version }}"
+
+    - name: Check network connectivity to SL1 repository
+      ansible.builtin.uri:
+        url: "https://updates.sciencelogic.com"
+        method: GET
+        timeout: 10
+        validate_certs: "{{ sl1_ssl.enabled }}"
+      register: repo_check
+      failed_when: false
+      changed_when: false
+
+    - name: Check if SL1 is already installed
+      ansible.builtin.stat:
+        path: /opt/em7
+      register: sl1_existing_install
+
+    - name: Fail if SL1 is already installed and force not set
+      ansible.builtin.fail:
+        msg: "SL1 is already installed at /opt/em7. Use force_reinstall to override."
+      when:
+        - sl1_existing_install.stat.exists
+        - not (sl1_install_options.force_reinstall | default(false))
+
+    - name: Check license file
+      ansible.builtin.stat:
+        path: "{{ sl1_license_file }}"
+      register: license_file_stat
+      when: sl1_license.activate
+
+    - name: Validate license file exists
+      ansible.builtin.fail:
+        msg: "License file not found at {{ sl1_license_file }}"
+      when:
+        - sl1_license.activate
+        - not license_file_stat.stat.exists
+
+    - name: Pre-installation checks summary
+      ansible.builtin.debug:
+        msg:
+          - "Pre-installation validation completed successfully"
+          - "Install Mode: {{ sl1_install_mode }}"
+          - "SL1 Version: {{ sl1_version }}"
+          - "Target Hostname: {{ sl1_aio.hostname if sl1_install_mode == 'all_in_one' else sl1_db_server.hostname }}"
+
+    # ----------------------------- postflight -------------------
+
+    - name: "sciencelogic/sl1_platform_install/10_pre_install_checks | Postflight | Verify the guarded body ran after a passing preflight"
+      ansible.builtin.assert:
+        that:
+          - fe_sciencelogic_sl1_platform_install_10_pre_install_checks_preflight_passed | bool
+          - fe_sciencelogic_sl1_platform_install_10_pre_install_checks_status in ['running', 'succeeded']
+        fail_msg: >-
+          sciencelogic/sl1_platform_install/10_pre_install_checks: postflight validation failed - preflight passed
+          ={{ fe_sciencelogic_sl1_platform_install_10_pre_install_checks_preflight_passed | default(false) }},
+          status={{ fe_sciencelogic_sl1_platform_install_10_pre_install_checks_status | default('unknown') }}.
+        success_msg: "sciencelogic/sl1_platform_install/10_pre_install_checks: postflight validation passed."
+        quiet: true
+      tags:
+        - always
+        - postflight
+        - validation
+
+    - name: "sciencelogic/sl1_platform_install/10_pre_install_checks | Postflight | Record the successful outcome"
+      ansible.builtin.set_fact:
+        fe_sciencelogic_sl1_platform_install_10_pre_install_checks_postflight_passed: true
+        fe_sciencelogic_sl1_platform_install_10_pre_install_checks_status: "succeeded"
+      tags:
+        - always
+        - postflight
+        - validation
+
+  rescue:
+
+    - name: "sciencelogic/sl1_platform_install/10_pre_install_checks | Rescue | Capture the failing task and error detail"
+      ansible.builtin.set_fact:
+        fe_sciencelogic_sl1_platform_install_10_pre_install_checks_status: "failed"
+        fe_sciencelogic_sl1_platform_install_10_pre_install_checks_postflight_passed: false
+        fe_sciencelogic_sl1_platform_install_10_pre_install_checks_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+        fe_sciencelogic_sl1_platform_install_10_pre_install_checks_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+      tags:
+        - always
+        - rescue
+
+    - name: "sciencelogic/sl1_platform_install/10_pre_install_checks | Rescue | Report the failure"
+      ansible.builtin.debug:
+        msg: >-
+          sciencelogic/sl1_platform_install/10_pre_install_checks: FAILED at '{{ fe_sciencelogic_sl1_platform_install_10_pre_install_checks_failed_task }}' on
+          {{ inventory_hostname }} - {{ fe_sciencelogic_sl1_platform_install_10_pre_install_checks_error }}
+      tags:
+        - always
+        - rescue
+
+    - name: "sciencelogic/sl1_platform_install/10_pre_install_checks | Rescue | Re-raise the failure unless the caller opted to continue"
+      ansible.builtin.fail:
+        msg: >-
+          sciencelogic/sl1_platform_install/10_pre_install_checks failed at '{{ fe_sciencelogic_sl1_platform_install_10_pre_install_checks_failed_task }}': {{ fe_sciencelogic_sl1_platform_install_10_pre_install_checks_error }}
+      when: not (fe_validation_continue_on_error | default(false) | bool)
+      tags:
+        - always
+        - rescue
+
+  always:
+
+    - name: "sciencelogic/sl1_platform_install/10_pre_install_checks | Always | Compute the execution duration"
+      ansible.builtin.set_fact:
+        fe_sciencelogic_sl1_platform_install_10_pre_install_checks_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+        fe_sciencelogic_sl1_platform_install_10_pre_install_checks_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_sciencelogic_sl1_platform_install_10_pre_install_checks_start_epoch | default(0) | int) }}"
+      tags:
+        - always
+
+    - name: "sciencelogic/sl1_platform_install/10_pre_install_checks | Always | Publish the validation result with set_stats"
+      ansible.builtin.set_stats:
+        data:
+          fe_validation_results:
+            "sciencelogic/sl1_platform_install/10_pre_install_checks":
+              component: "sciencelogic/sl1_platform_install/10_pre_install_checks"
+              type: "role-tasks"
+              platform: "sciencelogic"
+              host: "{{ inventory_hostname }}"
+              status: "{{ fe_sciencelogic_sl1_platform_install_10_pre_install_checks_status | default('unknown') }}"
+              preflight_passed: "{{ fe_sciencelogic_sl1_platform_install_10_pre_install_checks_preflight_passed | default(false) | bool }}"
+              postflight_passed: "{{ fe_sciencelogic_sl1_platform_install_10_pre_install_checks_postflight_passed | default(false) | bool }}"
+              started_at: "{{ fe_sciencelogic_sl1_platform_install_10_pre_install_checks_started_at | default('') }}"
+              ended_at: "{{ fe_sciencelogic_sl1_platform_install_10_pre_install_checks_ended_at | default('') }}"
+              duration_seconds: "{{ fe_sciencelogic_sl1_platform_install_10_pre_install_checks_duration_seconds | default(0) | int }}"
+              failed_task: "{{ fe_sciencelogic_sl1_platform_install_10_pre_install_checks_failed_task | default('') }}"
+              error: "{{ fe_sciencelogic_sl1_platform_install_10_pre_install_checks_error | default('') }}"
+              check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+          fe_validation_executions: 1
+          fe_validation_succeeded: "{{ 1 if fe_sciencelogic_sl1_platform_install_10_pre_install_checks_status | default('') == 'succeeded' else 0 }}"
+          fe_validation_failed: "{{ 0 if fe_sciencelogic_sl1_platform_install_10_pre_install_checks_status | default('') == 'succeeded' else 1 }}"
+          fe_validation_duration_seconds: "{{ fe_sciencelogic_sl1_platform_install_10_pre_install_checks_duration_seconds | default(0) | int }}"
+          fe_validation_failed_components: >-
+            {{ [] if fe_sciencelogic_sl1_platform_install_10_pre_install_checks_status | default('') == 'succeeded' else ['sciencelogic/sl1_platform_install/10_pre_install_checks'] }}
+        aggregate: true
+        per_host: false
+      tags:
+        - always
+
+    - name: "sciencelogic/sl1_platform_install/10_pre_install_checks | Always | Mark the validation statistics as published"
+      ansible.builtin.set_fact:
+        fe_sciencelogic_sl1_platform_install_10_pre_install_checks_stats_published: true
+      tags:
+        - always

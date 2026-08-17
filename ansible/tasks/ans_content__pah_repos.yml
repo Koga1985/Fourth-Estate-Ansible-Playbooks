@@ -1,4 +1,21 @@
 ---
+# ---------------------------------------------------------------------------
+# Fourth Estate preflight / postflight validation harness
+#
+# Every play below carries a block/rescue/always validation wrapper:
+#
+#   pre_tasks   preflight validation. On failure it records the reason,
+#               publishes the outcome with set_stats and aborts the play
+#               before any role or task runs.
+#   tasks       the original task list, wrapped so a failure is captured
+#               (which task, which error) and then re-raised.
+#   post_tasks  postflight validation, then the run record is published with
+#               ansible.builtin.set_stats.
+#
+# Set fe_validation_continue_on_error=true to record failures and keep going.
+# See docs/VALIDATION_AND_STATS.md for the published stats schema.
+# ---------------------------------------------------------------------------
+
 - name: ans_content__pah_repos.yml
   hosts: localhost
   connection: local
@@ -25,6 +42,140 @@
     remotes: "{{ remotes | default([]) }}"
 
   pre_tasks:
+    - name: "ansible/tasks/ans_content__pah_repos | Preflight validation"
+      tags:
+        - always
+        - preflight
+        - validation
+      block:
+
+        - name: "ansible/tasks/ans_content__pah_repos | Initialize validation state"
+          ansible.builtin.set_fact:
+            fe_ansible_tasks_ans_content__pah_repos_start_epoch: "{{ now(fmt='%s') | int }}"
+            fe_ansible_tasks_ans_content__pah_repos_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+            fe_ansible_tasks_ans_content__pah_repos_status: "running"
+            fe_ansible_tasks_ans_content__pah_repos_preflight_passed: false
+            fe_ansible_tasks_ans_content__pah_repos_postflight_passed: false
+            fe_ansible_tasks_ans_content__pah_repos_failed_task: ""
+            fe_ansible_tasks_ans_content__pah_repos_error: ""
+            fe_ansible_tasks_ans_content__pah_repos_stats_published: false
+          tags:
+            - always
+
+        - name: "ansible/tasks/ans_content__pah_repos | Preflight | Verify the control node meets the minimum ansible-core version"
+          ansible.builtin.assert:
+            that:
+              - ansible_version.full is version(fe_validation_min_ansible_version | default('2.12'), '>=')
+            fail_msg: >-
+              ansible/tasks/ans_content__pah_repos: requires ansible-core
+              {{ fe_validation_min_ansible_version | default('2.12') }} or newer,
+              found {{ ansible_version.full }}.
+            success_msg: >-
+              ansible/tasks/ans_content__pah_repos: ansible-core {{ ansible_version.full }} satisfies the minimum.
+            quiet: true
+          tags:
+            - always
+            - preflight
+            - validation
+
+        - name: "ansible/tasks/ans_content__pah_repos | Preflight | Verify every declared required variable is defined"
+          ansible.builtin.assert:
+            that:
+              - vars[item] is defined
+            fail_msg: "ansible/tasks/ans_content__pah_repos: required variable '{{ item }}' is not defined."
+            success_msg: "ansible/tasks/ans_content__pah_repos: required variable '{{ item }}' is defined."
+            quiet: true
+          loop: "{{ fe_ansible_tasks_ans_content__pah_repos_required_vars | default([]) }}"
+          loop_control:
+            label: "{{ item }}"
+          tags:
+            - always
+            - preflight
+            - validation
+
+        - name: "ansible/tasks/ans_content__pah_repos | Preflight | Record that preflight validation passed"
+          ansible.builtin.set_fact:
+            fe_ansible_tasks_ans_content__pah_repos_preflight_passed: true
+          tags:
+            - always
+            - preflight
+            - validation
+
+      rescue:
+
+        - name: "ansible/tasks/ans_content__pah_repos | Rescue | Capture the failing task and error detail"
+          ansible.builtin.set_fact:
+            fe_ansible_tasks_ans_content__pah_repos_status: "preflight_failed"
+            fe_ansible_tasks_ans_content__pah_repos_postflight_passed: false
+            fe_ansible_tasks_ans_content__pah_repos_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+            fe_ansible_tasks_ans_content__pah_repos_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+          tags:
+            - always
+            - rescue
+
+        - name: "ansible/tasks/ans_content__pah_repos | Rescue | Report the failure"
+          ansible.builtin.debug:
+            msg: >-
+              ansible/tasks/ans_content__pah_repos: FAILED at '{{ fe_ansible_tasks_ans_content__pah_repos_failed_task }}' on
+              {{ inventory_hostname }} - {{ fe_ansible_tasks_ans_content__pah_repos_error }}
+          tags:
+            - always
+            - rescue
+
+        - name: "ansible/tasks/ans_content__pah_repos | Always | Publish the validation result with set_stats"
+          ansible.builtin.set_stats:
+            data:
+              fe_validation_results:
+                "ansible/tasks/ans_content__pah_repos":
+                  component: "ansible/tasks/ans_content__pah_repos"
+                  type: "playbook"
+                  platform: "ansible"
+                  host: "{{ inventory_hostname }}"
+                  status: "{{ fe_ansible_tasks_ans_content__pah_repos_status | default('unknown') }}"
+                  preflight_passed: "{{ fe_ansible_tasks_ans_content__pah_repos_preflight_passed | default(false) | bool }}"
+                  postflight_passed: "{{ fe_ansible_tasks_ans_content__pah_repos_postflight_passed | default(false) | bool }}"
+                  started_at: "{{ fe_ansible_tasks_ans_content__pah_repos_started_at | default('') }}"
+                  ended_at: "{{ fe_ansible_tasks_ans_content__pah_repos_ended_at | default('') }}"
+                  duration_seconds: "{{ fe_ansible_tasks_ans_content__pah_repos_duration_seconds | default(0) | int }}"
+                  failed_task: "{{ fe_ansible_tasks_ans_content__pah_repos_failed_task | default('') }}"
+                  error: "{{ fe_ansible_tasks_ans_content__pah_repos_error | default('') }}"
+                  check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+              fe_validation_executions: 1
+              fe_validation_succeeded: "{{ 1 if fe_ansible_tasks_ans_content__pah_repos_status | default('') == 'succeeded' else 0 }}"
+              fe_validation_failed: "{{ 0 if fe_ansible_tasks_ans_content__pah_repos_status | default('') == 'succeeded' else 1 }}"
+              fe_validation_duration_seconds: "{{ fe_ansible_tasks_ans_content__pah_repos_duration_seconds | default(0) | int }}"
+              fe_validation_failed_components: >-
+                {{ [] if fe_ansible_tasks_ans_content__pah_repos_status | default('') == 'succeeded' else ['ansible/tasks/ans_content__pah_repos'] }}
+            aggregate: true
+            per_host: false
+          tags:
+            - always
+
+        - name: "ansible/tasks/ans_content__pah_repos | Always | Mark the validation statistics as published"
+          ansible.builtin.set_fact:
+            fe_ansible_tasks_ans_content__pah_repos_stats_published: true
+          tags:
+            - always
+
+        - name: "ansible/tasks/ans_content__pah_repos | Rescue | Re-raise the failure unless the caller opted to continue"
+          ansible.builtin.fail:
+            msg: >-
+              ansible/tasks/ans_content__pah_repos failed at '{{ fe_ansible_tasks_ans_content__pah_repos_failed_task }}': {{ fe_ansible_tasks_ans_content__pah_repos_error }}
+          when: not (fe_validation_continue_on_error | default(false) | bool)
+          tags:
+            - always
+            - rescue
+
+      always:
+
+        - name: "ansible/tasks/ans_content__pah_repos | Always | Report the preflight outcome"
+          ansible.builtin.debug:
+            msg: >-
+              ansible/tasks/ans_content__pah_repos: preflight
+              {{ 'passed' if fe_ansible_tasks_ans_content__pah_repos_preflight_passed | default(false) | bool else 'FAILED' }}
+              on {{ inventory_hostname }}.
+          tags:
+            - always
     - name: Ensure artifacts directory (least privilege - fourth estate compliant)
       ansible.builtin.file:
         path: "{{ artifacts_dir }}"
@@ -54,210 +205,408 @@
           }}
 
   tasks:
-    - name: Initialize results list
-      ansible.builtin.set_fact:
-        pah_results: []
-
-    - name: Ensure remotes, repositories, and optional sync
-      when: apply_changes | bool
-      no_log: true   # protect credentials and responses
+    - name: "ansible/tasks/ans_content__pah_repos | Guarded execution with rescue and always handling"
       block:
-        - name: Process remote {{ item.name }}
-          vars:
-            _name: "{{ item.name }}"
-            _url: "{{ item.url }}"
-            _tls: "{{ item.tls_validation | default(true) | bool }}"
-            _ca: "{{ item.ca_cert | default(omit) }}"
-            _cc: "{{ item.client_cert | default(omit) }}"
-            _ck: "{{ item.client_key | default(omit) }}"
-            _dist: "{{ item.distribution_base_path | default(omit) }}"
-            _sync: "{{ item.sync | default(false) | bool }}"
-            _headers:
-              Content-Type: application/json
+
+        - name: Initialize results list
+          ansible.builtin.set_fact:
+            pah_results: []
+
+        - name: Ensure remotes, repositories, and optional sync
+          when: apply_changes | bool
+          no_log: true   # protect credentials and responses
           block:
-            # ----- REMOTE -----
-            - name: Lookup collection remote by name
-              ansible.builtin.uri:
-                url: "{{ ah_url }}/pulp/api/v3/remotes/ansible/collection/?name={{ _name | urlencode }}"
-                method: GET
-                force_basic_auth: true
-                url_username: "{{ ah_username }}"
-                url_password: "{{ ah_password }}"
-                validate_certs: "{{ validate_certs | bool }}"
-              register: _remote_q
-              changed_when: false
-
-            - name: Create or update remote
+            - name: Process remote {{ item.name }}
               vars:
-                body_common:
-                  name: "{{ _name }}"
-                  url: "{{ _url }}"
-                  tls_validation: "{{ _tls }}"
-                body_certs: >-
-                  {{
-                    dict()
-                    | combine( {'ca_cert': _ca}   if _ca   is not string else {} )
-                    | combine( {'client_cert': _cc} if _cc is not string else {} )
-                    | combine( {'client_key': _ck} if _ck is not string else {} )
-                  }}
+                _name: "{{ item.name }}"
+                _url: "{{ item.url }}"
+                _tls: "{{ item.tls_validation | default(true) | bool }}"
+                _ca: "{{ item.ca_cert | default(omit) }}"
+                _cc: "{{ item.client_cert | default(omit) }}"
+                _ck: "{{ item.client_key | default(omit) }}"
+                _dist: "{{ item.distribution_base_path | default(omit) }}"
+                _sync: "{{ item.sync | default(false) | bool }}"
+                _headers:
+                  Content-Type: application/json
               block:
-                - name: Create remote
-                  when: (_remote_q.json.count | default(0)) | int == 0
+                # ----- REMOTE -----
+                - name: Lookup collection remote by name
                   ansible.builtin.uri:
-                    url: "{{ ah_url }}/pulp/api/v3/remotes/ansible/collection/"
-                    method: POST
-                    headers: "{{ _headers }}"
-                    body_format: json
-                    body: "{{ body_common | combine(body_certs) }}"
-                    force_basic_auth: true
-                    url_username: "{{ ah_username }}"
-                    url_password: "{{ ah_password }}"
-                    validate_certs: "{{ validate_certs | bool }}"
-                  register: _remote_create
-
-                - name: Update remote (PATCH)
-                  when: (_remote_q.json.count | default(0)) | int > 0
-                  ansible.builtin.uri:
-                    url: "{{ _remote_q.json.results[0].pulp_href }}"
-                    method: PATCH
-                    headers: "{{ _headers }}"
-                    body_format: json
-                    body: "{{ body_common | combine(body_certs) }}"
-                    force_basic_auth: true
-                    url_username: "{{ ah_username }}"
-                    url_password: "{{ ah_password }}"
-                    validate_certs: "{{ validate_certs | bool }}"
-                  register: _remote_patch
-                  changed_when: false  # PATCH may be a no-op; avoid noisy changes
-
-            - name: Set remote href
-              ansible.builtin.set_fact:
-                _remote_href: >-
-                  {{
-                    (_remote_create.json.pulp_href
-                      if (_remote_create is defined and _remote_create.json is defined)
-                      else (_remote_q.json.results[0].pulp_href))
-                  }}
-
-            # ----- REPOSITORY -----
-            - name: Lookup collection repository by name
-              ansible.builtin.uri:
-                url: "{{ ah_url }}/pulp/api/v3/repositories/ansible/ansible/?name={{ _name | urlencode }}"
-                method: GET
-                force_basic_auth: true
-                url_username: "{{ ah_username }}"
-                url_password: "{{ ah_password }}"
-                validate_certs: "{{ validate_certs | bool }}"
-              register: _repo_q
-              changed_when: false
-
-            - name: Create repository (if missing)
-              when: (_repo_q.json.count | default(0)) | int == 0
-              ansible.builtin.uri:
-                url: "{{ ah_url }}/pulp/api/v3/repositories/ansible/ansible/"
-                method: POST
-                headers: "{{ _headers }}"
-                body_format: json
-                body:
-                  name: "{{ _name }}"
-                force_basic_auth: true
-                url_username: "{{ ah_username }}"
-                url_password: "{{ ah_password }}"
-                validate_certs: "{{ validate_certs | bool }}"
-              register: _repo_create
-
-            - name: Set repository href
-              ansible.builtin.set_fact:
-                _repo_href: >-
-                  {{
-                    (_repo_create.json.pulp_href
-                      if (_repo_create is defined and _repo_create.json is defined)
-                      else (_repo_q.json.results[0].pulp_href))
-                  }}
-
-            # ----- OPTIONAL SYNC -----
-            - name: Sync repository from remote
-              when: _sync
-              ansible.builtin.uri:
-                url: "{{ _repo_href }}sync/"
-                method: POST
-                headers: "{{ _headers }}"
-                body_format: json
-                body:
-                  remote: "{{ _remote_href }}"
-                force_basic_auth: true
-                url_username: "{{ ah_username }}"
-                url_password: "{{ ah_password }}"
-                validate_certs: "{{ validate_certs | bool }}"
-              register: _sync_task
-
-            # ----- OPTIONAL DISTRIBUTION -----
-            - name: Ensure distribution (optional when distribution_base_path provided)
-              when: _dist is not string
-              ansible.builtin.debug:
-                msg: "No distribution_base_path provided for {{ _name }}; skipping distribution creation."
-
-            - name: Lookup or create distribution (when base_path provided)
-              when: _dist is string
-              block:
-                - name: Lookup distribution
-                  ansible.builtin.uri:
-                    url: "{{ ah_url }}/pulp/api/v3/distributions/ansible/ansible/?base_path={{ _dist | urlencode }}"
+                    url: "{{ ah_url }}/pulp/api/v3/remotes/ansible/collection/?name={{ _name | urlencode }}"
                     method: GET
                     force_basic_auth: true
                     url_username: "{{ ah_username }}"
                     url_password: "{{ ah_password }}"
                     validate_certs: "{{ validate_certs | bool }}"
-                  register: _dist_q
+                  register: _remote_q
                   changed_when: false
 
-                - name: Create distribution
-                  when: (_dist_q.json.count | default(0)) | int == 0
+                - name: Create or update remote
+                  vars:
+                    body_common:
+                      name: "{{ _name }}"
+                      url: "{{ _url }}"
+                      tls_validation: "{{ _tls }}"
+                    body_certs: >-
+                      {{
+                        dict()
+                        | combine( {'ca_cert': _ca}   if _ca   is not string else {} )
+                        | combine( {'client_cert': _cc} if _cc is not string else {} )
+                        | combine( {'client_key': _ck} if _ck is not string else {} )
+                      }}
+                  block:
+                    - name: Create remote
+                      when: (_remote_q.json.count | default(0)) | int == 0
+                      ansible.builtin.uri:
+                        url: "{{ ah_url }}/pulp/api/v3/remotes/ansible/collection/"
+                        method: POST
+                        headers: "{{ _headers }}"
+                        body_format: json
+                        body: "{{ body_common | combine(body_certs) }}"
+                        force_basic_auth: true
+                        url_username: "{{ ah_username }}"
+                        url_password: "{{ ah_password }}"
+                        validate_certs: "{{ validate_certs | bool }}"
+                      register: _remote_create
+
+                    - name: Update remote (PATCH)
+                      when: (_remote_q.json.count | default(0)) | int > 0
+                      ansible.builtin.uri:
+                        url: "{{ _remote_q.json.results[0].pulp_href }}"
+                        method: PATCH
+                        headers: "{{ _headers }}"
+                        body_format: json
+                        body: "{{ body_common | combine(body_certs) }}"
+                        force_basic_auth: true
+                        url_username: "{{ ah_username }}"
+                        url_password: "{{ ah_password }}"
+                        validate_certs: "{{ validate_certs | bool }}"
+                      register: _remote_patch
+                      changed_when: false  # PATCH may be a no-op; avoid noisy changes
+
+                - name: Set remote href
+                  ansible.builtin.set_fact:
+                    _remote_href: >-
+                      {{
+                        (_remote_create.json.pulp_href
+                          if (_remote_create is defined and _remote_create.json is defined)
+                          else (_remote_q.json.results[0].pulp_href))
+                      }}
+
+                # ----- REPOSITORY -----
+                - name: Lookup collection repository by name
                   ansible.builtin.uri:
-                    url: "{{ ah_url }}/pulp/api/v3/distributions/ansible/ansible/"
+                    url: "{{ ah_url }}/pulp/api/v3/repositories/ansible/ansible/?name={{ _name | urlencode }}"
+                    method: GET
+                    force_basic_auth: true
+                    url_username: "{{ ah_username }}"
+                    url_password: "{{ ah_password }}"
+                    validate_certs: "{{ validate_certs | bool }}"
+                  register: _repo_q
+                  changed_when: false
+
+                - name: Create repository (if missing)
+                  when: (_repo_q.json.count | default(0)) | int == 0
+                  ansible.builtin.uri:
+                    url: "{{ ah_url }}/pulp/api/v3/repositories/ansible/ansible/"
                     method: POST
                     headers: "{{ _headers }}"
                     body_format: json
                     body:
                       name: "{{ _name }}"
-                      base_path: "{{ _dist }}"
-                      repository: "{{ _repo_href }}"
                     force_basic_auth: true
                     url_username: "{{ ah_username }}"
                     url_password: "{{ ah_password }}"
                     validate_certs: "{{ validate_certs | bool }}"
-                  register: _dist_create
+                  register: _repo_create
 
-            # ----- COLLECT RESULT -----
-            - name: Append result entry
-              ansible.builtin.set_fact:
-                pah_results: >-
-                  {{ pah_results + [ {
-                      'name': _name,
-                      'remote_href': _remote_href,
-                      'repo_href': _repo_href,
-                      'sync_started': (_sync and (_sync_task is defined)),
-                      'distribution': ( _dist if (_dist is string) else None )
-                    } ] }}
-          loop: "{{ remotes }}"
-          loop_control:
-            label: "{{ item.name }}"
+                - name: Set repository href
+                  ansible.builtin.set_fact:
+                    _repo_href: >-
+                      {{
+                        (_repo_create.json.pulp_href
+                          if (_repo_create is defined and _repo_create.json is defined)
+                          else (_repo_q.json.results[0].pulp_href))
+                      }}
 
-    - name: Write results summary (JSON)
-      ansible.builtin.copy:
-        dest: "{{ artifacts_dir }}/pah_repos_summary.json"
-        mode: "0640"
-        content: "{{ pah_results | to_nice_json if apply_changes | bool else '[]' }}"
+                # ----- OPTIONAL SYNC -----
+                - name: Sync repository from remote
+                  when: _sync
+                  ansible.builtin.uri:
+                    url: "{{ _repo_href }}sync/"
+                    method: POST
+                    headers: "{{ _headers }}"
+                    body_format: json
+                    body:
+                      remote: "{{ _remote_href }}"
+                    force_basic_auth: true
+                    url_username: "{{ ah_username }}"
+                    url_password: "{{ ah_password }}"
+                    validate_certs: "{{ validate_certs | bool }}"
+                  register: _sync_task
 
-    - name: Compute checksum
-      ansible.builtin.stat:
-        path: "{{ artifacts_dir }}/pah_repos_summary.json"
-        checksum_algorithm: sha256
-      register: _sum
-      changed_when: false
+                # ----- OPTIONAL DISTRIBUTION -----
+                - name: Ensure distribution (optional when distribution_base_path provided)
+                  when: _dist is not string
+                  ansible.builtin.debug:
+                    msg: "No distribution_base_path provided for {{ _name }}; skipping distribution creation."
 
-    - name: Write checksum sidecar
-      ansible.builtin.copy:
-        dest: "{{ artifacts_dir }}/pah_repos_summary.json.sha256"
-        mode: "0640"
-        content: "{{ _sum.stat.checksum }}  pah_repos_summary.json\n"
+                - name: Lookup or create distribution (when base_path provided)
+                  when: _dist is string
+                  block:
+                    - name: Lookup distribution
+                      ansible.builtin.uri:
+                        url: "{{ ah_url }}/pulp/api/v3/distributions/ansible/ansible/?base_path={{ _dist | urlencode }}"
+                        method: GET
+                        force_basic_auth: true
+                        url_username: "{{ ah_username }}"
+                        url_password: "{{ ah_password }}"
+                        validate_certs: "{{ validate_certs | bool }}"
+                      register: _dist_q
+                      changed_when: false
+
+                    - name: Create distribution
+                      when: (_dist_q.json.count | default(0)) | int == 0
+                      ansible.builtin.uri:
+                        url: "{{ ah_url }}/pulp/api/v3/distributions/ansible/ansible/"
+                        method: POST
+                        headers: "{{ _headers }}"
+                        body_format: json
+                        body:
+                          name: "{{ _name }}"
+                          base_path: "{{ _dist }}"
+                          repository: "{{ _repo_href }}"
+                        force_basic_auth: true
+                        url_username: "{{ ah_username }}"
+                        url_password: "{{ ah_password }}"
+                        validate_certs: "{{ validate_certs | bool }}"
+                      register: _dist_create
+
+                # ----- COLLECT RESULT -----
+                - name: Append result entry
+                  ansible.builtin.set_fact:
+                    pah_results: >-
+                      {{ pah_results + [ {
+                          'name': _name,
+                          'remote_href': _remote_href,
+                          'repo_href': _repo_href,
+                          'sync_started': (_sync and (_sync_task is defined)),
+                          'distribution': ( _dist if (_dist is string) else None )
+                        } ] }}
+              loop: "{{ remotes }}"
+              loop_control:
+                label: "{{ item.name }}"
+
+        - name: Write results summary (JSON)
+          ansible.builtin.copy:
+            dest: "{{ artifacts_dir }}/pah_repos_summary.json"
+            mode: "0640"
+            content: "{{ pah_results | to_nice_json if apply_changes | bool else '[]' }}"
+
+        - name: Compute checksum
+          ansible.builtin.stat:
+            path: "{{ artifacts_dir }}/pah_repos_summary.json"
+            checksum_algorithm: sha256
+          register: _sum
+          changed_when: false
+
+        - name: Write checksum sidecar
+          ansible.builtin.copy:
+            dest: "{{ artifacts_dir }}/pah_repos_summary.json.sha256"
+            mode: "0640"
+            content: "{{ _sum.stat.checksum }}  pah_repos_summary.json\n"
+
+      rescue:
+
+        - name: "ansible/tasks/ans_content__pah_repos | Rescue | Capture the failing task and error detail"
+          ansible.builtin.set_fact:
+            fe_ansible_tasks_ans_content__pah_repos_status: "failed"
+            fe_ansible_tasks_ans_content__pah_repos_postflight_passed: false
+            fe_ansible_tasks_ans_content__pah_repos_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+            fe_ansible_tasks_ans_content__pah_repos_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+          tags:
+            - always
+            - rescue
+
+        - name: "ansible/tasks/ans_content__pah_repos | Rescue | Report the failure"
+          ansible.builtin.debug:
+            msg: >-
+              ansible/tasks/ans_content__pah_repos: FAILED at '{{ fe_ansible_tasks_ans_content__pah_repos_failed_task }}' on
+              {{ inventory_hostname }} - {{ fe_ansible_tasks_ans_content__pah_repos_error }}
+          tags:
+            - always
+            - rescue
+
+        - name: "ansible/tasks/ans_content__pah_repos | Rescue | Re-raise the failure unless the caller opted to continue"
+          ansible.builtin.fail:
+            msg: >-
+              ansible/tasks/ans_content__pah_repos failed at '{{ fe_ansible_tasks_ans_content__pah_repos_failed_task }}': {{ fe_ansible_tasks_ans_content__pah_repos_error }}
+          when: not (fe_validation_continue_on_error | default(false) | bool)
+          tags:
+            - always
+            - rescue
+
+      always:
+
+        - name: "ansible/tasks/ans_content__pah_repos | Always | Compute the execution duration"
+          ansible.builtin.set_fact:
+            fe_ansible_tasks_ans_content__pah_repos_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+            fe_ansible_tasks_ans_content__pah_repos_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_ansible_tasks_ans_content__pah_repos_start_epoch | default(0) | int) }}"
+          tags:
+            - always
+
+        - name: "ansible/tasks/ans_content__pah_repos | Always | Publish the validation result with set_stats"
+          ansible.builtin.set_stats:
+            data:
+              fe_validation_results:
+                "ansible/tasks/ans_content__pah_repos":
+                  component: "ansible/tasks/ans_content__pah_repos"
+                  type: "playbook"
+                  platform: "ansible"
+                  host: "{{ inventory_hostname }}"
+                  status: "{{ fe_ansible_tasks_ans_content__pah_repos_status | default('unknown') }}"
+                  preflight_passed: "{{ fe_ansible_tasks_ans_content__pah_repos_preflight_passed | default(false) | bool }}"
+                  postflight_passed: "{{ fe_ansible_tasks_ans_content__pah_repos_postflight_passed | default(false) | bool }}"
+                  started_at: "{{ fe_ansible_tasks_ans_content__pah_repos_started_at | default('') }}"
+                  ended_at: "{{ fe_ansible_tasks_ans_content__pah_repos_ended_at | default('') }}"
+                  duration_seconds: "{{ fe_ansible_tasks_ans_content__pah_repos_duration_seconds | default(0) | int }}"
+                  failed_task: "{{ fe_ansible_tasks_ans_content__pah_repos_failed_task | default('') }}"
+                  error: "{{ fe_ansible_tasks_ans_content__pah_repos_error | default('') }}"
+                  check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+              fe_validation_executions: 1
+              fe_validation_succeeded: "{{ 1 if fe_ansible_tasks_ans_content__pah_repos_status | default('') == 'succeeded' else 0 }}"
+              fe_validation_failed: "{{ 0 if fe_ansible_tasks_ans_content__pah_repos_status | default('') == 'succeeded' else 1 }}"
+              fe_validation_duration_seconds: "{{ fe_ansible_tasks_ans_content__pah_repos_duration_seconds | default(0) | int }}"
+              fe_validation_failed_components: >-
+                {{ [] if fe_ansible_tasks_ans_content__pah_repos_status | default('') == 'succeeded' else ['ansible/tasks/ans_content__pah_repos'] }}
+            aggregate: true
+            per_host: false
+          when:
+            - fe_ansible_tasks_ans_content__pah_repos_status | default('') == 'failed'
+            - not (fe_ansible_tasks_ans_content__pah_repos_stats_published | default(false) | bool)
+          tags:
+            - always
+
+        - name: "ansible/tasks/ans_content__pah_repos | Always | Mark the validation statistics as published"
+          ansible.builtin.set_fact:
+            fe_ansible_tasks_ans_content__pah_repos_stats_published: true
+          when:
+            - fe_ansible_tasks_ans_content__pah_repos_status | default('') == 'failed'
+          tags:
+            - always
+  post_tasks:
+    - name: "ansible/tasks/ans_content__pah_repos | Postflight validation"
+      tags:
+        - always
+        - postflight
+        - validation
+      block:
+
+        - name: "ansible/tasks/ans_content__pah_repos | Postflight | Verify the guarded body ran after a passing preflight"
+          ansible.builtin.assert:
+            that:
+              - fe_ansible_tasks_ans_content__pah_repos_preflight_passed | bool
+              - fe_ansible_tasks_ans_content__pah_repos_status in ['running', 'succeeded']
+            fail_msg: >-
+              ansible/tasks/ans_content__pah_repos: postflight validation failed - preflight passed
+              ={{ fe_ansible_tasks_ans_content__pah_repos_preflight_passed | default(false) }},
+              status={{ fe_ansible_tasks_ans_content__pah_repos_status | default('unknown') }}.
+            success_msg: "ansible/tasks/ans_content__pah_repos: postflight validation passed."
+            quiet: true
+          tags:
+            - always
+            - postflight
+            - validation
+
+        - name: "ansible/tasks/ans_content__pah_repos | Postflight | Record the successful outcome"
+          ansible.builtin.set_fact:
+            fe_ansible_tasks_ans_content__pah_repos_postflight_passed: true
+            fe_ansible_tasks_ans_content__pah_repos_status: "succeeded"
+          tags:
+            - always
+            - postflight
+            - validation
+
+      rescue:
+
+        - name: "ansible/tasks/ans_content__pah_repos | Rescue | Capture the failing task and error detail"
+          ansible.builtin.set_fact:
+            fe_ansible_tasks_ans_content__pah_repos_status: "failed"
+            fe_ansible_tasks_ans_content__pah_repos_postflight_passed: false
+            fe_ansible_tasks_ans_content__pah_repos_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+            fe_ansible_tasks_ans_content__pah_repos_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+          tags:
+            - always
+            - rescue
+
+        - name: "ansible/tasks/ans_content__pah_repos | Rescue | Report the failure"
+          ansible.builtin.debug:
+            msg: >-
+              ansible/tasks/ans_content__pah_repos: FAILED at '{{ fe_ansible_tasks_ans_content__pah_repos_failed_task }}' on
+              {{ inventory_hostname }} - {{ fe_ansible_tasks_ans_content__pah_repos_error }}
+          tags:
+            - always
+            - rescue
+
+        - name: "ansible/tasks/ans_content__pah_repos | Rescue | Re-raise the failure unless the caller opted to continue"
+          ansible.builtin.fail:
+            msg: >-
+              ansible/tasks/ans_content__pah_repos failed at '{{ fe_ansible_tasks_ans_content__pah_repos_failed_task }}': {{ fe_ansible_tasks_ans_content__pah_repos_error }}
+          when: not (fe_validation_continue_on_error | default(false) | bool)
+          tags:
+            - always
+            - rescue
+
+      always:
+
+        - name: "ansible/tasks/ans_content__pah_repos | Always | Compute the execution duration"
+          ansible.builtin.set_fact:
+            fe_ansible_tasks_ans_content__pah_repos_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+            fe_ansible_tasks_ans_content__pah_repos_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_ansible_tasks_ans_content__pah_repos_start_epoch | default(0) | int) }}"
+          tags:
+            - always
+
+        - name: "ansible/tasks/ans_content__pah_repos | Always | Publish the validation result with set_stats"
+          ansible.builtin.set_stats:
+            data:
+              fe_validation_results:
+                "ansible/tasks/ans_content__pah_repos":
+                  component: "ansible/tasks/ans_content__pah_repos"
+                  type: "playbook"
+                  platform: "ansible"
+                  host: "{{ inventory_hostname }}"
+                  status: "{{ fe_ansible_tasks_ans_content__pah_repos_status | default('unknown') }}"
+                  preflight_passed: "{{ fe_ansible_tasks_ans_content__pah_repos_preflight_passed | default(false) | bool }}"
+                  postflight_passed: "{{ fe_ansible_tasks_ans_content__pah_repos_postflight_passed | default(false) | bool }}"
+                  started_at: "{{ fe_ansible_tasks_ans_content__pah_repos_started_at | default('') }}"
+                  ended_at: "{{ fe_ansible_tasks_ans_content__pah_repos_ended_at | default('') }}"
+                  duration_seconds: "{{ fe_ansible_tasks_ans_content__pah_repos_duration_seconds | default(0) | int }}"
+                  failed_task: "{{ fe_ansible_tasks_ans_content__pah_repos_failed_task | default('') }}"
+                  error: "{{ fe_ansible_tasks_ans_content__pah_repos_error | default('') }}"
+                  check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+              fe_validation_executions: 1
+              fe_validation_succeeded: "{{ 1 if fe_ansible_tasks_ans_content__pah_repos_status | default('') == 'succeeded' else 0 }}"
+              fe_validation_failed: "{{ 0 if fe_ansible_tasks_ans_content__pah_repos_status | default('') == 'succeeded' else 1 }}"
+              fe_validation_duration_seconds: "{{ fe_ansible_tasks_ans_content__pah_repos_duration_seconds | default(0) | int }}"
+              fe_validation_failed_components: >-
+                {{ [] if fe_ansible_tasks_ans_content__pah_repos_status | default('') == 'succeeded' else ['ansible/tasks/ans_content__pah_repos'] }}
+            aggregate: true
+            per_host: false
+          when:
+            - not (fe_ansible_tasks_ans_content__pah_repos_stats_published | default(false) | bool)
+          tags:
+            - always
+
+        - name: "ansible/tasks/ans_content__pah_repos | Always | Mark the validation statistics as published"
+          ansible.builtin.set_fact:
+            fe_ansible_tasks_ans_content__pah_repos_stats_published: true
+          tags:
+            - always
+
+        - name: "ansible/tasks/ans_content__pah_repos | Always | Report the run summary"
+          ansible.builtin.debug:
+            msg: >-
+              ansible/tasks/ans_content__pah_repos: {{ fe_ansible_tasks_ans_content__pah_repos_status | default('unknown') }} in
+              {{ fe_ansible_tasks_ans_content__pah_repos_duration_seconds | default(0) }}s on {{ inventory_hostname }}.
+          tags:
+            - always

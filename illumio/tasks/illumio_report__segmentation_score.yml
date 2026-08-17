@@ -1,59 +1,243 @@
 ---
-- name: Ensure artifacts dir
-  ansible.builtin.file:
-    path: "{{ artifacts_dir | default('/tmp/illumio-artifacts') }}"
-    state: directory
-    mode: "0755"
 
-- name: Set common headers
+# ---------------------------------------------------------------------------
+# Fourth Estate preflight / postflight validation harness
+#
+# The task file body below is wrapped in an Ansible block/rescue/always structure:
+#
+#   block   preflight validation runs first, then the original task file body, then
+#           postflight validation. Any failure transfers control to rescue.
+#   rescue  records which task failed and why, then re-raises so a failure is
+#           never silently swallowed. Set fe_validation_continue_on_error=true
+#           to record the failure and keep going instead.
+#   always  computes the run duration and publishes the outcome through
+#           ansible.builtin.set_stats, so a wrapping playbook, AWX/AAP or CI can
+#           consume the result without scraping log output.
+#
+# Published stats (see docs/VALIDATION_AND_STATS.md):
+#   fe_validation_results['illumio/illumio_report__segmentation_score']  per-component record
+#   fe_validation_executions / _succeeded / _failed / _duration_seconds
+#   fe_validation_failed_components
+#
+# Add component-specific preflight checks without editing this file by setting
+#   fe_illumio_illumio_report__segmentation_score_required_vars: [var_one, var_two]
+# ---------------------------------------------------------------------------
+
+- name: "illumio/illumio_report__segmentation_score | Initialize validation state"
   ansible.builtin.set_fact:
-    illumio_headers:
-      Accept: "application/json"
-      Content-Type: "application/json"
-      X-Illumio-Org: "{{ org_id }}"
+    fe_illumio_illumio_report__segmentation_score_start_epoch: "{{ now(fmt='%s') | int }}"
+    fe_illumio_illumio_report__segmentation_score_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+    fe_illumio_illumio_report__segmentation_score_status: "running"
+    fe_illumio_illumio_report__segmentation_score_preflight_passed: false
+    fe_illumio_illumio_report__segmentation_score_postflight_passed: false
+    fe_illumio_illumio_report__segmentation_score_failed_task: ""
+    fe_illumio_illumio_report__segmentation_score_error: ""
+    fe_illumio_illumio_report__segmentation_score_stats_published: false
+  tags:
+    - always
 
-- name: Fetch workloads and rules (for scoring)
-  ansible.builtin.uri:
-    url: "{{ pce_url }}/api/v2/orgs/{{ org_id }}/workloads"
-    method: GET
-    user: "{{ api_user }}"
-    password: "{{ api_key }}"
-    force_basic_auth: true
-    validate_certs: "{{ verify_ssl | default(true) }}"
-    headers: "{{ illumio_headers }}"
-    return_content: true
-  no_log: true
-  register: _wls
+- name: "illumio/illumio_report__segmentation_score | Guarded execution with preflight and postflight validation"
+  block:
 
-- name: Fetch active rulesets (optional for richer score)
-  ansible.builtin.uri:
-    url: "{{ pce_url }}/api/v2/orgs/{{ org_id }}/sec_policy/active/rule_sets"
-    method: GET
-    user: "{{ api_user }}"
-    password: "{{ api_key }}"
-    force_basic_auth: true
-    validate_certs: "{{ verify_ssl | default(true) }}"
-    headers: "{{ illumio_headers }}"
-    return_content: true
-  no_log: true
-  register: _rules
+    # ----------------------------- preflight --------------------
 
-- name: Compute naive segmentation KPI (coverage & enforcement)
-  vars:
-    total: "{{ _wls.json | length }}"
-    labeled: "{{ (_wls.json | selectattr('labels','defined') | list) | length }}"
-    enforced: "{{ (_wls.json | selectattr('enforcement_mode','equalto','enforced') | list) | length }}"
-  ansible.builtin.set_fact:
-    seg_score:
-      total_workloads: "{{ total }}"
-      labeled_pct: "{{ ( (labeled|float / (total|float if total|int>0 else 1)) * 100 ) | round(2) }}"
-      enforced_pct: "{{ ( (enforced|float / (total|float if total|int>0 else 1)) * 100 ) | round(2) }}"
-      rule_sets: "{{ _rules.json | length | default(0) }}"
+    - name: "illumio/illumio_report__segmentation_score | Preflight | Verify the control node meets the minimum ansible-core version"
+      ansible.builtin.assert:
+        that:
+          - ansible_version.full is version(fe_validation_min_ansible_version | default('2.12'), '>=')
+        fail_msg: >-
+          illumio/illumio_report__segmentation_score: requires ansible-core
+          {{ fe_validation_min_ansible_version | default('2.12') }} or newer,
+          found {{ ansible_version.full }}.
+        success_msg: >-
+          illumio/illumio_report__segmentation_score: ansible-core {{ ansible_version.full }} satisfies the minimum.
+        quiet: true
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: Write segmentation KPI CSV
-  ansible.builtin.copy:
-    dest: "{{ artifacts_dir | default('/tmp/illumio-artifacts') }}/segmentation_score.csv"
-    mode: "0644"
-    content: |
-      total_workloads,labeled_pct,enforced_pct,rule_sets
-      {{ seg_score.total_workloads }},{{ seg_score.labeled_pct }},{{ seg_score.enforced_pct }},{{ seg_score.rule_sets }}
+    - name: "illumio/illumio_report__segmentation_score | Preflight | Verify every declared required variable is defined"
+      ansible.builtin.assert:
+        that:
+          - vars[item] is defined
+        fail_msg: "illumio/illumio_report__segmentation_score: required variable '{{ item }}' is not defined."
+        success_msg: "illumio/illumio_report__segmentation_score: required variable '{{ item }}' is defined."
+        quiet: true
+      loop: "{{ fe_illumio_illumio_report__segmentation_score_required_vars | default([]) }}"
+      loop_control:
+        label: "{{ item }}"
+      tags:
+        - always
+        - preflight
+        - validation
+
+    - name: "illumio/illumio_report__segmentation_score | Preflight | Record that preflight validation passed"
+      ansible.builtin.set_fact:
+        fe_illumio_illumio_report__segmentation_score_preflight_passed: true
+      tags:
+        - always
+        - preflight
+        - validation
+
+    # ----------------------------- execute ----------------------
+
+    - name: Ensure artifacts dir
+      ansible.builtin.file:
+        path: "{{ artifacts_dir | default('/tmp/illumio-artifacts') }}"
+        state: directory
+        mode: "0755"
+
+    - name: Set common headers
+      ansible.builtin.set_fact:
+        illumio_headers:
+          Accept: "application/json"
+          Content-Type: "application/json"
+          X-Illumio-Org: "{{ org_id }}"
+
+    - name: Fetch workloads and rules (for scoring)
+      ansible.builtin.uri:
+        url: "{{ pce_url }}/api/v2/orgs/{{ org_id }}/workloads"
+        method: GET
+        user: "{{ api_user }}"
+        password: "{{ api_key }}"
+        force_basic_auth: true
+        validate_certs: "{{ verify_ssl | default(true) }}"
+        headers: "{{ illumio_headers }}"
+        return_content: true
+      no_log: true
+      register: _wls
+
+    - name: Fetch active rulesets (optional for richer score)
+      ansible.builtin.uri:
+        url: "{{ pce_url }}/api/v2/orgs/{{ org_id }}/sec_policy/active/rule_sets"
+        method: GET
+        user: "{{ api_user }}"
+        password: "{{ api_key }}"
+        force_basic_auth: true
+        validate_certs: "{{ verify_ssl | default(true) }}"
+        headers: "{{ illumio_headers }}"
+        return_content: true
+      no_log: true
+      register: _rules
+
+    - name: Compute naive segmentation KPI (coverage & enforcement)
+      vars:
+        total: "{{ _wls.json | length }}"
+        labeled: "{{ (_wls.json | selectattr('labels','defined') | list) | length }}"
+        enforced: "{{ (_wls.json | selectattr('enforcement_mode','equalto','enforced') | list) | length }}"
+      ansible.builtin.set_fact:
+        seg_score:
+          total_workloads: "{{ total }}"
+          labeled_pct: "{{ ( (labeled|float / (total|float if total|int>0 else 1)) * 100 ) | round(2) }}"
+          enforced_pct: "{{ ( (enforced|float / (total|float if total|int>0 else 1)) * 100 ) | round(2) }}"
+          rule_sets: "{{ _rules.json | length | default(0) }}"
+
+    - name: Write segmentation KPI CSV
+      ansible.builtin.copy:
+        dest: "{{ artifacts_dir | default('/tmp/illumio-artifacts') }}/segmentation_score.csv"
+        mode: "0644"
+        content: |
+          total_workloads,labeled_pct,enforced_pct,rule_sets
+          {{ seg_score.total_workloads }},{{ seg_score.labeled_pct }},{{ seg_score.enforced_pct }},{{ seg_score.rule_sets }}
+
+    # ----------------------------- postflight -------------------
+
+    - name: "illumio/illumio_report__segmentation_score | Postflight | Verify the guarded body ran after a passing preflight"
+      ansible.builtin.assert:
+        that:
+          - fe_illumio_illumio_report__segmentation_score_preflight_passed | bool
+          - fe_illumio_illumio_report__segmentation_score_status in ['running', 'succeeded']
+        fail_msg: >-
+          illumio/illumio_report__segmentation_score: postflight validation failed - preflight passed
+          ={{ fe_illumio_illumio_report__segmentation_score_preflight_passed | default(false) }},
+          status={{ fe_illumio_illumio_report__segmentation_score_status | default('unknown') }}.
+        success_msg: "illumio/illumio_report__segmentation_score: postflight validation passed."
+        quiet: true
+      tags:
+        - always
+        - postflight
+        - validation
+
+    - name: "illumio/illumio_report__segmentation_score | Postflight | Record the successful outcome"
+      ansible.builtin.set_fact:
+        fe_illumio_illumio_report__segmentation_score_postflight_passed: true
+        fe_illumio_illumio_report__segmentation_score_status: "succeeded"
+      tags:
+        - always
+        - postflight
+        - validation
+
+  rescue:
+
+    - name: "illumio/illumio_report__segmentation_score | Rescue | Capture the failing task and error detail"
+      ansible.builtin.set_fact:
+        fe_illumio_illumio_report__segmentation_score_status: "failed"
+        fe_illumio_illumio_report__segmentation_score_postflight_passed: false
+        fe_illumio_illumio_report__segmentation_score_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+        fe_illumio_illumio_report__segmentation_score_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+      tags:
+        - always
+        - rescue
+
+    - name: "illumio/illumio_report__segmentation_score | Rescue | Report the failure"
+      ansible.builtin.debug:
+        msg: >-
+          illumio/illumio_report__segmentation_score: FAILED at '{{ fe_illumio_illumio_report__segmentation_score_failed_task }}' on
+          {{ inventory_hostname }} - {{ fe_illumio_illumio_report__segmentation_score_error }}
+      tags:
+        - always
+        - rescue
+
+    - name: "illumio/illumio_report__segmentation_score | Rescue | Re-raise the failure unless the caller opted to continue"
+      ansible.builtin.fail:
+        msg: >-
+          illumio/illumio_report__segmentation_score failed at '{{ fe_illumio_illumio_report__segmentation_score_failed_task }}': {{ fe_illumio_illumio_report__segmentation_score_error }}
+      when: not (fe_validation_continue_on_error | default(false) | bool)
+      tags:
+        - always
+        - rescue
+
+  always:
+
+    - name: "illumio/illumio_report__segmentation_score | Always | Compute the execution duration"
+      ansible.builtin.set_fact:
+        fe_illumio_illumio_report__segmentation_score_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+        fe_illumio_illumio_report__segmentation_score_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_illumio_illumio_report__segmentation_score_start_epoch | default(0) | int) }}"
+      tags:
+        - always
+
+    - name: "illumio/illumio_report__segmentation_score | Always | Publish the validation result with set_stats"
+      ansible.builtin.set_stats:
+        data:
+          fe_validation_results:
+            "illumio/illumio_report__segmentation_score":
+              component: "illumio/illumio_report__segmentation_score"
+              type: "tasks"
+              platform: "illumio"
+              host: "{{ inventory_hostname }}"
+              status: "{{ fe_illumio_illumio_report__segmentation_score_status | default('unknown') }}"
+              preflight_passed: "{{ fe_illumio_illumio_report__segmentation_score_preflight_passed | default(false) | bool }}"
+              postflight_passed: "{{ fe_illumio_illumio_report__segmentation_score_postflight_passed | default(false) | bool }}"
+              started_at: "{{ fe_illumio_illumio_report__segmentation_score_started_at | default('') }}"
+              ended_at: "{{ fe_illumio_illumio_report__segmentation_score_ended_at | default('') }}"
+              duration_seconds: "{{ fe_illumio_illumio_report__segmentation_score_duration_seconds | default(0) | int }}"
+              failed_task: "{{ fe_illumio_illumio_report__segmentation_score_failed_task | default('') }}"
+              error: "{{ fe_illumio_illumio_report__segmentation_score_error | default('') }}"
+              check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+          fe_validation_executions: 1
+          fe_validation_succeeded: "{{ 1 if fe_illumio_illumio_report__segmentation_score_status | default('') == 'succeeded' else 0 }}"
+          fe_validation_failed: "{{ 0 if fe_illumio_illumio_report__segmentation_score_status | default('') == 'succeeded' else 1 }}"
+          fe_validation_duration_seconds: "{{ fe_illumio_illumio_report__segmentation_score_duration_seconds | default(0) | int }}"
+          fe_validation_failed_components: >-
+            {{ [] if fe_illumio_illumio_report__segmentation_score_status | default('') == 'succeeded' else ['illumio/illumio_report__segmentation_score'] }}
+        aggregate: true
+        per_host: false
+      tags:
+        - always
+
+    - name: "illumio/illumio_report__segmentation_score | Always | Mark the validation statistics as published"
+      ansible.builtin.set_fact:
+        fe_illumio_illumio_report__segmentation_score_stats_published: true
+      tags:
+        - always

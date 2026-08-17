@@ -2,215 +2,398 @@
 # TLS/SSL configuration tasks
 # NIST 800-52r2, STIG V-258034
 
-- name: Create SSL certificate directory
-  ansible.builtin.file:
-    path: "{{ splunk_home }}/etc/auth/mycerts"
-    state: directory
-    owner: "{{ splunk_user }}"
-    group: "{{ splunk_group }}"
-    mode: '0700'
+# ---------------------------------------------------------------------------
+# Fourth Estate preflight / postflight validation harness
+#
+# The task file body below is wrapped in an Ansible block/rescue/always structure:
+#
+#   block   preflight validation runs first, then the original task file body, then
+#           postflight validation. Any failure transfers control to rescue.
+#   rescue  records which task failed and why, then re-raises so a failure is
+#           never silently swallowed. Set fe_validation_continue_on_error=true
+#           to record the failure and keep going instead.
+#   always  computes the run duration and publishes the outcome through
+#           ansible.builtin.set_stats, so a wrapping playbook, AWX/AAP or CI can
+#           consume the result without scraping log output.
+#
+# Published stats (see docs/VALIDATION_AND_STATS.md):
+#   fe_validation_results['splunk/splunk_enterprise_install/tls_config']  per-component record
+#   fe_validation_executions / _succeeded / _failed / _duration_seconds
+#   fe_validation_failed_components
+#
+# Add component-specific preflight checks without editing this file by setting
+#   fe_splunk_splunk_enterprise_install_tls_config_required_vars: [var_one, var_two]
+# ---------------------------------------------------------------------------
+
+- name: "splunk/splunk_enterprise_install/tls_config | Initialize validation state"
+  ansible.builtin.set_fact:
+    fe_splunk_splunk_enterprise_install_tls_config_start_epoch: "{{ now(fmt='%s') | int }}"
+    fe_splunk_splunk_enterprise_install_tls_config_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+    fe_splunk_splunk_enterprise_install_tls_config_status: "running"
+    fe_splunk_splunk_enterprise_install_tls_config_preflight_passed: false
+    fe_splunk_splunk_enterprise_install_tls_config_postflight_passed: false
+    fe_splunk_splunk_enterprise_install_tls_config_failed_task: ""
+    fe_splunk_splunk_enterprise_install_tls_config_error: ""
+    fe_splunk_splunk_enterprise_install_tls_config_stats_published: false
   tags:
-    - tls
-    - certificates
-    - directories
+    - always
 
-- name: Copy TLS server certificate
-  ansible.builtin.copy:
-    src: "{{ splunk_server_cert }}"
-    dest: "{{ splunk_home }}/etc/auth/mycerts/server.pem"
-    owner: "{{ splunk_user }}"
-    group: "{{ splunk_group }}"
-    mode: '0600'
-  when:
-    - not splunk_use_default_tls_certs
-    - splunk_server_cert != ''
-  notify: restart splunk
-  tags:
-    - tls
-    - certificates
+- name: "splunk/splunk_enterprise_install/tls_config | Guarded execution with preflight and postflight validation"
+  block:
 
-- name: Copy TLS server key
-  ansible.builtin.copy:
-    src: "{{ splunk_server_key }}"
-    dest: "{{ splunk_home }}/etc/auth/mycerts/server-key.pem"
-    owner: "{{ splunk_user }}"
-    group: "{{ splunk_group }}"
-    mode: '0600'
-  when:
-    - not splunk_use_default_tls_certs
-    - splunk_server_key != ''
-  notify: restart splunk
-  no_log: true
-  tags:
-    - tls
-    - certificates
+    # ----------------------------- preflight --------------------
 
-- name: Copy CA certificate
-  ansible.builtin.copy:
-    src: "{{ splunk_ca_cert }}"
-    dest: "{{ splunk_home }}/etc/auth/mycerts/ca.pem"
-    owner: "{{ splunk_user }}"
-    group: "{{ splunk_group }}"
-    mode: '0644'
-  when:
-    - not splunk_use_default_tls_certs
-    - splunk_ca_cert != ''
-  notify: restart splunk
-  tags:
-    - tls
-    - certificates
+    - name: "splunk/splunk_enterprise_install/tls_config | Preflight | Verify the control node meets the minimum ansible-core version"
+      ansible.builtin.assert:
+        that:
+          - ansible_version.full is version(fe_validation_min_ansible_version | default('2.12'), '>=')
+        fail_msg: >-
+          splunk/splunk_enterprise_install/tls_config: requires ansible-core
+          {{ fe_validation_min_ansible_version | default('2.12') }} or newer,
+          found {{ ansible_version.full }}.
+        success_msg: >-
+          splunk/splunk_enterprise_install/tls_config: ansible-core {{ ansible_version.full }} satisfies the minimum.
+        quiet: true
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: Copy intermediate CA certificates
-  ansible.builtin.copy:
-    src: "{{ item }}"
-    dest: "{{ splunk_home }}/etc/auth/mycerts/intermediate-{{ item | basename }}"
-    owner: "{{ splunk_user }}"
-    group: "{{ splunk_group }}"
-    mode: '0644'
-  loop: "{{ splunk_intermediate_ca_certs }}"
-  when:
-    - splunk_intermediate_ca_certs | length > 0
-  notify: restart splunk
-  tags:
-    - tls
-    - certificates
+    - name: "splunk/splunk_enterprise_install/tls_config | Preflight | Verify every declared required variable is defined"
+      ansible.builtin.assert:
+        that:
+          - vars[item] is defined
+        fail_msg: "splunk/splunk_enterprise_install/tls_config: required variable '{{ item }}' is not defined."
+        success_msg: "splunk/splunk_enterprise_install/tls_config: required variable '{{ item }}' is defined."
+        quiet: true
+      loop: "{{ fe_splunk_splunk_enterprise_install_tls_config_required_vars | default([]) }}"
+      loop_control:
+        label: "{{ item }}"
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: Configure web interface TLS (STIG V-258036)
-  ansible.builtin.blockinfile:
-    path: "{{ splunk_home }}/etc/system/local/web.conf"
-    block: |
-      [settings]
-      enableSplunkWebSSL = {{ splunk_enable_web_ssl | lower }}
-      privKeyPath = {{ splunk_home }}/etc/auth/mycerts/server-key.pem
-      serverCert = {{ splunk_home }}/etc/auth/mycerts/server.pem
-      sslVersions = {{ splunk_ssl_versions }}
-      cipherSuite = {{ splunk_cipher_suite }}
-      httpport = {{ splunk_web_port }}
-      mgmtHostPort = {{ splunk_bind_ip }}:{{ splunk_mgmt_port }}
-      sessionTimeout = {{ splunk_ui_session_timeout }}
-      tools.sessions.timeout = {{ splunk_ui_idle_timeout }}
-      max_upload_size = {{ splunk_max_upload_size }}
-      enableWebDebug = false
-      x_frame_options_sameorigin = true
-      cspEnabled = true
-      cookieSecure = true
-      # DoD STIG V-258036 - Enable secure cookies
-      trustedIP = {{ splunk_allowed_management_networks | join(', ') }}
-    create: yes
-    owner: "{{ splunk_user }}"
-    group: "{{ splunk_group }}"
-    mode: '0600'
-  when: not splunk_use_default_tls_certs
-  notify: restart splunk
-  tags:
-    - tls
-    - config
-    - web
+    - name: "splunk/splunk_enterprise_install/tls_config | Preflight | Record that preflight validation passed"
+      ansible.builtin.set_fact:
+        fe_splunk_splunk_enterprise_install_tls_config_preflight_passed: true
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: Configure Splunk management interface TLS (STIG V-258038)
-  ansible.builtin.blockinfile:
-    path: "{{ splunk_home }}/etc/system/local/server.conf"
-    block: |
-      [sslConfig]
-      enableSplunkdSSL = true
-      serverCert = {{ splunk_home }}/etc/auth/mycerts/server.pem
-      sslPassword = $7${{ lookup('password', '/dev/null length=32 chars=ascii_letters,digits') | b64encode }}
-      sslVersions = {{ splunk_ssl_versions }}
-      ecdhCurves = {{ splunk_ecdh_curves }}
-      cipherSuite = {{ splunk_cipher_suite }}
-      sslVerifyServerCert = {{ splunk_cert_validation_strict | lower }}
-      sslVerifyServerName = {{ splunk_cert_validation_strict | lower }}
-      sslCommonNameToCheck = {{ inventory_hostname }}
-      allowSslCompression = false
-      allowSslRenegotiation = false
-      useClientSSLCompression = false
-      useSplunkdClientSSLCompression = false
-    create: yes
-    owner: "{{ splunk_user }}"
-    group: "{{ splunk_group }}"
-    mode: '0600'
-  when: not splunk_use_default_tls_certs
-  notify: restart splunk
-  tags:
-    - tls
-    - config
-    - management
+    # ----------------------------- execute ----------------------
 
-- name: Configure inputs TLS for receiving data (STIG V-258040)
-  ansible.builtin.blockinfile:
-    path: "{{ splunk_home }}/etc/system/local/inputs.conf"
-    block: |
-      [splunktcp-ssl:{{ splunk_splunktcp_port }}]
-      disabled = {{ not splunk_enable_splunktcp_ssl | lower }}
-      serverCert = {{ splunk_home }}/etc/auth/mycerts/server.pem
-      sslPassword = $7${{ lookup('password', '/dev/null length=32 chars=ascii_letters,digits') | b64encode }}
-      requireClientCert = false
-      sslVersions = {{ splunk_ssl_versions }}
-      cipherSuite = {{ splunk_cipher_suite }}
-    create: yes
-    owner: "{{ splunk_user }}"
-    group: "{{ splunk_group }}"
-    mode: '0600'
-  when:
-    - not splunk_use_default_tls_certs
-    - splunk_enable_splunktcp_ssl | bool
-  notify: restart splunk
-  tags:
-    - tls
-    - config
-    - inputs
+    - name: Create SSL certificate directory
+      ansible.builtin.file:
+        path: "{{ splunk_home }}/etc/auth/mycerts"
+        state: directory
+        owner: "{{ splunk_user }}"
+        group: "{{ splunk_group }}"
+        mode: '0700'
+      tags:
+        - tls
+        - certificates
+        - directories
 
-- name: Create certificate monitoring script
-  ansible.builtin.copy:
-    dest: "{{ splunk_home }}/bin/check_cert_expiry.sh"
-    content: |
-      #!/bin/bash
-      # Certificate Expiry Check Script
-      # STIG V-258042 - Monitor certificate expiration
+    - name: Copy TLS server certificate
+      ansible.builtin.copy:
+        src: "{{ splunk_server_cert }}"
+        dest: "{{ splunk_home }}/etc/auth/mycerts/server.pem"
+        owner: "{{ splunk_user }}"
+        group: "{{ splunk_group }}"
+        mode: '0600'
+      when:
+        - not splunk_use_default_tls_certs
+        - splunk_server_cert != ''
+      notify: restart splunk
+      tags:
+        - tls
+        - certificates
 
-      CERT_FILE="{{ splunk_home }}/etc/auth/mycerts/server.pem"
-      WARNING_DAYS={{ splunk_cert_expiry_warning_days }}
+    - name: Copy TLS server key
+      ansible.builtin.copy:
+        src: "{{ splunk_server_key }}"
+        dest: "{{ splunk_home }}/etc/auth/mycerts/server-key.pem"
+        owner: "{{ splunk_user }}"
+        group: "{{ splunk_group }}"
+        mode: '0600'
+      when:
+        - not splunk_use_default_tls_certs
+        - splunk_server_key != ''
+      notify: restart splunk
+      no_log: true
+      tags:
+        - tls
+        - certificates
 
-      if [ ! -f "$CERT_FILE" ]; then
-        echo "ERROR: Certificate file not found: $CERT_FILE"
-        exit 1
-      fi
+    - name: Copy CA certificate
+      ansible.builtin.copy:
+        src: "{{ splunk_ca_cert }}"
+        dest: "{{ splunk_home }}/etc/auth/mycerts/ca.pem"
+        owner: "{{ splunk_user }}"
+        group: "{{ splunk_group }}"
+        mode: '0644'
+      when:
+        - not splunk_use_default_tls_certs
+        - splunk_ca_cert != ''
+      notify: restart splunk
+      tags:
+        - tls
+        - certificates
 
-      EXPIRY_DATE=$(openssl x509 -enddate -noout -in "$CERT_FILE" | cut -d= -f2)
-      EXPIRY_EPOCH=$(date -d "$EXPIRY_DATE" +%s)
-      CURRENT_EPOCH=$(date +%s)
-      DAYS_UNTIL_EXPIRY=$(( ($EXPIRY_EPOCH - $CURRENT_EPOCH) / 86400 ))
+    - name: Copy intermediate CA certificates
+      ansible.builtin.copy:
+        src: "{{ item }}"
+        dest: "{{ splunk_home }}/etc/auth/mycerts/intermediate-{{ item | basename }}"
+        owner: "{{ splunk_user }}"
+        group: "{{ splunk_group }}"
+        mode: '0644'
+      loop: "{{ splunk_intermediate_ca_certs }}"
+      when:
+        - splunk_intermediate_ca_certs | length > 0
+      notify: restart splunk
+      tags:
+        - tls
+        - certificates
 
-      echo "Certificate: $CERT_FILE"
-      echo "Expires: $EXPIRY_DATE"
-      echo "Days until expiry: $DAYS_UNTIL_EXPIRY"
+    - name: Configure web interface TLS (STIG V-258036)
+      ansible.builtin.blockinfile:
+        path: "{{ splunk_home }}/etc/system/local/web.conf"
+        block: |
+          [settings]
+          enableSplunkWebSSL = {{ splunk_enable_web_ssl | lower }}
+          privKeyPath = {{ splunk_home }}/etc/auth/mycerts/server-key.pem
+          serverCert = {{ splunk_home }}/etc/auth/mycerts/server.pem
+          sslVersions = {{ splunk_ssl_versions }}
+          cipherSuite = {{ splunk_cipher_suite }}
+          httpport = {{ splunk_web_port }}
+          mgmtHostPort = {{ splunk_bind_ip }}:{{ splunk_mgmt_port }}
+          sessionTimeout = {{ splunk_ui_session_timeout }}
+          tools.sessions.timeout = {{ splunk_ui_idle_timeout }}
+          max_upload_size = {{ splunk_max_upload_size }}
+          enableWebDebug = false
+          x_frame_options_sameorigin = true
+          cspEnabled = true
+          cookieSecure = true
+          # DoD STIG V-258036 - Enable secure cookies
+          trustedIP = {{ splunk_allowed_management_networks | join(', ') }}
+        create: yes
+        owner: "{{ splunk_user }}"
+        group: "{{ splunk_group }}"
+        mode: '0600'
+      when: not splunk_use_default_tls_certs
+      notify: restart splunk
+      tags:
+        - tls
+        - config
+        - web
 
-      if [ $DAYS_UNTIL_EXPIRY -lt 0 ]; then
-        echo "CRITICAL: Certificate has EXPIRED!"
-        exit 2
-      elif [ $DAYS_UNTIL_EXPIRY -lt $WARNING_DAYS ]; then
-        echo "WARNING: Certificate expires in less than $WARNING_DAYS days!"
-        exit 1
-      else
-        echo "OK: Certificate is valid"
-        exit 0
-      fi
-    owner: "{{ splunk_user }}"
-    group: "{{ splunk_group }}"
-    mode: '0750'
-  tags:
-    - tls
-    - monitoring
-    - scripts
+    - name: Configure Splunk management interface TLS (STIG V-258038)
+      ansible.builtin.blockinfile:
+        path: "{{ splunk_home }}/etc/system/local/server.conf"
+        block: |
+          [sslConfig]
+          enableSplunkdSSL = true
+          serverCert = {{ splunk_home }}/etc/auth/mycerts/server.pem
+          sslPassword = $7${{ lookup('password', '/dev/null length=32 chars=ascii_letters,digits') | b64encode }}
+          sslVersions = {{ splunk_ssl_versions }}
+          ecdhCurves = {{ splunk_ecdh_curves }}
+          cipherSuite = {{ splunk_cipher_suite }}
+          sslVerifyServerCert = {{ splunk_cert_validation_strict | lower }}
+          sslVerifyServerName = {{ splunk_cert_validation_strict | lower }}
+          sslCommonNameToCheck = {{ inventory_hostname }}
+          allowSslCompression = false
+          allowSslRenegotiation = false
+          useClientSSLCompression = false
+          useSplunkdClientSSLCompression = false
+        create: yes
+        owner: "{{ splunk_user }}"
+        group: "{{ splunk_group }}"
+        mode: '0600'
+      when: not splunk_use_default_tls_certs
+      notify: restart splunk
+      tags:
+        - tls
+        - config
+        - management
 
-- name: Setup certificate expiry monitoring cron job
-  ansible.builtin.cron:
-    name: "Splunk certificate expiry check"
-    minute: "0"
-    hour: "6"
-    job: "{{ splunk_home }}/bin/check_cert_expiry.sh"
-    user: "{{ splunk_user }}"
-  tags:
-    - tls
-    - monitoring
-    - cron
+    - name: Configure inputs TLS for receiving data (STIG V-258040)
+      ansible.builtin.blockinfile:
+        path: "{{ splunk_home }}/etc/system/local/inputs.conf"
+        block: |
+          [splunktcp-ssl:{{ splunk_splunktcp_port }}]
+          disabled = {{ not splunk_enable_splunktcp_ssl | lower }}
+          serverCert = {{ splunk_home }}/etc/auth/mycerts/server.pem
+          sslPassword = $7${{ lookup('password', '/dev/null length=32 chars=ascii_letters,digits') | b64encode }}
+          requireClientCert = false
+          sslVersions = {{ splunk_ssl_versions }}
+          cipherSuite = {{ splunk_cipher_suite }}
+        create: yes
+        owner: "{{ splunk_user }}"
+        group: "{{ splunk_group }}"
+        mode: '0600'
+      when:
+        - not splunk_use_default_tls_certs
+        - splunk_enable_splunktcp_ssl | bool
+      notify: restart splunk
+      tags:
+        - tls
+        - config
+        - inputs
+
+    - name: Create certificate monitoring script
+      ansible.builtin.copy:
+        dest: "{{ splunk_home }}/bin/check_cert_expiry.sh"
+        content: |
+          #!/bin/bash
+          # Certificate Expiry Check Script
+          # STIG V-258042 - Monitor certificate expiration
+
+          CERT_FILE="{{ splunk_home }}/etc/auth/mycerts/server.pem"
+          WARNING_DAYS={{ splunk_cert_expiry_warning_days }}
+
+          if [ ! -f "$CERT_FILE" ]; then
+            echo "ERROR: Certificate file not found: $CERT_FILE"
+            exit 1
+          fi
+
+          EXPIRY_DATE=$(openssl x509 -enddate -noout -in "$CERT_FILE" | cut -d= -f2)
+          EXPIRY_EPOCH=$(date -d "$EXPIRY_DATE" +%s)
+          CURRENT_EPOCH=$(date +%s)
+          DAYS_UNTIL_EXPIRY=$(( ($EXPIRY_EPOCH - $CURRENT_EPOCH) / 86400 ))
+
+          echo "Certificate: $CERT_FILE"
+          echo "Expires: $EXPIRY_DATE"
+          echo "Days until expiry: $DAYS_UNTIL_EXPIRY"
+
+          if [ $DAYS_UNTIL_EXPIRY -lt 0 ]; then
+            echo "CRITICAL: Certificate has EXPIRED!"
+            exit 2
+          elif [ $DAYS_UNTIL_EXPIRY -lt $WARNING_DAYS ]; then
+            echo "WARNING: Certificate expires in less than $WARNING_DAYS days!"
+            exit 1
+          else
+            echo "OK: Certificate is valid"
+            exit 0
+          fi
+        owner: "{{ splunk_user }}"
+        group: "{{ splunk_group }}"
+        mode: '0750'
+      tags:
+        - tls
+        - monitoring
+        - scripts
+
+    - name: Setup certificate expiry monitoring cron job
+      ansible.builtin.cron:
+        name: "Splunk certificate expiry check"
+        minute: "0"
+        hour: "6"
+        job: "{{ splunk_home }}/bin/check_cert_expiry.sh"
+        user: "{{ splunk_user }}"
+      tags:
+        - tls
+        - monitoring
+        - cron
+
+    # ----------------------------- postflight -------------------
+
+    - name: "splunk/splunk_enterprise_install/tls_config | Postflight | Verify the guarded body ran after a passing preflight"
+      ansible.builtin.assert:
+        that:
+          - fe_splunk_splunk_enterprise_install_tls_config_preflight_passed | bool
+          - fe_splunk_splunk_enterprise_install_tls_config_status in ['running', 'succeeded']
+        fail_msg: >-
+          splunk/splunk_enterprise_install/tls_config: postflight validation failed - preflight passed
+          ={{ fe_splunk_splunk_enterprise_install_tls_config_preflight_passed | default(false) }},
+          status={{ fe_splunk_splunk_enterprise_install_tls_config_status | default('unknown') }}.
+        success_msg: "splunk/splunk_enterprise_install/tls_config: postflight validation passed."
+        quiet: true
+      tags:
+        - always
+        - postflight
+        - validation
+
+    - name: "splunk/splunk_enterprise_install/tls_config | Postflight | Record the successful outcome"
+      ansible.builtin.set_fact:
+        fe_splunk_splunk_enterprise_install_tls_config_postflight_passed: true
+        fe_splunk_splunk_enterprise_install_tls_config_status: "succeeded"
+      tags:
+        - always
+        - postflight
+        - validation
+
+  rescue:
+
+    - name: "splunk/splunk_enterprise_install/tls_config | Rescue | Capture the failing task and error detail"
+      ansible.builtin.set_fact:
+        fe_splunk_splunk_enterprise_install_tls_config_status: "failed"
+        fe_splunk_splunk_enterprise_install_tls_config_postflight_passed: false
+        fe_splunk_splunk_enterprise_install_tls_config_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+        fe_splunk_splunk_enterprise_install_tls_config_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+      tags:
+        - always
+        - rescue
+
+    - name: "splunk/splunk_enterprise_install/tls_config | Rescue | Report the failure"
+      ansible.builtin.debug:
+        msg: >-
+          splunk/splunk_enterprise_install/tls_config: FAILED at '{{ fe_splunk_splunk_enterprise_install_tls_config_failed_task }}' on
+          {{ inventory_hostname }} - {{ fe_splunk_splunk_enterprise_install_tls_config_error }}
+      tags:
+        - always
+        - rescue
+
+    - name: "splunk/splunk_enterprise_install/tls_config | Rescue | Re-raise the failure unless the caller opted to continue"
+      ansible.builtin.fail:
+        msg: >-
+          splunk/splunk_enterprise_install/tls_config failed at '{{ fe_splunk_splunk_enterprise_install_tls_config_failed_task }}': {{ fe_splunk_splunk_enterprise_install_tls_config_error }}
+      when: not (fe_validation_continue_on_error | default(false) | bool)
+      tags:
+        - always
+        - rescue
+
+  always:
+
+    - name: "splunk/splunk_enterprise_install/tls_config | Always | Compute the execution duration"
+      ansible.builtin.set_fact:
+        fe_splunk_splunk_enterprise_install_tls_config_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+        fe_splunk_splunk_enterprise_install_tls_config_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_splunk_splunk_enterprise_install_tls_config_start_epoch | default(0) | int) }}"
+      tags:
+        - always
+
+    - name: "splunk/splunk_enterprise_install/tls_config | Always | Publish the validation result with set_stats"
+      ansible.builtin.set_stats:
+        data:
+          fe_validation_results:
+            "splunk/splunk_enterprise_install/tls_config":
+              component: "splunk/splunk_enterprise_install/tls_config"
+              type: "role-tasks"
+              platform: "splunk"
+              host: "{{ inventory_hostname }}"
+              status: "{{ fe_splunk_splunk_enterprise_install_tls_config_status | default('unknown') }}"
+              preflight_passed: "{{ fe_splunk_splunk_enterprise_install_tls_config_preflight_passed | default(false) | bool }}"
+              postflight_passed: "{{ fe_splunk_splunk_enterprise_install_tls_config_postflight_passed | default(false) | bool }}"
+              started_at: "{{ fe_splunk_splunk_enterprise_install_tls_config_started_at | default('') }}"
+              ended_at: "{{ fe_splunk_splunk_enterprise_install_tls_config_ended_at | default('') }}"
+              duration_seconds: "{{ fe_splunk_splunk_enterprise_install_tls_config_duration_seconds | default(0) | int }}"
+              failed_task: "{{ fe_splunk_splunk_enterprise_install_tls_config_failed_task | default('') }}"
+              error: "{{ fe_splunk_splunk_enterprise_install_tls_config_error | default('') }}"
+              check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+          fe_validation_executions: 1
+          fe_validation_succeeded: "{{ 1 if fe_splunk_splunk_enterprise_install_tls_config_status | default('') == 'succeeded' else 0 }}"
+          fe_validation_failed: "{{ 0 if fe_splunk_splunk_enterprise_install_tls_config_status | default('') == 'succeeded' else 1 }}"
+          fe_validation_duration_seconds: "{{ fe_splunk_splunk_enterprise_install_tls_config_duration_seconds | default(0) | int }}"
+          fe_validation_failed_components: >-
+            {{ [] if fe_splunk_splunk_enterprise_install_tls_config_status | default('') == 'succeeded' else ['splunk/splunk_enterprise_install/tls_config'] }}
+        aggregate: true
+        per_host: false
+      tags:
+        - always
+
+    - name: "splunk/splunk_enterprise_install/tls_config | Always | Mark the validation statistics as published"
+      ansible.builtin.set_fact:
+        fe_splunk_splunk_enterprise_install_tls_config_stats_published: true
+      tags:
+        - always

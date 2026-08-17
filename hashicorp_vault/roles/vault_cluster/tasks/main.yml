@@ -2,324 +2,507 @@
 # HashiCorp Vault Cluster Tasks
 # Fourth Estate Production Configuration
 
-- name: Validate cluster configuration
-  ansible.builtin.assert:
-    that:
-      - vault_cluster_name is defined
-      - vault_cluster_members | length >= 3 or not vault_join_cluster
-    fail_msg: "Cluster requires at least 3 members for HA"
-    quiet: true
-  tags: [vault, cluster, validate]
+# ---------------------------------------------------------------------------
+# Fourth Estate preflight / postflight validation harness
+#
+# The task file body below is wrapped in an Ansible block/rescue/always structure:
+#
+#   block   preflight validation runs first, then the original task file body, then
+#           postflight validation. Any failure transfers control to rescue.
+#   rescue  records which task failed and why, then re-raises so a failure is
+#           never silently swallowed. Set fe_validation_continue_on_error=true
+#           to record the failure and keep going instead.
+#   always  computes the run duration and publishes the outcome through
+#           ansible.builtin.set_stats, so a wrapping playbook, AWX/AAP or CI can
+#           consume the result without scraping log output.
+#
+# Published stats (see docs/VALIDATION_AND_STATS.md):
+#   fe_validation_results['hashicorp_vault/vault_cluster']  per-component record
+#   fe_validation_executions / _succeeded / _failed / _duration_seconds
+#   fe_validation_failed_components
+#
+# Add component-specific preflight checks without editing this file by setting
+#   fe_hashicorp_vault_vault_cluster_required_vars: [var_one, var_two]
+# ---------------------------------------------------------------------------
 
-- name: Check Vault service status
-  ansible.builtin.systemd:
-    name: vault
-  register: vault_service_status
-  tags: [vault, cluster]
+- name: "hashicorp_vault/vault_cluster | Initialize validation state"
+  ansible.builtin.set_fact:
+    fe_hashicorp_vault_vault_cluster_start_epoch: "{{ now(fmt='%s') | int }}"
+    fe_hashicorp_vault_vault_cluster_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+    fe_hashicorp_vault_vault_cluster_status: "running"
+    fe_hashicorp_vault_vault_cluster_preflight_passed: false
+    fe_hashicorp_vault_vault_cluster_postflight_passed: false
+    fe_hashicorp_vault_vault_cluster_failed_task: ""
+    fe_hashicorp_vault_vault_cluster_error: ""
+    fe_hashicorp_vault_vault_cluster_stats_published: false
+  tags:
+    - always
 
-- name: Wait for Vault to be responsive
-  ansible.builtin.uri:
-    url: "{{ vault_api_addr }}/v1/sys/health"
-    validate_certs: false
-    status_code: [200, 429, 472, 473, 501, 503]
-  register: vault_health
-  retries: 12
-  delay: 5
-  until: vault_health.status in [200, 429, 472, 473, 501, 503]
-  tags: [vault, cluster, health]
-
-- name: Check if Vault is initialized
-  ansible.builtin.uri:
-    url: "{{ vault_api_addr }}/v1/sys/init"
-    method: GET
-    validate_certs: false
-  register: vault_init_status
-  tags: [vault, cluster, init]
-
-- name: Initialize Vault cluster (primary node)
-  when:
-    - vault_is_cluster_primary | bool
-    - not vault_init_status.json.initialized
-    - vault_init_required | bool
+- name: "hashicorp_vault/vault_cluster | Guarded execution with preflight and postflight validation"
   block:
-    - name: Initialize Vault
-      ansible.builtin.uri:
-        url: "{{ vault_api_addr }}/v1/sys/init"
-        method: POST
-        body_format: json
-        body:
-          secret_shares: "{{ vault_init_secret_shares }}"
-          secret_threshold: "{{ vault_init_secret_threshold }}"
-          pgp_keys: "{{ vault_init_pgp_keys | default(omit) }}"
-          root_token_pgp_key: "{{ vault_init_root_token_pgp_key | default(omit) }}"
-          stored_shares: "{{ vault_init_stored_shares if vault_auto_unseal else omit }}"
-          recovery_shares: "{{ vault_init_recovery_shares if vault_auto_unseal else omit }}"
-          recovery_threshold: "{{ vault_init_recovery_threshold if vault_auto_unseal else omit }}"
-          recovery_pgp_keys: "{{ vault_init_recovery_pgp_keys if vault_auto_unseal else [] }}"
-        validate_certs: false
-      register: vault_init_result
-      no_log: true
 
-    - name: Save Vault initialization keys (SECURE THIS!)
-      ansible.builtin.copy:
-        content: "{{ vault_init_result.json | to_nice_json }}"
-        dest: "{{ vault_config_path }}/vault-init-keys.json"
-        owner: "{{ vault_user }}"
-        group: "{{ vault_group }}"
-        mode: '0600'
-      when: vault_init_result is changed
-      no_log: true
+    # ----------------------------- preflight --------------------
 
-    - name: Display initialization warning
-      ansible.builtin.debug:
-        msg:
-          - "CRITICAL: Vault has been initialized"
-          - "Unseal keys and root token saved to: {{ vault_config_path }}/vault-init-keys.json"
-          - "IMMEDIATELY secure this file and remove from server!"
-          - "Store in a secure location (HSM, encrypted storage, etc.)"
+    - name: "hashicorp_vault/vault_cluster | Preflight | Verify the control node meets the minimum ansible-core version"
+      ansible.builtin.assert:
+        that:
+          - ansible_version.full is version(fe_validation_min_ansible_version | default('2.12'), '>=')
+        fail_msg: >-
+          hashicorp_vault/vault_cluster: requires ansible-core
+          {{ fe_validation_min_ansible_version | default('2.12') }} or newer,
+          found {{ ansible_version.full }}.
+        success_msg: >-
+          hashicorp_vault/vault_cluster: ansible-core {{ ansible_version.full }} satisfies the minimum.
+        quiet: true
+      tags:
+        - always
+        - preflight
+        - validation
 
-  tags: [vault, cluster, init]
+    - name: "hashicorp_vault/vault_cluster | Preflight | Verify every declared required variable is defined"
+      ansible.builtin.assert:
+        that:
+          - vars[item] is defined
+        fail_msg: "hashicorp_vault/vault_cluster: required variable '{{ item }}' is not defined."
+        success_msg: "hashicorp_vault/vault_cluster: required variable '{{ item }}' is defined."
+        quiet: true
+      loop: "{{ fe_hashicorp_vault_vault_cluster_required_vars | default([]) }}"
+      loop_control:
+        label: "{{ item }}"
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: Unseal Vault (Shamir seal)
-  when:
-    - not vault_auto_unseal | bool
-    - vault_unseal_keys | length > 0
-    - vault_health.json.sealed | default(true)
-  block:
-    - name: Unseal Vault with provided keys
-      ansible.builtin.uri:
-        url: "{{ vault_api_addr }}/v1/sys/unseal"
-        method: POST
-        body_format: json
-        body:
-          key: "{{ item }}"
-        validate_certs: false
-      loop: "{{ vault_unseal_keys[:vault_init_secret_threshold] }}"
-      no_log: true
-      register: unseal_result
+    - name: "hashicorp_vault/vault_cluster | Preflight | Record that preflight validation passed"
+      ansible.builtin.set_fact:
+        fe_hashicorp_vault_vault_cluster_preflight_passed: true
+      tags:
+        - always
+        - preflight
+        - validation
 
-    - name: Verify Vault is unsealed
+    # ----------------------------- execute ----------------------
+
+    - name: Validate cluster configuration
+      ansible.builtin.assert:
+        that:
+          - vault_cluster_name is defined
+          - vault_cluster_members | length >= 3 or not vault_join_cluster
+        fail_msg: "Cluster requires at least 3 members for HA"
+        quiet: true
+      tags: [vault, cluster, validate]
+
+    - name: Check Vault service status
+      ansible.builtin.systemd:
+        name: vault
+      register: vault_service_status
+      tags: [vault, cluster]
+
+    - name: Wait for Vault to be responsive
       ansible.builtin.uri:
         url: "{{ vault_api_addr }}/v1/sys/health"
         validate_certs: false
-      register: vault_health_after_unseal
+        status_code: [200, 429, 472, 473, 501, 503]
+      register: vault_health
+      retries: 12
+      delay: 5
+      until: vault_health.status in [200, 429, 472, 473, 501, 503]
+      tags: [vault, cluster, health]
 
-  tags: [vault, cluster, unseal]
-
-- name: Join Vault cluster (follower nodes)
-  when:
-    - vault_join_cluster | bool
-    - not vault_is_cluster_primary | bool
-    - not vault_init_status.json.initialized
-  block:
-    - name: Join Raft cluster
+    - name: Check if Vault is initialized
       ansible.builtin.uri:
-        url: "{{ vault_api_addr }}/v1/sys/storage/raft/join"
-        method: POST
-        body_format: json
-        body:
-          leader_api_addr: "{{ vault_join_leader_api_addr }}"
-          leader_ca_cert: "{{ lookup('file', vault_join_leader_ca_cert) if vault_join_leader_ca_cert else omit }}"
-          retry: true
+        url: "{{ vault_api_addr }}/v1/sys/init"
+        method: GET
         validate_certs: false
-      register: raft_join_result
-      retries: "{{ vault_join_retry_attempts }}"
-      delay: "{{ vault_join_retry_interval }}"
-      until: raft_join_result.status == 200
+      register: vault_init_status
+      tags: [vault, cluster, init]
 
-    - name: Display join success message
+    - name: Initialize Vault cluster (primary node)
+      when:
+        - vault_is_cluster_primary | bool
+        - not vault_init_status.json.initialized
+        - vault_init_required | bool
+      block:
+        - name: Initialize Vault
+          ansible.builtin.uri:
+            url: "{{ vault_api_addr }}/v1/sys/init"
+            method: POST
+            body_format: json
+            body:
+              secret_shares: "{{ vault_init_secret_shares }}"
+              secret_threshold: "{{ vault_init_secret_threshold }}"
+              pgp_keys: "{{ vault_init_pgp_keys | default(omit) }}"
+              root_token_pgp_key: "{{ vault_init_root_token_pgp_key | default(omit) }}"
+              stored_shares: "{{ vault_init_stored_shares if vault_auto_unseal else omit }}"
+              recovery_shares: "{{ vault_init_recovery_shares if vault_auto_unseal else omit }}"
+              recovery_threshold: "{{ vault_init_recovery_threshold if vault_auto_unseal else omit }}"
+              recovery_pgp_keys: "{{ vault_init_recovery_pgp_keys if vault_auto_unseal else [] }}"
+            validate_certs: false
+          register: vault_init_result
+          no_log: true
+
+        - name: Save Vault initialization keys (SECURE THIS!)
+          ansible.builtin.copy:
+            content: "{{ vault_init_result.json | to_nice_json }}"
+            dest: "{{ vault_config_path }}/vault-init-keys.json"
+            owner: "{{ vault_user }}"
+            group: "{{ vault_group }}"
+            mode: '0600'
+          when: vault_init_result is changed
+          no_log: true
+
+        - name: Display initialization warning
+          ansible.builtin.debug:
+            msg:
+              - "CRITICAL: Vault has been initialized"
+              - "Unseal keys and root token saved to: {{ vault_config_path }}/vault-init-keys.json"
+              - "IMMEDIATELY secure this file and remove from server!"
+              - "Store in a secure location (HSM, encrypted storage, etc.)"
+
+      tags: [vault, cluster, init]
+
+    - name: Unseal Vault (Shamir seal)
+      when:
+        - not vault_auto_unseal | bool
+        - vault_unseal_keys | length > 0
+        - vault_health.json.sealed | default(true)
+      block:
+        - name: Unseal Vault with provided keys
+          ansible.builtin.uri:
+            url: "{{ vault_api_addr }}/v1/sys/unseal"
+            method: POST
+            body_format: json
+            body:
+              key: "{{ item }}"
+            validate_certs: false
+          loop: "{{ vault_unseal_keys[:vault_init_secret_threshold] }}"
+          no_log: true
+          register: unseal_result
+
+        - name: Verify Vault is unsealed
+          ansible.builtin.uri:
+            url: "{{ vault_api_addr }}/v1/sys/health"
+            validate_certs: false
+          register: vault_health_after_unseal
+
+      tags: [vault, cluster, unseal]
+
+    - name: Join Vault cluster (follower nodes)
+      when:
+        - vault_join_cluster | bool
+        - not vault_is_cluster_primary | bool
+        - not vault_init_status.json.initialized
+      block:
+        - name: Join Raft cluster
+          ansible.builtin.uri:
+            url: "{{ vault_api_addr }}/v1/sys/storage/raft/join"
+            method: POST
+            body_format: json
+            body:
+              leader_api_addr: "{{ vault_join_leader_api_addr }}"
+              leader_ca_cert: "{{ lookup('file', vault_join_leader_ca_cert) if vault_join_leader_ca_cert else omit }}"
+              retry: true
+            validate_certs: false
+          register: raft_join_result
+          retries: "{{ vault_join_retry_attempts }}"
+          delay: "{{ vault_join_retry_interval }}"
+          until: raft_join_result.status == 200
+
+        - name: Display join success message
+          ansible.builtin.debug:
+            msg: "Successfully joined Vault cluster at {{ vault_join_leader_api_addr }}"
+
+      tags: [vault, cluster, join]
+
+    - name: Configure Raft autopilot
+      when: vault_is_cluster_primary | bool
+      block:
+        - name: Set Raft autopilot configuration
+          ansible.builtin.uri:
+            url: "{{ vault_api_addr }}/v1/sys/storage/raft/autopilot/configuration"
+            method: POST
+            headers:
+              X-Vault-Token: "{{ vault_root_token }}"
+            body_format: json
+            body:
+              cleanup_dead_servers: true
+              dead_server_last_contact_threshold: "24h"
+              last_contact_threshold: "10s"
+              max_trailing_logs: 1000
+              min_quorum: 3
+              server_stabilization_time: "10s"
+            validate_certs: false
+          when: vault_root_token is defined
+
+      tags: [vault, cluster, autopilot]
+
+    - name: Check cluster status
+      ansible.builtin.uri:
+        url: "{{ vault_api_addr }}/v1/sys/leader"
+        method: GET
+        validate_certs: false
+      register: vault_leader_status
+      tags: [vault, cluster, status]
+
+    - name: Display cluster information
       ansible.builtin.debug:
-        msg: "Successfully joined Vault cluster at {{ vault_join_leader_api_addr }}"
+        msg:
+          - "Cluster Name: {{ vault_cluster_name }}"
+          - "Is Leader: {{ vault_leader_status.json.is_self | default(false) }}"
+          - "Leader Address: {{ vault_leader_status.json.leader_address | default('N/A') }}"
+          - "HA Enabled: {{ vault_leader_status.json.ha_enabled | default(false) }}"
+      tags: [vault, cluster, status]
 
-  tags: [vault, cluster, join]
-
-- name: Configure Raft autopilot
-  when: vault_is_cluster_primary | bool
-  block:
-    - name: Set Raft autopilot configuration
+    - name: List Raft peers
       ansible.builtin.uri:
-        url: "{{ vault_api_addr }}/v1/sys/storage/raft/autopilot/configuration"
-        method: POST
+        url: "{{ vault_api_addr }}/v1/sys/storage/raft/configuration"
+        method: GET
         headers:
           X-Vault-Token: "{{ vault_root_token }}"
-        body_format: json
-        body:
-          cleanup_dead_servers: true
-          dead_server_last_contact_threshold: "24h"
-          last_contact_threshold: "10s"
-          max_trailing_logs: 1000
-          min_quorum: 3
-          server_stabilization_time: "10s"
         validate_certs: false
-      when: vault_root_token is defined
-
-  tags: [vault, cluster, autopilot]
-
-- name: Check cluster status
-  ansible.builtin.uri:
-    url: "{{ vault_api_addr }}/v1/sys/leader"
-    method: GET
-    validate_certs: false
-  register: vault_leader_status
-  tags: [vault, cluster, status]
-
-- name: Display cluster information
-  ansible.builtin.debug:
-    msg:
-      - "Cluster Name: {{ vault_cluster_name }}"
-      - "Is Leader: {{ vault_leader_status.json.is_self | default(false) }}"
-      - "Leader Address: {{ vault_leader_status.json.leader_address | default('N/A') }}"
-      - "HA Enabled: {{ vault_leader_status.json.ha_enabled | default(false) }}"
-  tags: [vault, cluster, status]
-
-- name: List Raft peers
-  ansible.builtin.uri:
-    url: "{{ vault_api_addr }}/v1/sys/storage/raft/configuration"
-    method: GET
-    headers:
-      X-Vault-Token: "{{ vault_root_token }}"
-    validate_certs: false
-  register: raft_peers
-  when:
-    - vault_is_cluster_primary | bool
-    - vault_root_token is defined
-  tags: [vault, cluster, peers]
-
-- name: Display Raft peers
-  ansible.builtin.debug:
-    var: raft_peers.json.data.config.servers
-  when:
-    - vault_is_cluster_primary | bool
-    - raft_peers is defined
-    - raft_peers.json is defined
-  tags: [vault, cluster, peers]
-
-- name: Configure performance replication (Enterprise primary)
-  when:
-    - vault_enterprise | default(false) | bool
-    - vault_enable_replication | bool
-    - vault_replication_mode == 'performance'
-    - vault_is_cluster_primary | bool
-  block:
-    - name: Enable performance replication primary
-      ansible.builtin.uri:
-        url: "{{ vault_api_addr }}/v1/sys/replication/performance/primary/enable"
-        method: POST
-        headers:
-          X-Vault-Token: "{{ vault_root_token }}"
-        body_format: json
-        body:
-          primary_cluster_addr: "{{ vault_replication_primary_cluster_addr }}"
-        validate_certs: false
-      when: vault_root_token is defined
-
-    - name: Generate secondary token
-      ansible.builtin.uri:
-        url: "{{ vault_api_addr }}/v1/sys/replication/performance/primary/secondary-token"
-        method: POST
-        headers:
-          X-Vault-Token: "{{ vault_root_token }}"
-        body_format: json
-        body:
-          id: "{{ vault_cluster_name }}-secondary"
-        validate_certs: false
-      register: secondary_token_result
-      when: vault_root_token is defined
-      no_log: true
-
-  tags: [vault, cluster, replication]
-
-- name: Configure performance replication (Enterprise secondary)
-  when:
-    - vault_enterprise | default(false) | bool
-    - vault_enable_replication | bool
-    - vault_replication_mode == 'performance'
-    - not vault_is_cluster_primary | bool
-    - vault_replication_secondary_token | length > 0
-  block:
-    - name: Enable performance replication secondary
-      ansible.builtin.uri:
-        url: "{{ vault_api_addr }}/v1/sys/replication/performance/secondary/enable"
-        method: POST
-        body_format: json
-        body:
-          token: "{{ vault_replication_secondary_token }}"
-          primary_api_addr: "{{ vault_replication_primary_cluster_addr }}"
-        validate_certs: false
-      no_log: true
-
-  tags: [vault, cluster, replication]
-
-- name: Configure DR replication (Enterprise)
-  when:
-    - vault_enterprise | default(false) | bool
-    - vault_enable_replication | bool
-    - vault_replication_mode == 'dr'
-  block:
-    - name: Enable DR replication primary
-      ansible.builtin.uri:
-        url: "{{ vault_api_addr }}/v1/sys/replication/dr/primary/enable"
-        method: POST
-        headers:
-          X-Vault-Token: "{{ vault_root_token }}"
-        body_format: json
-        body:
-          primary_cluster_addr: "{{ vault_dr_primary_cluster_addr }}"
-        validate_certs: false
+      register: raft_peers
       when:
         - vault_is_cluster_primary | bool
         - vault_root_token is defined
+      tags: [vault, cluster, peers]
 
-  tags: [vault, cluster, dr]
+    - name: Display Raft peers
+      ansible.builtin.debug:
+        var: raft_peers.json.data.config.servers
+      when:
+        - vault_is_cluster_primary | bool
+        - raft_peers is defined
+        - raft_peers.json is defined
+      tags: [vault, cluster, peers]
 
-- name: Create snapshot agent configuration
-  when: vault_snapshot_agent_enabled | bool
-  ansible.builtin.template:
-    src: snapshot-agent.hcl.j2
-    dest: "{{ vault_config_path }}/snapshot-agent.hcl"
-    owner: "{{ vault_user }}"
-    group: "{{ vault_group }}"
-    mode: '0640'
-  tags: [vault, cluster, snapshot]
+    - name: Configure performance replication (Enterprise primary)
+      when:
+        - vault_enterprise | default(false) | bool
+        - vault_enable_replication | bool
+        - vault_replication_mode == 'performance'
+        - vault_is_cluster_primary | bool
+      block:
+        - name: Enable performance replication primary
+          ansible.builtin.uri:
+            url: "{{ vault_api_addr }}/v1/sys/replication/performance/primary/enable"
+            method: POST
+            headers:
+              X-Vault-Token: "{{ vault_root_token }}"
+            body_format: json
+            body:
+              primary_cluster_addr: "{{ vault_replication_primary_cluster_addr }}"
+            validate_certs: false
+          when: vault_root_token is defined
 
-- name: Create snapshot agent systemd service
-  when: vault_snapshot_agent_enabled | bool
-  ansible.builtin.template:
-    src: vault-snapshot-agent.service.j2
-    dest: /etc/systemd/system/vault-snapshot-agent.service
-    owner: root
-    group: root
-    mode: '0644'
-  notify:
-    - systemd daemon reload
-    - restart vault snapshot agent
-  tags: [vault, cluster, snapshot]
+        - name: Generate secondary token
+          ansible.builtin.uri:
+            url: "{{ vault_api_addr }}/v1/sys/replication/performance/primary/secondary-token"
+            method: POST
+            headers:
+              X-Vault-Token: "{{ vault_root_token }}"
+            body_format: json
+            body:
+              id: "{{ vault_cluster_name }}-secondary"
+            validate_certs: false
+          register: secondary_token_result
+          when: vault_root_token is defined
+          no_log: true
 
-- name: Enable snapshot agent service
-  when: vault_snapshot_agent_enabled | bool
-  ansible.builtin.systemd:
-    name: vault-snapshot-agent
-    enabled: true
-    state: started
-    daemon_reload: true
-  tags: [vault, cluster, snapshot]
+      tags: [vault, cluster, replication]
 
-- name: Monitor cluster health
-  when: vault_health_check_enabled | bool
-  block:
-    - name: Create cluster health check script
+    - name: Configure performance replication (Enterprise secondary)
+      when:
+        - vault_enterprise | default(false) | bool
+        - vault_enable_replication | bool
+        - vault_replication_mode == 'performance'
+        - not vault_is_cluster_primary | bool
+        - vault_replication_secondary_token | length > 0
+      block:
+        - name: Enable performance replication secondary
+          ansible.builtin.uri:
+            url: "{{ vault_api_addr }}/v1/sys/replication/performance/secondary/enable"
+            method: POST
+            body_format: json
+            body:
+              token: "{{ vault_replication_secondary_token }}"
+              primary_api_addr: "{{ vault_replication_primary_cluster_addr }}"
+            validate_certs: false
+          no_log: true
+
+      tags: [vault, cluster, replication]
+
+    - name: Configure DR replication (Enterprise)
+      when:
+        - vault_enterprise | default(false) | bool
+        - vault_enable_replication | bool
+        - vault_replication_mode == 'dr'
+      block:
+        - name: Enable DR replication primary
+          ansible.builtin.uri:
+            url: "{{ vault_api_addr }}/v1/sys/replication/dr/primary/enable"
+            method: POST
+            headers:
+              X-Vault-Token: "{{ vault_root_token }}"
+            body_format: json
+            body:
+              primary_cluster_addr: "{{ vault_dr_primary_cluster_addr }}"
+            validate_certs: false
+          when:
+            - vault_is_cluster_primary | bool
+            - vault_root_token is defined
+
+      tags: [vault, cluster, dr]
+
+    - name: Create snapshot agent configuration
+      when: vault_snapshot_agent_enabled | bool
       ansible.builtin.template:
-        src: vault-health-check.sh.j2
-        dest: /usr/local/bin/vault-health-check.sh
+        src: snapshot-agent.hcl.j2
+        dest: "{{ vault_config_path }}/snapshot-agent.hcl"
+        owner: "{{ vault_user }}"
+        group: "{{ vault_group }}"
+        mode: '0640'
+      tags: [vault, cluster, snapshot]
+
+    - name: Create snapshot agent systemd service
+      when: vault_snapshot_agent_enabled | bool
+      ansible.builtin.template:
+        src: vault-snapshot-agent.service.j2
+        dest: /etc/systemd/system/vault-snapshot-agent.service
         owner: root
         group: root
-        mode: '0750'
+        mode: '0644'
+      notify:
+        - systemd daemon reload
+        - restart vault snapshot agent
+      tags: [vault, cluster, snapshot]
 
-    - name: Configure health check cron
-      ansible.builtin.cron:
-        name: "Vault cluster health check"
-        minute: "*/{{ vault_health_check_interval }}"
-        job: "/usr/local/bin/vault-health-check.sh >> {{ vault_log_path }}/health-check.log 2>&1"
-        user: root
+    - name: Enable snapshot agent service
+      when: vault_snapshot_agent_enabled | bool
+      ansible.builtin.systemd:
+        name: vault-snapshot-agent
+        enabled: true
+        state: started
+        daemon_reload: true
+      tags: [vault, cluster, snapshot]
 
-  tags: [vault, cluster, health]
+    - name: Monitor cluster health
+      when: vault_health_check_enabled | bool
+      block:
+        - name: Create cluster health check script
+          ansible.builtin.template:
+            src: vault-health-check.sh.j2
+            dest: /usr/local/bin/vault-health-check.sh
+            owner: root
+            group: root
+            mode: '0750'
+
+        - name: Configure health check cron
+          ansible.builtin.cron:
+            name: "Vault cluster health check"
+            minute: "*/{{ vault_health_check_interval }}"
+            job: "/usr/local/bin/vault-health-check.sh >> {{ vault_log_path }}/health-check.log 2>&1"
+            user: root
+
+      tags: [vault, cluster, health]
+
+    # ----------------------------- postflight -------------------
+
+    - name: "hashicorp_vault/vault_cluster | Postflight | Verify the guarded body ran after a passing preflight"
+      ansible.builtin.assert:
+        that:
+          - fe_hashicorp_vault_vault_cluster_preflight_passed | bool
+          - fe_hashicorp_vault_vault_cluster_status in ['running', 'succeeded']
+        fail_msg: >-
+          hashicorp_vault/vault_cluster: postflight validation failed - preflight passed
+          ={{ fe_hashicorp_vault_vault_cluster_preflight_passed | default(false) }},
+          status={{ fe_hashicorp_vault_vault_cluster_status | default('unknown') }}.
+        success_msg: "hashicorp_vault/vault_cluster: postflight validation passed."
+        quiet: true
+      tags:
+        - always
+        - postflight
+        - validation
+
+    - name: "hashicorp_vault/vault_cluster | Postflight | Record the successful outcome"
+      ansible.builtin.set_fact:
+        fe_hashicorp_vault_vault_cluster_postflight_passed: true
+        fe_hashicorp_vault_vault_cluster_status: "succeeded"
+      tags:
+        - always
+        - postflight
+        - validation
+
+  rescue:
+
+    - name: "hashicorp_vault/vault_cluster | Rescue | Capture the failing task and error detail"
+      ansible.builtin.set_fact:
+        fe_hashicorp_vault_vault_cluster_status: "failed"
+        fe_hashicorp_vault_vault_cluster_postflight_passed: false
+        fe_hashicorp_vault_vault_cluster_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+        fe_hashicorp_vault_vault_cluster_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+      tags:
+        - always
+        - rescue
+
+    - name: "hashicorp_vault/vault_cluster | Rescue | Report the failure"
+      ansible.builtin.debug:
+        msg: >-
+          hashicorp_vault/vault_cluster: FAILED at '{{ fe_hashicorp_vault_vault_cluster_failed_task }}' on
+          {{ inventory_hostname }} - {{ fe_hashicorp_vault_vault_cluster_error }}
+      tags:
+        - always
+        - rescue
+
+    - name: "hashicorp_vault/vault_cluster | Rescue | Re-raise the failure unless the caller opted to continue"
+      ansible.builtin.fail:
+        msg: >-
+          hashicorp_vault/vault_cluster failed at '{{ fe_hashicorp_vault_vault_cluster_failed_task }}': {{ fe_hashicorp_vault_vault_cluster_error }}
+      when: not (fe_validation_continue_on_error | default(false) | bool)
+      tags:
+        - always
+        - rescue
+
+  always:
+
+    - name: "hashicorp_vault/vault_cluster | Always | Compute the execution duration"
+      ansible.builtin.set_fact:
+        fe_hashicorp_vault_vault_cluster_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+        fe_hashicorp_vault_vault_cluster_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_hashicorp_vault_vault_cluster_start_epoch | default(0) | int) }}"
+      tags:
+        - always
+
+    - name: "hashicorp_vault/vault_cluster | Always | Publish the validation result with set_stats"
+      ansible.builtin.set_stats:
+        data:
+          fe_validation_results:
+            "hashicorp_vault/vault_cluster":
+              component: "hashicorp_vault/vault_cluster"
+              type: "role"
+              platform: "hashicorp_vault"
+              host: "{{ inventory_hostname }}"
+              status: "{{ fe_hashicorp_vault_vault_cluster_status | default('unknown') }}"
+              preflight_passed: "{{ fe_hashicorp_vault_vault_cluster_preflight_passed | default(false) | bool }}"
+              postflight_passed: "{{ fe_hashicorp_vault_vault_cluster_postflight_passed | default(false) | bool }}"
+              started_at: "{{ fe_hashicorp_vault_vault_cluster_started_at | default('') }}"
+              ended_at: "{{ fe_hashicorp_vault_vault_cluster_ended_at | default('') }}"
+              duration_seconds: "{{ fe_hashicorp_vault_vault_cluster_duration_seconds | default(0) | int }}"
+              failed_task: "{{ fe_hashicorp_vault_vault_cluster_failed_task | default('') }}"
+              error: "{{ fe_hashicorp_vault_vault_cluster_error | default('') }}"
+              check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+          fe_validation_executions: 1
+          fe_validation_succeeded: "{{ 1 if fe_hashicorp_vault_vault_cluster_status | default('') == 'succeeded' else 0 }}"
+          fe_validation_failed: "{{ 0 if fe_hashicorp_vault_vault_cluster_status | default('') == 'succeeded' else 1 }}"
+          fe_validation_duration_seconds: "{{ fe_hashicorp_vault_vault_cluster_duration_seconds | default(0) | int }}"
+          fe_validation_failed_components: >-
+            {{ [] if fe_hashicorp_vault_vault_cluster_status | default('') == 'succeeded' else ['hashicorp_vault/vault_cluster'] }}
+        aggregate: true
+        per_host: false
+      tags:
+        - always
+
+    - name: "hashicorp_vault/vault_cluster | Always | Mark the validation statistics as published"
+      ansible.builtin.set_fact:
+        fe_hashicorp_vault_vault_cluster_stats_published: true
+      tags:
+        - always

@@ -1,115 +1,298 @@
 ---
 # tasks file for aws_iam_users
 
-- name: Create IAM users
-  community.aws.iam_user:
-    name: "{{ item.name }}"
-    state: "{{ item.state | default(iam_user_state) }}"
-    managed_policies: "{{ item.managed_policies | default([]) }}"
-    tags: "{{ item.tags | default(iam_user_tags) | combine({'ManagedBy': 'Ansible'}) }}"
-  loop: "{{ iam_users }}"
-  when: iam_users is defined
-  register: iam_user_result
+# ---------------------------------------------------------------------------
+# Fourth Estate preflight / postflight validation harness
+#
+# The task file body below is wrapped in an Ansible block/rescue/always structure:
+#
+#   block   preflight validation runs first, then the original task file body, then
+#           postflight validation. Any failure transfers control to rescue.
+#   rescue  records which task failed and why, then re-raises so a failure is
+#           never silently swallowed. Set fe_validation_continue_on_error=true
+#           to record the failure and keep going instead.
+#   always  computes the run duration and publishes the outcome through
+#           ansible.builtin.set_stats, so a wrapping playbook, AWX/AAP or CI can
+#           consume the result without scraping log output.
+#
+# Published stats (see docs/VALIDATION_AND_STATS.md):
+#   fe_validation_results['aws/aws_iam_users']  per-component record
+#   fe_validation_executions / _succeeded / _failed / _duration_seconds
+#   fe_validation_failed_components
+#
+# Add component-specific preflight checks without editing this file by setting
+#   fe_aws_aws_iam_users_required_vars: [var_one, var_two]
+# ---------------------------------------------------------------------------
 
-- name: Create login profiles for console access
-  community.aws.iam_user:
-    name: "{{ item.name }}"
-    state: present
-    password: "{{ item.password | default(omit) }}"
-    password_reset_required: "{{ item.password_reset_required | default(true) }}"
-    update_password: "{{ item.update_password | default('on_create') }}"
-  loop: "{{ iam_users }}"
-  when:
-    - iam_users is defined
-    - item.console_access | default(false) | bool
-  no_log: true
+- name: "aws/aws_iam_users | Initialize validation state"
+  ansible.builtin.set_fact:
+    fe_aws_aws_iam_users_start_epoch: "{{ now(fmt='%s') | int }}"
+    fe_aws_aws_iam_users_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+    fe_aws_aws_iam_users_status: "running"
+    fe_aws_aws_iam_users_preflight_passed: false
+    fe_aws_aws_iam_users_postflight_passed: false
+    fe_aws_aws_iam_users_failed_task: ""
+    fe_aws_aws_iam_users_error: ""
+    fe_aws_aws_iam_users_stats_published: false
+  tags:
+    - always
 
-- name: Attach inline policies to users
-  community.aws.iam_policy:
-    iam_type: user
-    iam_name: "{{ item.0.name }}"
-    policy_name: "{{ item.1.name }}"
-    policy_document: "{{ lookup('template', item.1.template) }}"
-    state: "{{ item.0.state | default(iam_user_state) }}"
-  loop: "{{ iam_users | subelements('inline_policies', skip_missing=True) }}"
-  when: iam_users is defined
+- name: "aws/aws_iam_users | Guarded execution with preflight and postflight validation"
+  block:
 
-- name: Create access keys for programmatic access
-  community.aws.iam_access_key:
-    user_name: "{{ item.name }}"
-    state: present
-  loop: "{{ iam_users }}"
-  when:
-    - iam_users is defined
-    - item.programmatic_access | default(false) | bool
-    - item.state | default(iam_user_state) == 'present'
-  register: iam_access_keys
-  no_log: true
+    # ----------------------------- preflight --------------------
 
-- name: Save access keys to secure location
-  ansible.builtin.copy:
-    content: |
-      User: {{ item.item.name }}
-      Access Key ID: {{ item.access_key.access_key_id }}
-      Secret Access Key: {{ item.secret_access_key }}
-      Created: {{ item.access_key.create_date }}
-    dest: "{{ iam_user_keys_output_dir }}/{{ item.item.name }}_credentials.txt"
-    mode: '0600'
-  loop: "{{ iam_access_keys.results }}"
-  when:
-    - iam_access_keys is defined
-    - item.changed | default(false)
-    - item.access_key is defined
-  delegate_to: localhost
-  no_log: true
+    - name: "aws/aws_iam_users | Preflight | Verify the control node meets the minimum ansible-core version"
+      ansible.builtin.assert:
+        that:
+          - ansible_version.full is version(fe_validation_min_ansible_version | default('2.12'), '>=')
+        fail_msg: >-
+          aws/aws_iam_users: requires ansible-core
+          {{ fe_validation_min_ansible_version | default('2.12') }} or newer,
+          found {{ ansible_version.full }}.
+        success_msg: >-
+          aws/aws_iam_users: ansible-core {{ ansible_version.full }} satisfies the minimum.
+        quiet: true
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: Configure user permissions boundary
-  community.aws.iam_user:
-    name: "{{ item.name }}"
-    state: present
-    boundary: "{{ item.permissions_boundary | default(iam_user_permissions_boundary) }}"
-  loop: "{{ iam_users }}"
-  when:
-    - iam_users is defined
-    - item.permissions_boundary is defined or iam_user_permissions_boundary is defined
-    - item.state | default(iam_user_state) == 'present'
+    - name: "aws/aws_iam_users | Preflight | Verify every declared required variable is defined"
+      ansible.builtin.assert:
+        that:
+          - vars[item] is defined
+        fail_msg: "aws/aws_iam_users: required variable '{{ item }}' is not defined."
+        success_msg: "aws/aws_iam_users: required variable '{{ item }}' is defined."
+        quiet: true
+      loop: "{{ fe_aws_aws_iam_users_required_vars | default([]) }}"
+      loop_control:
+        label: "{{ item }}"
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: Add users to groups
-  community.aws.iam_group:
-    name: "{{ item.1 }}"
-    state: present
-    users:
-      - "{{ item.0.name }}"
-  loop: "{{ iam_users | subelements('groups', skip_missing=True) }}"
-  when: iam_users is defined
+    - name: "aws/aws_iam_users | Preflight | Record that preflight validation passed"
+      ansible.builtin.set_fact:
+        fe_aws_aws_iam_users_preflight_passed: true
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: Enable MFA enforcement tags
-  community.aws.iam_user:
-    name: "{{ item.name }}"
-    state: present
-    tags: "{{ item.tags | default(iam_user_tags) | combine({'MFAEnabled': 'false', 'MFAEnforced': 'true'}) }}"
-  loop: "{{ iam_users }}"
-  when:
-    - iam_users is defined
-    - iam_enforce_mfa | bool
-    - item.state | default(iam_user_state) == 'present'
+    # ----------------------------- execute ----------------------
 
-- name: Display IAM user creation summary
-  ansible.builtin.debug:
-    msg:
-      - "IAM Users Created: {{ iam_user_result.results | selectattr('changed', 'equalto', true) | list | length }}"
-      - "Total Users Managed: {{ iam_users | length }}"
-      - "Users with Console Access: {{ iam_users | selectattr('console_access', 'defined') | selectattr('console_access', 'equalto', true) | list | length }}"
-      - "Users with Programmatic Access: {{ iam_users | selectattr('programmatic_access', 'defined') | selectattr('programmatic_access', 'equalto', true) | list | length }}"
-  when:
-    - iam_users is defined
-    - iam_user_result is defined
+    - name: Create IAM users
+      community.aws.iam_user:
+        name: "{{ item.name }}"
+        state: "{{ item.state | default(iam_user_state) }}"
+        managed_policies: "{{ item.managed_policies | default([]) }}"
+        tags: "{{ item.tags | default(iam_user_tags) | combine({'ManagedBy': 'Ansible'}) }}"
+      loop: "{{ iam_users }}"
+      when: iam_users is defined
+      register: iam_user_result
 
-- name: Notify IAM user changes
-  ansible.builtin.debug:
-    msg: "IAM user changes completed"
-  changed_when: true
-  notify: notify iam user changes
-  when:
-    - iam_user_result is defined
-    - iam_user_result.changed | default(false)
+    - name: Create login profiles for console access
+      community.aws.iam_user:
+        name: "{{ item.name }}"
+        state: present
+        password: "{{ item.password | default(omit) }}"
+        password_reset_required: "{{ item.password_reset_required | default(true) }}"
+        update_password: "{{ item.update_password | default('on_create') }}"
+      loop: "{{ iam_users }}"
+      when:
+        - iam_users is defined
+        - item.console_access | default(false) | bool
+      no_log: true
+
+    - name: Attach inline policies to users
+      community.aws.iam_policy:
+        iam_type: user
+        iam_name: "{{ item.0.name }}"
+        policy_name: "{{ item.1.name }}"
+        policy_document: "{{ lookup('template', item.1.template) }}"
+        state: "{{ item.0.state | default(iam_user_state) }}"
+      loop: "{{ iam_users | subelements('inline_policies', skip_missing=True) }}"
+      when: iam_users is defined
+
+    - name: Create access keys for programmatic access
+      community.aws.iam_access_key:
+        user_name: "{{ item.name }}"
+        state: present
+      loop: "{{ iam_users }}"
+      when:
+        - iam_users is defined
+        - item.programmatic_access | default(false) | bool
+        - item.state | default(iam_user_state) == 'present'
+      register: iam_access_keys
+      no_log: true
+
+    - name: Save access keys to secure location
+      ansible.builtin.copy:
+        content: |
+          User: {{ item.item.name }}
+          Access Key ID: {{ item.access_key.access_key_id }}
+          Secret Access Key: {{ item.secret_access_key }}
+          Created: {{ item.access_key.create_date }}
+        dest: "{{ iam_user_keys_output_dir }}/{{ item.item.name }}_credentials.txt"
+        mode: '0600'
+      loop: "{{ iam_access_keys.results }}"
+      when:
+        - iam_access_keys is defined
+        - item.changed | default(false)
+        - item.access_key is defined
+      delegate_to: localhost
+      no_log: true
+
+    - name: Configure user permissions boundary
+      community.aws.iam_user:
+        name: "{{ item.name }}"
+        state: present
+        boundary: "{{ item.permissions_boundary | default(iam_user_permissions_boundary) }}"
+      loop: "{{ iam_users }}"
+      when:
+        - iam_users is defined
+        - item.permissions_boundary is defined or iam_user_permissions_boundary is defined
+        - item.state | default(iam_user_state) == 'present'
+
+    - name: Add users to groups
+      community.aws.iam_group:
+        name: "{{ item.1 }}"
+        state: present
+        users:
+          - "{{ item.0.name }}"
+      loop: "{{ iam_users | subelements('groups', skip_missing=True) }}"
+      when: iam_users is defined
+
+    - name: Enable MFA enforcement tags
+      community.aws.iam_user:
+        name: "{{ item.name }}"
+        state: present
+        tags: "{{ item.tags | default(iam_user_tags) | combine({'MFAEnabled': 'false', 'MFAEnforced': 'true'}) }}"
+      loop: "{{ iam_users }}"
+      when:
+        - iam_users is defined
+        - iam_enforce_mfa | bool
+        - item.state | default(iam_user_state) == 'present'
+
+    - name: Display IAM user creation summary
+      ansible.builtin.debug:
+        msg:
+          - "IAM Users Created: {{ iam_user_result.results | selectattr('changed', 'equalto', true) | list | length }}"
+          - "Total Users Managed: {{ iam_users | length }}"
+          - "Users with Console Access: {{ iam_users | selectattr('console_access', 'defined') | selectattr('console_access', 'equalto', true) | list | length }}"
+          - "Users with Programmatic Access: {{ iam_users | selectattr('programmatic_access', 'defined') | selectattr('programmatic_access', 'equalto', true) | list | length }}"
+      when:
+        - iam_users is defined
+        - iam_user_result is defined
+
+    - name: Notify IAM user changes
+      ansible.builtin.debug:
+        msg: "IAM user changes completed"
+      changed_when: true
+      notify: notify iam user changes
+      when:
+        - iam_user_result is defined
+        - iam_user_result.changed | default(false)
+
+    # ----------------------------- postflight -------------------
+
+    - name: "aws/aws_iam_users | Postflight | Verify the guarded body ran after a passing preflight"
+      ansible.builtin.assert:
+        that:
+          - fe_aws_aws_iam_users_preflight_passed | bool
+          - fe_aws_aws_iam_users_status in ['running', 'succeeded']
+        fail_msg: >-
+          aws/aws_iam_users: postflight validation failed - preflight passed
+          ={{ fe_aws_aws_iam_users_preflight_passed | default(false) }},
+          status={{ fe_aws_aws_iam_users_status | default('unknown') }}.
+        success_msg: "aws/aws_iam_users: postflight validation passed."
+        quiet: true
+      tags:
+        - always
+        - postflight
+        - validation
+
+    - name: "aws/aws_iam_users | Postflight | Record the successful outcome"
+      ansible.builtin.set_fact:
+        fe_aws_aws_iam_users_postflight_passed: true
+        fe_aws_aws_iam_users_status: "succeeded"
+      tags:
+        - always
+        - postflight
+        - validation
+
+  rescue:
+
+    - name: "aws/aws_iam_users | Rescue | Capture the failing task and error detail"
+      ansible.builtin.set_fact:
+        fe_aws_aws_iam_users_status: "failed"
+        fe_aws_aws_iam_users_postflight_passed: false
+        fe_aws_aws_iam_users_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+        fe_aws_aws_iam_users_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+      tags:
+        - always
+        - rescue
+
+    - name: "aws/aws_iam_users | Rescue | Report the failure"
+      ansible.builtin.debug:
+        msg: >-
+          aws/aws_iam_users: FAILED at '{{ fe_aws_aws_iam_users_failed_task }}' on
+          {{ inventory_hostname }} - {{ fe_aws_aws_iam_users_error }}
+      tags:
+        - always
+        - rescue
+
+    - name: "aws/aws_iam_users | Rescue | Re-raise the failure unless the caller opted to continue"
+      ansible.builtin.fail:
+        msg: >-
+          aws/aws_iam_users failed at '{{ fe_aws_aws_iam_users_failed_task }}': {{ fe_aws_aws_iam_users_error }}
+      when: not (fe_validation_continue_on_error | default(false) | bool)
+      tags:
+        - always
+        - rescue
+
+  always:
+
+    - name: "aws/aws_iam_users | Always | Compute the execution duration"
+      ansible.builtin.set_fact:
+        fe_aws_aws_iam_users_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+        fe_aws_aws_iam_users_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_aws_aws_iam_users_start_epoch | default(0) | int) }}"
+      tags:
+        - always
+
+    - name: "aws/aws_iam_users | Always | Publish the validation result with set_stats"
+      ansible.builtin.set_stats:
+        data:
+          fe_validation_results:
+            "aws/aws_iam_users":
+              component: "aws/aws_iam_users"
+              type: "role"
+              platform: "aws"
+              host: "{{ inventory_hostname }}"
+              status: "{{ fe_aws_aws_iam_users_status | default('unknown') }}"
+              preflight_passed: "{{ fe_aws_aws_iam_users_preflight_passed | default(false) | bool }}"
+              postflight_passed: "{{ fe_aws_aws_iam_users_postflight_passed | default(false) | bool }}"
+              started_at: "{{ fe_aws_aws_iam_users_started_at | default('') }}"
+              ended_at: "{{ fe_aws_aws_iam_users_ended_at | default('') }}"
+              duration_seconds: "{{ fe_aws_aws_iam_users_duration_seconds | default(0) | int }}"
+              failed_task: "{{ fe_aws_aws_iam_users_failed_task | default('') }}"
+              error: "{{ fe_aws_aws_iam_users_error | default('') }}"
+              check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+          fe_validation_executions: 1
+          fe_validation_succeeded: "{{ 1 if fe_aws_aws_iam_users_status | default('') == 'succeeded' else 0 }}"
+          fe_validation_failed: "{{ 0 if fe_aws_aws_iam_users_status | default('') == 'succeeded' else 1 }}"
+          fe_validation_duration_seconds: "{{ fe_aws_aws_iam_users_duration_seconds | default(0) | int }}"
+          fe_validation_failed_components: >-
+            {{ [] if fe_aws_aws_iam_users_status | default('') == 'succeeded' else ['aws/aws_iam_users'] }}
+        aggregate: true
+        per_host: false
+      tags:
+        - always
+
+    - name: "aws/aws_iam_users | Always | Mark the validation statistics as published"
+      ansible.builtin.set_fact:
+        fe_aws_aws_iam_users_stats_published: true
+      tags:
+        - always

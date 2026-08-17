@@ -2,34 +2,217 @@
 # Reusable task: Verify VAST compliance status
 # Usage: include this task to check compliance
 
-- name: Get STIG compliance status
-  ansible.builtin.uri:
-    url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port | default(443) }}/api/{{ vast_api_version | default('v1') }}/compliance/stig"
-    method: GET
-    user: "{{ vast_mgmt_user }}"
-    password: "{{ vast_mgmt_password }}"
-    force_basic_auth: true
-    validate_certs: "{{ vast_verify_ssl | default(true) }}"
-    return_content: true
-  no_log: true
-  register: compliance_check
-  delegate_to: localhost
-  changed_when: false
-  failed_when: false
+# ---------------------------------------------------------------------------
+# Fourth Estate preflight / postflight validation harness
+#
+# The task file body below is wrapped in an Ansible block/rescue/always structure:
+#
+#   block   preflight validation runs first, then the original task file body, then
+#           postflight validation. Any failure transfers control to rescue.
+#   rescue  records which task failed and why, then re-raises so a failure is
+#           never silently swallowed. Set fe_validation_continue_on_error=true
+#           to record the failure and keep going instead.
+#   always  computes the run duration and publishes the outcome through
+#           ansible.builtin.set_stats, so a wrapping playbook, AWX/AAP or CI can
+#           consume the result without scraping log output.
+#
+# Published stats (see docs/VALIDATION_AND_STATS.md):
+#   fe_validation_results['vast/verify_compliance']  per-component record
+#   fe_validation_executions / _succeeded / _failed / _duration_seconds
+#   fe_validation_failed_components
+#
+# Add component-specific preflight checks without editing this file by setting
+#   fe_vast_verify_compliance_required_vars: [var_one, var_two]
+# ---------------------------------------------------------------------------
 
-- name: Check for critical STIG findings (CAT I)
-  ansible.builtin.assert:
-    that:
-      - compliance_check.json.cat1_findings | default(0) == 0
-    fail_msg: "Critical STIG findings (CAT I) detected: {{ compliance_check.json.cat1_findings | default(0) }}"
-    success_msg: "No critical STIG findings detected"
-  when: compliance_check.json is defined
+- name: "vast/verify_compliance | Initialize validation state"
+  ansible.builtin.set_fact:
+    fe_vast_verify_compliance_start_epoch: "{{ now(fmt='%s') | int }}"
+    fe_vast_verify_compliance_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+    fe_vast_verify_compliance_status: "running"
+    fe_vast_verify_compliance_preflight_passed: false
+    fe_vast_verify_compliance_postflight_passed: false
+    fe_vast_verify_compliance_failed_task: ""
+    fe_vast_verify_compliance_error: ""
+    fe_vast_verify_compliance_stats_published: false
+  tags:
+    - always
 
-- name: Display compliance summary
-  ansible.builtin.debug:
-    msg:
-      - "Overall Status: {{ compliance_check.json.overall_status | default('unknown') }}"
-      - "CAT I Findings: {{ compliance_check.json.cat1_findings | default(0) }}"
-      - "CAT II Findings: {{ compliance_check.json.cat2_findings | default(0) }}"
-      - "CAT III Findings: {{ compliance_check.json.cat3_findings | default(0) }}"
-  when: compliance_check.json is defined
+- name: "vast/verify_compliance | Guarded execution with preflight and postflight validation"
+  block:
+
+    # ----------------------------- preflight --------------------
+
+    - name: "vast/verify_compliance | Preflight | Verify the control node meets the minimum ansible-core version"
+      ansible.builtin.assert:
+        that:
+          - ansible_version.full is version(fe_validation_min_ansible_version | default('2.12'), '>=')
+        fail_msg: >-
+          vast/verify_compliance: requires ansible-core
+          {{ fe_validation_min_ansible_version | default('2.12') }} or newer,
+          found {{ ansible_version.full }}.
+        success_msg: >-
+          vast/verify_compliance: ansible-core {{ ansible_version.full }} satisfies the minimum.
+        quiet: true
+      tags:
+        - always
+        - preflight
+        - validation
+
+    - name: "vast/verify_compliance | Preflight | Verify every declared required variable is defined"
+      ansible.builtin.assert:
+        that:
+          - vars[item] is defined
+        fail_msg: "vast/verify_compliance: required variable '{{ item }}' is not defined."
+        success_msg: "vast/verify_compliance: required variable '{{ item }}' is defined."
+        quiet: true
+      loop: "{{ fe_vast_verify_compliance_required_vars | default([]) }}"
+      loop_control:
+        label: "{{ item }}"
+      tags:
+        - always
+        - preflight
+        - validation
+
+    - name: "vast/verify_compliance | Preflight | Record that preflight validation passed"
+      ansible.builtin.set_fact:
+        fe_vast_verify_compliance_preflight_passed: true
+      tags:
+        - always
+        - preflight
+        - validation
+
+    # ----------------------------- execute ----------------------
+
+    - name: Get STIG compliance status
+      ansible.builtin.uri:
+        url: "https://{{ vast_mgmt_host }}:{{ vast_mgmt_port | default(443) }}/api/{{ vast_api_version | default('v1') }}/compliance/stig"
+        method: GET
+        user: "{{ vast_mgmt_user }}"
+        password: "{{ vast_mgmt_password }}"
+        force_basic_auth: true
+        validate_certs: "{{ vast_verify_ssl | default(true) }}"
+        return_content: true
+      no_log: true
+      register: compliance_check
+      delegate_to: localhost
+      changed_when: false
+      failed_when: false
+
+    - name: Check for critical STIG findings (CAT I)
+      ansible.builtin.assert:
+        that:
+          - compliance_check.json.cat1_findings | default(0) == 0
+        fail_msg: "Critical STIG findings (CAT I) detected: {{ compliance_check.json.cat1_findings | default(0) }}"
+        success_msg: "No critical STIG findings detected"
+      when: compliance_check.json is defined
+
+    - name: Display compliance summary
+      ansible.builtin.debug:
+        msg:
+          - "Overall Status: {{ compliance_check.json.overall_status | default('unknown') }}"
+          - "CAT I Findings: {{ compliance_check.json.cat1_findings | default(0) }}"
+          - "CAT II Findings: {{ compliance_check.json.cat2_findings | default(0) }}"
+          - "CAT III Findings: {{ compliance_check.json.cat3_findings | default(0) }}"
+      when: compliance_check.json is defined
+
+    # ----------------------------- postflight -------------------
+
+    - name: "vast/verify_compliance | Postflight | Verify the guarded body ran after a passing preflight"
+      ansible.builtin.assert:
+        that:
+          - fe_vast_verify_compliance_preflight_passed | bool
+          - fe_vast_verify_compliance_status in ['running', 'succeeded']
+        fail_msg: >-
+          vast/verify_compliance: postflight validation failed - preflight passed
+          ={{ fe_vast_verify_compliance_preflight_passed | default(false) }},
+          status={{ fe_vast_verify_compliance_status | default('unknown') }}.
+        success_msg: "vast/verify_compliance: postflight validation passed."
+        quiet: true
+      tags:
+        - always
+        - postflight
+        - validation
+
+    - name: "vast/verify_compliance | Postflight | Record the successful outcome"
+      ansible.builtin.set_fact:
+        fe_vast_verify_compliance_postflight_passed: true
+        fe_vast_verify_compliance_status: "succeeded"
+      tags:
+        - always
+        - postflight
+        - validation
+
+  rescue:
+
+    - name: "vast/verify_compliance | Rescue | Capture the failing task and error detail"
+      ansible.builtin.set_fact:
+        fe_vast_verify_compliance_status: "failed"
+        fe_vast_verify_compliance_postflight_passed: false
+        fe_vast_verify_compliance_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+        fe_vast_verify_compliance_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+      tags:
+        - always
+        - rescue
+
+    - name: "vast/verify_compliance | Rescue | Report the failure"
+      ansible.builtin.debug:
+        msg: >-
+          vast/verify_compliance: FAILED at '{{ fe_vast_verify_compliance_failed_task }}' on
+          {{ inventory_hostname }} - {{ fe_vast_verify_compliance_error }}
+      tags:
+        - always
+        - rescue
+
+    - name: "vast/verify_compliance | Rescue | Re-raise the failure unless the caller opted to continue"
+      ansible.builtin.fail:
+        msg: >-
+          vast/verify_compliance failed at '{{ fe_vast_verify_compliance_failed_task }}': {{ fe_vast_verify_compliance_error }}
+      when: not (fe_validation_continue_on_error | default(false) | bool)
+      tags:
+        - always
+        - rescue
+
+  always:
+
+    - name: "vast/verify_compliance | Always | Compute the execution duration"
+      ansible.builtin.set_fact:
+        fe_vast_verify_compliance_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+        fe_vast_verify_compliance_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_vast_verify_compliance_start_epoch | default(0) | int) }}"
+      tags:
+        - always
+
+    - name: "vast/verify_compliance | Always | Publish the validation result with set_stats"
+      ansible.builtin.set_stats:
+        data:
+          fe_validation_results:
+            "vast/verify_compliance":
+              component: "vast/verify_compliance"
+              type: "tasks"
+              platform: "vast"
+              host: "{{ inventory_hostname }}"
+              status: "{{ fe_vast_verify_compliance_status | default('unknown') }}"
+              preflight_passed: "{{ fe_vast_verify_compliance_preflight_passed | default(false) | bool }}"
+              postflight_passed: "{{ fe_vast_verify_compliance_postflight_passed | default(false) | bool }}"
+              started_at: "{{ fe_vast_verify_compliance_started_at | default('') }}"
+              ended_at: "{{ fe_vast_verify_compliance_ended_at | default('') }}"
+              duration_seconds: "{{ fe_vast_verify_compliance_duration_seconds | default(0) | int }}"
+              failed_task: "{{ fe_vast_verify_compliance_failed_task | default('') }}"
+              error: "{{ fe_vast_verify_compliance_error | default('') }}"
+              check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+          fe_validation_executions: 1
+          fe_validation_succeeded: "{{ 1 if fe_vast_verify_compliance_status | default('') == 'succeeded' else 0 }}"
+          fe_validation_failed: "{{ 0 if fe_vast_verify_compliance_status | default('') == 'succeeded' else 1 }}"
+          fe_validation_duration_seconds: "{{ fe_vast_verify_compliance_duration_seconds | default(0) | int }}"
+          fe_validation_failed_components: >-
+            {{ [] if fe_vast_verify_compliance_status | default('') == 'succeeded' else ['vast/verify_compliance'] }}
+        aggregate: true
+        per_host: false
+      tags:
+        - always
+
+    - name: "vast/verify_compliance | Always | Mark the validation statistics as published"
+      ansible.builtin.set_fact:
+        fe_vast_verify_compliance_stats_published: true
+      tags:
+        - always

@@ -1,25 +1,207 @@
 ---
 
-- name: Ensure artifacts directory exists
-  ansible.builtin.file:
-    path: "{{ artifacts_dir }}"
-    state: directory
-    mode: "0755"
+# ---------------------------------------------------------------------------
+# Fourth Estate preflight / postflight validation harness
+#
+# The task file body below is wrapped in an Ansible block/rescue/always structure:
+#
+#   block   preflight validation runs first, then the original task file body, then
+#           postflight validation. Any failure transfers control to rescue.
+#   rescue  records which task failed and why, then re-raises so a failure is
+#           never silently swallowed. Set fe_validation_continue_on_error=true
+#           to record the failure and keep going instead.
+#   always  computes the run duration and publishes the outcome through
+#           ansible.builtin.set_stats, so a wrapping playbook, AWX/AAP or CI can
+#           consume the result without scraping log output.
+#
+# Published stats (see docs/VALIDATION_AND_STATS.md):
+#   fe_validation_results['openshift/ocp_service_mesh']  per-component record
+#   fe_validation_executions / _succeeded / _failed / _duration_seconds
+#   fe_validation_failed_components
+#
+# Add component-specific preflight checks without editing this file by setting
+#   fe_openshift_ocp_service_mesh_required_vars: [var_one, var_two]
+# ---------------------------------------------------------------------------
+
+- name: "openshift/ocp_service_mesh | Initialize validation state"
+  ansible.builtin.set_fact:
+    fe_openshift_ocp_service_mesh_start_epoch: "{{ now(fmt='%s') | int }}"
+    fe_openshift_ocp_service_mesh_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+    fe_openshift_ocp_service_mesh_status: "running"
+    fe_openshift_ocp_service_mesh_preflight_passed: false
+    fe_openshift_ocp_service_mesh_postflight_passed: false
+    fe_openshift_ocp_service_mesh_failed_task: ""
+    fe_openshift_ocp_service_mesh_error: ""
+    fe_openshift_ocp_service_mesh_stats_published: false
+  tags:
+    - always
+
+- name: "openshift/ocp_service_mesh | Guarded execution with preflight and postflight validation"
+  block:
+
+    # ----------------------------- preflight --------------------
+
+    - name: "openshift/ocp_service_mesh | Preflight | Verify the control node meets the minimum ansible-core version"
+      ansible.builtin.assert:
+        that:
+          - ansible_version.full is version(fe_validation_min_ansible_version | default('2.12'), '>=')
+        fail_msg: >-
+          openshift/ocp_service_mesh: requires ansible-core
+          {{ fe_validation_min_ansible_version | default('2.12') }} or newer,
+          found {{ ansible_version.full }}.
+        success_msg: >-
+          openshift/ocp_service_mesh: ansible-core {{ ansible_version.full }} satisfies the minimum.
+        quiet: true
+      tags:
+        - always
+        - preflight
+        - validation
+
+    - name: "openshift/ocp_service_mesh | Preflight | Verify every declared required variable is defined"
+      ansible.builtin.assert:
+        that:
+          - vars[item] is defined
+        fail_msg: "openshift/ocp_service_mesh: required variable '{{ item }}' is not defined."
+        success_msg: "openshift/ocp_service_mesh: required variable '{{ item }}' is defined."
+        quiet: true
+      loop: "{{ fe_openshift_ocp_service_mesh_required_vars | default([]) }}"
+      loop_control:
+        label: "{{ item }}"
+      tags:
+        - always
+        - preflight
+        - validation
+
+    - name: "openshift/ocp_service_mesh | Preflight | Record that preflight validation passed"
+      ansible.builtin.set_fact:
+        fe_openshift_ocp_service_mesh_preflight_passed: true
+      tags:
+        - always
+        - preflight
+        - validation
+
+    # ----------------------------- execute ----------------------
+
+    - name: Ensure artifacts directory exists
+      ansible.builtin.file:
+        path: "{{ artifacts_dir }}"
+        state: directory
+        mode: "0755"
 
 
-- name: Apply Service Mesh manifests
-  kubernetes.core.k8s:
-    kubeconfig: "{{ kubeconfig }}"
-    state: present
-    definition: "{{ item }}"
-  loop: "{{ ossm_manifests }}"
-  loop_control: { label: "{{ item.kind }}:{{ item.metadata.name }}" }
+    - name: Apply Service Mesh manifests
+      kubernetes.core.k8s:
+        kubeconfig: "{{ kubeconfig }}"
+        state: present
+        definition: "{{ item }}"
+      loop: "{{ ossm_manifests }}"
+      loop_control: { label: "{{ item.kind }}:{{ item.metadata.name }}" }
 
-- name: Apply Mesh policies and gateways
-  kubernetes.core.k8s:
-    kubeconfig: "{{ kubeconfig }}"
-    state: present
-    definition: "{{ item }}"
-  loop: "{{ mesh_policies }}"
-  loop_control: { label: "{{ item.kind }}:{{ item.metadata.name }}" }
+    - name: Apply Mesh policies and gateways
+      kubernetes.core.k8s:
+        kubeconfig: "{{ kubeconfig }}"
+        state: present
+        definition: "{{ item }}"
+      loop: "{{ mesh_policies }}"
+      loop_control: { label: "{{ item.kind }}:{{ item.metadata.name }}" }
 
+    # ----------------------------- postflight -------------------
+
+    - name: "openshift/ocp_service_mesh | Postflight | Verify the guarded body ran after a passing preflight"
+      ansible.builtin.assert:
+        that:
+          - fe_openshift_ocp_service_mesh_preflight_passed | bool
+          - fe_openshift_ocp_service_mesh_status in ['running', 'succeeded']
+        fail_msg: >-
+          openshift/ocp_service_mesh: postflight validation failed - preflight passed
+          ={{ fe_openshift_ocp_service_mesh_preflight_passed | default(false) }},
+          status={{ fe_openshift_ocp_service_mesh_status | default('unknown') }}.
+        success_msg: "openshift/ocp_service_mesh: postflight validation passed."
+        quiet: true
+      tags:
+        - always
+        - postflight
+        - validation
+
+    - name: "openshift/ocp_service_mesh | Postflight | Record the successful outcome"
+      ansible.builtin.set_fact:
+        fe_openshift_ocp_service_mesh_postflight_passed: true
+        fe_openshift_ocp_service_mesh_status: "succeeded"
+      tags:
+        - always
+        - postflight
+        - validation
+
+  rescue:
+
+    - name: "openshift/ocp_service_mesh | Rescue | Capture the failing task and error detail"
+      ansible.builtin.set_fact:
+        fe_openshift_ocp_service_mesh_status: "failed"
+        fe_openshift_ocp_service_mesh_postflight_passed: false
+        fe_openshift_ocp_service_mesh_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+        fe_openshift_ocp_service_mesh_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+      tags:
+        - always
+        - rescue
+
+    - name: "openshift/ocp_service_mesh | Rescue | Report the failure"
+      ansible.builtin.debug:
+        msg: >-
+          openshift/ocp_service_mesh: FAILED at '{{ fe_openshift_ocp_service_mesh_failed_task }}' on
+          {{ inventory_hostname }} - {{ fe_openshift_ocp_service_mesh_error }}
+      tags:
+        - always
+        - rescue
+
+    - name: "openshift/ocp_service_mesh | Rescue | Re-raise the failure unless the caller opted to continue"
+      ansible.builtin.fail:
+        msg: >-
+          openshift/ocp_service_mesh failed at '{{ fe_openshift_ocp_service_mesh_failed_task }}': {{ fe_openshift_ocp_service_mesh_error }}
+      when: not (fe_validation_continue_on_error | default(false) | bool)
+      tags:
+        - always
+        - rescue
+
+  always:
+
+    - name: "openshift/ocp_service_mesh | Always | Compute the execution duration"
+      ansible.builtin.set_fact:
+        fe_openshift_ocp_service_mesh_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+        fe_openshift_ocp_service_mesh_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_openshift_ocp_service_mesh_start_epoch | default(0) | int) }}"
+      tags:
+        - always
+
+    - name: "openshift/ocp_service_mesh | Always | Publish the validation result with set_stats"
+      ansible.builtin.set_stats:
+        data:
+          fe_validation_results:
+            "openshift/ocp_service_mesh":
+              component: "openshift/ocp_service_mesh"
+              type: "role"
+              platform: "openshift"
+              host: "{{ inventory_hostname }}"
+              status: "{{ fe_openshift_ocp_service_mesh_status | default('unknown') }}"
+              preflight_passed: "{{ fe_openshift_ocp_service_mesh_preflight_passed | default(false) | bool }}"
+              postflight_passed: "{{ fe_openshift_ocp_service_mesh_postflight_passed | default(false) | bool }}"
+              started_at: "{{ fe_openshift_ocp_service_mesh_started_at | default('') }}"
+              ended_at: "{{ fe_openshift_ocp_service_mesh_ended_at | default('') }}"
+              duration_seconds: "{{ fe_openshift_ocp_service_mesh_duration_seconds | default(0) | int }}"
+              failed_task: "{{ fe_openshift_ocp_service_mesh_failed_task | default('') }}"
+              error: "{{ fe_openshift_ocp_service_mesh_error | default('') }}"
+              check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+          fe_validation_executions: 1
+          fe_validation_succeeded: "{{ 1 if fe_openshift_ocp_service_mesh_status | default('') == 'succeeded' else 0 }}"
+          fe_validation_failed: "{{ 0 if fe_openshift_ocp_service_mesh_status | default('') == 'succeeded' else 1 }}"
+          fe_validation_duration_seconds: "{{ fe_openshift_ocp_service_mesh_duration_seconds | default(0) | int }}"
+          fe_validation_failed_components: >-
+            {{ [] if fe_openshift_ocp_service_mesh_status | default('') == 'succeeded' else ['openshift/ocp_service_mesh'] }}
+        aggregate: true
+        per_host: false
+      tags:
+        - always
+
+    - name: "openshift/ocp_service_mesh | Always | Mark the validation statistics as published"
+      ansible.builtin.set_fact:
+        fe_openshift_ocp_service_mesh_stats_published: true
+      tags:
+        - always

@@ -1,96 +1,279 @@
 ---
 # End-of-Life Tracking
 
-- name: Check EOL and EOSL status
+# ---------------------------------------------------------------------------
+# Fourth Estate preflight / postflight validation harness
+#
+# The task file body below is wrapped in an Ansible block/rescue/always structure:
+#
+#   block   preflight validation runs first, then the original task file body, then
+#           postflight validation. Any failure transfers control to rescue.
+#   rescue  records which task failed and why, then re-raises so a failure is
+#           never silently swallowed. Set fe_validation_continue_on_error=true
+#           to record the failure and keep going instead.
+#   always  computes the run duration and publishes the outcome through
+#           ansible.builtin.set_stats, so a wrapping playbook, AWX/AAP or CI can
+#           consume the result without scraping log output.
+#
+# Published stats (see docs/VALIDATION_AND_STATS.md):
+#   fe_validation_results['operational_technology/ot_asset_lifecycle/includes/eol_tracking']  per-component record
+#   fe_validation_executions / _succeeded / _failed / _duration_seconds
+#   fe_validation_failed_components
+#
+# Add component-specific preflight checks without editing this file by setting
+#   fe_operational_technology_ot_asset_lifecycle_includes_eol_tracking_required_vars: [var_one, var_two]
+# ---------------------------------------------------------------------------
+
+- name: "operational_technology/ot_asset_lifecycle/includes/eol_tracking | Initialize validation state"
   ansible.builtin.set_fact:
-    eol_reached: "{{ (ot_asset_eol_date | default('') | length > 0) and ((ot_asset_eol_date | to_datetime) < (ansible_date_time.iso8601 | to_datetime)) }}"
-    eosl_reached: "{{ (ot_asset_eosl_date | default('') | length > 0) and ((ot_asset_eosl_date | to_datetime) < (ansible_date_time.iso8601 | to_datetime)) }}"
-  when: ot_asset_eol_date is defined or ot_asset_eosl_date is defined
+    fe_operational_technology_ot_asset_lifecycle_includes_eol_tracking_start_epoch: "{{ now(fmt='%s') | int }}"
+    fe_operational_technology_ot_asset_lifecycle_includes_eol_tracking_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+    fe_operational_technology_ot_asset_lifecycle_includes_eol_tracking_status: "running"
+    fe_operational_technology_ot_asset_lifecycle_includes_eol_tracking_preflight_passed: false
+    fe_operational_technology_ot_asset_lifecycle_includes_eol_tracking_postflight_passed: false
+    fe_operational_technology_ot_asset_lifecycle_includes_eol_tracking_failed_task: ""
+    fe_operational_technology_ot_asset_lifecycle_includes_eol_tracking_error: ""
+    fe_operational_technology_ot_asset_lifecycle_includes_eol_tracking_stats_published: false
+  tags:
+    - always
 
-- name: Calculate days until EOL
-  ansible.builtin.set_fact:
-    eol_days_remaining: "{{ ((ot_asset_eol_date | to_datetime) - (ansible_date_time.iso8601 | to_datetime)).days }}"
-  when:
-    - ot_asset_eol_date is defined
-    - ot_asset_eol_date | length > 0
-    - not eol_reached | default(false)
+- name: "operational_technology/ot_asset_lifecycle/includes/eol_tracking | Guarded execution with preflight and postflight validation"
+  block:
 
-- name: Calculate days until EOSL
-  ansible.builtin.set_fact:
-    eosl_days_remaining: "{{ ((ot_asset_eosl_date | to_datetime) - (ansible_date_time.iso8601 | to_datetime)).days }}"
-  when:
-    - ot_asset_eosl_date is defined
-    - ot_asset_eosl_date | length > 0
-    - not eosl_reached | default(false)
+    # ----------------------------- preflight --------------------
 
-- name: Create EOL tracking record
-  ansible.builtin.set_fact:
-    eol_record:
-      asset_id: "{{ ot_asset_id }}"
-      vendor: "{{ ot_asset_vendor }}"
-      model: "{{ ot_asset_model }}"
-      firmware_version: "{{ ot_asset_firmware_version }}"
-      eol_date: "{{ ot_asset_eol_date }}"
-      eol_reached: "{{ eol_reached | default(false) }}"
-      eol_days_remaining: "{{ eol_days_remaining | default('N/A') }}"
-      eosl_date: "{{ ot_asset_eosl_date }}"
-      eosl_reached: "{{ eosl_reached | default(false) }}"
-      eosl_days_remaining: "{{ eosl_days_remaining | default('N/A') }}"
-      criticality: "{{ ot_asset_criticality }}"
-      replacement_required: "{{ eol_reached | default(false) or (eol_days_remaining | default(999) | int < 180) }}"
-      checked_at: "{{ ansible_date_time.iso8601 }}"
+    - name: "operational_technology/ot_asset_lifecycle/includes/eol_tracking | Preflight | Verify the control node meets the minimum ansible-core version"
+      ansible.builtin.assert:
+        that:
+          - ansible_version.full is version(fe_validation_min_ansible_version | default('2.12'), '>=')
+        fail_msg: >-
+          operational_technology/ot_asset_lifecycle/includes/eol_tracking: requires ansible-core
+          {{ fe_validation_min_ansible_version | default('2.12') }} or newer,
+          found {{ ansible_version.full }}.
+        success_msg: >-
+          operational_technology/ot_asset_lifecycle/includes/eol_tracking: ansible-core {{ ansible_version.full }} satisfies the minimum.
+        quiet: true
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: Save EOL tracking record
-  ansible.builtin.copy:
-    content: "{{ eol_record | to_nice_json }}"
-    dest: "{{ ot_asset_artifacts_dir }}/eol_{{ ot_asset_id }}.json"
-    mode: '0640'
+    - name: "operational_technology/ot_asset_lifecycle/includes/eol_tracking | Preflight | Verify every declared required variable is defined"
+      ansible.builtin.assert:
+        that:
+          - vars[item] is defined
+        fail_msg: "operational_technology/ot_asset_lifecycle/includes/eol_tracking: required variable '{{ item }}' is not defined."
+        success_msg: "operational_technology/ot_asset_lifecycle/includes/eol_tracking: required variable '{{ item }}' is defined."
+        quiet: true
+      loop: "{{ fe_operational_technology_ot_asset_lifecycle_includes_eol_tracking_required_vars | default([]) }}"
+      loop_control:
+        label: "{{ item }}"
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: Alert if EOL approaching (within 180 days)
-  ansible.builtin.debug:
-    msg: "CRITICAL: Asset {{ ot_asset_id }} reaches End-of-Life in {{ eol_days_remaining }} days - Replacement planning required"
-  when:
-    - eol_days_remaining is defined
-    - eol_days_remaining | int < 180
-    - eol_days_remaining | int > 0
+    - name: "operational_technology/ot_asset_lifecycle/includes/eol_tracking | Preflight | Record that preflight validation passed"
+      ansible.builtin.set_fact:
+        fe_operational_technology_ot_asset_lifecycle_includes_eol_tracking_preflight_passed: true
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: Alert if EOL reached
-  ansible.builtin.debug:
-    msg: "CRITICAL: Asset {{ ot_asset_id }} has reached End-of-Life - Immediate replacement required"
-  when:
-    - eol_reached is defined
-    - eol_reached | bool
+    # ----------------------------- execute ----------------------
 
-- name: Alert if EOSL approaching (within 90 days)
-  ansible.builtin.debug:
-    msg: "WARNING: Asset {{ ot_asset_id }} reaches End-of-Service-Life in {{ eosl_days_remaining }} days"
-  when:
-    - eosl_days_remaining is defined
-    - eosl_days_remaining | int < 90
-    - eosl_days_remaining | int > 0
+    - name: Check EOL and EOSL status
+      ansible.builtin.set_fact:
+        eol_reached: "{{ (ot_asset_eol_date | default('') | length > 0) and ((ot_asset_eol_date | to_datetime) < (ansible_date_time.iso8601 | to_datetime)) }}"
+        eosl_reached: "{{ (ot_asset_eosl_date | default('') | length > 0) and ((ot_asset_eosl_date | to_datetime) < (ansible_date_time.iso8601 | to_datetime)) }}"
+      when: ot_asset_eol_date is defined or ot_asset_eosl_date is defined
 
-- name: Update asset with EOL status
-  ansible.builtin.uri:
-    url: "{{ ot_asset_api_url }}/assets/{{ ot_asset_id }}"
-    method: PATCH
-    headers:
-      Authorization: "Bearer {{ ot_asset_api_token }}"
-      Content-Type: "application/json"
-    body_format: json
-    body:
-      eol_status:
-        eol_reached: "{{ eol_reached | default(false) }}"
-        eosl_reached: "{{ eosl_reached | default(false) }}"
-        replacement_required: "{{ eol_reached | default(false) or (eol_days_remaining | default(999) | int < 180) }}"
-    validate_certs: "{{ ot_asset_verify_ssl }}"
-    status_code: [200, 204]
-  when:
-    - ot_asset_api_token | length > 0
-    - not ot_asset_dry_run
+    - name: Calculate days until EOL
+      ansible.builtin.set_fact:
+        eol_days_remaining: "{{ ((ot_asset_eol_date | to_datetime) - (ansible_date_time.iso8601 | to_datetime)).days }}"
+      when:
+        - ot_asset_eol_date is defined
+        - ot_asset_eol_date | length > 0
+        - not eol_reached | default(false)
 
-- name: Log EOL tracking
-  ansible.builtin.lineinfile:
-    path: "{{ ot_asset_log_dir }}/eol_tracking.log"
-    line: "{{ ansible_date_time.iso8601 }} | {{ ot_asset_id }} | EOL: {{ eol_reached | default('unknown') }} | EOSL: {{ eosl_reached | default('unknown') }}"
-    create: yes
-    mode: '0640'
+    - name: Calculate days until EOSL
+      ansible.builtin.set_fact:
+        eosl_days_remaining: "{{ ((ot_asset_eosl_date | to_datetime) - (ansible_date_time.iso8601 | to_datetime)).days }}"
+      when:
+        - ot_asset_eosl_date is defined
+        - ot_asset_eosl_date | length > 0
+        - not eosl_reached | default(false)
+
+    - name: Create EOL tracking record
+      ansible.builtin.set_fact:
+        eol_record:
+          asset_id: "{{ ot_asset_id }}"
+          vendor: "{{ ot_asset_vendor }}"
+          model: "{{ ot_asset_model }}"
+          firmware_version: "{{ ot_asset_firmware_version }}"
+          eol_date: "{{ ot_asset_eol_date }}"
+          eol_reached: "{{ eol_reached | default(false) }}"
+          eol_days_remaining: "{{ eol_days_remaining | default('N/A') }}"
+          eosl_date: "{{ ot_asset_eosl_date }}"
+          eosl_reached: "{{ eosl_reached | default(false) }}"
+          eosl_days_remaining: "{{ eosl_days_remaining | default('N/A') }}"
+          criticality: "{{ ot_asset_criticality }}"
+          replacement_required: "{{ eol_reached | default(false) or (eol_days_remaining | default(999) | int < 180) }}"
+          checked_at: "{{ ansible_date_time.iso8601 }}"
+
+    - name: Save EOL tracking record
+      ansible.builtin.copy:
+        content: "{{ eol_record | to_nice_json }}"
+        dest: "{{ ot_asset_artifacts_dir }}/eol_{{ ot_asset_id }}.json"
+        mode: '0640'
+
+    - name: Alert if EOL approaching (within 180 days)
+      ansible.builtin.debug:
+        msg: "CRITICAL: Asset {{ ot_asset_id }} reaches End-of-Life in {{ eol_days_remaining }} days - Replacement planning required"
+      when:
+        - eol_days_remaining is defined
+        - eol_days_remaining | int < 180
+        - eol_days_remaining | int > 0
+
+    - name: Alert if EOL reached
+      ansible.builtin.debug:
+        msg: "CRITICAL: Asset {{ ot_asset_id }} has reached End-of-Life - Immediate replacement required"
+      when:
+        - eol_reached is defined
+        - eol_reached | bool
+
+    - name: Alert if EOSL approaching (within 90 days)
+      ansible.builtin.debug:
+        msg: "WARNING: Asset {{ ot_asset_id }} reaches End-of-Service-Life in {{ eosl_days_remaining }} days"
+      when:
+        - eosl_days_remaining is defined
+        - eosl_days_remaining | int < 90
+        - eosl_days_remaining | int > 0
+
+    - name: Update asset with EOL status
+      ansible.builtin.uri:
+        url: "{{ ot_asset_api_url }}/assets/{{ ot_asset_id }}"
+        method: PATCH
+        headers:
+          Authorization: "Bearer {{ ot_asset_api_token }}"
+          Content-Type: "application/json"
+        body_format: json
+        body:
+          eol_status:
+            eol_reached: "{{ eol_reached | default(false) }}"
+            eosl_reached: "{{ eosl_reached | default(false) }}"
+            replacement_required: "{{ eol_reached | default(false) or (eol_days_remaining | default(999) | int < 180) }}"
+        validate_certs: "{{ ot_asset_verify_ssl }}"
+        status_code: [200, 204]
+      when:
+        - ot_asset_api_token | length > 0
+        - not ot_asset_dry_run
+
+    - name: Log EOL tracking
+      ansible.builtin.lineinfile:
+        path: "{{ ot_asset_log_dir }}/eol_tracking.log"
+        line: "{{ ansible_date_time.iso8601 }} | {{ ot_asset_id }} | EOL: {{ eol_reached | default('unknown') }} | EOSL: {{ eosl_reached | default('unknown') }}"
+        create: yes
+        mode: '0640'
+
+    # ----------------------------- postflight -------------------
+
+    - name: "operational_technology/ot_asset_lifecycle/includes/eol_tracking | Postflight | Verify the guarded body ran after a passing preflight"
+      ansible.builtin.assert:
+        that:
+          - fe_operational_technology_ot_asset_lifecycle_includes_eol_tracking_preflight_passed | bool
+          - fe_operational_technology_ot_asset_lifecycle_includes_eol_tracking_status in ['running', 'succeeded']
+        fail_msg: >-
+          operational_technology/ot_asset_lifecycle/includes/eol_tracking: postflight validation failed - preflight passed
+          ={{ fe_operational_technology_ot_asset_lifecycle_includes_eol_tracking_preflight_passed | default(false) }},
+          status={{ fe_operational_technology_ot_asset_lifecycle_includes_eol_tracking_status | default('unknown') }}.
+        success_msg: "operational_technology/ot_asset_lifecycle/includes/eol_tracking: postflight validation passed."
+        quiet: true
+      tags:
+        - always
+        - postflight
+        - validation
+
+    - name: "operational_technology/ot_asset_lifecycle/includes/eol_tracking | Postflight | Record the successful outcome"
+      ansible.builtin.set_fact:
+        fe_operational_technology_ot_asset_lifecycle_includes_eol_tracking_postflight_passed: true
+        fe_operational_technology_ot_asset_lifecycle_includes_eol_tracking_status: "succeeded"
+      tags:
+        - always
+        - postflight
+        - validation
+
+  rescue:
+
+    - name: "operational_technology/ot_asset_lifecycle/includes/eol_tracking | Rescue | Capture the failing task and error detail"
+      ansible.builtin.set_fact:
+        fe_operational_technology_ot_asset_lifecycle_includes_eol_tracking_status: "failed"
+        fe_operational_technology_ot_asset_lifecycle_includes_eol_tracking_postflight_passed: false
+        fe_operational_technology_ot_asset_lifecycle_includes_eol_tracking_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+        fe_operational_technology_ot_asset_lifecycle_includes_eol_tracking_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+      tags:
+        - always
+        - rescue
+
+    - name: "operational_technology/ot_asset_lifecycle/includes/eol_tracking | Rescue | Report the failure"
+      ansible.builtin.debug:
+        msg: >-
+          operational_technology/ot_asset_lifecycle/includes/eol_tracking: FAILED at '{{ fe_operational_technology_ot_asset_lifecycle_includes_eol_tracking_failed_task }}' on
+          {{ inventory_hostname }} - {{ fe_operational_technology_ot_asset_lifecycle_includes_eol_tracking_error }}
+      tags:
+        - always
+        - rescue
+
+    - name: "operational_technology/ot_asset_lifecycle/includes/eol_tracking | Rescue | Re-raise the failure unless the caller opted to continue"
+      ansible.builtin.fail:
+        msg: >-
+          operational_technology/ot_asset_lifecycle/includes/eol_tracking failed at '{{ fe_operational_technology_ot_asset_lifecycle_includes_eol_tracking_failed_task }}': {{ fe_operational_technology_ot_asset_lifecycle_includes_eol_tracking_error }}
+      when: not (fe_validation_continue_on_error | default(false) | bool)
+      tags:
+        - always
+        - rescue
+
+  always:
+
+    - name: "operational_technology/ot_asset_lifecycle/includes/eol_tracking | Always | Compute the execution duration"
+      ansible.builtin.set_fact:
+        fe_operational_technology_ot_asset_lifecycle_includes_eol_tracking_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+        fe_operational_technology_ot_asset_lifecycle_includes_eol_tracking_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_operational_technology_ot_asset_lifecycle_includes_eol_tracking_start_epoch | default(0) | int) }}"
+      tags:
+        - always
+
+    - name: "operational_technology/ot_asset_lifecycle/includes/eol_tracking | Always | Publish the validation result with set_stats"
+      ansible.builtin.set_stats:
+        data:
+          fe_validation_results:
+            "operational_technology/ot_asset_lifecycle/includes/eol_tracking":
+              component: "operational_technology/ot_asset_lifecycle/includes/eol_tracking"
+              type: "role-tasks"
+              platform: "operational_technology"
+              host: "{{ inventory_hostname }}"
+              status: "{{ fe_operational_technology_ot_asset_lifecycle_includes_eol_tracking_status | default('unknown') }}"
+              preflight_passed: "{{ fe_operational_technology_ot_asset_lifecycle_includes_eol_tracking_preflight_passed | default(false) | bool }}"
+              postflight_passed: "{{ fe_operational_technology_ot_asset_lifecycle_includes_eol_tracking_postflight_passed | default(false) | bool }}"
+              started_at: "{{ fe_operational_technology_ot_asset_lifecycle_includes_eol_tracking_started_at | default('') }}"
+              ended_at: "{{ fe_operational_technology_ot_asset_lifecycle_includes_eol_tracking_ended_at | default('') }}"
+              duration_seconds: "{{ fe_operational_technology_ot_asset_lifecycle_includes_eol_tracking_duration_seconds | default(0) | int }}"
+              failed_task: "{{ fe_operational_technology_ot_asset_lifecycle_includes_eol_tracking_failed_task | default('') }}"
+              error: "{{ fe_operational_technology_ot_asset_lifecycle_includes_eol_tracking_error | default('') }}"
+              check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+          fe_validation_executions: 1
+          fe_validation_succeeded: "{{ 1 if fe_operational_technology_ot_asset_lifecycle_includes_eol_tracking_status | default('') == 'succeeded' else 0 }}"
+          fe_validation_failed: "{{ 0 if fe_operational_technology_ot_asset_lifecycle_includes_eol_tracking_status | default('') == 'succeeded' else 1 }}"
+          fe_validation_duration_seconds: "{{ fe_operational_technology_ot_asset_lifecycle_includes_eol_tracking_duration_seconds | default(0) | int }}"
+          fe_validation_failed_components: >-
+            {{ [] if fe_operational_technology_ot_asset_lifecycle_includes_eol_tracking_status | default('') == 'succeeded' else ['operational_technology/ot_asset_lifecycle/includes/eol_tracking'] }}
+        aggregate: true
+        per_host: false
+      tags:
+        - always
+
+    - name: "operational_technology/ot_asset_lifecycle/includes/eol_tracking | Always | Mark the validation statistics as published"
+      ansible.builtin.set_fact:
+        fe_operational_technology_ot_asset_lifecycle_includes_eol_tracking_stats_published: true
+      tags:
+        - always

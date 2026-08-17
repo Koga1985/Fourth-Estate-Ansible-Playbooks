@@ -1,87 +1,270 @@
 ---
 # OT Firmware Register - Main Tasks
 
-- name: Validate required variables
-  ansible.builtin.assert:
-    that:
-      - ot_firmware_api_url is defined
-      - ot_firmware_operation in ['register', 'verify', 'baseline', 'update_plan', 'rollback']
-    fail_msg: "Required variables not properly configured"
+# ---------------------------------------------------------------------------
+# Fourth Estate preflight / postflight validation harness
+#
+# The task file body below is wrapped in an Ansible block/rescue/always structure:
+#
+#   block   preflight validation runs first, then the original task file body, then
+#           postflight validation. Any failure transfers control to rescue.
+#   rescue  records which task failed and why, then re-raises so a failure is
+#           never silently swallowed. Set fe_validation_continue_on_error=true
+#           to record the failure and keep going instead.
+#   always  computes the run duration and publishes the outcome through
+#           ansible.builtin.set_stats, so a wrapping playbook, AWX/AAP or CI can
+#           consume the result without scraping log output.
+#
+# Published stats (see docs/VALIDATION_AND_STATS.md):
+#   fe_validation_results['operational_technology/ot_firmware_register']  per-component record
+#   fe_validation_executions / _succeeded / _failed / _duration_seconds
+#   fe_validation_failed_components
+#
+# Add component-specific preflight checks without editing this file by setting
+#   fe_operational_technology_ot_firmware_register_required_vars: [var_one, var_two]
+# ---------------------------------------------------------------------------
 
-- name: Create required directories
-  ansible.builtin.file:
-    path: "{{ item }}"
-    state: directory
-    mode: '0750'
-    owner: root
-    group: root
-  loop:
-    - "{{ ot_firmware_artifacts_dir }}"
-    - "{{ ot_firmware_log_dir }}"
-    - "{{ ot_firmware_backup_dir }}"
-    - "{{ ot_firmware_repository_dir }}"
-    - "{{ ot_firmware_golden_image_path }}"
-    - "{{ ot_firmware_report_destination }}"
+- name: "operational_technology/ot_firmware_register | Initialize validation state"
+  ansible.builtin.set_fact:
+    fe_operational_technology_ot_firmware_register_start_epoch: "{{ now(fmt='%s') | int }}"
+    fe_operational_technology_ot_firmware_register_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+    fe_operational_technology_ot_firmware_register_status: "running"
+    fe_operational_technology_ot_firmware_register_preflight_passed: false
+    fe_operational_technology_ot_firmware_register_postflight_passed: false
+    fe_operational_technology_ot_firmware_register_failed_task: ""
+    fe_operational_technology_ot_firmware_register_error: ""
+    fe_operational_technology_ot_firmware_register_stats_published: false
+  tags:
+    - always
 
-- name: Include firmware registration workflow
-  ansible.builtin.include_tasks: includes/register.yml
-  when: ot_firmware_operation == 'register'
+- name: "operational_technology/ot_firmware_register | Guarded execution with preflight and postflight validation"
+  block:
 
-- name: Include firmware verification workflow
-  ansible.builtin.include_tasks: includes/verify.yml
-  when: ot_firmware_operation == 'verify'
+    # ----------------------------- preflight --------------------
 
-- name: Include baseline management workflow
-  ansible.builtin.include_tasks: includes/baseline.yml
-  when: ot_firmware_operation == 'baseline'
+    - name: "operational_technology/ot_firmware_register | Preflight | Verify the control node meets the minimum ansible-core version"
+      ansible.builtin.assert:
+        that:
+          - ansible_version.full is version(fe_validation_min_ansible_version | default('2.12'), '>=')
+        fail_msg: >-
+          operational_technology/ot_firmware_register: requires ansible-core
+          {{ fe_validation_min_ansible_version | default('2.12') }} or newer,
+          found {{ ansible_version.full }}.
+        success_msg: >-
+          operational_technology/ot_firmware_register: ansible-core {{ ansible_version.full }} satisfies the minimum.
+        quiet: true
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: Include update planning workflow
-  ansible.builtin.include_tasks: includes/update_plan.yml
-  when: ot_firmware_operation == 'update_plan'
+    - name: "operational_technology/ot_firmware_register | Preflight | Verify every declared required variable is defined"
+      ansible.builtin.assert:
+        that:
+          - vars[item] is defined
+        fail_msg: "operational_technology/ot_firmware_register: required variable '{{ item }}' is not defined."
+        success_msg: "operational_technology/ot_firmware_register: required variable '{{ item }}' is defined."
+        quiet: true
+      loop: "{{ fe_operational_technology_ot_firmware_register_required_vars | default([]) }}"
+      loop_control:
+        label: "{{ item }}"
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: Include rollback planning workflow
-  ansible.builtin.include_tasks: includes/rollback.yml
-  when: ot_firmware_operation == 'rollback'
+    - name: "operational_technology/ot_firmware_register | Preflight | Record that preflight validation passed"
+      ansible.builtin.set_fact:
+        fe_operational_technology_ot_firmware_register_preflight_passed: true
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: Sync to firmware registry
-  ansible.builtin.uri:
-    url: "{{ ot_firmware_api_url }}/firmware"
-    method: POST
-    headers:
-      Authorization: "Bearer {{ ot_firmware_api_token }}"
-      Content-Type: "application/json"
-    body_format: json
-    body:
-      firmware_id: "{{ ot_firmware_id }}"
-      vendor: "{{ ot_firmware_vendor }}"
-      device_type: "{{ ot_firmware_device_type }}"
-      device_model: "{{ ot_firmware_device_model }}"
-      version: "{{ ot_firmware_version }}"
-      hash_algorithm: "{{ ot_firmware_hash_algorithm }}"
-      hash_value: "{{ ot_firmware_hash_value }}"
-      golden_image: "{{ ot_firmware_golden_image }}"
-      baseline: "{{ ot_firmware_is_baseline }}"
-      cve_ids: "{{ ot_firmware_cve_ids }}"
-      vulnerability_severity: "{{ ot_firmware_vulnerability_severity }}"
-      approved: "{{ ot_firmware_approved }}"
-    validate_certs: "{{ ot_firmware_verify_ssl }}"
-    timeout: "{{ ot_firmware_api_timeout }}"
-    status_code: [200, 201]
-  when:
-    - not ot_firmware_dry_run
-    - ot_firmware_api_token | length > 0
-  register: firmware_sync_result
+    # ----------------------------- execute ----------------------
 
-- name: Generate firmware report
-  ansible.builtin.template:
-    src: "firmware_report.{{ ot_firmware_report_format }}.j2"
-    dest: "{{ ot_firmware_report_destination }}/firmware_{{ ot_firmware_id | default('unknown') }}_{{ ansible_date_time.iso8601_basic_short }}.{{ ot_firmware_report_format }}"
-    mode: '0640'
-  when: ot_firmware_generate_reports
+    - name: Validate required variables
+      ansible.builtin.assert:
+        that:
+          - ot_firmware_api_url is defined
+          - ot_firmware_operation in ['register', 'verify', 'baseline', 'update_plan', 'rollback']
+        fail_msg: "Required variables not properly configured"
 
-- name: Log firmware operation
-  ansible.builtin.lineinfile:
-    path: "{{ ot_firmware_log_dir }}/firmware_register.log"
-    line: "{{ ansible_date_time.iso8601 }} | {{ ot_firmware_operation | upper }} | {{ ot_firmware_vendor }} | {{ ot_firmware_device_model }} | {{ ot_firmware_version }}"
-    create: yes
-    mode: '0640'
+    - name: Create required directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: '0750'
+        owner: root
+        group: root
+      loop:
+        - "{{ ot_firmware_artifacts_dir }}"
+        - "{{ ot_firmware_log_dir }}"
+        - "{{ ot_firmware_backup_dir }}"
+        - "{{ ot_firmware_repository_dir }}"
+        - "{{ ot_firmware_golden_image_path }}"
+        - "{{ ot_firmware_report_destination }}"
+
+    - name: Include firmware registration workflow
+      ansible.builtin.include_tasks: includes/register.yml
+      when: ot_firmware_operation == 'register'
+
+    - name: Include firmware verification workflow
+      ansible.builtin.include_tasks: includes/verify.yml
+      when: ot_firmware_operation == 'verify'
+
+    - name: Include baseline management workflow
+      ansible.builtin.include_tasks: includes/baseline.yml
+      when: ot_firmware_operation == 'baseline'
+
+    - name: Include update planning workflow
+      ansible.builtin.include_tasks: includes/update_plan.yml
+      when: ot_firmware_operation == 'update_plan'
+
+    - name: Include rollback planning workflow
+      ansible.builtin.include_tasks: includes/rollback.yml
+      when: ot_firmware_operation == 'rollback'
+
+    - name: Sync to firmware registry
+      ansible.builtin.uri:
+        url: "{{ ot_firmware_api_url }}/firmware"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ ot_firmware_api_token }}"
+          Content-Type: "application/json"
+        body_format: json
+        body:
+          firmware_id: "{{ ot_firmware_id }}"
+          vendor: "{{ ot_firmware_vendor }}"
+          device_type: "{{ ot_firmware_device_type }}"
+          device_model: "{{ ot_firmware_device_model }}"
+          version: "{{ ot_firmware_version }}"
+          hash_algorithm: "{{ ot_firmware_hash_algorithm }}"
+          hash_value: "{{ ot_firmware_hash_value }}"
+          golden_image: "{{ ot_firmware_golden_image }}"
+          baseline: "{{ ot_firmware_is_baseline }}"
+          cve_ids: "{{ ot_firmware_cve_ids }}"
+          vulnerability_severity: "{{ ot_firmware_vulnerability_severity }}"
+          approved: "{{ ot_firmware_approved }}"
+        validate_certs: "{{ ot_firmware_verify_ssl }}"
+        timeout: "{{ ot_firmware_api_timeout }}"
+        status_code: [200, 201]
+      when:
+        - not ot_firmware_dry_run
+        - ot_firmware_api_token | length > 0
+      register: firmware_sync_result
+
+    - name: Generate firmware report
+      ansible.builtin.template:
+        src: "firmware_report.{{ ot_firmware_report_format }}.j2"
+        dest: "{{ ot_firmware_report_destination }}/firmware_{{ ot_firmware_id | default('unknown') }}_{{ ansible_date_time.iso8601_basic_short }}.{{ ot_firmware_report_format }}"
+        mode: '0640'
+      when: ot_firmware_generate_reports
+
+    - name: Log firmware operation
+      ansible.builtin.lineinfile:
+        path: "{{ ot_firmware_log_dir }}/firmware_register.log"
+        line: "{{ ansible_date_time.iso8601 }} | {{ ot_firmware_operation | upper }} | {{ ot_firmware_vendor }} | {{ ot_firmware_device_model }} | {{ ot_firmware_version }}"
+        create: yes
+        mode: '0640'
+
+    # ----------------------------- postflight -------------------
+
+    - name: "operational_technology/ot_firmware_register | Postflight | Verify the guarded body ran after a passing preflight"
+      ansible.builtin.assert:
+        that:
+          - fe_operational_technology_ot_firmware_register_preflight_passed | bool
+          - fe_operational_technology_ot_firmware_register_status in ['running', 'succeeded']
+        fail_msg: >-
+          operational_technology/ot_firmware_register: postflight validation failed - preflight passed
+          ={{ fe_operational_technology_ot_firmware_register_preflight_passed | default(false) }},
+          status={{ fe_operational_technology_ot_firmware_register_status | default('unknown') }}.
+        success_msg: "operational_technology/ot_firmware_register: postflight validation passed."
+        quiet: true
+      tags:
+        - always
+        - postflight
+        - validation
+
+    - name: "operational_technology/ot_firmware_register | Postflight | Record the successful outcome"
+      ansible.builtin.set_fact:
+        fe_operational_technology_ot_firmware_register_postflight_passed: true
+        fe_operational_technology_ot_firmware_register_status: "succeeded"
+      tags:
+        - always
+        - postflight
+        - validation
+
+  rescue:
+
+    - name: "operational_technology/ot_firmware_register | Rescue | Capture the failing task and error detail"
+      ansible.builtin.set_fact:
+        fe_operational_technology_ot_firmware_register_status: "failed"
+        fe_operational_technology_ot_firmware_register_postflight_passed: false
+        fe_operational_technology_ot_firmware_register_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+        fe_operational_technology_ot_firmware_register_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+      tags:
+        - always
+        - rescue
+
+    - name: "operational_technology/ot_firmware_register | Rescue | Report the failure"
+      ansible.builtin.debug:
+        msg: >-
+          operational_technology/ot_firmware_register: FAILED at '{{ fe_operational_technology_ot_firmware_register_failed_task }}' on
+          {{ inventory_hostname }} - {{ fe_operational_technology_ot_firmware_register_error }}
+      tags:
+        - always
+        - rescue
+
+    - name: "operational_technology/ot_firmware_register | Rescue | Re-raise the failure unless the caller opted to continue"
+      ansible.builtin.fail:
+        msg: >-
+          operational_technology/ot_firmware_register failed at '{{ fe_operational_technology_ot_firmware_register_failed_task }}': {{ fe_operational_technology_ot_firmware_register_error }}
+      when: not (fe_validation_continue_on_error | default(false) | bool)
+      tags:
+        - always
+        - rescue
+
+  always:
+
+    - name: "operational_technology/ot_firmware_register | Always | Compute the execution duration"
+      ansible.builtin.set_fact:
+        fe_operational_technology_ot_firmware_register_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+        fe_operational_technology_ot_firmware_register_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_operational_technology_ot_firmware_register_start_epoch | default(0) | int) }}"
+      tags:
+        - always
+
+    - name: "operational_technology/ot_firmware_register | Always | Publish the validation result with set_stats"
+      ansible.builtin.set_stats:
+        data:
+          fe_validation_results:
+            "operational_technology/ot_firmware_register":
+              component: "operational_technology/ot_firmware_register"
+              type: "role"
+              platform: "operational_technology"
+              host: "{{ inventory_hostname }}"
+              status: "{{ fe_operational_technology_ot_firmware_register_status | default('unknown') }}"
+              preflight_passed: "{{ fe_operational_technology_ot_firmware_register_preflight_passed | default(false) | bool }}"
+              postflight_passed: "{{ fe_operational_technology_ot_firmware_register_postflight_passed | default(false) | bool }}"
+              started_at: "{{ fe_operational_technology_ot_firmware_register_started_at | default('') }}"
+              ended_at: "{{ fe_operational_technology_ot_firmware_register_ended_at | default('') }}"
+              duration_seconds: "{{ fe_operational_technology_ot_firmware_register_duration_seconds | default(0) | int }}"
+              failed_task: "{{ fe_operational_technology_ot_firmware_register_failed_task | default('') }}"
+              error: "{{ fe_operational_technology_ot_firmware_register_error | default('') }}"
+              check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+          fe_validation_executions: 1
+          fe_validation_succeeded: "{{ 1 if fe_operational_technology_ot_firmware_register_status | default('') == 'succeeded' else 0 }}"
+          fe_validation_failed: "{{ 0 if fe_operational_technology_ot_firmware_register_status | default('') == 'succeeded' else 1 }}"
+          fe_validation_duration_seconds: "{{ fe_operational_technology_ot_firmware_register_duration_seconds | default(0) | int }}"
+          fe_validation_failed_components: >-
+            {{ [] if fe_operational_technology_ot_firmware_register_status | default('') == 'succeeded' else ['operational_technology/ot_firmware_register'] }}
+        aggregate: true
+        per_host: false
+      tags:
+        - always
+
+    - name: "operational_technology/ot_firmware_register | Always | Mark the validation statistics as published"
+      ansible.builtin.set_fact:
+        fe_operational_technology_ot_firmware_register_stats_published: true
+      tags:
+        - always

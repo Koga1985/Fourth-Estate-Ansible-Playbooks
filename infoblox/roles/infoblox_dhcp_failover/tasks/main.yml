@@ -1,363 +1,547 @@
 ---
-- name: Validate Infoblox connection vars
-  ansible.builtin.assert:
-    that:
-      - nios_host | length > 0
-      - nios_username | length > 0
-      - nios_password | length > 0
-    fail_msg: "Set nios_host / nios_username / nios_password."
 
-- name: Defaults
+# ---------------------------------------------------------------------------
+# Fourth Estate preflight / postflight validation harness
+#
+# The task file body below is wrapped in an Ansible block/rescue/always structure:
+#
+#   block   preflight validation runs first, then the original task file body, then
+#           postflight validation. Any failure transfers control to rescue.
+#   rescue  records which task failed and why, then re-raises so a failure is
+#           never silently swallowed. Set fe_validation_continue_on_error=true
+#           to record the failure and keep going instead.
+#   always  computes the run duration and publishes the outcome through
+#           ansible.builtin.set_stats, so a wrapping playbook, AWX/AAP or CI can
+#           consume the result without scraping log output.
+#
+# Published stats (see docs/VALIDATION_AND_STATS.md):
+#   fe_validation_results['infoblox/infoblox_dhcp_failover']  per-component record
+#   fe_validation_executions / _succeeded / _failed / _duration_seconds
+#   fe_validation_failed_components
+#
+# Add component-specific preflight checks without editing this file by setting
+#   fe_infoblox_infoblox_dhcp_failover_required_vars: [var_one, var_two]
+# ---------------------------------------------------------------------------
+
+- name: "infoblox/infoblox_dhcp_failover | Initialize validation state"
   ansible.builtin.set_fact:
-    nios_validate_certs: "{{ nios_validate_certs | default(false) }}"
-    nios_wapi_version: "{{ nios_wapi_version | default('v2.12') }}"
-    dhcp_failover_pairs: "{{ dhcp_failover_pairs | default([]) }}"
-    artifact_dir: "{{ artifact_dir | default('/tmp/infoblox-dhcp-failover') }}"
-    network_view: "{{ network_view | default('default') }}"
+    fe_infoblox_infoblox_dhcp_failover_start_epoch: "{{ now(fmt='%s') | int }}"
+    fe_infoblox_infoblox_dhcp_failover_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+    fe_infoblox_infoblox_dhcp_failover_status: "running"
+    fe_infoblox_infoblox_dhcp_failover_preflight_passed: false
+    fe_infoblox_infoblox_dhcp_failover_postflight_passed: false
+    fe_infoblox_infoblox_dhcp_failover_failed_task: ""
+    fe_infoblox_infoblox_dhcp_failover_error: ""
+    fe_infoblox_infoblox_dhcp_failover_stats_published: false
+  tags:
+    - always
 
-- name: Ensure artifact directory
-  ansible.builtin.file:
-    path: "{{ artifact_dir }}"
-    state: directory
-    mode: "0755"
-
-- name: Build WAPI base & creds
-  ansible.builtin.set_fact:
-    _wapi_base: "https://{{ nios_host }}/wapi/{{ nios_wapi_version }}"
-    _creds:
-      user: "{{ nios_username }}"
-      password: "{{ nios_password }}"
-      force_basic_auth: true
-      validate_certs: "{{ nios_validate_certs }}"
-
-# Discovery – members and existing failovers
-  no_log: true
-- name: Get DHCP members (for ref resolution)
-  ansible.builtin.uri:
-    url: "{{ _wapi_base }}/member:dhcp"
-    method: GET
-    return_content: true
-    status_code: [200]
-    params:
-      _return_as_object: 1
-      _max_results: 5000
-      "_return_fields+": "name,host_name,ipv4addr,enable_dhcp"
-    url_username: "{{ _creds.user }}"
-    url_password: "{{ _creds.password }}"
-    force_basic_auth: "{{ _creds.force_basic_auth }}"
-    validate_certs: "{{ _creds.validate_certs }}"
-  register: dhcp_members
-  failed_when: false
-
-- name: Build DHCP member map (by name and host_name)
-  ansible.builtin.set_fact:
-    _member_by_name: >-
-      {{
-        dict( ((dhcp_members.json.result | default([])) | map(attribute='name') | list)
-              | zip(dhcp_members.json.result | default([])) )
-      }}
-    _member_by_host: >-
-      {{
-        dict( ((dhcp_members.json.result | default([])) | map(attribute='host_name') | list)
-              | zip(dhcp_members.json.result | default([])) )
-      }}
-
-- name: Try fetch failover associations (endpoint A)
-  ansible.builtin.uri:
-    url: "{{ _wapi_base }}/dhcpfailover"
-    method: GET
-    return_content: true
-    status_code: [200]
-    params: { _return_as_object: 1, _max_results: 5000, "_return_fields+": "name,mode,primary,secondary,split,enable_bi_directional_communication,max_outage,comment" }
-    url_username: "{{ _creds.user }}"
-    url_password: "{{ _creds.password }}"
-    force_basic_auth: "{{ _creds.force_basic_auth }}"
-    validate_certs: "{{ _creds.validate_certs }}"
-  register: fo_get_a
-  failed_when: false
-
-- name: Try fetch failover associations (endpoint B fallback)
-  ansible.builtin.uri:
-    url: "{{ _wapi_base }}/failoverassociation"
-    method: GET
-    return_content: true
-    status_code: [200]
-    params: { _return_as_object: 1, _max_results: 5000, "_return_fields+": "name,mode,primary,secondary,split,enable_bi_directional_communication,max_outage,comment" }
-    url_username: "{{ _creds.user }}"
-    url_password: "{{ _creds.password }}"
-    force_basic_auth: "{{ _creds.force_basic_auth }}"
-    validate_certs: "{{ _creds.validate_certs }}"
-  register: fo_get_b
-  failed_when: false
-
-- name: Choose working failover endpoint
-  ansible.builtin.set_fact:
-    _fo_endpoint: >-
-      {% if (fo_get_a.status | default(0)) == 200 %}dhcpfailover{% else %}failoverassociation{% endif %}
-    _fo_existing: >-
-      {% if (fo_get_a.status | default(0)) == 200 %}
-      {{ fo_get_a.json.result | default([]) }}
-      {% else %}
-      {{ fo_get_b.json.result | default([]) }}
-      {% endif %}
-
-- name: Index existing failover associations by name
-  ansible.builtin.set_fact:
-    _fo_by_name: "{{ dict( ((_fo_existing | default([])) | map(attribute='name') | list) | zip(_fo_existing | default([])) ) }}"
-
-# Ensure peerings
-- name: Ensure DHCP failover peerings
-  vars:
-    _pair: "{{ item }}"
-    _name: "{{ _pair.name }}"
-    _mode_map:
-      load_balance: "load_balance"
-      hot_standby: "hot_standby"
-    _primary_ref: "{{ (_member_by_name.get(_pair.primary_member) or _member_by_host.get(_pair.primary_member) or {}) .get('_ref', _pair.primary_member) }}"
-    _secondary_ref: "{{ (_member_by_name.get(_pair.secondary_member) or _member_by_host.get(_pair.secondary_member) or {}) .get('_ref', _pair.secondary_member) }}"
-    _payload: >-
-      {{
-        dict({
-          "name": _pair.name,
-          "mode": _mode_map.get(_pair.mode | default('load_balance')),
-          "primary": _primary_ref,
-          "secondary": _secondary_ref,
-          "split": (_pair.split | default(128)),
-          "max_outage": (_pair.max_outage | default(3600)),
-          "enable_bi_directional_communication": (_pair.enable_bidir | default(true)),
-          "comment": _pair.comment | default(omit)
-        })
-      }}
+- name: "infoblox/infoblox_dhcp_failover | Guarded execution with preflight and postflight validation"
   block:
-    - name: Create failover association when missing
-      when: _fo_by_name.get(_name) is not defined
+
+    # ----------------------------- preflight --------------------
+
+    - name: "infoblox/infoblox_dhcp_failover | Preflight | Verify the control node meets the minimum ansible-core version"
+      ansible.builtin.assert:
+        that:
+          - ansible_version.full is version(fe_validation_min_ansible_version | default('2.12'), '>=')
+        fail_msg: >-
+          infoblox/infoblox_dhcp_failover: requires ansible-core
+          {{ fe_validation_min_ansible_version | default('2.12') }} or newer,
+          found {{ ansible_version.full }}.
+        success_msg: >-
+          infoblox/infoblox_dhcp_failover: ansible-core {{ ansible_version.full }} satisfies the minimum.
+        quiet: true
+      tags:
+        - always
+        - preflight
+        - validation
+
+    - name: "infoblox/infoblox_dhcp_failover | Preflight | Verify every declared required variable is defined"
+      ansible.builtin.assert:
+        that:
+          - vars[item] is defined
+        fail_msg: "infoblox/infoblox_dhcp_failover: required variable '{{ item }}' is not defined."
+        success_msg: "infoblox/infoblox_dhcp_failover: required variable '{{ item }}' is defined."
+        quiet: true
+      loop: "{{ fe_infoblox_infoblox_dhcp_failover_required_vars | default([]) }}"
+      loop_control:
+        label: "{{ item }}"
+      tags:
+        - always
+        - preflight
+        - validation
+
+    - name: "infoblox/infoblox_dhcp_failover | Preflight | Record that preflight validation passed"
+      ansible.builtin.set_fact:
+        fe_infoblox_infoblox_dhcp_failover_preflight_passed: true
+      tags:
+        - always
+        - preflight
+        - validation
+
+    # ----------------------------- execute ----------------------
+
+    - name: Validate Infoblox connection vars
+      ansible.builtin.assert:
+        that:
+          - nios_host | length > 0
+          - nios_username | length > 0
+          - nios_password | length > 0
+        fail_msg: "Set nios_host / nios_username / nios_password."
+
+    - name: Defaults
+      ansible.builtin.set_fact:
+        nios_validate_certs: "{{ nios_validate_certs | default(false) }}"
+        nios_wapi_version: "{{ nios_wapi_version | default('v2.12') }}"
+        dhcp_failover_pairs: "{{ dhcp_failover_pairs | default([]) }}"
+        artifact_dir: "{{ artifact_dir | default('/tmp/infoblox-dhcp-failover') }}"
+        network_view: "{{ network_view | default('default') }}"
+
+    - name: Ensure artifact directory
+      ansible.builtin.file:
+        path: "{{ artifact_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Build WAPI base & creds
+      ansible.builtin.set_fact:
+        _wapi_base: "https://{{ nios_host }}/wapi/{{ nios_wapi_version }}"
+        _creds:
+          user: "{{ nios_username }}"
+          password: "{{ nios_password }}"
+          force_basic_auth: true
+          validate_certs: "{{ nios_validate_certs }}"
+
+    # Discovery – members and existing failovers
+      no_log: true
+    - name: Get DHCP members (for ref resolution)
       ansible.builtin.uri:
-        url: "{{ _wapi_base }}/{{ _fo_endpoint }}"
-        method: POST
-        headers: { Content-Type: "application/json" }
-        body_format: json
-        body: "{{ _payload }}"
-        status_code: [200,201,400]
-        url_username: "{{ _creds.user }}"
-        url_password: "{{ _creds.password }}"
-        force_basic_auth: "{{ _creds.force_basic_auth }}"
-        validate_certs: "{{ _creds.validate_certs }}"
-      register: fo_create
-      failed_when: false
-
-    - name: Update failover association when present
-      when: _fo_by_name.get(_name) is defined
-      ansible.builtin.uri:
-        url: "{{ _wapi_base }}/{{ _fo_by_name[_name]._ref }}"
-        method: PUT
-        headers: { Content-Type: "application/json" }
-        body_format: json
-        body: "{{ _payload }}"
-        status_code: [200,400]
-        url_username: "{{ _creds.user }}"
-        url_password: "{{ _creds.password }}"
-        force_basic_auth: "{{ _creds.force_basic_auth }}"
-        validate_certs: "{{ _creds.validate_certs }}"
-      register: fo_update
-      failed_when: false
-  loop: "{{ dhcp_failover_pairs }}"
-  loop_control:
-    label: "{{ item.name }}"
-
-# Refresh cache
-- name: Refresh failover map after create/update
-  ansible.builtin.uri:
-    url: "{{ _wapi_base }}/{{ _fo_endpoint }}"
-    method: GET
-    return_content: true
-    status_code: [200]
-    params: { _return_as_object: 1, _max_results: 5000 }
-    url_username: "{{ _creds.user }}"
-    url_password: "{{ _creds.password }}"
-    force_basic_auth: "{{ _creds.force_basic_auth }}"
-    validate_certs: "{{ _creds.validate_certs }}"
-  register: fo_post
-  failed_when: false
-
-- name: Reindex failover associations
-  ansible.builtin.set_fact:
-    _fo_by_name: "{{ dict( ((fo_post.json.result | default([])) | map(attribute='name') | list) | zip(fo_post.json.result | default([])) ) }}"
-
-# Attach to networks
-- name: Attach failover to networks (best-effort)
-  when: (item.networks | default([])) | length > 0
-  vars:
-    _fo_ref: "{{ _fo_by_name[item.name]._ref | default(omit) }}"
-  block:
-    - name: Lookup target networks
-      ansible.builtin.uri:
-        url: "{{ _wapi_base }}/network"
+        url: "{{ _wapi_base }}/member:dhcp"
         method: GET
         return_content: true
         status_code: [200]
         params:
           _return_as_object: 1
           _max_results: 5000
-          "_return_fields+": "network,network_view,failover_association"
-          network_view: "{{ network_view }}"
+          "_return_fields+": "name,host_name,ipv4addr,enable_dhcp"
         url_username: "{{ _creds.user }}"
         url_password: "{{ _creds.password }}"
         force_basic_auth: "{{ _creds.force_basic_auth }}"
         validate_certs: "{{ _creds.validate_certs }}"
-      register: nets
+      register: dhcp_members
       failed_when: false
 
-    - name: Index networks by CIDR
+    - name: Build DHCP member map (by name and host_name)
       ansible.builtin.set_fact:
-        _nets_by_cidr: "{{ dict( ((nets.json.result | default([])) | map(attribute='network') | list) | zip(nets.json.result | default([])) ) }}"
-
-    - name: Apply failover association to networks
-      when: _nets_by_cidr.get(_cidr) is defined and _fo_ref is defined
-      vars:
-        _cidr: "{{ item2 }}"
-      ansible.builtin.uri:
-        url: "{{ _wapi_base }}/{{ _nets_by_cidr[_cidr]._ref }}"
-        method: PUT
-        headers: { Content-Type: "application/json" }
-        body_format: json
-        body: { "failover_association": "{{ _fo_ref }}" }
-        status_code: [200,400]
-        url_username: "{{ _creds.user }}"
-        url_password: "{{ _creds.password }}"
-        force_basic_auth: "{{ _creds.force_basic_auth }}"
-        validate_certs: "{{ _creds.validate_certs }}"
-      loop: "{{ item.networks | default([]) }}"
-      loop_control: { loop_var: item2, label: "{{ item2 }}" }
-      register: nets_apply
-      failed_when: false
-  loop: "{{ dhcp_failover_pairs }}"
-  loop_control: { label: "{{ item.name }} (networks)" }
-
-# Attach to shared networks
-- name: Attach failover to shared networks (best-effort)
-  when: (item.shared_networks | default([])) | length > 0
-  vars:
-    _fo_ref: "{{ _fo_by_name[item.name]._ref | default(omit) }}"
-  block:
-    - name: Lookup shared networks
-      ansible.builtin.uri:
-        url: "{{ _wapi_base }}/sharednetwork"
-        method: GET
-        return_content: true
-        status_code: [200]
-        params:
-          _return_as_object: 1
-          _max_results: 5000
-          "_return_fields+": "name,failover_association"
-        url_username: "{{ _creds.user }}"
-        url_password: "{{ _creds.password }}"
-        force_basic_auth: "{{ _creds.force_basic_auth }}"
-        validate_certs: "{{ _creds.validate_certs }}"
-      register: sharednets
-      failed_when: false
-
-    - name: Index shared networks by name
-      ansible.builtin.set_fact:
-        _shared_by_name: "{{ dict( ((sharednets.json.result | default([])) | map(attribute='name') | list) | zip(sharednets.json.result | default([])) ) }}"
-
-    - name: Apply failover association to shared networks
-      when: _shared_by_name.get(_sname) is defined and _fo_ref is defined
-      vars:
-        _sname: "{{ item2 }}"
-      ansible.builtin.uri:
-        url: "{{ _wapi_base }}/{{ _shared_by_name[_sname]._ref }}"
-        method: PUT
-        headers: { Content-Type: "application/json" }
-        body_format: json
-        body: { "failover_association": "{{ _fo_ref }}" }
-        status_code: [200,400]
-        url_username: "{{ _creds.user }}"
-        url_password: "{{ _creds.password }}"
-        force_basic_auth: "{{ _creds.force_basic_auth }}"
-        validate_certs: "{{ _creds.validate_certs }}"
-      loop: "{{ item.shared_networks | default([]) }}"
-      loop_control: { loop_var: item2, label: "{{ item2 }}" }
-      register: shared_apply
-      failed_when: false
-  loop: "{{ dhcp_failover_pairs }}"
-  loop_control: { label: "{{ item.name }} (shared networks)" }
-
-# Attach to ranges
-- name: Attach failover to ranges (best-effort)
-  when: (item.ranges | default([])) | length > 0
-  vars:
-    _fo_ref: "{{ _fo_by_name[item.name]._ref | default(omit) }}"
-  block:
-    - name: Lookup ranges (for view {{ network_view }})
-      ansible.builtin.uri:
-        url: "{{ _wapi_base }}/range"
-        method: GET
-        return_content: true
-        status_code: [200]
-        params:
-          _return_as_object: 1
-          _max_results: 10000
-          "_return_fields+": "start_addr,end_addr,network,failover_association"
-        url_username: "{{ _creds.user }}"
-        url_password: "{{ _creds.password }}"
-        force_basic_auth: "{{ _creds.force_basic_auth }}"
-        validate_certs: "{{ _creds.validate_certs }}"
-      register: ranges_get
-      failed_when: false
-
-    - name: Build range key map "start-end"
-      ansible.builtin.set_fact:
-        _ranges_by_key: >-
+        _member_by_name: >-
           {{
-            dict(
-              (((ranges_get.json.result | default([])) | map(attribute='start_addr') | list) |
-               zip((ranges_get.json.result | default([])) | map(attribute='end_addr') | list)) |
-              map('join', '-') |
-              list |
-              zip(ranges_get.json.result | default([]))
-            )
+            dict( ((dhcp_members.json.result | default([])) | map(attribute='name') | list)
+                  | zip(dhcp_members.json.result | default([])) )
+          }}
+        _member_by_host: >-
+          {{
+            dict( ((dhcp_members.json.result | default([])) | map(attribute='host_name') | list)
+                  | zip(dhcp_members.json.result | default([])) )
           }}
 
-    - name: Apply failover association to ranges
-      when: _ranges_by_key.get(_rkey) is defined and _fo_ref is defined
-      vars:
-        _rkey: "{{ item2 }}"
+    - name: Try fetch failover associations (endpoint A)
       ansible.builtin.uri:
-        url: "{{ _wapi_base }}/{{ _ranges_by_key[_rkey]._ref }}"
-        method: PUT
-        headers: { Content-Type: "application/json" }
-        body_format: json
-        body: { "failover_association": "{{ _fo_ref }}" }
-        status_code: [200,400]
+        url: "{{ _wapi_base }}/dhcpfailover"
+        method: GET
+        return_content: true
+        status_code: [200]
+        params: { _return_as_object: 1, _max_results: 5000, "_return_fields+": "name,mode,primary,secondary,split,enable_bi_directional_communication,max_outage,comment" }
         url_username: "{{ _creds.user }}"
         url_password: "{{ _creds.password }}"
         force_basic_auth: "{{ _creds.force_basic_auth }}"
         validate_certs: "{{ _creds.validate_certs }}"
-      loop: "{{ item.ranges | default([]) }}"
-      loop_control: { loop_var: item2, label: "{{ item2 }}" }
-      register: ranges_apply
+      register: fo_get_a
       failed_when: false
-  loop: "{{ dhcp_failover_pairs }}"
-  loop_control: { label: "{{ item.name }} (ranges)" }
 
-# Artifacts
-- name: Save summary artifacts
-  ansible.builtin.copy:
-    dest: "{{ artifact_dir }}/dhcp_failover_summary.json"
-    mode: "0644"
-    content: >-
-      {{
-        {
-          "endpoint": _fo_endpoint,
-          "existing_before": _fo_existing,
-          "members": (dhcp_members.json.result | default([])),
-          "existing_after": (fo_post.json.result | default([])),
-          "notes": "Applied best-effort; check individual PUT/POST results for 400s."
-        } | to_nice_json
-      }}
+    - name: Try fetch failover associations (endpoint B fallback)
+      ansible.builtin.uri:
+        url: "{{ _wapi_base }}/failoverassociation"
+        method: GET
+        return_content: true
+        status_code: [200]
+        params: { _return_as_object: 1, _max_results: 5000, "_return_fields+": "name,mode,primary,secondary,split,enable_bi_directional_communication,max_outage,comment" }
+        url_username: "{{ _creds.user }}"
+        url_password: "{{ _creds.password }}"
+        force_basic_auth: "{{ _creds.force_basic_auth }}"
+        validate_certs: "{{ _creds.validate_certs }}"
+      register: fo_get_b
+      failed_when: false
 
-- name: Done
-  ansible.builtin.debug:
-    msg:
-      - "Processed {{ dhcp_failover_pairs | length }} DHCP failover peering(s)"
-      - "Artifacts: {{ artifact_dir }}/dhcp_failover_summary.json"
+    - name: Choose working failover endpoint
+      ansible.builtin.set_fact:
+        _fo_endpoint: >-
+          {% if (fo_get_a.status | default(0)) == 200 %}dhcpfailover{% else %}failoverassociation{% endif %}
+        _fo_existing: >-
+          {% if (fo_get_a.status | default(0)) == 200 %}
+          {{ fo_get_a.json.result | default([]) }}
+          {% else %}
+          {{ fo_get_b.json.result | default([]) }}
+          {% endif %}
+
+    - name: Index existing failover associations by name
+      ansible.builtin.set_fact:
+        _fo_by_name: "{{ dict( ((_fo_existing | default([])) | map(attribute='name') | list) | zip(_fo_existing | default([])) ) }}"
+
+    # Ensure peerings
+    - name: Ensure DHCP failover peerings
+      vars:
+        _pair: "{{ item }}"
+        _name: "{{ _pair.name }}"
+        _mode_map:
+          load_balance: "load_balance"
+          hot_standby: "hot_standby"
+        _primary_ref: "{{ (_member_by_name.get(_pair.primary_member) or _member_by_host.get(_pair.primary_member) or {}) .get('_ref', _pair.primary_member) }}"
+        _secondary_ref: "{{ (_member_by_name.get(_pair.secondary_member) or _member_by_host.get(_pair.secondary_member) or {}) .get('_ref', _pair.secondary_member) }}"
+        _payload: >-
+          {{
+            dict({
+              "name": _pair.name,
+              "mode": _mode_map.get(_pair.mode | default('load_balance')),
+              "primary": _primary_ref,
+              "secondary": _secondary_ref,
+              "split": (_pair.split | default(128)),
+              "max_outage": (_pair.max_outage | default(3600)),
+              "enable_bi_directional_communication": (_pair.enable_bidir | default(true)),
+              "comment": _pair.comment | default(omit)
+            })
+          }}
+      block:
+        - name: Create failover association when missing
+          when: _fo_by_name.get(_name) is not defined
+          ansible.builtin.uri:
+            url: "{{ _wapi_base }}/{{ _fo_endpoint }}"
+            method: POST
+            headers: { Content-Type: "application/json" }
+            body_format: json
+            body: "{{ _payload }}"
+            status_code: [200,201,400]
+            url_username: "{{ _creds.user }}"
+            url_password: "{{ _creds.password }}"
+            force_basic_auth: "{{ _creds.force_basic_auth }}"
+            validate_certs: "{{ _creds.validate_certs }}"
+          register: fo_create
+          failed_when: false
+
+        - name: Update failover association when present
+          when: _fo_by_name.get(_name) is defined
+          ansible.builtin.uri:
+            url: "{{ _wapi_base }}/{{ _fo_by_name[_name]._ref }}"
+            method: PUT
+            headers: { Content-Type: "application/json" }
+            body_format: json
+            body: "{{ _payload }}"
+            status_code: [200,400]
+            url_username: "{{ _creds.user }}"
+            url_password: "{{ _creds.password }}"
+            force_basic_auth: "{{ _creds.force_basic_auth }}"
+            validate_certs: "{{ _creds.validate_certs }}"
+          register: fo_update
+          failed_when: false
+      loop: "{{ dhcp_failover_pairs }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    # Refresh cache
+    - name: Refresh failover map after create/update
+      ansible.builtin.uri:
+        url: "{{ _wapi_base }}/{{ _fo_endpoint }}"
+        method: GET
+        return_content: true
+        status_code: [200]
+        params: { _return_as_object: 1, _max_results: 5000 }
+        url_username: "{{ _creds.user }}"
+        url_password: "{{ _creds.password }}"
+        force_basic_auth: "{{ _creds.force_basic_auth }}"
+        validate_certs: "{{ _creds.validate_certs }}"
+      register: fo_post
+      failed_when: false
+
+    - name: Reindex failover associations
+      ansible.builtin.set_fact:
+        _fo_by_name: "{{ dict( ((fo_post.json.result | default([])) | map(attribute='name') | list) | zip(fo_post.json.result | default([])) ) }}"
+
+    # Attach to networks
+    - name: Attach failover to networks (best-effort)
+      when: (item.networks | default([])) | length > 0
+      vars:
+        _fo_ref: "{{ _fo_by_name[item.name]._ref | default(omit) }}"
+      block:
+        - name: Lookup target networks
+          ansible.builtin.uri:
+            url: "{{ _wapi_base }}/network"
+            method: GET
+            return_content: true
+            status_code: [200]
+            params:
+              _return_as_object: 1
+              _max_results: 5000
+              "_return_fields+": "network,network_view,failover_association"
+              network_view: "{{ network_view }}"
+            url_username: "{{ _creds.user }}"
+            url_password: "{{ _creds.password }}"
+            force_basic_auth: "{{ _creds.force_basic_auth }}"
+            validate_certs: "{{ _creds.validate_certs }}"
+          register: nets
+          failed_when: false
+
+        - name: Index networks by CIDR
+          ansible.builtin.set_fact:
+            _nets_by_cidr: "{{ dict( ((nets.json.result | default([])) | map(attribute='network') | list) | zip(nets.json.result | default([])) ) }}"
+
+        - name: Apply failover association to networks
+          when: _nets_by_cidr.get(_cidr) is defined and _fo_ref is defined
+          vars:
+            _cidr: "{{ item2 }}"
+          ansible.builtin.uri:
+            url: "{{ _wapi_base }}/{{ _nets_by_cidr[_cidr]._ref }}"
+            method: PUT
+            headers: { Content-Type: "application/json" }
+            body_format: json
+            body: { "failover_association": "{{ _fo_ref }}" }
+            status_code: [200,400]
+            url_username: "{{ _creds.user }}"
+            url_password: "{{ _creds.password }}"
+            force_basic_auth: "{{ _creds.force_basic_auth }}"
+            validate_certs: "{{ _creds.validate_certs }}"
+          loop: "{{ item.networks | default([]) }}"
+          loop_control: { loop_var: item2, label: "{{ item2 }}" }
+          register: nets_apply
+          failed_when: false
+      loop: "{{ dhcp_failover_pairs }}"
+      loop_control: { label: "{{ item.name }} (networks)" }
+
+    # Attach to shared networks
+    - name: Attach failover to shared networks (best-effort)
+      when: (item.shared_networks | default([])) | length > 0
+      vars:
+        _fo_ref: "{{ _fo_by_name[item.name]._ref | default(omit) }}"
+      block:
+        - name: Lookup shared networks
+          ansible.builtin.uri:
+            url: "{{ _wapi_base }}/sharednetwork"
+            method: GET
+            return_content: true
+            status_code: [200]
+            params:
+              _return_as_object: 1
+              _max_results: 5000
+              "_return_fields+": "name,failover_association"
+            url_username: "{{ _creds.user }}"
+            url_password: "{{ _creds.password }}"
+            force_basic_auth: "{{ _creds.force_basic_auth }}"
+            validate_certs: "{{ _creds.validate_certs }}"
+          register: sharednets
+          failed_when: false
+
+        - name: Index shared networks by name
+          ansible.builtin.set_fact:
+            _shared_by_name: "{{ dict( ((sharednets.json.result | default([])) | map(attribute='name') | list) | zip(sharednets.json.result | default([])) ) }}"
+
+        - name: Apply failover association to shared networks
+          when: _shared_by_name.get(_sname) is defined and _fo_ref is defined
+          vars:
+            _sname: "{{ item2 }}"
+          ansible.builtin.uri:
+            url: "{{ _wapi_base }}/{{ _shared_by_name[_sname]._ref }}"
+            method: PUT
+            headers: { Content-Type: "application/json" }
+            body_format: json
+            body: { "failover_association": "{{ _fo_ref }}" }
+            status_code: [200,400]
+            url_username: "{{ _creds.user }}"
+            url_password: "{{ _creds.password }}"
+            force_basic_auth: "{{ _creds.force_basic_auth }}"
+            validate_certs: "{{ _creds.validate_certs }}"
+          loop: "{{ item.shared_networks | default([]) }}"
+          loop_control: { loop_var: item2, label: "{{ item2 }}" }
+          register: shared_apply
+          failed_when: false
+      loop: "{{ dhcp_failover_pairs }}"
+      loop_control: { label: "{{ item.name }} (shared networks)" }
+
+    # Attach to ranges
+    - name: Attach failover to ranges (best-effort)
+      when: (item.ranges | default([])) | length > 0
+      vars:
+        _fo_ref: "{{ _fo_by_name[item.name]._ref | default(omit) }}"
+      block:
+        - name: Lookup ranges (for view {{ network_view }})
+          ansible.builtin.uri:
+            url: "{{ _wapi_base }}/range"
+            method: GET
+            return_content: true
+            status_code: [200]
+            params:
+              _return_as_object: 1
+              _max_results: 10000
+              "_return_fields+": "start_addr,end_addr,network,failover_association"
+            url_username: "{{ _creds.user }}"
+            url_password: "{{ _creds.password }}"
+            force_basic_auth: "{{ _creds.force_basic_auth }}"
+            validate_certs: "{{ _creds.validate_certs }}"
+          register: ranges_get
+          failed_when: false
+
+        - name: Build range key map "start-end"
+          ansible.builtin.set_fact:
+            _ranges_by_key: >-
+              {{
+                dict(
+                  (((ranges_get.json.result | default([])) | map(attribute='start_addr') | list) |
+                   zip((ranges_get.json.result | default([])) | map(attribute='end_addr') | list)) |
+                  map('join', '-') |
+                  list |
+                  zip(ranges_get.json.result | default([]))
+                )
+              }}
+
+        - name: Apply failover association to ranges
+          when: _ranges_by_key.get(_rkey) is defined and _fo_ref is defined
+          vars:
+            _rkey: "{{ item2 }}"
+          ansible.builtin.uri:
+            url: "{{ _wapi_base }}/{{ _ranges_by_key[_rkey]._ref }}"
+            method: PUT
+            headers: { Content-Type: "application/json" }
+            body_format: json
+            body: { "failover_association": "{{ _fo_ref }}" }
+            status_code: [200,400]
+            url_username: "{{ _creds.user }}"
+            url_password: "{{ _creds.password }}"
+            force_basic_auth: "{{ _creds.force_basic_auth }}"
+            validate_certs: "{{ _creds.validate_certs }}"
+          loop: "{{ item.ranges | default([]) }}"
+          loop_control: { loop_var: item2, label: "{{ item2 }}" }
+          register: ranges_apply
+          failed_when: false
+      loop: "{{ dhcp_failover_pairs }}"
+      loop_control: { label: "{{ item.name }} (ranges)" }
+
+    # Artifacts
+    - name: Save summary artifacts
+      ansible.builtin.copy:
+        dest: "{{ artifact_dir }}/dhcp_failover_summary.json"
+        mode: "0644"
+        content: >-
+          {{
+            {
+              "endpoint": _fo_endpoint,
+              "existing_before": _fo_existing,
+              "members": (dhcp_members.json.result | default([])),
+              "existing_after": (fo_post.json.result | default([])),
+              "notes": "Applied best-effort; check individual PUT/POST results for 400s."
+            } | to_nice_json
+          }}
+
+    - name: Done
+      ansible.builtin.debug:
+        msg:
+          - "Processed {{ dhcp_failover_pairs | length }} DHCP failover peering(s)"
+          - "Artifacts: {{ artifact_dir }}/dhcp_failover_summary.json"
+
+    # ----------------------------- postflight -------------------
+
+    - name: "infoblox/infoblox_dhcp_failover | Postflight | Verify the guarded body ran after a passing preflight"
+      ansible.builtin.assert:
+        that:
+          - fe_infoblox_infoblox_dhcp_failover_preflight_passed | bool
+          - fe_infoblox_infoblox_dhcp_failover_status in ['running', 'succeeded']
+        fail_msg: >-
+          infoblox/infoblox_dhcp_failover: postflight validation failed - preflight passed
+          ={{ fe_infoblox_infoblox_dhcp_failover_preflight_passed | default(false) }},
+          status={{ fe_infoblox_infoblox_dhcp_failover_status | default('unknown') }}.
+        success_msg: "infoblox/infoblox_dhcp_failover: postflight validation passed."
+        quiet: true
+      tags:
+        - always
+        - postflight
+        - validation
+
+    - name: "infoblox/infoblox_dhcp_failover | Postflight | Record the successful outcome"
+      ansible.builtin.set_fact:
+        fe_infoblox_infoblox_dhcp_failover_postflight_passed: true
+        fe_infoblox_infoblox_dhcp_failover_status: "succeeded"
+      tags:
+        - always
+        - postflight
+        - validation
+
+  rescue:
+
+    - name: "infoblox/infoblox_dhcp_failover | Rescue | Capture the failing task and error detail"
+      ansible.builtin.set_fact:
+        fe_infoblox_infoblox_dhcp_failover_status: "failed"
+        fe_infoblox_infoblox_dhcp_failover_postflight_passed: false
+        fe_infoblox_infoblox_dhcp_failover_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+        fe_infoblox_infoblox_dhcp_failover_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+      tags:
+        - always
+        - rescue
+
+    - name: "infoblox/infoblox_dhcp_failover | Rescue | Report the failure"
+      ansible.builtin.debug:
+        msg: >-
+          infoblox/infoblox_dhcp_failover: FAILED at '{{ fe_infoblox_infoblox_dhcp_failover_failed_task }}' on
+          {{ inventory_hostname }} - {{ fe_infoblox_infoblox_dhcp_failover_error }}
+      tags:
+        - always
+        - rescue
+
+    - name: "infoblox/infoblox_dhcp_failover | Rescue | Re-raise the failure unless the caller opted to continue"
+      ansible.builtin.fail:
+        msg: >-
+          infoblox/infoblox_dhcp_failover failed at '{{ fe_infoblox_infoblox_dhcp_failover_failed_task }}': {{ fe_infoblox_infoblox_dhcp_failover_error }}
+      when: not (fe_validation_continue_on_error | default(false) | bool)
+      tags:
+        - always
+        - rescue
+
+  always:
+
+    - name: "infoblox/infoblox_dhcp_failover | Always | Compute the execution duration"
+      ansible.builtin.set_fact:
+        fe_infoblox_infoblox_dhcp_failover_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+        fe_infoblox_infoblox_dhcp_failover_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_infoblox_infoblox_dhcp_failover_start_epoch | default(0) | int) }}"
+      tags:
+        - always
+
+    - name: "infoblox/infoblox_dhcp_failover | Always | Publish the validation result with set_stats"
+      ansible.builtin.set_stats:
+        data:
+          fe_validation_results:
+            "infoblox/infoblox_dhcp_failover":
+              component: "infoblox/infoblox_dhcp_failover"
+              type: "role"
+              platform: "infoblox"
+              host: "{{ inventory_hostname }}"
+              status: "{{ fe_infoblox_infoblox_dhcp_failover_status | default('unknown') }}"
+              preflight_passed: "{{ fe_infoblox_infoblox_dhcp_failover_preflight_passed | default(false) | bool }}"
+              postflight_passed: "{{ fe_infoblox_infoblox_dhcp_failover_postflight_passed | default(false) | bool }}"
+              started_at: "{{ fe_infoblox_infoblox_dhcp_failover_started_at | default('') }}"
+              ended_at: "{{ fe_infoblox_infoblox_dhcp_failover_ended_at | default('') }}"
+              duration_seconds: "{{ fe_infoblox_infoblox_dhcp_failover_duration_seconds | default(0) | int }}"
+              failed_task: "{{ fe_infoblox_infoblox_dhcp_failover_failed_task | default('') }}"
+              error: "{{ fe_infoblox_infoblox_dhcp_failover_error | default('') }}"
+              check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+          fe_validation_executions: 1
+          fe_validation_succeeded: "{{ 1 if fe_infoblox_infoblox_dhcp_failover_status | default('') == 'succeeded' else 0 }}"
+          fe_validation_failed: "{{ 0 if fe_infoblox_infoblox_dhcp_failover_status | default('') == 'succeeded' else 1 }}"
+          fe_validation_duration_seconds: "{{ fe_infoblox_infoblox_dhcp_failover_duration_seconds | default(0) | int }}"
+          fe_validation_failed_components: >-
+            {{ [] if fe_infoblox_infoblox_dhcp_failover_status | default('') == 'succeeded' else ['infoblox/infoblox_dhcp_failover'] }}
+        aggregate: true
+        per_host: false
+      tags:
+        - always
+
+    - name: "infoblox/infoblox_dhcp_failover | Always | Mark the validation statistics as published"
+      ansible.builtin.set_fact:
+        fe_infoblox_infoblox_dhcp_failover_stats_published: true
+      tags:
+        - always

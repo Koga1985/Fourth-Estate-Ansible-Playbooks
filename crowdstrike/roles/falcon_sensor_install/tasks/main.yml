@@ -2,47 +2,230 @@
 # CrowdStrike Falcon Sensor Installation - Main Tasks
 # Fourth Estate production-ready EDR deployment
 
-- name: Validate required variables
-  ansible.builtin.assert:
-    that:
-      - falcon_cid is defined
-      - falcon_cid | length > 0
-    fail_msg: "falcon_cid is required but not defined"
-    success_msg: "Required variables validated"
+# ---------------------------------------------------------------------------
+# Fourth Estate preflight / postflight validation harness
+#
+# The task file body below is wrapped in an Ansible block/rescue/always structure:
+#
+#   block   preflight validation runs first, then the original task file body, then
+#           postflight validation. Any failure transfers control to rescue.
+#   rescue  records which task failed and why, then re-raises so a failure is
+#           never silently swallowed. Set fe_validation_continue_on_error=true
+#           to record the failure and keep going instead.
+#   always  computes the run duration and publishes the outcome through
+#           ansible.builtin.set_stats, so a wrapping playbook, AWX/AAP or CI can
+#           consume the result without scraping log output.
+#
+# Published stats (see docs/VALIDATION_AND_STATS.md):
+#   fe_validation_results['crowdstrike/falcon_sensor_install']  per-component record
+#   fe_validation_executions / _succeeded / _failed / _duration_seconds
+#   fe_validation_failed_components
+#
+# Add component-specific preflight checks without editing this file by setting
+#   fe_crowdstrike_falcon_sensor_install_required_vars: [var_one, var_two]
+# ---------------------------------------------------------------------------
 
-- name: Include pre-flight checks
-  ansible.builtin.include_tasks: preflight.yml
-  tags: [preflight, always]
+- name: "crowdstrike/falcon_sensor_install | Initialize validation state"
+  ansible.builtin.set_fact:
+    fe_crowdstrike_falcon_sensor_install_start_epoch: "{{ now(fmt='%s') | int }}"
+    fe_crowdstrike_falcon_sensor_install_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+    fe_crowdstrike_falcon_sensor_install_status: "running"
+    fe_crowdstrike_falcon_sensor_install_preflight_passed: false
+    fe_crowdstrike_falcon_sensor_install_postflight_passed: false
+    fe_crowdstrike_falcon_sensor_install_failed_task: ""
+    fe_crowdstrike_falcon_sensor_install_error: ""
+    fe_crowdstrike_falcon_sensor_install_stats_published: false
+  tags:
+    - always
 
-- name: Include Linux sensor installation
-  ansible.builtin.include_tasks: install_linux.yml
-  when: ansible_os_family in ['RedHat', 'Debian', 'Suse']
-  tags: [install, linux]
+- name: "crowdstrike/falcon_sensor_install | Guarded execution with preflight and postflight validation"
+  block:
 
-- name: Include Windows sensor installation
-  ansible.builtin.include_tasks: install_windows.yml
-  when: ansible_os_family == 'Windows'
-  tags: [install, windows]
+    # ----------------------------- preflight --------------------
 
-- name: Include Kubernetes sensor deployment
-  ansible.builtin.include_tasks: install_kubernetes.yml
-  when: falcon_k8s_enabled | bool
-  tags: [install, kubernetes]
+    - name: "crowdstrike/falcon_sensor_install | Preflight | Verify the control node meets the minimum ansible-core version"
+      ansible.builtin.assert:
+        that:
+          - ansible_version.full is version(fe_validation_min_ansible_version | default('2.12'), '>=')
+        fail_msg: >-
+          crowdstrike/falcon_sensor_install: requires ansible-core
+          {{ fe_validation_min_ansible_version | default('2.12') }} or newer,
+          found {{ ansible_version.full }}.
+        success_msg: >-
+          crowdstrike/falcon_sensor_install: ansible-core {{ ansible_version.full }} satisfies the minimum.
+        quiet: true
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: Include sensor configuration
-  ansible.builtin.include_tasks: configure.yml
-  tags: [configure, config]
+    - name: "crowdstrike/falcon_sensor_install | Preflight | Verify every declared required variable is defined"
+      ansible.builtin.assert:
+        that:
+          - vars[item] is defined
+        fail_msg: "crowdstrike/falcon_sensor_install: required variable '{{ item }}' is not defined."
+        success_msg: "crowdstrike/falcon_sensor_install: required variable '{{ item }}' is defined."
+        quiet: true
+      loop: "{{ fe_crowdstrike_falcon_sensor_install_required_vars | default([]) }}"
+      loop_control:
+        label: "{{ item }}"
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: Include sensor verification
-  ansible.builtin.include_tasks: verify.yml
-  tags: [verify, validation]
+    - name: "crowdstrike/falcon_sensor_install | Preflight | Record that preflight validation passed"
+      ansible.builtin.set_fact:
+        fe_crowdstrike_falcon_sensor_install_preflight_passed: true
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: Include Fourth Estate configuration
-  ansible.builtin.include_tasks: fourth_estate.yml
-  when: falcon_fourth_estate_enabled | bool
-  tags: [fourth-estate, compliance]
+    # ----------------------------- execute ----------------------
 
-- name: Include monitoring setup
-  ansible.builtin.include_tasks: monitoring.yml
-  when: falcon_enable_sensor_monitoring | bool
-  tags: [monitoring, observability]
+    - name: Validate required variables
+      ansible.builtin.assert:
+        that:
+          - falcon_cid is defined
+          - falcon_cid | length > 0
+        fail_msg: "falcon_cid is required but not defined"
+        success_msg: "Required variables validated"
+
+    - name: Include pre-flight checks
+      ansible.builtin.include_tasks: preflight.yml
+      tags: [preflight, always]
+
+    - name: Include Linux sensor installation
+      ansible.builtin.include_tasks: install_linux.yml
+      when: ansible_os_family in ['RedHat', 'Debian', 'Suse']
+      tags: [install, linux]
+
+    - name: Include Windows sensor installation
+      ansible.builtin.include_tasks: install_windows.yml
+      when: ansible_os_family == 'Windows'
+      tags: [install, windows]
+
+    - name: Include Kubernetes sensor deployment
+      ansible.builtin.include_tasks: install_kubernetes.yml
+      when: falcon_k8s_enabled | bool
+      tags: [install, kubernetes]
+
+    - name: Include sensor configuration
+      ansible.builtin.include_tasks: configure.yml
+      tags: [configure, config]
+
+    - name: Include sensor verification
+      ansible.builtin.include_tasks: verify.yml
+      tags: [verify, validation]
+
+    - name: Include Fourth Estate configuration
+      ansible.builtin.include_tasks: fourth_estate.yml
+      when: falcon_fourth_estate_enabled | bool
+      tags: [fourth-estate, compliance]
+
+    - name: Include monitoring setup
+      ansible.builtin.include_tasks: monitoring.yml
+      when: falcon_enable_sensor_monitoring | bool
+      tags: [monitoring, observability]
+
+    # ----------------------------- postflight -------------------
+
+    - name: "crowdstrike/falcon_sensor_install | Postflight | Verify the guarded body ran after a passing preflight"
+      ansible.builtin.assert:
+        that:
+          - fe_crowdstrike_falcon_sensor_install_preflight_passed | bool
+          - fe_crowdstrike_falcon_sensor_install_status in ['running', 'succeeded']
+        fail_msg: >-
+          crowdstrike/falcon_sensor_install: postflight validation failed - preflight passed
+          ={{ fe_crowdstrike_falcon_sensor_install_preflight_passed | default(false) }},
+          status={{ fe_crowdstrike_falcon_sensor_install_status | default('unknown') }}.
+        success_msg: "crowdstrike/falcon_sensor_install: postflight validation passed."
+        quiet: true
+      tags:
+        - always
+        - postflight
+        - validation
+
+    - name: "crowdstrike/falcon_sensor_install | Postflight | Record the successful outcome"
+      ansible.builtin.set_fact:
+        fe_crowdstrike_falcon_sensor_install_postflight_passed: true
+        fe_crowdstrike_falcon_sensor_install_status: "succeeded"
+      tags:
+        - always
+        - postflight
+        - validation
+
+  rescue:
+
+    - name: "crowdstrike/falcon_sensor_install | Rescue | Capture the failing task and error detail"
+      ansible.builtin.set_fact:
+        fe_crowdstrike_falcon_sensor_install_status: "failed"
+        fe_crowdstrike_falcon_sensor_install_postflight_passed: false
+        fe_crowdstrike_falcon_sensor_install_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+        fe_crowdstrike_falcon_sensor_install_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+      tags:
+        - always
+        - rescue
+
+    - name: "crowdstrike/falcon_sensor_install | Rescue | Report the failure"
+      ansible.builtin.debug:
+        msg: >-
+          crowdstrike/falcon_sensor_install: FAILED at '{{ fe_crowdstrike_falcon_sensor_install_failed_task }}' on
+          {{ inventory_hostname }} - {{ fe_crowdstrike_falcon_sensor_install_error }}
+      tags:
+        - always
+        - rescue
+
+    - name: "crowdstrike/falcon_sensor_install | Rescue | Re-raise the failure unless the caller opted to continue"
+      ansible.builtin.fail:
+        msg: >-
+          crowdstrike/falcon_sensor_install failed at '{{ fe_crowdstrike_falcon_sensor_install_failed_task }}': {{ fe_crowdstrike_falcon_sensor_install_error }}
+      when: not (fe_validation_continue_on_error | default(false) | bool)
+      tags:
+        - always
+        - rescue
+
+  always:
+
+    - name: "crowdstrike/falcon_sensor_install | Always | Compute the execution duration"
+      ansible.builtin.set_fact:
+        fe_crowdstrike_falcon_sensor_install_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+        fe_crowdstrike_falcon_sensor_install_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_crowdstrike_falcon_sensor_install_start_epoch | default(0) | int) }}"
+      tags:
+        - always
+
+    - name: "crowdstrike/falcon_sensor_install | Always | Publish the validation result with set_stats"
+      ansible.builtin.set_stats:
+        data:
+          fe_validation_results:
+            "crowdstrike/falcon_sensor_install":
+              component: "crowdstrike/falcon_sensor_install"
+              type: "role"
+              platform: "crowdstrike"
+              host: "{{ inventory_hostname }}"
+              status: "{{ fe_crowdstrike_falcon_sensor_install_status | default('unknown') }}"
+              preflight_passed: "{{ fe_crowdstrike_falcon_sensor_install_preflight_passed | default(false) | bool }}"
+              postflight_passed: "{{ fe_crowdstrike_falcon_sensor_install_postflight_passed | default(false) | bool }}"
+              started_at: "{{ fe_crowdstrike_falcon_sensor_install_started_at | default('') }}"
+              ended_at: "{{ fe_crowdstrike_falcon_sensor_install_ended_at | default('') }}"
+              duration_seconds: "{{ fe_crowdstrike_falcon_sensor_install_duration_seconds | default(0) | int }}"
+              failed_task: "{{ fe_crowdstrike_falcon_sensor_install_failed_task | default('') }}"
+              error: "{{ fe_crowdstrike_falcon_sensor_install_error | default('') }}"
+              check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+          fe_validation_executions: 1
+          fe_validation_succeeded: "{{ 1 if fe_crowdstrike_falcon_sensor_install_status | default('') == 'succeeded' else 0 }}"
+          fe_validation_failed: "{{ 0 if fe_crowdstrike_falcon_sensor_install_status | default('') == 'succeeded' else 1 }}"
+          fe_validation_duration_seconds: "{{ fe_crowdstrike_falcon_sensor_install_duration_seconds | default(0) | int }}"
+          fe_validation_failed_components: >-
+            {{ [] if fe_crowdstrike_falcon_sensor_install_status | default('') == 'succeeded' else ['crowdstrike/falcon_sensor_install'] }}
+        aggregate: true
+        per_host: false
+      tags:
+        - always
+
+    - name: "crowdstrike/falcon_sensor_install | Always | Mark the validation statistics as published"
+      ansible.builtin.set_fact:
+        fe_crowdstrike_falcon_sensor_install_stats_published: true
+      tags:
+        - always

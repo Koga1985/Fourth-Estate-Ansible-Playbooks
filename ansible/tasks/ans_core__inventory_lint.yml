@@ -1,4 +1,21 @@
 ---
+# ---------------------------------------------------------------------------
+# Fourth Estate preflight / postflight validation harness
+#
+# Every play below carries a block/rescue/always validation wrapper:
+#
+#   pre_tasks   preflight validation. On failure it records the reason,
+#               publishes the outcome with set_stats and aborts the play
+#               before any role or task runs.
+#   tasks       the original task list, wrapped so a failure is captured
+#               (which task, which error) and then re-raised.
+#   post_tasks  postflight validation, then the run record is published with
+#               ansible.builtin.set_stats.
+#
+# Set fe_validation_continue_on_error=true to record failures and keep going.
+# See docs/VALIDATION_AND_STATS.md for the published stats schema.
+# ---------------------------------------------------------------------------
+
 - name: ans_core__inventory_lint.yml
   hosts: localhost
   connection: local
@@ -10,6 +27,140 @@
     inventory_path: "{{ inventory_path | default('inventory') }}"
 
   pre_tasks:
+    - name: "ansible/tasks/ans_core__inventory_lint | Preflight validation"
+      tags:
+        - always
+        - preflight
+        - validation
+      block:
+
+        - name: "ansible/tasks/ans_core__inventory_lint | Initialize validation state"
+          ansible.builtin.set_fact:
+            fe_ansible_tasks_ans_core__inventory_lint_start_epoch: "{{ now(fmt='%s') | int }}"
+            fe_ansible_tasks_ans_core__inventory_lint_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+            fe_ansible_tasks_ans_core__inventory_lint_status: "running"
+            fe_ansible_tasks_ans_core__inventory_lint_preflight_passed: false
+            fe_ansible_tasks_ans_core__inventory_lint_postflight_passed: false
+            fe_ansible_tasks_ans_core__inventory_lint_failed_task: ""
+            fe_ansible_tasks_ans_core__inventory_lint_error: ""
+            fe_ansible_tasks_ans_core__inventory_lint_stats_published: false
+          tags:
+            - always
+
+        - name: "ansible/tasks/ans_core__inventory_lint | Preflight | Verify the control node meets the minimum ansible-core version"
+          ansible.builtin.assert:
+            that:
+              - ansible_version.full is version(fe_validation_min_ansible_version | default('2.12'), '>=')
+            fail_msg: >-
+              ansible/tasks/ans_core__inventory_lint: requires ansible-core
+              {{ fe_validation_min_ansible_version | default('2.12') }} or newer,
+              found {{ ansible_version.full }}.
+            success_msg: >-
+              ansible/tasks/ans_core__inventory_lint: ansible-core {{ ansible_version.full }} satisfies the minimum.
+            quiet: true
+          tags:
+            - always
+            - preflight
+            - validation
+
+        - name: "ansible/tasks/ans_core__inventory_lint | Preflight | Verify every declared required variable is defined"
+          ansible.builtin.assert:
+            that:
+              - vars[item] is defined
+            fail_msg: "ansible/tasks/ans_core__inventory_lint: required variable '{{ item }}' is not defined."
+            success_msg: "ansible/tasks/ans_core__inventory_lint: required variable '{{ item }}' is defined."
+            quiet: true
+          loop: "{{ fe_ansible_tasks_ans_core__inventory_lint_required_vars | default([]) }}"
+          loop_control:
+            label: "{{ item }}"
+          tags:
+            - always
+            - preflight
+            - validation
+
+        - name: "ansible/tasks/ans_core__inventory_lint | Preflight | Record that preflight validation passed"
+          ansible.builtin.set_fact:
+            fe_ansible_tasks_ans_core__inventory_lint_preflight_passed: true
+          tags:
+            - always
+            - preflight
+            - validation
+
+      rescue:
+
+        - name: "ansible/tasks/ans_core__inventory_lint | Rescue | Capture the failing task and error detail"
+          ansible.builtin.set_fact:
+            fe_ansible_tasks_ans_core__inventory_lint_status: "preflight_failed"
+            fe_ansible_tasks_ans_core__inventory_lint_postflight_passed: false
+            fe_ansible_tasks_ans_core__inventory_lint_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+            fe_ansible_tasks_ans_core__inventory_lint_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+          tags:
+            - always
+            - rescue
+
+        - name: "ansible/tasks/ans_core__inventory_lint | Rescue | Report the failure"
+          ansible.builtin.debug:
+            msg: >-
+              ansible/tasks/ans_core__inventory_lint: FAILED at '{{ fe_ansible_tasks_ans_core__inventory_lint_failed_task }}' on
+              {{ inventory_hostname }} - {{ fe_ansible_tasks_ans_core__inventory_lint_error }}
+          tags:
+            - always
+            - rescue
+
+        - name: "ansible/tasks/ans_core__inventory_lint | Always | Publish the validation result with set_stats"
+          ansible.builtin.set_stats:
+            data:
+              fe_validation_results:
+                "ansible/tasks/ans_core__inventory_lint":
+                  component: "ansible/tasks/ans_core__inventory_lint"
+                  type: "playbook"
+                  platform: "ansible"
+                  host: "{{ inventory_hostname }}"
+                  status: "{{ fe_ansible_tasks_ans_core__inventory_lint_status | default('unknown') }}"
+                  preflight_passed: "{{ fe_ansible_tasks_ans_core__inventory_lint_preflight_passed | default(false) | bool }}"
+                  postflight_passed: "{{ fe_ansible_tasks_ans_core__inventory_lint_postflight_passed | default(false) | bool }}"
+                  started_at: "{{ fe_ansible_tasks_ans_core__inventory_lint_started_at | default('') }}"
+                  ended_at: "{{ fe_ansible_tasks_ans_core__inventory_lint_ended_at | default('') }}"
+                  duration_seconds: "{{ fe_ansible_tasks_ans_core__inventory_lint_duration_seconds | default(0) | int }}"
+                  failed_task: "{{ fe_ansible_tasks_ans_core__inventory_lint_failed_task | default('') }}"
+                  error: "{{ fe_ansible_tasks_ans_core__inventory_lint_error | default('') }}"
+                  check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+              fe_validation_executions: 1
+              fe_validation_succeeded: "{{ 1 if fe_ansible_tasks_ans_core__inventory_lint_status | default('') == 'succeeded' else 0 }}"
+              fe_validation_failed: "{{ 0 if fe_ansible_tasks_ans_core__inventory_lint_status | default('') == 'succeeded' else 1 }}"
+              fe_validation_duration_seconds: "{{ fe_ansible_tasks_ans_core__inventory_lint_duration_seconds | default(0) | int }}"
+              fe_validation_failed_components: >-
+                {{ [] if fe_ansible_tasks_ans_core__inventory_lint_status | default('') == 'succeeded' else ['ansible/tasks/ans_core__inventory_lint'] }}
+            aggregate: true
+            per_host: false
+          tags:
+            - always
+
+        - name: "ansible/tasks/ans_core__inventory_lint | Always | Mark the validation statistics as published"
+          ansible.builtin.set_fact:
+            fe_ansible_tasks_ans_core__inventory_lint_stats_published: true
+          tags:
+            - always
+
+        - name: "ansible/tasks/ans_core__inventory_lint | Rescue | Re-raise the failure unless the caller opted to continue"
+          ansible.builtin.fail:
+            msg: >-
+              ansible/tasks/ans_core__inventory_lint failed at '{{ fe_ansible_tasks_ans_core__inventory_lint_failed_task }}': {{ fe_ansible_tasks_ans_core__inventory_lint_error }}
+          when: not (fe_validation_continue_on_error | default(false) | bool)
+          tags:
+            - always
+            - rescue
+
+      always:
+
+        - name: "ansible/tasks/ans_core__inventory_lint | Always | Report the preflight outcome"
+          ansible.builtin.debug:
+            msg: >-
+              ansible/tasks/ans_core__inventory_lint: preflight
+              {{ 'passed' if fe_ansible_tasks_ans_core__inventory_lint_preflight_passed | default(false) | bool else 'FAILED' }}
+              on {{ inventory_hostname }}.
+          tags:
+            - always
     - name: Ensure artifacts directory
       ansible.builtin.file:
         path: "{{ artifacts_dir }}"
@@ -17,53 +168,251 @@
         mode: "0750"
 
   tasks:
-    - name: ansible-inventory --list JSON
-      ansible.builtin.shell: |
-        set -euo pipefail
-        ansible-inventory -i "{{ inventory_path }}" --list
-      args: { executable: /bin/bash }
-      register: invlist
-      changed_when: false
-      failed_when: false
+    - name: "ansible/tasks/ans_core__inventory_lint | Guarded execution with rescue and always handling"
+      block:
 
-    - name: Check for inventory errors
-      ansible.builtin.fail:
-        msg: "Inventory validation failed: {{ invlist.stderr }}"
-      when:
-        - invlist.rc != 0
-        - invlist.stderr is search('ERROR|error|Error')
-        - not (invlist.stderr is search('WARNING|warning|Warning'))
+        - name: ansible-inventory --list JSON
+          ansible.builtin.shell: |
+            set -euo pipefail
+            ansible-inventory -i "{{ inventory_path }}" --list
+          args: { executable: /bin/bash }
+          register: invlist
+          changed_when: false
+          failed_when: false
 
-    - name: Write inventory list artifact
-      ansible.builtin.copy:
-        dest: "{{ artifacts_dir }}/inventory_list.json"
-        mode: "0640"
-        content: "{{ invlist.stdout | default('{}') }}"
+        - name: Check for inventory errors
+          ansible.builtin.fail:
+            msg: "Inventory validation failed: {{ invlist.stderr }}"
+          when:
+            - invlist.rc != 0
+            - invlist.stderr is search('ERROR|error|Error')
+            - not (invlist.stderr is search('WARNING|warning|Warning'))
 
-    - name: Detect duplicate hosts and group cycles (heuristic)
-      ansible.builtin.shell: |
-        set -euo pipefail
-        ansible-inventory -i "{{ inventory_path }}" --graph | tee "{{ artifacts_dir }}/inventory_graph.txt"
-        python3 - <<'PY'
-        import re,sys,json
-        g=open("{{ artifacts_dir }}/inventory_graph.txt").read().splitlines()
-        dupes=set(); seen=set(); cycle=False
-        for ln in g:
-          m=re.match(r"\|\s+([\w-]+)", ln)
-          if m:
-            n=m.group(1)
-            if n in seen: dupes.add(n)
-            else: seen.add(n)
-        # naive cycle guess: look for repeated group arrows multiple times
-        print(json.dumps({"dupes":sorted(dupes),"cycle_suspect":cycle}))
-        PY
-      args: { executable: /bin/bash }
-      register: lintres
-      changed_when: false
-      failed_when: lintres.rc != 0 and lintres.rc != 1
+        - name: Write inventory list artifact
+          ansible.builtin.copy:
+            dest: "{{ artifacts_dir }}/inventory_list.json"
+            mode: "0640"
+            content: "{{ invlist.stdout | default('{}') }}"
 
-    - name: Write lint result
-      ansible.builtin.copy:
-        dest: "{{ artifacts_dir }}/inventory_lint.json"
-        mode: "0640"
-        content: "{{ lintres.stdout | default('{}') }}"
+        - name: Detect duplicate hosts and group cycles (heuristic)
+          ansible.builtin.shell: |
+            set -euo pipefail
+            ansible-inventory -i "{{ inventory_path }}" --graph | tee "{{ artifacts_dir }}/inventory_graph.txt"
+            python3 - <<'PY'
+            import re,sys,json
+            g=open("{{ artifacts_dir }}/inventory_graph.txt").read().splitlines()
+            dupes=set(); seen=set(); cycle=False
+            for ln in g:
+              m=re.match(r"\|\s+([\w-]+)", ln)
+              if m:
+                n=m.group(1)
+                if n in seen: dupes.add(n)
+                else: seen.add(n)
+            # naive cycle guess: look for repeated group arrows multiple times
+            print(json.dumps({"dupes":sorted(dupes),"cycle_suspect":cycle}))
+            PY
+          args: { executable: /bin/bash }
+          register: lintres
+          changed_when: false
+          failed_when: lintres.rc != 0 and lintres.rc != 1
+
+        - name: Write lint result
+          ansible.builtin.copy:
+            dest: "{{ artifacts_dir }}/inventory_lint.json"
+            mode: "0640"
+            content: "{{ lintres.stdout | default('{}') }}"
+
+      rescue:
+
+        - name: "ansible/tasks/ans_core__inventory_lint | Rescue | Capture the failing task and error detail"
+          ansible.builtin.set_fact:
+            fe_ansible_tasks_ans_core__inventory_lint_status: "failed"
+            fe_ansible_tasks_ans_core__inventory_lint_postflight_passed: false
+            fe_ansible_tasks_ans_core__inventory_lint_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+            fe_ansible_tasks_ans_core__inventory_lint_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+          tags:
+            - always
+            - rescue
+
+        - name: "ansible/tasks/ans_core__inventory_lint | Rescue | Report the failure"
+          ansible.builtin.debug:
+            msg: >-
+              ansible/tasks/ans_core__inventory_lint: FAILED at '{{ fe_ansible_tasks_ans_core__inventory_lint_failed_task }}' on
+              {{ inventory_hostname }} - {{ fe_ansible_tasks_ans_core__inventory_lint_error }}
+          tags:
+            - always
+            - rescue
+
+        - name: "ansible/tasks/ans_core__inventory_lint | Rescue | Re-raise the failure unless the caller opted to continue"
+          ansible.builtin.fail:
+            msg: >-
+              ansible/tasks/ans_core__inventory_lint failed at '{{ fe_ansible_tasks_ans_core__inventory_lint_failed_task }}': {{ fe_ansible_tasks_ans_core__inventory_lint_error }}
+          when: not (fe_validation_continue_on_error | default(false) | bool)
+          tags:
+            - always
+            - rescue
+
+      always:
+
+        - name: "ansible/tasks/ans_core__inventory_lint | Always | Compute the execution duration"
+          ansible.builtin.set_fact:
+            fe_ansible_tasks_ans_core__inventory_lint_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+            fe_ansible_tasks_ans_core__inventory_lint_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_ansible_tasks_ans_core__inventory_lint_start_epoch | default(0) | int) }}"
+          tags:
+            - always
+
+        - name: "ansible/tasks/ans_core__inventory_lint | Always | Publish the validation result with set_stats"
+          ansible.builtin.set_stats:
+            data:
+              fe_validation_results:
+                "ansible/tasks/ans_core__inventory_lint":
+                  component: "ansible/tasks/ans_core__inventory_lint"
+                  type: "playbook"
+                  platform: "ansible"
+                  host: "{{ inventory_hostname }}"
+                  status: "{{ fe_ansible_tasks_ans_core__inventory_lint_status | default('unknown') }}"
+                  preflight_passed: "{{ fe_ansible_tasks_ans_core__inventory_lint_preflight_passed | default(false) | bool }}"
+                  postflight_passed: "{{ fe_ansible_tasks_ans_core__inventory_lint_postflight_passed | default(false) | bool }}"
+                  started_at: "{{ fe_ansible_tasks_ans_core__inventory_lint_started_at | default('') }}"
+                  ended_at: "{{ fe_ansible_tasks_ans_core__inventory_lint_ended_at | default('') }}"
+                  duration_seconds: "{{ fe_ansible_tasks_ans_core__inventory_lint_duration_seconds | default(0) | int }}"
+                  failed_task: "{{ fe_ansible_tasks_ans_core__inventory_lint_failed_task | default('') }}"
+                  error: "{{ fe_ansible_tasks_ans_core__inventory_lint_error | default('') }}"
+                  check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+              fe_validation_executions: 1
+              fe_validation_succeeded: "{{ 1 if fe_ansible_tasks_ans_core__inventory_lint_status | default('') == 'succeeded' else 0 }}"
+              fe_validation_failed: "{{ 0 if fe_ansible_tasks_ans_core__inventory_lint_status | default('') == 'succeeded' else 1 }}"
+              fe_validation_duration_seconds: "{{ fe_ansible_tasks_ans_core__inventory_lint_duration_seconds | default(0) | int }}"
+              fe_validation_failed_components: >-
+                {{ [] if fe_ansible_tasks_ans_core__inventory_lint_status | default('') == 'succeeded' else ['ansible/tasks/ans_core__inventory_lint'] }}
+            aggregate: true
+            per_host: false
+          when:
+            - fe_ansible_tasks_ans_core__inventory_lint_status | default('') == 'failed'
+            - not (fe_ansible_tasks_ans_core__inventory_lint_stats_published | default(false) | bool)
+          tags:
+            - always
+
+        - name: "ansible/tasks/ans_core__inventory_lint | Always | Mark the validation statistics as published"
+          ansible.builtin.set_fact:
+            fe_ansible_tasks_ans_core__inventory_lint_stats_published: true
+          when:
+            - fe_ansible_tasks_ans_core__inventory_lint_status | default('') == 'failed'
+          tags:
+            - always
+  post_tasks:
+    - name: "ansible/tasks/ans_core__inventory_lint | Postflight validation"
+      tags:
+        - always
+        - postflight
+        - validation
+      block:
+
+        - name: "ansible/tasks/ans_core__inventory_lint | Postflight | Verify the guarded body ran after a passing preflight"
+          ansible.builtin.assert:
+            that:
+              - fe_ansible_tasks_ans_core__inventory_lint_preflight_passed | bool
+              - fe_ansible_tasks_ans_core__inventory_lint_status in ['running', 'succeeded']
+            fail_msg: >-
+              ansible/tasks/ans_core__inventory_lint: postflight validation failed - preflight passed
+              ={{ fe_ansible_tasks_ans_core__inventory_lint_preflight_passed | default(false) }},
+              status={{ fe_ansible_tasks_ans_core__inventory_lint_status | default('unknown') }}.
+            success_msg: "ansible/tasks/ans_core__inventory_lint: postflight validation passed."
+            quiet: true
+          tags:
+            - always
+            - postflight
+            - validation
+
+        - name: "ansible/tasks/ans_core__inventory_lint | Postflight | Record the successful outcome"
+          ansible.builtin.set_fact:
+            fe_ansible_tasks_ans_core__inventory_lint_postflight_passed: true
+            fe_ansible_tasks_ans_core__inventory_lint_status: "succeeded"
+          tags:
+            - always
+            - postflight
+            - validation
+
+      rescue:
+
+        - name: "ansible/tasks/ans_core__inventory_lint | Rescue | Capture the failing task and error detail"
+          ansible.builtin.set_fact:
+            fe_ansible_tasks_ans_core__inventory_lint_status: "failed"
+            fe_ansible_tasks_ans_core__inventory_lint_postflight_passed: false
+            fe_ansible_tasks_ans_core__inventory_lint_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+            fe_ansible_tasks_ans_core__inventory_lint_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+          tags:
+            - always
+            - rescue
+
+        - name: "ansible/tasks/ans_core__inventory_lint | Rescue | Report the failure"
+          ansible.builtin.debug:
+            msg: >-
+              ansible/tasks/ans_core__inventory_lint: FAILED at '{{ fe_ansible_tasks_ans_core__inventory_lint_failed_task }}' on
+              {{ inventory_hostname }} - {{ fe_ansible_tasks_ans_core__inventory_lint_error }}
+          tags:
+            - always
+            - rescue
+
+        - name: "ansible/tasks/ans_core__inventory_lint | Rescue | Re-raise the failure unless the caller opted to continue"
+          ansible.builtin.fail:
+            msg: >-
+              ansible/tasks/ans_core__inventory_lint failed at '{{ fe_ansible_tasks_ans_core__inventory_lint_failed_task }}': {{ fe_ansible_tasks_ans_core__inventory_lint_error }}
+          when: not (fe_validation_continue_on_error | default(false) | bool)
+          tags:
+            - always
+            - rescue
+
+      always:
+
+        - name: "ansible/tasks/ans_core__inventory_lint | Always | Compute the execution duration"
+          ansible.builtin.set_fact:
+            fe_ansible_tasks_ans_core__inventory_lint_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+            fe_ansible_tasks_ans_core__inventory_lint_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_ansible_tasks_ans_core__inventory_lint_start_epoch | default(0) | int) }}"
+          tags:
+            - always
+
+        - name: "ansible/tasks/ans_core__inventory_lint | Always | Publish the validation result with set_stats"
+          ansible.builtin.set_stats:
+            data:
+              fe_validation_results:
+                "ansible/tasks/ans_core__inventory_lint":
+                  component: "ansible/tasks/ans_core__inventory_lint"
+                  type: "playbook"
+                  platform: "ansible"
+                  host: "{{ inventory_hostname }}"
+                  status: "{{ fe_ansible_tasks_ans_core__inventory_lint_status | default('unknown') }}"
+                  preflight_passed: "{{ fe_ansible_tasks_ans_core__inventory_lint_preflight_passed | default(false) | bool }}"
+                  postflight_passed: "{{ fe_ansible_tasks_ans_core__inventory_lint_postflight_passed | default(false) | bool }}"
+                  started_at: "{{ fe_ansible_tasks_ans_core__inventory_lint_started_at | default('') }}"
+                  ended_at: "{{ fe_ansible_tasks_ans_core__inventory_lint_ended_at | default('') }}"
+                  duration_seconds: "{{ fe_ansible_tasks_ans_core__inventory_lint_duration_seconds | default(0) | int }}"
+                  failed_task: "{{ fe_ansible_tasks_ans_core__inventory_lint_failed_task | default('') }}"
+                  error: "{{ fe_ansible_tasks_ans_core__inventory_lint_error | default('') }}"
+                  check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+              fe_validation_executions: 1
+              fe_validation_succeeded: "{{ 1 if fe_ansible_tasks_ans_core__inventory_lint_status | default('') == 'succeeded' else 0 }}"
+              fe_validation_failed: "{{ 0 if fe_ansible_tasks_ans_core__inventory_lint_status | default('') == 'succeeded' else 1 }}"
+              fe_validation_duration_seconds: "{{ fe_ansible_tasks_ans_core__inventory_lint_duration_seconds | default(0) | int }}"
+              fe_validation_failed_components: >-
+                {{ [] if fe_ansible_tasks_ans_core__inventory_lint_status | default('') == 'succeeded' else ['ansible/tasks/ans_core__inventory_lint'] }}
+            aggregate: true
+            per_host: false
+          when:
+            - not (fe_ansible_tasks_ans_core__inventory_lint_stats_published | default(false) | bool)
+          tags:
+            - always
+
+        - name: "ansible/tasks/ans_core__inventory_lint | Always | Mark the validation statistics as published"
+          ansible.builtin.set_fact:
+            fe_ansible_tasks_ans_core__inventory_lint_stats_published: true
+          tags:
+            - always
+
+        - name: "ansible/tasks/ans_core__inventory_lint | Always | Report the run summary"
+          ansible.builtin.debug:
+            msg: >-
+              ansible/tasks/ans_core__inventory_lint: {{ fe_ansible_tasks_ans_core__inventory_lint_status | default('unknown') }} in
+              {{ fe_ansible_tasks_ans_core__inventory_lint_duration_seconds | default(0) }}s on {{ inventory_hostname }}.
+          tags:
+            - always

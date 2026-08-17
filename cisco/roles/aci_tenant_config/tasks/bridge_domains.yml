@@ -2,107 +2,290 @@
 # tasks file for aci_tenant_config - Bridge Domain Configuration
 # Creates bridge domains and subnets using cisco.aci.aci_bd and aci_bd_subnet
 
-- name: PHASE 2 - Create bridge domains
-  cisco.aci.aci_bd:
-    host: "{{ aci_host }}"
-    username: "{{ aci_username }}"
-    password: "{{ aci_password }}"
-    validate_certs: "{{ aci_verify_ssl }}"
-    use_proxy: "{{ aci_use_proxy }}"
-    tenant: "{{ item.tenant }}"
-    bd: "{{ item.name }}"
-    vrf: "{{ item.vrf }}"
-    description: "{{ item.description | default('') }}"
-    enable_routing: "{{ item.unicast_routing | default(true) }}"
-    arp_flooding: "{{ item.arp_flooding | default(false) }}"
-    l2_unknown_unicast: "{{ item.l2_unknown_unicast | default('proxy') }}"
-    l3_unknown_multicast: "{{ item.l3_unknown_multicast_flooding | default('flood') }}"
-    multi_dest: "{{ item.multi_dest_flooding | default('bd-flood') }}"
-    ip_learning: "{{ item.ip_learning | default(true) }}"
-    limit_ip_learn: "{{ item.limit_ip_learn | default(true) }}"
-    state: "{{ 'present' if apply_changes | bool else 'query' }}"
-  no_log: true
-  changed_when: not (apply_changes | bool)
-  loop: "{{ aci_bridge_domains }}"
-  loop_control:
-    label: "{{ item.tenant }}/{{ item.name }}"
-  register: bd_creation_results
-  tags:
-    - aci
-    - tenants
-    - bridge_domains
-    - phase2
+# ---------------------------------------------------------------------------
+# Fourth Estate preflight / postflight validation harness
+#
+# The task file body below is wrapped in an Ansible block/rescue/always structure:
+#
+#   block   preflight validation runs first, then the original task file body, then
+#           postflight validation. Any failure transfers control to rescue.
+#   rescue  records which task failed and why, then re-raises so a failure is
+#           never silently swallowed. Set fe_validation_continue_on_error=true
+#           to record the failure and keep going instead.
+#   always  computes the run duration and publishes the outcome through
+#           ansible.builtin.set_stats, so a wrapping playbook, AWX/AAP or CI can
+#           consume the result without scraping log output.
+#
+# Published stats (see docs/VALIDATION_AND_STATS.md):
+#   fe_validation_results['cisco/aci_tenant_config/bridge_domains']  per-component record
+#   fe_validation_executions / _succeeded / _failed / _duration_seconds
+#   fe_validation_failed_components
+#
+# Add component-specific preflight checks without editing this file by setting
+#   fe_cisco_aci_tenant_config_bridge_domains_required_vars: [var_one, var_two]
+# ---------------------------------------------------------------------------
 
-- name: PHASE 2 - Create bridge domain subnets (gateway IPs)
-  cisco.aci.aci_bd_subnet:
-    host: "{{ aci_host }}"
-    username: "{{ aci_username }}"
-    password: "{{ aci_password }}"
-    validate_certs: "{{ aci_verify_ssl }}"
-    use_proxy: "{{ aci_use_proxy }}"
-    tenant: "{{ item.tenant }}"
-    bd: "{{ item.name }}"
-    gateway: "{{ item.gateway_ip | ansible.utils.ipaddr('address') }}"
-    mask: "{{ item.gateway_ip | ansible.utils.ipaddr('prefix') }}"
-    scope: "{{ item.scope | default('private') }}"
-    state: "{{ 'present' if apply_changes | bool else 'query' }}"
-  no_log: true
-  changed_when: not (apply_changes | bool)
-  loop: "{{ aci_bridge_domains }}"
-  loop_control:
-    label: "{{ item.tenant }}/{{ item.name }} - {{ item.gateway_ip }}"
-  when: item.gateway_ip is defined
-  register: bd_subnet_results
+- name: "cisco/aci_tenant_config/bridge_domains | Initialize validation state"
+  ansible.builtin.set_fact:
+    fe_cisco_aci_tenant_config_bridge_domains_start_epoch: "{{ now(fmt='%s') | int }}"
+    fe_cisco_aci_tenant_config_bridge_domains_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+    fe_cisco_aci_tenant_config_bridge_domains_status: "running"
+    fe_cisco_aci_tenant_config_bridge_domains_preflight_passed: false
+    fe_cisco_aci_tenant_config_bridge_domains_postflight_passed: false
+    fe_cisco_aci_tenant_config_bridge_domains_failed_task: ""
+    fe_cisco_aci_tenant_config_bridge_domains_error: ""
+    fe_cisco_aci_tenant_config_bridge_domains_stats_published: false
   tags:
-    - aci
-    - tenants
-    - bridge_domains
-    - subnets
-    - phase2
+    - always
 
-- name: PHASE 2 - Query bridge domains for validation
-  cisco.aci.aci_bd:
-    host: "{{ aci_host }}"
-    username: "{{ aci_username }}"
-    password: "{{ aci_password }}"
-    validate_certs: "{{ aci_verify_ssl }}"
-    use_proxy: "{{ aci_use_proxy }}"
-    state: query
-  no_log: true
-  changed_when: false
-  register: aci_bd_query_all
-  tags:
-    - aci
-    - tenants
-    - bridge_domains
-    - phase2
-    - validation
+- name: "cisco/aci_tenant_config/bridge_domains | Guarded execution with preflight and postflight validation"
+  block:
 
-- name: PHASE 2 - Display bridge domain configuration summary
-  ansible.builtin.debug:
-    msg:
-      - "=== Bridge Domain Configuration Summary ==="
-      - "Configured BDs:  {{ aci_bridge_domains | length }}"
-      - "With gateways:   {{ aci_bridge_domains | selectattr('gateway_ip', 'defined') | list | length }}"
-      - "Apply changes:   {{ apply_changes | bool }}"
-  tags:
-    - aci
-    - tenants
-    - bridge_domains
-    - phase2
+    # ----------------------------- preflight --------------------
 
-- name: PHASE 2 - Save bridge domain configuration artifact
-  ansible.builtin.copy:
-    dest: "{{ artifacts_dir }}/aci_bridge_domains.json"
-    mode: "0640"
-    content: "{{ bd_artifact | to_nice_json }}"
-  vars:
-    bd_artifact:
-      timestamp: "{{ ansible_date_time.iso8601 }}"
-      configured_bridge_domains: "{{ aci_bridge_domains }}"
-      apply_changes: "{{ apply_changes | bool }}"
-  tags:
-    - aci
-    - tenants
-    - bridge_domains
-    - phase2
+    - name: "cisco/aci_tenant_config/bridge_domains | Preflight | Verify the control node meets the minimum ansible-core version"
+      ansible.builtin.assert:
+        that:
+          - ansible_version.full is version(fe_validation_min_ansible_version | default('2.12'), '>=')
+        fail_msg: >-
+          cisco/aci_tenant_config/bridge_domains: requires ansible-core
+          {{ fe_validation_min_ansible_version | default('2.12') }} or newer,
+          found {{ ansible_version.full }}.
+        success_msg: >-
+          cisco/aci_tenant_config/bridge_domains: ansible-core {{ ansible_version.full }} satisfies the minimum.
+        quiet: true
+      tags:
+        - always
+        - preflight
+        - validation
+
+    - name: "cisco/aci_tenant_config/bridge_domains | Preflight | Verify every declared required variable is defined"
+      ansible.builtin.assert:
+        that:
+          - vars[item] is defined
+        fail_msg: "cisco/aci_tenant_config/bridge_domains: required variable '{{ item }}' is not defined."
+        success_msg: "cisco/aci_tenant_config/bridge_domains: required variable '{{ item }}' is defined."
+        quiet: true
+      loop: "{{ fe_cisco_aci_tenant_config_bridge_domains_required_vars | default([]) }}"
+      loop_control:
+        label: "{{ item }}"
+      tags:
+        - always
+        - preflight
+        - validation
+
+    - name: "cisco/aci_tenant_config/bridge_domains | Preflight | Record that preflight validation passed"
+      ansible.builtin.set_fact:
+        fe_cisco_aci_tenant_config_bridge_domains_preflight_passed: true
+      tags:
+        - always
+        - preflight
+        - validation
+
+    # ----------------------------- execute ----------------------
+
+    - name: PHASE 2 - Create bridge domains
+      cisco.aci.aci_bd:
+        host: "{{ aci_host }}"
+        username: "{{ aci_username }}"
+        password: "{{ aci_password }}"
+        validate_certs: "{{ aci_verify_ssl }}"
+        use_proxy: "{{ aci_use_proxy }}"
+        tenant: "{{ item.tenant }}"
+        bd: "{{ item.name }}"
+        vrf: "{{ item.vrf }}"
+        description: "{{ item.description | default('') }}"
+        enable_routing: "{{ item.unicast_routing | default(true) }}"
+        arp_flooding: "{{ item.arp_flooding | default(false) }}"
+        l2_unknown_unicast: "{{ item.l2_unknown_unicast | default('proxy') }}"
+        l3_unknown_multicast: "{{ item.l3_unknown_multicast_flooding | default('flood') }}"
+        multi_dest: "{{ item.multi_dest_flooding | default('bd-flood') }}"
+        ip_learning: "{{ item.ip_learning | default(true) }}"
+        limit_ip_learn: "{{ item.limit_ip_learn | default(true) }}"
+        state: "{{ 'present' if apply_changes | bool else 'query' }}"
+      no_log: true
+      changed_when: not (apply_changes | bool)
+      loop: "{{ aci_bridge_domains }}"
+      loop_control:
+        label: "{{ item.tenant }}/{{ item.name }}"
+      register: bd_creation_results
+      tags:
+        - aci
+        - tenants
+        - bridge_domains
+        - phase2
+
+    - name: PHASE 2 - Create bridge domain subnets (gateway IPs)
+      cisco.aci.aci_bd_subnet:
+        host: "{{ aci_host }}"
+        username: "{{ aci_username }}"
+        password: "{{ aci_password }}"
+        validate_certs: "{{ aci_verify_ssl }}"
+        use_proxy: "{{ aci_use_proxy }}"
+        tenant: "{{ item.tenant }}"
+        bd: "{{ item.name }}"
+        gateway: "{{ item.gateway_ip | ansible.utils.ipaddr('address') }}"
+        mask: "{{ item.gateway_ip | ansible.utils.ipaddr('prefix') }}"
+        scope: "{{ item.scope | default('private') }}"
+        state: "{{ 'present' if apply_changes | bool else 'query' }}"
+      no_log: true
+      changed_when: not (apply_changes | bool)
+      loop: "{{ aci_bridge_domains }}"
+      loop_control:
+        label: "{{ item.tenant }}/{{ item.name }} - {{ item.gateway_ip }}"
+      when: item.gateway_ip is defined
+      register: bd_subnet_results
+      tags:
+        - aci
+        - tenants
+        - bridge_domains
+        - subnets
+        - phase2
+
+    - name: PHASE 2 - Query bridge domains for validation
+      cisco.aci.aci_bd:
+        host: "{{ aci_host }}"
+        username: "{{ aci_username }}"
+        password: "{{ aci_password }}"
+        validate_certs: "{{ aci_verify_ssl }}"
+        use_proxy: "{{ aci_use_proxy }}"
+        state: query
+      no_log: true
+      changed_when: false
+      register: aci_bd_query_all
+      tags:
+        - aci
+        - tenants
+        - bridge_domains
+        - phase2
+        - validation
+
+    - name: PHASE 2 - Display bridge domain configuration summary
+      ansible.builtin.debug:
+        msg:
+          - "=== Bridge Domain Configuration Summary ==="
+          - "Configured BDs:  {{ aci_bridge_domains | length }}"
+          - "With gateways:   {{ aci_bridge_domains | selectattr('gateway_ip', 'defined') | list | length }}"
+          - "Apply changes:   {{ apply_changes | bool }}"
+      tags:
+        - aci
+        - tenants
+        - bridge_domains
+        - phase2
+
+    - name: PHASE 2 - Save bridge domain configuration artifact
+      ansible.builtin.copy:
+        dest: "{{ artifacts_dir }}/aci_bridge_domains.json"
+        mode: "0640"
+        content: "{{ bd_artifact | to_nice_json }}"
+      vars:
+        bd_artifact:
+          timestamp: "{{ ansible_date_time.iso8601 }}"
+          configured_bridge_domains: "{{ aci_bridge_domains }}"
+          apply_changes: "{{ apply_changes | bool }}"
+      tags:
+        - aci
+        - tenants
+        - bridge_domains
+        - phase2
+
+    # ----------------------------- postflight -------------------
+
+    - name: "cisco/aci_tenant_config/bridge_domains | Postflight | Verify the guarded body ran after a passing preflight"
+      ansible.builtin.assert:
+        that:
+          - fe_cisco_aci_tenant_config_bridge_domains_preflight_passed | bool
+          - fe_cisco_aci_tenant_config_bridge_domains_status in ['running', 'succeeded']
+        fail_msg: >-
+          cisco/aci_tenant_config/bridge_domains: postflight validation failed - preflight passed
+          ={{ fe_cisco_aci_tenant_config_bridge_domains_preflight_passed | default(false) }},
+          status={{ fe_cisco_aci_tenant_config_bridge_domains_status | default('unknown') }}.
+        success_msg: "cisco/aci_tenant_config/bridge_domains: postflight validation passed."
+        quiet: true
+      tags:
+        - always
+        - postflight
+        - validation
+
+    - name: "cisco/aci_tenant_config/bridge_domains | Postflight | Record the successful outcome"
+      ansible.builtin.set_fact:
+        fe_cisco_aci_tenant_config_bridge_domains_postflight_passed: true
+        fe_cisco_aci_tenant_config_bridge_domains_status: "succeeded"
+      tags:
+        - always
+        - postflight
+        - validation
+
+  rescue:
+
+    - name: "cisco/aci_tenant_config/bridge_domains | Rescue | Capture the failing task and error detail"
+      ansible.builtin.set_fact:
+        fe_cisco_aci_tenant_config_bridge_domains_status: "failed"
+        fe_cisco_aci_tenant_config_bridge_domains_postflight_passed: false
+        fe_cisco_aci_tenant_config_bridge_domains_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+        fe_cisco_aci_tenant_config_bridge_domains_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+      tags:
+        - always
+        - rescue
+
+    - name: "cisco/aci_tenant_config/bridge_domains | Rescue | Report the failure"
+      ansible.builtin.debug:
+        msg: >-
+          cisco/aci_tenant_config/bridge_domains: FAILED at '{{ fe_cisco_aci_tenant_config_bridge_domains_failed_task }}' on
+          {{ inventory_hostname }} - {{ fe_cisco_aci_tenant_config_bridge_domains_error }}
+      tags:
+        - always
+        - rescue
+
+    - name: "cisco/aci_tenant_config/bridge_domains | Rescue | Re-raise the failure unless the caller opted to continue"
+      ansible.builtin.fail:
+        msg: >-
+          cisco/aci_tenant_config/bridge_domains failed at '{{ fe_cisco_aci_tenant_config_bridge_domains_failed_task }}': {{ fe_cisco_aci_tenant_config_bridge_domains_error }}
+      when: not (fe_validation_continue_on_error | default(false) | bool)
+      tags:
+        - always
+        - rescue
+
+  always:
+
+    - name: "cisco/aci_tenant_config/bridge_domains | Always | Compute the execution duration"
+      ansible.builtin.set_fact:
+        fe_cisco_aci_tenant_config_bridge_domains_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+        fe_cisco_aci_tenant_config_bridge_domains_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_cisco_aci_tenant_config_bridge_domains_start_epoch | default(0) | int) }}"
+      tags:
+        - always
+
+    - name: "cisco/aci_tenant_config/bridge_domains | Always | Publish the validation result with set_stats"
+      ansible.builtin.set_stats:
+        data:
+          fe_validation_results:
+            "cisco/aci_tenant_config/bridge_domains":
+              component: "cisco/aci_tenant_config/bridge_domains"
+              type: "role-tasks"
+              platform: "cisco"
+              host: "{{ inventory_hostname }}"
+              status: "{{ fe_cisco_aci_tenant_config_bridge_domains_status | default('unknown') }}"
+              preflight_passed: "{{ fe_cisco_aci_tenant_config_bridge_domains_preflight_passed | default(false) | bool }}"
+              postflight_passed: "{{ fe_cisco_aci_tenant_config_bridge_domains_postflight_passed | default(false) | bool }}"
+              started_at: "{{ fe_cisco_aci_tenant_config_bridge_domains_started_at | default('') }}"
+              ended_at: "{{ fe_cisco_aci_tenant_config_bridge_domains_ended_at | default('') }}"
+              duration_seconds: "{{ fe_cisco_aci_tenant_config_bridge_domains_duration_seconds | default(0) | int }}"
+              failed_task: "{{ fe_cisco_aci_tenant_config_bridge_domains_failed_task | default('') }}"
+              error: "{{ fe_cisco_aci_tenant_config_bridge_domains_error | default('') }}"
+              check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+          fe_validation_executions: 1
+          fe_validation_succeeded: "{{ 1 if fe_cisco_aci_tenant_config_bridge_domains_status | default('') == 'succeeded' else 0 }}"
+          fe_validation_failed: "{{ 0 if fe_cisco_aci_tenant_config_bridge_domains_status | default('') == 'succeeded' else 1 }}"
+          fe_validation_duration_seconds: "{{ fe_cisco_aci_tenant_config_bridge_domains_duration_seconds | default(0) | int }}"
+          fe_validation_failed_components: >-
+            {{ [] if fe_cisco_aci_tenant_config_bridge_domains_status | default('') == 'succeeded' else ['cisco/aci_tenant_config/bridge_domains'] }}
+        aggregate: true
+        per_host: false
+      tags:
+        - always
+
+    - name: "cisco/aci_tenant_config/bridge_domains | Always | Mark the validation statistics as published"
+      ansible.builtin.set_fact:
+        fe_cisco_aci_tenant_config_bridge_domains_stats_published: true
+      tags:
+        - always

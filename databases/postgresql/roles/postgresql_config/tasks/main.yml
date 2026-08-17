@@ -2,289 +2,472 @@
 # tasks file for postgresql_config
 # Production-ready PostgreSQL configuration management
 
-- name: Include OS-specific variables
-  include_vars: "{{ ansible_os_family }}.yml"
-  when: ansible_os_family in ['RedHat', 'Debian']
-  failed_when: false
+# ---------------------------------------------------------------------------
+# Fourth Estate preflight / postflight validation harness
+#
+# The task file body below is wrapped in an Ansible block/rescue/always structure:
+#
+#   block   preflight validation runs first, then the original task file body, then
+#           postflight validation. Any failure transfers control to rescue.
+#   rescue  records which task failed and why, then re-raises so a failure is
+#           never silently swallowed. Set fe_validation_continue_on_error=true
+#           to record the failure and keep going instead.
+#   always  computes the run duration and publishes the outcome through
+#           ansible.builtin.set_stats, so a wrapping playbook, AWX/AAP or CI can
+#           consume the result without scraping log output.
+#
+# Published stats (see docs/VALIDATION_AND_STATS.md):
+#   fe_validation_results['databases/postgresql/postgresql_config']  per-component record
+#   fe_validation_executions / _succeeded / _failed / _duration_seconds
+#   fe_validation_failed_components
+#
+# Add component-specific preflight checks without editing this file by setting
+#   fe_databases_postgresql_postgresql_config_required_vars: [var_one, var_two]
+# ---------------------------------------------------------------------------
 
-- name: Ensure PostgreSQL data directory exists
-  ansible.builtin.stat:
-    path: "{{ postgresql_data_directory }}/PG_VERSION"
-  register: pg_data_check
-  failed_when: not pg_data_check.stat.exists
+- name: "databases/postgresql/postgresql_config | Initialize validation state"
+  ansible.builtin.set_fact:
+    fe_databases_postgresql_postgresql_config_start_epoch: "{{ now(fmt='%s') | int }}"
+    fe_databases_postgresql_postgresql_config_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+    fe_databases_postgresql_postgresql_config_status: "running"
+    fe_databases_postgresql_postgresql_config_preflight_passed: false
+    fe_databases_postgresql_postgresql_config_postflight_passed: false
+    fe_databases_postgresql_postgresql_config_failed_task: ""
+    fe_databases_postgresql_postgresql_config_error: ""
+    fe_databases_postgresql_postgresql_config_stats_published: false
+  tags:
+    - always
 
-- name: Backup existing postgresql.conf
-  ansible.builtin.copy:
-    src: "{{ postgresql_config_directory }}/postgresql.conf"
-    dest: "{{ postgresql_config_directory }}/postgresql.conf.{{ ansible_date_time.iso8601_basic_short }}.bak"
-    remote_src: true
-    owner: postgres
-    group: postgres
-    mode: '0600'
-  when: pg_data_check.stat.exists
-
-- name: Deploy postgresql.conf from template
-  ansible.builtin.template:
-    src: postgresql.conf.j2
-    dest: "{{ postgresql_config_directory }}/postgresql.conf"
-    owner: postgres
-    group: postgres
-    mode: '0600'
-    validate: "{{ postgresql_bin_path }}/postgres -D {{ postgresql_data_directory }} -C config_file=%s"
-    backup: true
-  notify: reload postgresql
-
-- name: Backup existing pg_hba.conf
-  ansible.builtin.copy:
-    src: "{{ postgresql_config_directory }}/pg_hba.conf"
-    dest: "{{ postgresql_config_directory }}/pg_hba.conf.{{ ansible_date_time.iso8601_basic_short }}.bak"
-    remote_src: true
-    owner: postgres
-    group: postgres
-    mode: '0600'
-  when: pg_data_check.stat.exists
-
-- name: Deploy pg_hba.conf from template
-  ansible.builtin.template:
-    src: pg_hba.conf.j2
-    dest: "{{ postgresql_config_directory }}/pg_hba.conf"
-    owner: postgres
-    group: postgres
-    mode: '0600'
-    backup: true
-  notify: reload postgresql
-
-- name: Deploy pg_ident.conf from template
-  ansible.builtin.template:
-    src: pg_ident.conf.j2
-    dest: "{{ postgresql_config_directory }}/pg_ident.conf"
-    owner: postgres
-    group: postgres
-    mode: '0600'
-    backup: true
-  notify: reload postgresql
-
-- name: Create SSL certificate directory
-  ansible.builtin.file:
-    path: "{{ postgresql_ssl_cert_directory }}"
-    state: directory
-    owner: postgres
-    group: postgres
-    mode: '0700'
-  when: postgresql_ssl_enabled
-
-- name: Generate self-signed SSL certificate (if not provided)
-  when:
-    - postgresql_ssl_enabled
-    - postgresql_ssl_generate_self_signed
+- name: "databases/postgresql/postgresql_config | Guarded execution with preflight and postflight validation"
   block:
-    - name: Check if SSL certificate exists
+
+    # ----------------------------- preflight --------------------
+
+    - name: "databases/postgresql/postgresql_config | Preflight | Verify the control node meets the minimum ansible-core version"
+      ansible.builtin.assert:
+        that:
+          - ansible_version.full is version(fe_validation_min_ansible_version | default('2.12'), '>=')
+        fail_msg: >-
+          databases/postgresql/postgresql_config: requires ansible-core
+          {{ fe_validation_min_ansible_version | default('2.12') }} or newer,
+          found {{ ansible_version.full }}.
+        success_msg: >-
+          databases/postgresql/postgresql_config: ansible-core {{ ansible_version.full }} satisfies the minimum.
+        quiet: true
+      tags:
+        - always
+        - preflight
+        - validation
+
+    - name: "databases/postgresql/postgresql_config | Preflight | Verify every declared required variable is defined"
+      ansible.builtin.assert:
+        that:
+          - vars[item] is defined
+        fail_msg: "databases/postgresql/postgresql_config: required variable '{{ item }}' is not defined."
+        success_msg: "databases/postgresql/postgresql_config: required variable '{{ item }}' is defined."
+        quiet: true
+      loop: "{{ fe_databases_postgresql_postgresql_config_required_vars | default([]) }}"
+      loop_control:
+        label: "{{ item }}"
+      tags:
+        - always
+        - preflight
+        - validation
+
+    - name: "databases/postgresql/postgresql_config | Preflight | Record that preflight validation passed"
+      ansible.builtin.set_fact:
+        fe_databases_postgresql_postgresql_config_preflight_passed: true
+      tags:
+        - always
+        - preflight
+        - validation
+
+    # ----------------------------- execute ----------------------
+
+    - name: Include OS-specific variables
+      include_vars: "{{ ansible_os_family }}.yml"
+      when: ansible_os_family in ['RedHat', 'Debian']
+      failed_when: false
+
+    - name: Ensure PostgreSQL data directory exists
       ansible.builtin.stat:
-        path: "{{ postgresql_ssl_cert_file }}"
-      register: ssl_cert_check
+        path: "{{ postgresql_data_directory }}/PG_VERSION"
+      register: pg_data_check
+      failed_when: not pg_data_check.stat.exists
 
-    - name: Generate self-signed certificate
-      ansible.builtin.command: >
-        openssl req -new -x509 -days 365 -nodes -text
-        -out {{ postgresql_ssl_cert_file }}
-        -keyout {{ postgresql_ssl_key_file }}
-        -subj "/C=US/ST=State/L=City/O=FourthEstate/CN={{ ansible_fqdn }}"
-      when: not ssl_cert_check.stat.exists
+    - name: Backup existing postgresql.conf
+      ansible.builtin.copy:
+        src: "{{ postgresql_config_directory }}/postgresql.conf"
+        dest: "{{ postgresql_config_directory }}/postgresql.conf.{{ ansible_date_time.iso8601_basic_short }}.bak"
+        remote_src: true
+        owner: postgres
+        group: postgres
+        mode: '0600'
+      when: pg_data_check.stat.exists
+
+    - name: Deploy postgresql.conf from template
+      ansible.builtin.template:
+        src: postgresql.conf.j2
+        dest: "{{ postgresql_config_directory }}/postgresql.conf"
+        owner: postgres
+        group: postgres
+        mode: '0600'
+        validate: "{{ postgresql_bin_path }}/postgres -D {{ postgresql_data_directory }} -C config_file=%s"
+        backup: true
       notify: reload postgresql
 
-    - name: Set SSL certificate permissions
+    - name: Backup existing pg_hba.conf
+      ansible.builtin.copy:
+        src: "{{ postgresql_config_directory }}/pg_hba.conf"
+        dest: "{{ postgresql_config_directory }}/pg_hba.conf.{{ ansible_date_time.iso8601_basic_short }}.bak"
+        remote_src: true
+        owner: postgres
+        group: postgres
+        mode: '0600'
+      when: pg_data_check.stat.exists
+
+    - name: Deploy pg_hba.conf from template
+      ansible.builtin.template:
+        src: pg_hba.conf.j2
+        dest: "{{ postgresql_config_directory }}/pg_hba.conf"
+        owner: postgres
+        group: postgres
+        mode: '0600'
+        backup: true
+      notify: reload postgresql
+
+    - name: Deploy pg_ident.conf from template
+      ansible.builtin.template:
+        src: pg_ident.conf.j2
+        dest: "{{ postgresql_config_directory }}/pg_ident.conf"
+        owner: postgres
+        group: postgres
+        mode: '0600'
+        backup: true
+      notify: reload postgresql
+
+    - name: Create SSL certificate directory
       ansible.builtin.file:
-        path: "{{ item }}"
+        path: "{{ postgresql_ssl_cert_directory }}"
+        state: directory
         owner: postgres
         group: postgres
-        mode: '0600'
-      loop:
-        - "{{ postgresql_ssl_cert_file }}"
-        - "{{ postgresql_ssl_key_file }}"
+        mode: '0700'
+      when: postgresql_ssl_enabled
 
-- name: Copy SSL certificates (if provided)
-  when:
-    - postgresql_ssl_enabled
-    - not postgresql_ssl_generate_self_signed
-    - postgresql_ssl_cert_content is defined
-  block:
-    - name: Copy SSL certificate
-      ansible.builtin.copy:
-        content: "{{ postgresql_ssl_cert_content }}"
-        dest: "{{ postgresql_ssl_cert_file }}"
+    - name: Generate self-signed SSL certificate (if not provided)
+      when:
+        - postgresql_ssl_enabled
+        - postgresql_ssl_generate_self_signed
+      block:
+        - name: Check if SSL certificate exists
+          ansible.builtin.stat:
+            path: "{{ postgresql_ssl_cert_file }}"
+          register: ssl_cert_check
+
+        - name: Generate self-signed certificate
+          ansible.builtin.command: >
+            openssl req -new -x509 -days 365 -nodes -text
+            -out {{ postgresql_ssl_cert_file }}
+            -keyout {{ postgresql_ssl_key_file }}
+            -subj "/C=US/ST=State/L=City/O=FourthEstate/CN={{ ansible_fqdn }}"
+          when: not ssl_cert_check.stat.exists
+          notify: reload postgresql
+
+        - name: Set SSL certificate permissions
+          ansible.builtin.file:
+            path: "{{ item }}"
+            owner: postgres
+            group: postgres
+            mode: '0600'
+          loop:
+            - "{{ postgresql_ssl_cert_file }}"
+            - "{{ postgresql_ssl_key_file }}"
+
+    - name: Copy SSL certificates (if provided)
+      when:
+        - postgresql_ssl_enabled
+        - not postgresql_ssl_generate_self_signed
+        - postgresql_ssl_cert_content is defined
+      block:
+        - name: Copy SSL certificate
+          ansible.builtin.copy:
+            content: "{{ postgresql_ssl_cert_content }}"
+            dest: "{{ postgresql_ssl_cert_file }}"
+            owner: postgres
+            group: postgres
+            mode: '0600'
+          notify: reload postgresql
+          no_log: true
+
+        - name: Copy SSL key
+          ansible.builtin.copy:
+            content: "{{ postgresql_ssl_key_content }}"
+            dest: "{{ postgresql_ssl_key_file }}"
+            owner: postgres
+            group: postgres
+            mode: '0600'
+          notify: reload postgresql
+          no_log: true
+
+        - name: Copy SSL CA certificate
+          ansible.builtin.copy:
+            content: "{{ postgresql_ssl_ca_content }}"
+            dest: "{{ postgresql_ssl_ca_file }}"
+            owner: postgres
+            group: postgres
+            mode: '0600'
+          when: postgresql_ssl_ca_content is defined
+          notify: reload postgresql
+          no_log: true
+
+    - name: Create recovery.conf for PostgreSQL < 12 (if needed)
+      ansible.builtin.template:
+        src: recovery.conf.j2
+        dest: "{{ postgresql_data_directory }}/recovery.conf"
         owner: postgres
         group: postgres
         mode: '0600'
+      when:
+        - postgresql_version | int < 12
+        - postgresql_recovery_mode is defined
+        - postgresql_recovery_mode
+      notify: restart postgresql
+
+    - name: Configure automatic failover with recovery.signal (PostgreSQL 12+)
+      ansible.builtin.file:
+        path: "{{ postgresql_data_directory }}/recovery.signal"
+        state: touch
+        owner: postgres
+        group: postgres
+        mode: '0600'
+      when:
+        - postgresql_version | int >= 12
+        - postgresql_recovery_mode is defined
+        - postgresql_recovery_mode
+      notify: restart postgresql
+
+    - name: Create custom configuration directory
+      ansible.builtin.file:
+        path: "{{ postgresql_config_directory }}/conf.d"
+        state: directory
+        owner: postgres
+        group: postgres
+        mode: '0755'
+
+    - name: Deploy custom configuration snippets
+      ansible.builtin.template:
+        src: custom_config.conf.j2
+        dest: "{{ postgresql_config_directory }}/conf.d/{{ item.key }}.conf"
+        owner: postgres
+        group: postgres
+        mode: '0600'
+      loop: "{{ postgresql_custom_configs | dict2items }}"
+      when: postgresql_custom_configs is defined
       notify: reload postgresql
-      no_log: true
 
-    - name: Copy SSL key
-      ansible.builtin.copy:
-        content: "{{ postgresql_ssl_key_content }}"
-        dest: "{{ postgresql_ssl_key_file }}"
+    - name: Configure pgAudit extension
+      ansible.builtin.template:
+        src: pgaudit.conf.j2
+        dest: "{{ postgresql_config_directory }}/conf.d/pgaudit.conf"
         owner: postgres
         group: postgres
         mode: '0600'
+      when: postgresql_pgaudit_enabled
       notify: reload postgresql
-      no_log: true
 
-    - name: Copy SSL CA certificate
-      ansible.builtin.copy:
-        content: "{{ postgresql_ssl_ca_content }}"
-        dest: "{{ postgresql_ssl_ca_file }}"
+    - name: Configure pg_stat_statements extension
+      ansible.builtin.template:
+        src: pg_stat_statements.conf.j2
+        dest: "{{ postgresql_config_directory }}/conf.d/pg_stat_statements.conf"
         owner: postgres
         group: postgres
         mode: '0600'
-      when: postgresql_ssl_ca_content is defined
+      when: postgresql_pg_stat_statements_enabled
       notify: reload postgresql
+
+    - name: Create PostgreSQL database users
+      community.postgresql.postgresql_user:
+        name: "{{ item.name }}"
+        password: "{{ item.password | default(omit) }}"
+        role_attr_flags: "{{ item.role_attr_flags | default(omit) }}"
+        encrypted: true
+        state: "{{ item.state | default('present') }}"
+        login_host: localhost
+        login_user: postgres
+        port: "{{ postgresql_port }}"
+      loop: "{{ postgresql_users }}"
+      when: postgresql_users is defined
       no_log: true
+      become: true
+      become_user: postgres
 
-- name: Create recovery.conf for PostgreSQL < 12 (if needed)
-  ansible.builtin.template:
-    src: recovery.conf.j2
-    dest: "{{ postgresql_data_directory }}/recovery.conf"
-    owner: postgres
-    group: postgres
-    mode: '0600'
-  when:
-    - postgresql_version | int < 12
-    - postgresql_recovery_mode is defined
-    - postgresql_recovery_mode
-  notify: restart postgresql
+    - name: Create PostgreSQL databases
+      community.postgresql.postgresql_db:
+        name: "{{ item.name }}"
+        owner: "{{ item.owner | default('postgres') }}"
+        encoding: "{{ item.encoding | default(postgresql_encoding) }}"
+        lc_collate: "{{ item.lc_collate | default(postgresql_locale) }}"
+        lc_ctype: "{{ item.lc_ctype | default(postgresql_locale) }}"
+        template: "{{ item.template | default('template0') }}"
+        state: "{{ item.state | default('present') }}"
+        login_host: localhost
+        login_user: postgres
+        port: "{{ postgresql_port }}"
+      loop: "{{ postgresql_databases }}"
+      when: postgresql_databases is defined
+      become: true
+      become_user: postgres
 
-- name: Configure automatic failover with recovery.signal (PostgreSQL 12+)
-  ansible.builtin.file:
-    path: "{{ postgresql_data_directory }}/recovery.signal"
-    state: touch
-    owner: postgres
-    group: postgres
-    mode: '0600'
-  when:
-    - postgresql_version | int >= 12
-    - postgresql_recovery_mode is defined
-    - postgresql_recovery_mode
-  notify: restart postgresql
+    - name: Enable PostgreSQL extensions
+      community.postgresql.postgresql_ext:
+        name: "{{ item.name }}"
+        db: "{{ item.database }}"
+        schema: "{{ item.schema | default('public') }}"
+        state: "{{ item.state | default('present') }}"
+        login_host: localhost
+        login_user: postgres
+        port: "{{ postgresql_port }}"
+      loop: "{{ postgresql_extensions }}"
+      when: postgresql_extensions is defined
+      become: true
+      become_user: postgres
 
-- name: Create custom configuration directory
-  ansible.builtin.file:
-    path: "{{ postgresql_config_directory }}/conf.d"
-    state: directory
-    owner: postgres
-    group: postgres
-    mode: '0755'
+    - name: Grant database privileges
+      community.postgresql.postgresql_privs:
+        database: "{{ item.database }}"
+        roles: "{{ item.roles }}"
+        type: "{{ item.type | default('database') }}"
+        privs: "{{ item.privs }}"
+        objs: "{{ item.objs | default(omit) }}"
+        schema: "{{ item.schema | default(omit) }}"
+        grant_option: "{{ item.grant_option | default(false) }}"
+        state: "{{ item.state | default('present') }}"
+        login_host: localhost
+        login_user: postgres
+        port: "{{ postgresql_port }}"
+      loop: "{{ postgresql_privileges }}"
+      when: postgresql_privileges is defined
+      become: true
+      become_user: postgres
 
-- name: Deploy custom configuration snippets
-  ansible.builtin.template:
-    src: custom_config.conf.j2
-    dest: "{{ postgresql_config_directory }}/conf.d/{{ item.key }}.conf"
-    owner: postgres
-    group: postgres
-    mode: '0600'
-  loop: "{{ postgresql_custom_configs | dict2items }}"
-  when: postgresql_custom_configs is defined
-  notify: reload postgresql
+    - name: Validate PostgreSQL configuration
+      ansible.builtin.command: >
+        {{ postgresql_bin_path }}/postgres
+        -D {{ postgresql_data_directory }}
+        -C config_file
+      become: true
+      become_user: postgres
+      changed_when: false
+      register: pg_config_validate
 
-- name: Configure pgAudit extension
-  ansible.builtin.template:
-    src: pgaudit.conf.j2
-    dest: "{{ postgresql_config_directory }}/conf.d/pgaudit.conf"
-    owner: postgres
-    group: postgres
-    mode: '0600'
-  when: postgresql_pgaudit_enabled
-  notify: reload postgresql
+    - name: Display configuration summary
+      ansible.builtin.debug:
+        msg:
+          - "PostgreSQL {{ postgresql_version }} configuration completed"
+          - "SSL Enabled: {{ postgresql_ssl_enabled }}"
+          - "Max Connections: {{ postgresql_max_connections }}"
+          - "Shared Buffers: {{ postgresql_shared_buffers }}"
+          - "pgAudit Enabled: {{ postgresql_pgaudit_enabled }}"
+          - "Configuration validated successfully"
 
-- name: Configure pg_stat_statements extension
-  ansible.builtin.template:
-    src: pg_stat_statements.conf.j2
-    dest: "{{ postgresql_config_directory }}/conf.d/pg_stat_statements.conf"
-    owner: postgres
-    group: postgres
-    mode: '0600'
-  when: postgresql_pg_stat_statements_enabled
-  notify: reload postgresql
+    # ----------------------------- postflight -------------------
 
-- name: Create PostgreSQL database users
-  community.postgresql.postgresql_user:
-    name: "{{ item.name }}"
-    password: "{{ item.password | default(omit) }}"
-    role_attr_flags: "{{ item.role_attr_flags | default(omit) }}"
-    encrypted: true
-    state: "{{ item.state | default('present') }}"
-    login_host: localhost
-    login_user: postgres
-    port: "{{ postgresql_port }}"
-  loop: "{{ postgresql_users }}"
-  when: postgresql_users is defined
-  no_log: true
-  become: true
-  become_user: postgres
+    - name: "databases/postgresql/postgresql_config | Postflight | Verify the guarded body ran after a passing preflight"
+      ansible.builtin.assert:
+        that:
+          - fe_databases_postgresql_postgresql_config_preflight_passed | bool
+          - fe_databases_postgresql_postgresql_config_status in ['running', 'succeeded']
+        fail_msg: >-
+          databases/postgresql/postgresql_config: postflight validation failed - preflight passed
+          ={{ fe_databases_postgresql_postgresql_config_preflight_passed | default(false) }},
+          status={{ fe_databases_postgresql_postgresql_config_status | default('unknown') }}.
+        success_msg: "databases/postgresql/postgresql_config: postflight validation passed."
+        quiet: true
+      tags:
+        - always
+        - postflight
+        - validation
 
-- name: Create PostgreSQL databases
-  community.postgresql.postgresql_db:
-    name: "{{ item.name }}"
-    owner: "{{ item.owner | default('postgres') }}"
-    encoding: "{{ item.encoding | default(postgresql_encoding) }}"
-    lc_collate: "{{ item.lc_collate | default(postgresql_locale) }}"
-    lc_ctype: "{{ item.lc_ctype | default(postgresql_locale) }}"
-    template: "{{ item.template | default('template0') }}"
-    state: "{{ item.state | default('present') }}"
-    login_host: localhost
-    login_user: postgres
-    port: "{{ postgresql_port }}"
-  loop: "{{ postgresql_databases }}"
-  when: postgresql_databases is defined
-  become: true
-  become_user: postgres
+    - name: "databases/postgresql/postgresql_config | Postflight | Record the successful outcome"
+      ansible.builtin.set_fact:
+        fe_databases_postgresql_postgresql_config_postflight_passed: true
+        fe_databases_postgresql_postgresql_config_status: "succeeded"
+      tags:
+        - always
+        - postflight
+        - validation
 
-- name: Enable PostgreSQL extensions
-  community.postgresql.postgresql_ext:
-    name: "{{ item.name }}"
-    db: "{{ item.database }}"
-    schema: "{{ item.schema | default('public') }}"
-    state: "{{ item.state | default('present') }}"
-    login_host: localhost
-    login_user: postgres
-    port: "{{ postgresql_port }}"
-  loop: "{{ postgresql_extensions }}"
-  when: postgresql_extensions is defined
-  become: true
-  become_user: postgres
+  rescue:
 
-- name: Grant database privileges
-  community.postgresql.postgresql_privs:
-    database: "{{ item.database }}"
-    roles: "{{ item.roles }}"
-    type: "{{ item.type | default('database') }}"
-    privs: "{{ item.privs }}"
-    objs: "{{ item.objs | default(omit) }}"
-    schema: "{{ item.schema | default(omit) }}"
-    grant_option: "{{ item.grant_option | default(false) }}"
-    state: "{{ item.state | default('present') }}"
-    login_host: localhost
-    login_user: postgres
-    port: "{{ postgresql_port }}"
-  loop: "{{ postgresql_privileges }}"
-  when: postgresql_privileges is defined
-  become: true
-  become_user: postgres
+    - name: "databases/postgresql/postgresql_config | Rescue | Capture the failing task and error detail"
+      ansible.builtin.set_fact:
+        fe_databases_postgresql_postgresql_config_status: "failed"
+        fe_databases_postgresql_postgresql_config_postflight_passed: false
+        fe_databases_postgresql_postgresql_config_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+        fe_databases_postgresql_postgresql_config_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+      tags:
+        - always
+        - rescue
 
-- name: Validate PostgreSQL configuration
-  ansible.builtin.command: >
-    {{ postgresql_bin_path }}/postgres
-    -D {{ postgresql_data_directory }}
-    -C config_file
-  become: true
-  become_user: postgres
-  changed_when: false
-  register: pg_config_validate
+    - name: "databases/postgresql/postgresql_config | Rescue | Report the failure"
+      ansible.builtin.debug:
+        msg: >-
+          databases/postgresql/postgresql_config: FAILED at '{{ fe_databases_postgresql_postgresql_config_failed_task }}' on
+          {{ inventory_hostname }} - {{ fe_databases_postgresql_postgresql_config_error }}
+      tags:
+        - always
+        - rescue
 
-- name: Display configuration summary
-  ansible.builtin.debug:
-    msg:
-      - "PostgreSQL {{ postgresql_version }} configuration completed"
-      - "SSL Enabled: {{ postgresql_ssl_enabled }}"
-      - "Max Connections: {{ postgresql_max_connections }}"
-      - "Shared Buffers: {{ postgresql_shared_buffers }}"
-      - "pgAudit Enabled: {{ postgresql_pgaudit_enabled }}"
-      - "Configuration validated successfully"
+    - name: "databases/postgresql/postgresql_config | Rescue | Re-raise the failure unless the caller opted to continue"
+      ansible.builtin.fail:
+        msg: >-
+          databases/postgresql/postgresql_config failed at '{{ fe_databases_postgresql_postgresql_config_failed_task }}': {{ fe_databases_postgresql_postgresql_config_error }}
+      when: not (fe_validation_continue_on_error | default(false) | bool)
+      tags:
+        - always
+        - rescue
+
+  always:
+
+    - name: "databases/postgresql/postgresql_config | Always | Compute the execution duration"
+      ansible.builtin.set_fact:
+        fe_databases_postgresql_postgresql_config_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+        fe_databases_postgresql_postgresql_config_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_databases_postgresql_postgresql_config_start_epoch | default(0) | int) }}"
+      tags:
+        - always
+
+    - name: "databases/postgresql/postgresql_config | Always | Publish the validation result with set_stats"
+      ansible.builtin.set_stats:
+        data:
+          fe_validation_results:
+            "databases/postgresql/postgresql_config":
+              component: "databases/postgresql/postgresql_config"
+              type: "role"
+              platform: "databases"
+              host: "{{ inventory_hostname }}"
+              status: "{{ fe_databases_postgresql_postgresql_config_status | default('unknown') }}"
+              preflight_passed: "{{ fe_databases_postgresql_postgresql_config_preflight_passed | default(false) | bool }}"
+              postflight_passed: "{{ fe_databases_postgresql_postgresql_config_postflight_passed | default(false) | bool }}"
+              started_at: "{{ fe_databases_postgresql_postgresql_config_started_at | default('') }}"
+              ended_at: "{{ fe_databases_postgresql_postgresql_config_ended_at | default('') }}"
+              duration_seconds: "{{ fe_databases_postgresql_postgresql_config_duration_seconds | default(0) | int }}"
+              failed_task: "{{ fe_databases_postgresql_postgresql_config_failed_task | default('') }}"
+              error: "{{ fe_databases_postgresql_postgresql_config_error | default('') }}"
+              check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+          fe_validation_executions: 1
+          fe_validation_succeeded: "{{ 1 if fe_databases_postgresql_postgresql_config_status | default('') == 'succeeded' else 0 }}"
+          fe_validation_failed: "{{ 0 if fe_databases_postgresql_postgresql_config_status | default('') == 'succeeded' else 1 }}"
+          fe_validation_duration_seconds: "{{ fe_databases_postgresql_postgresql_config_duration_seconds | default(0) | int }}"
+          fe_validation_failed_components: >-
+            {{ [] if fe_databases_postgresql_postgresql_config_status | default('') == 'succeeded' else ['databases/postgresql/postgresql_config'] }}
+        aggregate: true
+        per_host: false
+      tags:
+        - always
+
+    - name: "databases/postgresql/postgresql_config | Always | Mark the validation statistics as published"
+      ansible.builtin.set_fact:
+        fe_databases_postgresql_postgresql_config_stats_published: true
+      tags:
+        - always

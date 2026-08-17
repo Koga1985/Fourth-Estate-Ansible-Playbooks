@@ -2,199 +2,382 @@
 # Fabric Interconnect Configuration Tasks
 # Configures Fabric Interconnects A and B including ports, port channels, and clustering
 
-- name: Display Fabric Interconnect configuration banner
-  ansible.builtin.debug:
-    msg: |
-      ========================================
-      Fabric Interconnect Configuration
-      ========================================
-      Fabric A: {{ fi_a_mgmt_ip | default('Not configured') }}
-      Fabric B: {{ fi_b_mgmt_ip | default('Not configured') }}
-      Cluster Mode: {{ fi_cluster_mode | default('Yes') }}
-      ========================================
+# ---------------------------------------------------------------------------
+# Fourth Estate preflight / postflight validation harness
+#
+# The task file body below is wrapped in an Ansible block/rescue/always structure:
+#
+#   block   preflight validation runs first, then the original task file body, then
+#           postflight validation. Any failure transfers control to rescue.
+#   rescue  records which task failed and why, then re-raises so a failure is
+#           never silently swallowed. Set fe_validation_continue_on_error=true
+#           to record the failure and keep going instead.
+#   always  computes the run duration and publishes the outcome through
+#           ansible.builtin.set_stats, so a wrapping playbook, AWX/AAP or CI can
+#           consume the result without scraping log output.
+#
+# Published stats (see docs/VALIDATION_AND_STATS.md):
+#   fe_validation_results['cisco/ucs_prod_infrastructure/fabric_interconnects']  per-component record
+#   fe_validation_executions / _succeeded / _failed / _duration_seconds
+#   fe_validation_failed_components
+#
+# Add component-specific preflight checks without editing this file by setting
+#   fe_cisco_ucs_prod_infrastructure_fabric_interconnects_required_vars: [var_one, var_two]
+# ---------------------------------------------------------------------------
 
-- name: Verify Fabric Interconnect cluster status
-  cisco.ucs.ucs_query:
-    hostname: "{{ ucs_hostname }}"
-    username: "{{ ucs_username }}"
-    password: "{{ ucs_password }}"
-    validate_certs: "{{ ucs_validate_certs | default(false) }}"
-    class_ids: networkElement
-  no_log: true
-  register: fabric_interconnects
-  delegate_to: localhost
+- name: "cisco/ucs_prod_infrastructure/fabric_interconnects | Initialize validation state"
+  ansible.builtin.set_fact:
+    fe_cisco_ucs_prod_infrastructure_fabric_interconnects_start_epoch: "{{ now(fmt='%s') | int }}"
+    fe_cisco_ucs_prod_infrastructure_fabric_interconnects_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+    fe_cisco_ucs_prod_infrastructure_fabric_interconnects_status: "running"
+    fe_cisco_ucs_prod_infrastructure_fabric_interconnects_preflight_passed: false
+    fe_cisco_ucs_prod_infrastructure_fabric_interconnects_postflight_passed: false
+    fe_cisco_ucs_prod_infrastructure_fabric_interconnects_failed_task: ""
+    fe_cisco_ucs_prod_infrastructure_fabric_interconnects_error: ""
+    fe_cisco_ucs_prod_infrastructure_fabric_interconnects_stats_published: false
+  tags:
+    - always
 
-- name: Display discovered Fabric Interconnects
-  ansible.builtin.debug:
-    msg: |
-      Discovered Fabric Interconnects:
-      {% for fi in fabric_interconnects.objects %}
-      - {{ fi.id }}: {{ fi.model }} ({{ fi.serial }}) - {{ fi.oper_state }}
-      {% endfor %}
+- name: "cisco/ucs_prod_infrastructure/fabric_interconnects | Guarded execution with preflight and postflight validation"
+  block:
 
-- name: Configure Fabric Interconnect A management IP
-  cisco.ucs.ucs_ip_pool:
-    hostname: "{{ ucs_hostname }}"
-    username: "{{ ucs_username }}"
-    password: "{{ ucs_password }}"
-    validate_certs: "{{ ucs_validate_certs | default(false) }}"
-    name: "ext-mgmt"
-    order: "sequential"
-    first_addr: "{{ fi_a_mgmt_ip }}"
-    last_addr: "{{ fi_a_mgmt_ip }}"
-    subnet_mask: "{{ fi_mgmt_subnet | default('255.255.255.0') }}"
-    default_gw: "{{ fi_mgmt_gateway }}"
-    state: "{{ 'present' if apply_changes else 'query' }}"
-  no_log: true
-  changed_when: not (apply_changes | bool)
-  when:
-    - fi_a_mgmt_ip is defined
-    - apply_changes | default(false)
-  delegate_to: localhost
+    # ----------------------------- preflight --------------------
 
-- name: Configure server ports on Fabric Interconnect A
-  cisco.ucs.ucs_san_connectivity:
-    hostname: "{{ ucs_hostname }}"
-    username: "{{ ucs_username }}"
-    password: "{{ ucs_password }}"
-    validate_certs: "{{ ucs_validate_certs | default(false) }}"
-    name: "{{ item.name }}"
-    fabric: "A"
-    slot_id: "{{ item.slot }}"
-    port_id: "{{ item.port }}"
-    state: "{{ 'present' if apply_changes else 'query' }}"
-  no_log: true
-  changed_when: not (apply_changes | bool)
-  loop: "{{ fi_a_server_ports }}"
-  when:
-    - fi_a_server_ports is defined
-    - apply_changes | default(false)
-  delegate_to: localhost
+    - name: "cisco/ucs_prod_infrastructure/fabric_interconnects | Preflight | Verify the control node meets the minimum ansible-core version"
+      ansible.builtin.assert:
+        that:
+          - ansible_version.full is version(fe_validation_min_ansible_version | default('2.12'), '>=')
+        fail_msg: >-
+          cisco/ucs_prod_infrastructure/fabric_interconnects: requires ansible-core
+          {{ fe_validation_min_ansible_version | default('2.12') }} or newer,
+          found {{ ansible_version.full }}.
+        success_msg: >-
+          cisco/ucs_prod_infrastructure/fabric_interconnects: ansible-core {{ ansible_version.full }} satisfies the minimum.
+        quiet: true
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: Configure server ports on Fabric Interconnect B
-  cisco.ucs.ucs_san_connectivity:
-    hostname: "{{ ucs_hostname }}"
-    username: "{{ ucs_username }}"
-    password: "{{ ucs_password }}"
-    validate_certs: "{{ ucs_validate_certs | default(false) }}"
-    name: "{{ item.name }}"
-    fabric: "B"
-    slot_id: "{{ item.slot }}"
-    port_id: "{{ item.port }}"
-    state: "{{ 'present' if apply_changes else 'query' }}"
-  no_log: true
-  changed_when: not (apply_changes | bool)
-  loop: "{{ fi_b_server_ports }}"
-  when:
-    - fi_b_server_ports is defined
-    - apply_changes | default(false)
-  delegate_to: localhost
+    - name: "cisco/ucs_prod_infrastructure/fabric_interconnects | Preflight | Verify every declared required variable is defined"
+      ansible.builtin.assert:
+        that:
+          - vars[item] is defined
+        fail_msg: "cisco/ucs_prod_infrastructure/fabric_interconnects: required variable '{{ item }}' is not defined."
+        success_msg: "cisco/ucs_prod_infrastructure/fabric_interconnects: required variable '{{ item }}' is defined."
+        quiet: true
+      loop: "{{ fe_cisco_ucs_prod_infrastructure_fabric_interconnects_required_vars | default([]) }}"
+      loop_control:
+        label: "{{ item }}"
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: Configure uplink ports on Fabric Interconnect A
-  ansible.builtin.debug:
-    msg: "Configuring uplink port {{ item.slot }}/{{ item.port }} on Fabric A as {{ item.type | default('ethernet') }}"
-  loop: "{{ fi_a_uplink_ports }}"
-  when: fi_a_uplink_ports is defined
+    - name: "cisco/ucs_prod_infrastructure/fabric_interconnects | Preflight | Record that preflight validation passed"
+      ansible.builtin.set_fact:
+        fe_cisco_ucs_prod_infrastructure_fabric_interconnects_preflight_passed: true
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: Configure uplink ports on Fabric Interconnect B
-  ansible.builtin.debug:
-    msg: "Configuring uplink port {{ item.slot }}/{{ item.port }} on Fabric B as {{ item.type | default('ethernet') }}"
-  loop: "{{ fi_b_uplink_ports }}"
-  when: fi_b_uplink_ports is defined
+    # ----------------------------- execute ----------------------
 
-- name: Configure port channels on Fabric Interconnect A
-  ansible.builtin.debug:
-    msg: "Configuring port channel {{ item.id }} on Fabric A with ports {{ item.ports }}"
-  loop: "{{ fi_a_port_channels }}"
-  when: fi_a_port_channels is defined
+    - name: Display Fabric Interconnect configuration banner
+      ansible.builtin.debug:
+        msg: |
+          ========================================
+          Fabric Interconnect Configuration
+          ========================================
+          Fabric A: {{ fi_a_mgmt_ip | default('Not configured') }}
+          Fabric B: {{ fi_b_mgmt_ip | default('Not configured') }}
+          Cluster Mode: {{ fi_cluster_mode | default('Yes') }}
+          ========================================
 
-- name: Configure port channels on Fabric Interconnect B
-  ansible.builtin.debug:
-    msg: "Configuring port channel {{ item.id }} on Fabric B with ports {{ item.ports }}"
-  loop: "{{ fi_b_port_channels }}"
-  when: fi_b_port_channels is defined
+    - name: Verify Fabric Interconnect cluster status
+      cisco.ucs.ucs_query:
+        hostname: "{{ ucs_hostname }}"
+        username: "{{ ucs_username }}"
+        password: "{{ ucs_password }}"
+        validate_certs: "{{ ucs_validate_certs | default(false) }}"
+        class_ids: networkElement
+      no_log: true
+      register: fabric_interconnects
+      delegate_to: localhost
 
-- name: Query Fabric Interconnect faults
-  cisco.ucs.ucs_query:
-    hostname: "{{ ucs_hostname }}"
-    username: "{{ ucs_username }}"
-    password: "{{ ucs_password }}"
-    validate_certs: "{{ ucs_validate_certs | default(false) }}"
-    class_ids: faultInst
-    filter_str: "affected RN contains 'sys/switch'"
-  no_log: true
-  register: fi_faults
-  delegate_to: localhost
+    - name: Display discovered Fabric Interconnects
+      ansible.builtin.debug:
+        msg: |
+          Discovered Fabric Interconnects:
+          {% for fi in fabric_interconnects.objects %}
+          - {{ fi.id }}: {{ fi.model }} ({{ fi.serial }}) - {{ fi.oper_state }}
+          {% endfor %}
 
-- name: Display Fabric Interconnect faults
-  ansible.builtin.debug:
-    msg: |
-      Fabric Interconnect Faults:
-      {% if fi_faults.objects | length > 0 %}
-      {% for fault in fi_faults.objects %}
-      - [{{ fault.severity }}] {{ fault.descr }}
-      {% endfor %}
-      {% else %}
-      No faults detected on Fabric Interconnects
-      {% endif %}
+    - name: Configure Fabric Interconnect A management IP
+      cisco.ucs.ucs_ip_pool:
+        hostname: "{{ ucs_hostname }}"
+        username: "{{ ucs_username }}"
+        password: "{{ ucs_password }}"
+        validate_certs: "{{ ucs_validate_certs | default(false) }}"
+        name: "ext-mgmt"
+        order: "sequential"
+        first_addr: "{{ fi_a_mgmt_ip }}"
+        last_addr: "{{ fi_a_mgmt_ip }}"
+        subnet_mask: "{{ fi_mgmt_subnet | default('255.255.255.0') }}"
+        default_gw: "{{ fi_mgmt_gateway }}"
+        state: "{{ 'present' if apply_changes else 'query' }}"
+      no_log: true
+      changed_when: not (apply_changes | bool)
+      when:
+        - fi_a_mgmt_ip is defined
+        - apply_changes | default(false)
+      delegate_to: localhost
 
-- name: Generate Fabric Interconnect configuration report
-  ansible.builtin.copy:
-    content: |
-      ================================================================================
-      Fabric Interconnect Configuration Report
-      ================================================================================
-      Generated: {{ ansible_date_time.iso8601 }}
+    - name: Configure server ports on Fabric Interconnect A
+      cisco.ucs.ucs_san_connectivity:
+        hostname: "{{ ucs_hostname }}"
+        username: "{{ ucs_username }}"
+        password: "{{ ucs_password }}"
+        validate_certs: "{{ ucs_validate_certs | default(false) }}"
+        name: "{{ item.name }}"
+        fabric: "A"
+        slot_id: "{{ item.slot }}"
+        port_id: "{{ item.port }}"
+        state: "{{ 'present' if apply_changes else 'query' }}"
+      no_log: true
+      changed_when: not (apply_changes | bool)
+      loop: "{{ fi_a_server_ports }}"
+      when:
+        - fi_a_server_ports is defined
+        - apply_changes | default(false)
+      delegate_to: localhost
 
-      Cluster Configuration:
-      - Cluster Mode: {{ fi_cluster_mode | default('HA Cluster') }}
-      - Fabric A Management IP: {{ fi_a_mgmt_ip | default('Not configured') }}
-      - Fabric B Management IP: {{ fi_b_mgmt_ip | default('Not configured') }}
-      - Management Subnet: {{ fi_mgmt_subnet | default('255.255.255.0') }}
-      - Management Gateway: {{ fi_mgmt_gateway | default('Not configured') }}
+    - name: Configure server ports on Fabric Interconnect B
+      cisco.ucs.ucs_san_connectivity:
+        hostname: "{{ ucs_hostname }}"
+        username: "{{ ucs_username }}"
+        password: "{{ ucs_password }}"
+        validate_certs: "{{ ucs_validate_certs | default(false) }}"
+        name: "{{ item.name }}"
+        fabric: "B"
+        slot_id: "{{ item.slot }}"
+        port_id: "{{ item.port }}"
+        state: "{{ 'present' if apply_changes else 'query' }}"
+      no_log: true
+      changed_when: not (apply_changes | bool)
+      loop: "{{ fi_b_server_ports }}"
+      when:
+        - fi_b_server_ports is defined
+        - apply_changes | default(false)
+      delegate_to: localhost
 
-      Discovered Fabric Interconnects:
-      {% for fi in fabric_interconnects.objects %}
-      - ID: {{ fi.id }}
-        Model: {{ fi.model }}
-        Serial: {{ fi.serial }}
-        Firmware: {{ fi.version }}
-        State: {{ fi.oper_state }}
-      {% endfor %}
+    - name: Configure uplink ports on Fabric Interconnect A
+      ansible.builtin.debug:
+        msg: "Configuring uplink port {{ item.slot }}/{{ item.port }} on Fabric A as {{ item.type | default('ethernet') }}"
+      loop: "{{ fi_a_uplink_ports }}"
+      when: fi_a_uplink_ports is defined
 
-      Fabric Interconnect A Configuration:
-      - Server Ports: {{ fi_a_server_ports | length if fi_a_server_ports is defined else 0 }}
-      - Uplink Ports: {{ fi_a_uplink_ports | length if fi_a_uplink_ports is defined else 0 }}
-      - Port Channels: {{ fi_a_port_channels | length if fi_a_port_channels is defined else 0 }}
+    - name: Configure uplink ports on Fabric Interconnect B
+      ansible.builtin.debug:
+        msg: "Configuring uplink port {{ item.slot }}/{{ item.port }} on Fabric B as {{ item.type | default('ethernet') }}"
+      loop: "{{ fi_b_uplink_ports }}"
+      when: fi_b_uplink_ports is defined
 
-      Fabric Interconnect B Configuration:
-      - Server Ports: {{ fi_b_server_ports | length if fi_b_server_ports is defined else 0 }}
-      - Uplink Ports: {{ fi_b_uplink_ports | length if fi_b_uplink_ports is defined else 0 }}
-      - Port Channels: {{ fi_b_port_channels | length if fi_b_port_channels is defined else 0 }}
+    - name: Configure port channels on Fabric Interconnect A
+      ansible.builtin.debug:
+        msg: "Configuring port channel {{ item.id }} on Fabric A with ports {{ item.ports }}"
+      loop: "{{ fi_a_port_channels }}"
+      when: fi_a_port_channels is defined
 
-      Active Faults:
-      {% if fi_faults.objects | length > 0 %}
-      {% for fault in fi_faults.objects %}
-      - [{{ fault.severity }}] {{ fault.descr }}
-      {% endfor %}
-      {% else %}
-      No faults detected
-      {% endif %}
+    - name: Configure port channels on Fabric Interconnect B
+      ansible.builtin.debug:
+        msg: "Configuring port channel {{ item.id }} on Fabric B with ports {{ item.ports }}"
+      loop: "{{ fi_b_port_channels }}"
+      when: fi_b_port_channels is defined
 
-      Configuration Status: {{ 'APPLIED' if apply_changes else 'DRY-RUN (no changes made)' }}
-      ================================================================================
-    dest: "{{ ucs_artifacts_dir }}/fabric_interconnect_config.txt"
-    mode: '0644'
-  delegate_to: localhost
+    - name: Query Fabric Interconnect faults
+      cisco.ucs.ucs_query:
+        hostname: "{{ ucs_hostname }}"
+        username: "{{ ucs_username }}"
+        password: "{{ ucs_password }}"
+        validate_certs: "{{ ucs_validate_certs | default(false) }}"
+        class_ids: faultInst
+        filter_str: "affected RN contains 'sys/switch'"
+      no_log: true
+      register: fi_faults
+      delegate_to: localhost
 
-- name: Display Fabric Interconnect configuration summary
-  ansible.builtin.debug:
-    msg: |
-      ========================================
-      Fabric Interconnect Configuration Complete
-      ========================================
-      Status: {{ 'APPLIED' if apply_changes else 'DRY-RUN' }}
-      Fabric A configured: Yes
-      Fabric B configured: Yes
-      Report: {{ ucs_artifacts_dir }}/fabric_interconnect_config.txt
-      ========================================
+    - name: Display Fabric Interconnect faults
+      ansible.builtin.debug:
+        msg: |
+          Fabric Interconnect Faults:
+          {% if fi_faults.objects | length > 0 %}
+          {% for fault in fi_faults.objects %}
+          - [{{ fault.severity }}] {{ fault.descr }}
+          {% endfor %}
+          {% else %}
+          No faults detected on Fabric Interconnects
+          {% endif %}
+
+    - name: Generate Fabric Interconnect configuration report
+      ansible.builtin.copy:
+        content: |
+          ================================================================================
+          Fabric Interconnect Configuration Report
+          ================================================================================
+          Generated: {{ ansible_date_time.iso8601 }}
+
+          Cluster Configuration:
+          - Cluster Mode: {{ fi_cluster_mode | default('HA Cluster') }}
+          - Fabric A Management IP: {{ fi_a_mgmt_ip | default('Not configured') }}
+          - Fabric B Management IP: {{ fi_b_mgmt_ip | default('Not configured') }}
+          - Management Subnet: {{ fi_mgmt_subnet | default('255.255.255.0') }}
+          - Management Gateway: {{ fi_mgmt_gateway | default('Not configured') }}
+
+          Discovered Fabric Interconnects:
+          {% for fi in fabric_interconnects.objects %}
+          - ID: {{ fi.id }}
+            Model: {{ fi.model }}
+            Serial: {{ fi.serial }}
+            Firmware: {{ fi.version }}
+            State: {{ fi.oper_state }}
+          {% endfor %}
+
+          Fabric Interconnect A Configuration:
+          - Server Ports: {{ fi_a_server_ports | length if fi_a_server_ports is defined else 0 }}
+          - Uplink Ports: {{ fi_a_uplink_ports | length if fi_a_uplink_ports is defined else 0 }}
+          - Port Channels: {{ fi_a_port_channels | length if fi_a_port_channels is defined else 0 }}
+
+          Fabric Interconnect B Configuration:
+          - Server Ports: {{ fi_b_server_ports | length if fi_b_server_ports is defined else 0 }}
+          - Uplink Ports: {{ fi_b_uplink_ports | length if fi_b_uplink_ports is defined else 0 }}
+          - Port Channels: {{ fi_b_port_channels | length if fi_b_port_channels is defined else 0 }}
+
+          Active Faults:
+          {% if fi_faults.objects | length > 0 %}
+          {% for fault in fi_faults.objects %}
+          - [{{ fault.severity }}] {{ fault.descr }}
+          {% endfor %}
+          {% else %}
+          No faults detected
+          {% endif %}
+
+          Configuration Status: {{ 'APPLIED' if apply_changes else 'DRY-RUN (no changes made)' }}
+          ================================================================================
+        dest: "{{ ucs_artifacts_dir }}/fabric_interconnect_config.txt"
+        mode: '0644'
+      delegate_to: localhost
+
+    - name: Display Fabric Interconnect configuration summary
+      ansible.builtin.debug:
+        msg: |
+          ========================================
+          Fabric Interconnect Configuration Complete
+          ========================================
+          Status: {{ 'APPLIED' if apply_changes else 'DRY-RUN' }}
+          Fabric A configured: Yes
+          Fabric B configured: Yes
+          Report: {{ ucs_artifacts_dir }}/fabric_interconnect_config.txt
+          ========================================
+
+    # ----------------------------- postflight -------------------
+
+    - name: "cisco/ucs_prod_infrastructure/fabric_interconnects | Postflight | Verify the guarded body ran after a passing preflight"
+      ansible.builtin.assert:
+        that:
+          - fe_cisco_ucs_prod_infrastructure_fabric_interconnects_preflight_passed | bool
+          - fe_cisco_ucs_prod_infrastructure_fabric_interconnects_status in ['running', 'succeeded']
+        fail_msg: >-
+          cisco/ucs_prod_infrastructure/fabric_interconnects: postflight validation failed - preflight passed
+          ={{ fe_cisco_ucs_prod_infrastructure_fabric_interconnects_preflight_passed | default(false) }},
+          status={{ fe_cisco_ucs_prod_infrastructure_fabric_interconnects_status | default('unknown') }}.
+        success_msg: "cisco/ucs_prod_infrastructure/fabric_interconnects: postflight validation passed."
+        quiet: true
+      tags:
+        - always
+        - postflight
+        - validation
+
+    - name: "cisco/ucs_prod_infrastructure/fabric_interconnects | Postflight | Record the successful outcome"
+      ansible.builtin.set_fact:
+        fe_cisco_ucs_prod_infrastructure_fabric_interconnects_postflight_passed: true
+        fe_cisco_ucs_prod_infrastructure_fabric_interconnects_status: "succeeded"
+      tags:
+        - always
+        - postflight
+        - validation
+
+  rescue:
+
+    - name: "cisco/ucs_prod_infrastructure/fabric_interconnects | Rescue | Capture the failing task and error detail"
+      ansible.builtin.set_fact:
+        fe_cisco_ucs_prod_infrastructure_fabric_interconnects_status: "failed"
+        fe_cisco_ucs_prod_infrastructure_fabric_interconnects_postflight_passed: false
+        fe_cisco_ucs_prod_infrastructure_fabric_interconnects_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+        fe_cisco_ucs_prod_infrastructure_fabric_interconnects_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+      tags:
+        - always
+        - rescue
+
+    - name: "cisco/ucs_prod_infrastructure/fabric_interconnects | Rescue | Report the failure"
+      ansible.builtin.debug:
+        msg: >-
+          cisco/ucs_prod_infrastructure/fabric_interconnects: FAILED at '{{ fe_cisco_ucs_prod_infrastructure_fabric_interconnects_failed_task }}' on
+          {{ inventory_hostname }} - {{ fe_cisco_ucs_prod_infrastructure_fabric_interconnects_error }}
+      tags:
+        - always
+        - rescue
+
+    - name: "cisco/ucs_prod_infrastructure/fabric_interconnects | Rescue | Re-raise the failure unless the caller opted to continue"
+      ansible.builtin.fail:
+        msg: >-
+          cisco/ucs_prod_infrastructure/fabric_interconnects failed at '{{ fe_cisco_ucs_prod_infrastructure_fabric_interconnects_failed_task }}': {{ fe_cisco_ucs_prod_infrastructure_fabric_interconnects_error }}
+      when: not (fe_validation_continue_on_error | default(false) | bool)
+      tags:
+        - always
+        - rescue
+
+  always:
+
+    - name: "cisco/ucs_prod_infrastructure/fabric_interconnects | Always | Compute the execution duration"
+      ansible.builtin.set_fact:
+        fe_cisco_ucs_prod_infrastructure_fabric_interconnects_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+        fe_cisco_ucs_prod_infrastructure_fabric_interconnects_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_cisco_ucs_prod_infrastructure_fabric_interconnects_start_epoch | default(0) | int) }}"
+      tags:
+        - always
+
+    - name: "cisco/ucs_prod_infrastructure/fabric_interconnects | Always | Publish the validation result with set_stats"
+      ansible.builtin.set_stats:
+        data:
+          fe_validation_results:
+            "cisco/ucs_prod_infrastructure/fabric_interconnects":
+              component: "cisco/ucs_prod_infrastructure/fabric_interconnects"
+              type: "role-tasks"
+              platform: "cisco"
+              host: "{{ inventory_hostname }}"
+              status: "{{ fe_cisco_ucs_prod_infrastructure_fabric_interconnects_status | default('unknown') }}"
+              preflight_passed: "{{ fe_cisco_ucs_prod_infrastructure_fabric_interconnects_preflight_passed | default(false) | bool }}"
+              postflight_passed: "{{ fe_cisco_ucs_prod_infrastructure_fabric_interconnects_postflight_passed | default(false) | bool }}"
+              started_at: "{{ fe_cisco_ucs_prod_infrastructure_fabric_interconnects_started_at | default('') }}"
+              ended_at: "{{ fe_cisco_ucs_prod_infrastructure_fabric_interconnects_ended_at | default('') }}"
+              duration_seconds: "{{ fe_cisco_ucs_prod_infrastructure_fabric_interconnects_duration_seconds | default(0) | int }}"
+              failed_task: "{{ fe_cisco_ucs_prod_infrastructure_fabric_interconnects_failed_task | default('') }}"
+              error: "{{ fe_cisco_ucs_prod_infrastructure_fabric_interconnects_error | default('') }}"
+              check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+          fe_validation_executions: 1
+          fe_validation_succeeded: "{{ 1 if fe_cisco_ucs_prod_infrastructure_fabric_interconnects_status | default('') == 'succeeded' else 0 }}"
+          fe_validation_failed: "{{ 0 if fe_cisco_ucs_prod_infrastructure_fabric_interconnects_status | default('') == 'succeeded' else 1 }}"
+          fe_validation_duration_seconds: "{{ fe_cisco_ucs_prod_infrastructure_fabric_interconnects_duration_seconds | default(0) | int }}"
+          fe_validation_failed_components: >-
+            {{ [] if fe_cisco_ucs_prod_infrastructure_fabric_interconnects_status | default('') == 'succeeded' else ['cisco/ucs_prod_infrastructure/fabric_interconnects'] }}
+        aggregate: true
+        per_host: false
+      tags:
+        - always
+
+    - name: "cisco/ucs_prod_infrastructure/fabric_interconnects | Always | Mark the validation statistics as published"
+      ansible.builtin.set_fact:
+        fe_cisco_ucs_prod_infrastructure_fabric_interconnects_stats_published: true
+      tags:
+        - always

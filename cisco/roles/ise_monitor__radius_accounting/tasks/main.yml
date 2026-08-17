@@ -2,83 +2,266 @@
 # tasks file for ise_monitor__radius_accounting
 # Cisco ISE RADIUS Accounting Monitoring
 
-- name: Validate ISE connection parameters
-  ansible.builtin.assert:
-    that:
-      - ise_hostname is defined
-      - ise_username is defined
-      - ise_password is defined
-    fail_msg: "Required ISE connection parameters not defined"
-  tags: [validation, prerequisites]
+# ---------------------------------------------------------------------------
+# Fourth Estate preflight / postflight validation harness
+#
+# The task file body below is wrapped in an Ansible block/rescue/always structure:
+#
+#   block   preflight validation runs first, then the original task file body, then
+#           postflight validation. Any failure transfers control to rescue.
+#   rescue  records which task failed and why, then re-raises so a failure is
+#           never silently swallowed. Set fe_validation_continue_on_error=true
+#           to record the failure and keep going instead.
+#   always  computes the run duration and publishes the outcome through
+#           ansible.builtin.set_stats, so a wrapping playbook, AWX/AAP or CI can
+#           consume the result without scraping log output.
+#
+# Published stats (see docs/VALIDATION_AND_STATS.md):
+#   fe_validation_results['cisco/ise_monitor__radius_accounting']  per-component record
+#   fe_validation_executions / _succeeded / _failed / _duration_seconds
+#   fe_validation_failed_components
+#
+# Add component-specific preflight checks without editing this file by setting
+#   fe_cisco_ise_monitor__radius_accounting_required_vars: [var_one, var_two]
+# ---------------------------------------------------------------------------
 
-- name: Ensure artifacts directory
-  ansible.builtin.file:
-    path: "{{ ise_artifacts_dir }}"
-    state: directory
-    mode: "0750"
-  tags: [always]
-
-- name: Retrieve RADIUS accounting sessions
-  ansible.builtin.uri:
-    url: "https://{{ ise_hostname }}/admin/API/mnt/Session/ActiveList"
-    method: GET
-    user: "{{ ise_username }}"
-    password: "{{ ise_password }}"
-    force_basic_auth: true
-    validate_certs: "{{ ise_verify_ssl }}"
-    headers:
-      Accept: "application/json"
-  no_log: true
-  register: active_sessions
-  tags: [monitoring, radius]
-
-- name: Retrieve accounting logs
-  ansible.builtin.uri:
-    url: "https://{{ ise_hostname }}/admin/API/mnt/Session/AccountingLogs"
-    method: GET
-    user: "{{ ise_username }}"
-    password: "{{ ise_password }}"
-    force_basic_auth: true
-    validate_certs: "{{ ise_verify_ssl }}"
-    headers:
-      Accept: "application/json"
-    body_format: json
-    body:
-      startDate: "{{ accounting_start_date }}"
-      endDate: "{{ accounting_end_date }}"
-  no_log: true
-  register: accounting_logs
-  tags: [monitoring, accounting]
-
-- name: Parse session statistics
+- name: "cisco/ise_monitor__radius_accounting | Initialize validation state"
   ansible.builtin.set_fact:
-    session_stats:
-      total_sessions: "{{ active_sessions.json.sessionList | default([]) | length }}"
-      authenticated_users: "{{ active_sessions.json.sessionList | default([]) | map(attribute='userName') | unique | list | length }}"
-      nas_devices: "{{ active_sessions.json.sessionList | default([]) | map(attribute='nas_ip_address') | unique | list | length }}"
-  when: active_sessions.json is defined
-  tags: [monitoring, analysis]
+    fe_cisco_ise_monitor__radius_accounting_start_epoch: "{{ now(fmt='%s') | int }}"
+    fe_cisco_ise_monitor__radius_accounting_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+    fe_cisco_ise_monitor__radius_accounting_status: "running"
+    fe_cisco_ise_monitor__radius_accounting_preflight_passed: false
+    fe_cisco_ise_monitor__radius_accounting_postflight_passed: false
+    fe_cisco_ise_monitor__radius_accounting_failed_task: ""
+    fe_cisco_ise_monitor__radius_accounting_error: ""
+    fe_cisco_ise_monitor__radius_accounting_stats_published: false
+  tags:
+    - always
 
-- name: Generate accounting monitoring report
-  ansible.builtin.template:
-    src: ise_monitor__radius_accounting_report.json.j2
-    dest: "{{ ise_artifacts_dir }}/radius_accounting_{{ ansible_date_time.epoch }}.json"
-    mode: "0640"
-  tags: [reporting]
+- name: "cisco/ise_monitor__radius_accounting | Guarded execution with preflight and postflight validation"
+  block:
 
-- name: Export accounting data to SIEM
-  ansible.builtin.uri:
-    url: "{{ siem_endpoint }}/api/events"
-    method: POST
-    headers:
-      Authorization: "Bearer {{ siem_api_token }}"
-      Content-Type: "application/json"
-    body_format: json
-    body:
-      source: "ise_radius_accounting"
-      sessions: "{{ active_sessions.json.sessionList | default([]) }}"
-  when:
-    - siem_integration_enabled | bool
-    - active_sessions.json is defined
-  ignore_errors: true
-  tags: [siem, integration]
+    # ----------------------------- preflight --------------------
+
+    - name: "cisco/ise_monitor__radius_accounting | Preflight | Verify the control node meets the minimum ansible-core version"
+      ansible.builtin.assert:
+        that:
+          - ansible_version.full is version(fe_validation_min_ansible_version | default('2.12'), '>=')
+        fail_msg: >-
+          cisco/ise_monitor__radius_accounting: requires ansible-core
+          {{ fe_validation_min_ansible_version | default('2.12') }} or newer,
+          found {{ ansible_version.full }}.
+        success_msg: >-
+          cisco/ise_monitor__radius_accounting: ansible-core {{ ansible_version.full }} satisfies the minimum.
+        quiet: true
+      tags:
+        - always
+        - preflight
+        - validation
+
+    - name: "cisco/ise_monitor__radius_accounting | Preflight | Verify every declared required variable is defined"
+      ansible.builtin.assert:
+        that:
+          - vars[item] is defined
+        fail_msg: "cisco/ise_monitor__radius_accounting: required variable '{{ item }}' is not defined."
+        success_msg: "cisco/ise_monitor__radius_accounting: required variable '{{ item }}' is defined."
+        quiet: true
+      loop: "{{ fe_cisco_ise_monitor__radius_accounting_required_vars | default([]) }}"
+      loop_control:
+        label: "{{ item }}"
+      tags:
+        - always
+        - preflight
+        - validation
+
+    - name: "cisco/ise_monitor__radius_accounting | Preflight | Record that preflight validation passed"
+      ansible.builtin.set_fact:
+        fe_cisco_ise_monitor__radius_accounting_preflight_passed: true
+      tags:
+        - always
+        - preflight
+        - validation
+
+    # ----------------------------- execute ----------------------
+
+    - name: Validate ISE connection parameters
+      ansible.builtin.assert:
+        that:
+          - ise_hostname is defined
+          - ise_username is defined
+          - ise_password is defined
+        fail_msg: "Required ISE connection parameters not defined"
+      tags: [validation, prerequisites]
+
+    - name: Ensure artifacts directory
+      ansible.builtin.file:
+        path: "{{ ise_artifacts_dir }}"
+        state: directory
+        mode: "0750"
+      tags: [always]
+
+    - name: Retrieve RADIUS accounting sessions
+      ansible.builtin.uri:
+        url: "https://{{ ise_hostname }}/admin/API/mnt/Session/ActiveList"
+        method: GET
+        user: "{{ ise_username }}"
+        password: "{{ ise_password }}"
+        force_basic_auth: true
+        validate_certs: "{{ ise_verify_ssl }}"
+        headers:
+          Accept: "application/json"
+      no_log: true
+      register: active_sessions
+      tags: [monitoring, radius]
+
+    - name: Retrieve accounting logs
+      ansible.builtin.uri:
+        url: "https://{{ ise_hostname }}/admin/API/mnt/Session/AccountingLogs"
+        method: GET
+        user: "{{ ise_username }}"
+        password: "{{ ise_password }}"
+        force_basic_auth: true
+        validate_certs: "{{ ise_verify_ssl }}"
+        headers:
+          Accept: "application/json"
+        body_format: json
+        body:
+          startDate: "{{ accounting_start_date }}"
+          endDate: "{{ accounting_end_date }}"
+      no_log: true
+      register: accounting_logs
+      tags: [monitoring, accounting]
+
+    - name: Parse session statistics
+      ansible.builtin.set_fact:
+        session_stats:
+          total_sessions: "{{ active_sessions.json.sessionList | default([]) | length }}"
+          authenticated_users: "{{ active_sessions.json.sessionList | default([]) | map(attribute='userName') | unique | list | length }}"
+          nas_devices: "{{ active_sessions.json.sessionList | default([]) | map(attribute='nas_ip_address') | unique | list | length }}"
+      when: active_sessions.json is defined
+      tags: [monitoring, analysis]
+
+    - name: Generate accounting monitoring report
+      ansible.builtin.template:
+        src: ise_monitor__radius_accounting_report.json.j2
+        dest: "{{ ise_artifacts_dir }}/radius_accounting_{{ ansible_date_time.epoch }}.json"
+        mode: "0640"
+      tags: [reporting]
+
+    - name: Export accounting data to SIEM
+      ansible.builtin.uri:
+        url: "{{ siem_endpoint }}/api/events"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ siem_api_token }}"
+          Content-Type: "application/json"
+        body_format: json
+        body:
+          source: "ise_radius_accounting"
+          sessions: "{{ active_sessions.json.sessionList | default([]) }}"
+      when:
+        - siem_integration_enabled | bool
+        - active_sessions.json is defined
+      ignore_errors: true
+      tags: [siem, integration]
+
+    # ----------------------------- postflight -------------------
+
+    - name: "cisco/ise_monitor__radius_accounting | Postflight | Verify the guarded body ran after a passing preflight"
+      ansible.builtin.assert:
+        that:
+          - fe_cisco_ise_monitor__radius_accounting_preflight_passed | bool
+          - fe_cisco_ise_monitor__radius_accounting_status in ['running', 'succeeded']
+        fail_msg: >-
+          cisco/ise_monitor__radius_accounting: postflight validation failed - preflight passed
+          ={{ fe_cisco_ise_monitor__radius_accounting_preflight_passed | default(false) }},
+          status={{ fe_cisco_ise_monitor__radius_accounting_status | default('unknown') }}.
+        success_msg: "cisco/ise_monitor__radius_accounting: postflight validation passed."
+        quiet: true
+      tags:
+        - always
+        - postflight
+        - validation
+
+    - name: "cisco/ise_monitor__radius_accounting | Postflight | Record the successful outcome"
+      ansible.builtin.set_fact:
+        fe_cisco_ise_monitor__radius_accounting_postflight_passed: true
+        fe_cisco_ise_monitor__radius_accounting_status: "succeeded"
+      tags:
+        - always
+        - postflight
+        - validation
+
+  rescue:
+
+    - name: "cisco/ise_monitor__radius_accounting | Rescue | Capture the failing task and error detail"
+      ansible.builtin.set_fact:
+        fe_cisco_ise_monitor__radius_accounting_status: "failed"
+        fe_cisco_ise_monitor__radius_accounting_postflight_passed: false
+        fe_cisco_ise_monitor__radius_accounting_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+        fe_cisco_ise_monitor__radius_accounting_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+      tags:
+        - always
+        - rescue
+
+    - name: "cisco/ise_monitor__radius_accounting | Rescue | Report the failure"
+      ansible.builtin.debug:
+        msg: >-
+          cisco/ise_monitor__radius_accounting: FAILED at '{{ fe_cisco_ise_monitor__radius_accounting_failed_task }}' on
+          {{ inventory_hostname }} - {{ fe_cisco_ise_monitor__radius_accounting_error }}
+      tags:
+        - always
+        - rescue
+
+    - name: "cisco/ise_monitor__radius_accounting | Rescue | Re-raise the failure unless the caller opted to continue"
+      ansible.builtin.fail:
+        msg: >-
+          cisco/ise_monitor__radius_accounting failed at '{{ fe_cisco_ise_monitor__radius_accounting_failed_task }}': {{ fe_cisco_ise_monitor__radius_accounting_error }}
+      when: not (fe_validation_continue_on_error | default(false) | bool)
+      tags:
+        - always
+        - rescue
+
+  always:
+
+    - name: "cisco/ise_monitor__radius_accounting | Always | Compute the execution duration"
+      ansible.builtin.set_fact:
+        fe_cisco_ise_monitor__radius_accounting_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+        fe_cisco_ise_monitor__radius_accounting_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_cisco_ise_monitor__radius_accounting_start_epoch | default(0) | int) }}"
+      tags:
+        - always
+
+    - name: "cisco/ise_monitor__radius_accounting | Always | Publish the validation result with set_stats"
+      ansible.builtin.set_stats:
+        data:
+          fe_validation_results:
+            "cisco/ise_monitor__radius_accounting":
+              component: "cisco/ise_monitor__radius_accounting"
+              type: "role"
+              platform: "cisco"
+              host: "{{ inventory_hostname }}"
+              status: "{{ fe_cisco_ise_monitor__radius_accounting_status | default('unknown') }}"
+              preflight_passed: "{{ fe_cisco_ise_monitor__radius_accounting_preflight_passed | default(false) | bool }}"
+              postflight_passed: "{{ fe_cisco_ise_monitor__radius_accounting_postflight_passed | default(false) | bool }}"
+              started_at: "{{ fe_cisco_ise_monitor__radius_accounting_started_at | default('') }}"
+              ended_at: "{{ fe_cisco_ise_monitor__radius_accounting_ended_at | default('') }}"
+              duration_seconds: "{{ fe_cisco_ise_monitor__radius_accounting_duration_seconds | default(0) | int }}"
+              failed_task: "{{ fe_cisco_ise_monitor__radius_accounting_failed_task | default('') }}"
+              error: "{{ fe_cisco_ise_monitor__radius_accounting_error | default('') }}"
+              check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+          fe_validation_executions: 1
+          fe_validation_succeeded: "{{ 1 if fe_cisco_ise_monitor__radius_accounting_status | default('') == 'succeeded' else 0 }}"
+          fe_validation_failed: "{{ 0 if fe_cisco_ise_monitor__radius_accounting_status | default('') == 'succeeded' else 1 }}"
+          fe_validation_duration_seconds: "{{ fe_cisco_ise_monitor__radius_accounting_duration_seconds | default(0) | int }}"
+          fe_validation_failed_components: >-
+            {{ [] if fe_cisco_ise_monitor__radius_accounting_status | default('') == 'succeeded' else ['cisco/ise_monitor__radius_accounting'] }}
+        aggregate: true
+        per_host: false
+      tags:
+        - always
+
+    - name: "cisco/ise_monitor__radius_accounting | Always | Mark the validation statistics as published"
+      ansible.builtin.set_fact:
+        fe_cisco_ise_monitor__radius_accounting_stats_published: true
+      tags:
+        - always

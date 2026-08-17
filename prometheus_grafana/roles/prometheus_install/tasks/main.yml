@@ -2,395 +2,578 @@
 # Prometheus Installation Role - Main Tasks
 # Fourth Estate Agency - Infrastructure Monitoring
 
-- name: Include OS-specific variables
-  include_vars: "{{ ansible_os_family }}.yml"
-  failed_when: false
-  tags:
-    - prometheus
-    - prometheus_install
+# ---------------------------------------------------------------------------
+# Fourth Estate preflight / postflight validation harness
+#
+# The task file body below is wrapped in an Ansible block/rescue/always structure:
+#
+#   block   preflight validation runs first, then the original task file body, then
+#           postflight validation. Any failure transfers control to rescue.
+#   rescue  records which task failed and why, then re-raises so a failure is
+#           never silently swallowed. Set fe_validation_continue_on_error=true
+#           to record the failure and keep going instead.
+#   always  computes the run duration and publishes the outcome through
+#           ansible.builtin.set_stats, so a wrapping playbook, AWX/AAP or CI can
+#           consume the result without scraping log output.
+#
+# Published stats (see docs/VALIDATION_AND_STATS.md):
+#   fe_validation_results['prometheus_grafana/prometheus_install']  per-component record
+#   fe_validation_executions / _succeeded / _failed / _duration_seconds
+#   fe_validation_failed_components
+#
+# Add component-specific preflight checks without editing this file by setting
+#   fe_prometheus_grafana_prometheus_install_required_vars: [var_one, var_two]
+# ---------------------------------------------------------------------------
 
-- name: Install required packages
-  package:
-    name: "{{ prometheus_dependencies }}"
-    state: present
+- name: "prometheus_grafana/prometheus_install | Initialize validation state"
+  ansible.builtin.set_fact:
+    fe_prometheus_grafana_prometheus_install_start_epoch: "{{ now(fmt='%s') | int }}"
+    fe_prometheus_grafana_prometheus_install_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+    fe_prometheus_grafana_prometheus_install_status: "running"
+    fe_prometheus_grafana_prometheus_install_preflight_passed: false
+    fe_prometheus_grafana_prometheus_install_postflight_passed: false
+    fe_prometheus_grafana_prometheus_install_failed_task: ""
+    fe_prometheus_grafana_prometheus_install_error: ""
+    fe_prometheus_grafana_prometheus_install_stats_published: false
   tags:
-    - prometheus
-    - prometheus_install
-    - packages
+    - always
 
-- name: Create Prometheus system group
-  group:
-    name: "{{ prometheus_group }}"
-    gid: "{{ prometheus_gid }}"
-    system: true
-    state: present
-  tags:
-    - prometheus
-    - prometheus_install
-    - users
+- name: "prometheus_grafana/prometheus_install | Guarded execution with preflight and postflight validation"
+  block:
 
-- name: Create Prometheus system user
-  user:
-    name: "{{ prometheus_user }}"
-    uid: "{{ prometheus_uid }}"
-    group: "{{ prometheus_group }}"
-    system: true
-    shell: /sbin/nologin
-    home: "{{ prometheus_data_dir }}"
-    createhome: false
-    comment: "Prometheus Monitoring System"
-    state: present
-  tags:
-    - prometheus
-    - prometheus_install
-    - users
+    # ----------------------------- preflight --------------------
 
-- name: Create Prometheus directories
-  file:
-    path: "{{ item }}"
-    state: directory
-    owner: "{{ prometheus_user }}"
-    group: "{{ prometheus_group }}"
-    mode: "0755"
-  loop:
-    - "{{ prometheus_install_dir }}"
-    - "{{ prometheus_config_dir }}"
-    - "{{ prometheus_config_dir }}/rules"
-    - "{{ prometheus_config_dir }}/file_sd"
-    - "{{ prometheus_config_dir }}/tls"
-    - "{{ prometheus_data_dir }}"
-    - "{{ prometheus_log_dir }}"
-  tags:
-    - prometheus
-    - prometheus_install
-    - directories
+    - name: "prometheus_grafana/prometheus_install | Preflight | Verify the control node meets the minimum ansible-core version"
+      ansible.builtin.assert:
+        that:
+          - ansible_version.full is version(fe_validation_min_ansible_version | default('2.12'), '>=')
+        fail_msg: >-
+          prometheus_grafana/prometheus_install: requires ansible-core
+          {{ fe_validation_min_ansible_version | default('2.12') }} or newer,
+          found {{ ansible_version.full }}.
+        success_msg: >-
+          prometheus_grafana/prometheus_install: ansible-core {{ ansible_version.full }} satisfies the minimum.
+        quiet: true
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: Check if Prometheus is already installed
-  stat:
-    path: "{{ prometheus_install_dir }}/prometheus"
-  register: prometheus_binary
-  tags:
-    - prometheus
-    - prometheus_install
+    - name: "prometheus_grafana/prometheus_install | Preflight | Verify every declared required variable is defined"
+      ansible.builtin.assert:
+        that:
+          - vars[item] is defined
+        fail_msg: "prometheus_grafana/prometheus_install: required variable '{{ item }}' is not defined."
+        success_msg: "prometheus_grafana/prometheus_install: required variable '{{ item }}' is defined."
+        quiet: true
+      loop: "{{ fe_prometheus_grafana_prometheus_install_required_vars | default([]) }}"
+      loop_control:
+        label: "{{ item }}"
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: Get installed Prometheus version
-  command: "{{ prometheus_install_dir }}/prometheus --version"
-  register: prometheus_installed_version
-  changed_when: false
-  failed_when: false
-  when: prometheus_binary.stat.exists
-  tags:
-    - prometheus
-    - prometheus_install
+    - name: "prometheus_grafana/prometheus_install | Preflight | Record that preflight validation passed"
+      ansible.builtin.set_fact:
+        fe_prometheus_grafana_prometheus_install_preflight_passed: true
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: Download Prometheus
-  get_url:
-    url: "{{ prometheus_download_url }}"
-    dest: "/tmp/prometheus-{{ prometheus_version }}.tar.gz"
-    mode: "0644"
-    timeout: 300
-  when: >
-    not prometheus_binary.stat.exists or
-    prometheus_version not in prometheus_installed_version.stdout | default('')
-  tags:
-    - prometheus
-    - prometheus_install
-    - download
+    # ----------------------------- execute ----------------------
 
-- name: Extract Prometheus archive
-  unarchive:
-    src: "/tmp/prometheus-{{ prometheus_version }}.tar.gz"
-    dest: "/tmp"
-    remote_src: true
-    creates: "/tmp/prometheus-{{ prometheus_version }}.linux-amd64"
-  when: >
-    not prometheus_binary.stat.exists or
-    prometheus_version not in prometheus_installed_version.stdout | default('')
-  tags:
-    - prometheus
-    - prometheus_install
+    - name: Include OS-specific variables
+      include_vars: "{{ ansible_os_family }}.yml"
+      failed_when: false
+      tags:
+        - prometheus
+        - prometheus_install
 
-- name: Stop Prometheus service for upgrade
-  systemd:
-    name: prometheus
-    state: stopped
-  when: >
-    prometheus_binary.stat.exists and
-    prometheus_version not in prometheus_installed_version.stdout | default('')
-  ignore_errors: true
-  tags:
-    - prometheus
-    - prometheus_install
+    - name: Install required packages
+      package:
+        name: "{{ prometheus_dependencies }}"
+        state: present
+      tags:
+        - prometheus
+        - prometheus_install
+        - packages
 
-- name: Copy Prometheus binaries
-  copy:
-    src: "/tmp/prometheus-{{ prometheus_version }}.linux-amd64/{{ item }}"
-    dest: "{{ prometheus_install_dir }}/{{ item }}"
-    owner: "{{ prometheus_user }}"
-    group: "{{ prometheus_group }}"
-    mode: "0755"
-    remote_src: true
-  loop:
-    - prometheus
-    - promtool
-  when: >
-    not prometheus_binary.stat.exists or
-    prometheus_version not in prometheus_installed_version.stdout | default('')
-  notify: restart prometheus
-  tags:
-    - prometheus
-    - prometheus_install
+    - name: Create Prometheus system group
+      group:
+        name: "{{ prometheus_group }}"
+        gid: "{{ prometheus_gid }}"
+        system: true
+        state: present
+      tags:
+        - prometheus
+        - prometheus_install
+        - users
 
-- name: Copy Prometheus console templates
-  copy:
-    src: "/tmp/prometheus-{{ prometheus_version }}.linux-amd64/{{ item }}"
-    dest: "{{ prometheus_config_dir }}/{{ item }}"
-    owner: "{{ prometheus_user }}"
-    group: "{{ prometheus_group }}"
-    mode: "0755"
-    remote_src: true
-  loop:
-    - consoles
-    - console_libraries
-  when: >
-    not prometheus_binary.stat.exists or
-    prometheus_version not in prometheus_installed_version.stdout | default('')
-  tags:
-    - prometheus
-    - prometheus_install
+    - name: Create Prometheus system user
+      user:
+        name: "{{ prometheus_user }}"
+        uid: "{{ prometheus_uid }}"
+        group: "{{ prometheus_group }}"
+        system: true
+        shell: /sbin/nologin
+        home: "{{ prometheus_data_dir }}"
+        createhome: false
+        comment: "Prometheus Monitoring System"
+        state: present
+      tags:
+        - prometheus
+        - prometheus_install
+        - users
 
-- name: Clean up Prometheus download files
-  file:
-    path: "{{ item }}"
-    state: absent
-  loop:
-    - "/tmp/prometheus-{{ prometheus_version }}.tar.gz"
-    - "/tmp/prometheus-{{ prometheus_version }}.linux-amd64"
-  when: >
-    not prometheus_binary.stat.exists or
-    prometheus_version not in prometheus_installed_version.stdout | default('')
-  tags:
-    - prometheus
-    - prometheus_install
-    - cleanup
+    - name: Create Prometheus directories
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: "{{ prometheus_user }}"
+        group: "{{ prometheus_group }}"
+        mode: "0755"
+      loop:
+        - "{{ prometheus_install_dir }}"
+        - "{{ prometheus_config_dir }}"
+        - "{{ prometheus_config_dir }}/rules"
+        - "{{ prometheus_config_dir }}/file_sd"
+        - "{{ prometheus_config_dir }}/tls"
+        - "{{ prometheus_data_dir }}"
+        - "{{ prometheus_log_dir }}"
+      tags:
+        - prometheus
+        - prometheus_install
+        - directories
 
-- name: Create basic Prometheus configuration
-  template:
-    src: prometheus.yml.j2
-    dest: "{{ prometheus_config_dir }}/prometheus.yml"
-    owner: "{{ prometheus_user }}"
-    group: "{{ prometheus_group }}"
-    mode: "0644"
-    validate: "{{ prometheus_install_dir }}/promtool check config %s"
-  notify: reload prometheus
-  tags:
-    - prometheus
-    - prometheus_install
-    - config
+    - name: Check if Prometheus is already installed
+      stat:
+        path: "{{ prometheus_install_dir }}/prometheus"
+      register: prometheus_binary
+      tags:
+        - prometheus
+        - prometheus_install
 
-- name: Create Prometheus web configuration for basic auth
-  template:
-    src: web-config.yml.j2
-    dest: "{{ prometheus_config_dir }}/web-config.yml"
-    owner: "{{ prometheus_user }}"
-    group: "{{ prometheus_group }}"
-    mode: "0600"
-  when: prometheus_enable_basic_auth or prometheus_enable_tls
-  notify: restart prometheus
-  tags:
-    - prometheus
-    - prometheus_install
-    - config
-    - security
+    - name: Get installed Prometheus version
+      command: "{{ prometheus_install_dir }}/prometheus --version"
+      register: prometheus_installed_version
+      changed_when: false
+      failed_when: false
+      when: prometheus_binary.stat.exists
+      tags:
+        - prometheus
+        - prometheus_install
 
-- name: Copy TLS certificates
-  copy:
-    src: "{{ item.src }}"
-    dest: "{{ item.dest }}"
-    owner: "{{ prometheus_user }}"
-    group: "{{ prometheus_group }}"
-    mode: "0600"
-  loop:
-    - src: "{{ prometheus_tls_cert_file }}"
-      dest: "{{ prometheus_config_dir }}/tls/prometheus.crt"
-    - src: "{{ prometheus_tls_key_file }}"
-      dest: "{{ prometheus_config_dir }}/tls/prometheus.key"
-  when: prometheus_enable_tls
-  notify: restart prometheus
-  tags:
-    - prometheus
-    - prometheus_install
-    - tls
+    - name: Download Prometheus
+      get_url:
+        url: "{{ prometheus_download_url }}"
+        dest: "/tmp/prometheus-{{ prometheus_version }}.tar.gz"
+        mode: "0644"
+        timeout: 300
+      when: >
+        not prometheus_binary.stat.exists or
+        prometheus_version not in prometheus_installed_version.stdout | default('')
+      tags:
+        - prometheus
+        - prometheus_install
+        - download
 
-- name: Create Prometheus systemd service
-  template:
-    src: prometheus.service.j2
-    dest: /etc/systemd/system/prometheus.service
-    owner: root
-    group: root
-    mode: "0644"
-  notify: restart prometheus
-  tags:
-    - prometheus
-    - prometheus_install
-    - systemd
+    - name: Extract Prometheus archive
+      unarchive:
+        src: "/tmp/prometheus-{{ prometheus_version }}.tar.gz"
+        dest: "/tmp"
+        remote_src: true
+        creates: "/tmp/prometheus-{{ prometheus_version }}.linux-amd64"
+      when: >
+        not prometheus_binary.stat.exists or
+        prometheus_version not in prometheus_installed_version.stdout | default('')
+      tags:
+        - prometheus
+        - prometheus_install
 
-- name: Create Prometheus environment file
-  template:
-    src: prometheus.environment.j2
-    dest: /etc/default/prometheus
-    owner: root
-    group: root
-    mode: "0644"
-  notify: restart prometheus
-  tags:
-    - prometheus
-    - prometheus_install
-    - systemd
+    - name: Stop Prometheus service for upgrade
+      systemd:
+        name: prometheus
+        state: stopped
+      when: >
+        prometheus_binary.stat.exists and
+        prometheus_version not in prometheus_installed_version.stdout | default('')
+      ignore_errors: true
+      tags:
+        - prometheus
+        - prometheus_install
 
-- name: Reload systemd daemon
-  systemd:
-    daemon_reload: true
-  tags:
-    - prometheus
-    - prometheus_install
-    - systemd
+    - name: Copy Prometheus binaries
+      copy:
+        src: "/tmp/prometheus-{{ prometheus_version }}.linux-amd64/{{ item }}"
+        dest: "{{ prometheus_install_dir }}/{{ item }}"
+        owner: "{{ prometheus_user }}"
+        group: "{{ prometheus_group }}"
+        mode: "0755"
+        remote_src: true
+      loop:
+        - prometheus
+        - promtool
+      when: >
+        not prometheus_binary.stat.exists or
+        prometheus_version not in prometheus_installed_version.stdout | default('')
+      notify: restart prometheus
+      tags:
+        - prometheus
+        - prometheus_install
 
-- name: Configure firewall for Prometheus
-  firewalld:
-    port: "{{ item }}"
-    permanent: true
-    state: enabled
-    zone: "{{ prometheus_firewall_zone }}"
-    immediate: true
-  loop: "{{ prometheus_firewall_ports }}"
-  when: prometheus_firewall_enabled and ansible_os_family == "RedHat"
-  tags:
-    - prometheus
-    - prometheus_install
-    - firewall
+    - name: Copy Prometheus console templates
+      copy:
+        src: "/tmp/prometheus-{{ prometheus_version }}.linux-amd64/{{ item }}"
+        dest: "{{ prometheus_config_dir }}/{{ item }}"
+        owner: "{{ prometheus_user }}"
+        group: "{{ prometheus_group }}"
+        mode: "0755"
+        remote_src: true
+      loop:
+        - consoles
+        - console_libraries
+      when: >
+        not prometheus_binary.stat.exists or
+        prometheus_version not in prometheus_installed_version.stdout | default('')
+      tags:
+        - prometheus
+        - prometheus_install
 
-- name: Configure SELinux for Prometheus
-  seport:
-    ports: "{{ item.port }}"
-    proto: "{{ item.proto }}"
-    setype: "{{ item.setype }}"
-    state: present
-  loop: "{{ prometheus_selinux_ports }}"
-  when: prometheus_selinux_enabled and ansible_selinux.status == "enabled"
-  tags:
-    - prometheus
-    - prometheus_install
-    - selinux
+    - name: Clean up Prometheus download files
+      file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - "/tmp/prometheus-{{ prometheus_version }}.tar.gz"
+        - "/tmp/prometheus-{{ prometheus_version }}.linux-amd64"
+      when: >
+        not prometheus_binary.stat.exists or
+        prometheus_version not in prometheus_installed_version.stdout | default('')
+      tags:
+        - prometheus
+        - prometheus_install
+        - cleanup
 
-- name: Set SELinux context for Prometheus directories
-  sefcontext:
-    target: "{{ item }}(/.*)?"
-    setype: prometheus_var_lib_t
-    state: present
-  loop:
-    - "{{ prometheus_data_dir }}"
-    - "{{ prometheus_log_dir }}"
-  when: prometheus_selinux_enabled and ansible_selinux.status == "enabled"
-  tags:
-    - prometheus
-    - prometheus_install
-    - selinux
+    - name: Create basic Prometheus configuration
+      template:
+        src: prometheus.yml.j2
+        dest: "{{ prometheus_config_dir }}/prometheus.yml"
+        owner: "{{ prometheus_user }}"
+        group: "{{ prometheus_group }}"
+        mode: "0644"
+        validate: "{{ prometheus_install_dir }}/promtool check config %s"
+      notify: reload prometheus
+      tags:
+        - prometheus
+        - prometheus_install
+        - config
 
-- name: Apply SELinux context to Prometheus directories
-  command: "restorecon -Rv {{ item }}"
-  loop:
-    - "{{ prometheus_data_dir }}"
-    - "{{ prometheus_log_dir }}"
-  when: prometheus_selinux_enabled and ansible_selinux.status == "enabled"
-  changed_when: false
-  tags:
-    - prometheus
-    - prometheus_install
-    - selinux
+    - name: Create Prometheus web configuration for basic auth
+      template:
+        src: web-config.yml.j2
+        dest: "{{ prometheus_config_dir }}/web-config.yml"
+        owner: "{{ prometheus_user }}"
+        group: "{{ prometheus_group }}"
+        mode: "0600"
+      when: prometheus_enable_basic_auth or prometheus_enable_tls
+      notify: restart prometheus
+      tags:
+        - prometheus
+        - prometheus_install
+        - config
+        - security
 
-- name: Create Prometheus backup directory
-  file:
-    path: "{{ prometheus_backup_dir }}"
-    state: directory
-    owner: "{{ prometheus_user }}"
-    group: "{{ prometheus_group }}"
-    mode: "0755"
-  when: prometheus_backup_enabled
-  tags:
-    - prometheus
-    - prometheus_install
-    - backup
+    - name: Copy TLS certificates
+      copy:
+        src: "{{ item.src }}"
+        dest: "{{ item.dest }}"
+        owner: "{{ prometheus_user }}"
+        group: "{{ prometheus_group }}"
+        mode: "0600"
+      loop:
+        - src: "{{ prometheus_tls_cert_file }}"
+          dest: "{{ prometheus_config_dir }}/tls/prometheus.crt"
+        - src: "{{ prometheus_tls_key_file }}"
+          dest: "{{ prometheus_config_dir }}/tls/prometheus.key"
+      when: prometheus_enable_tls
+      notify: restart prometheus
+      tags:
+        - prometheus
+        - prometheus_install
+        - tls
 
-- name: Create Prometheus backup script
-  template:
-    src: backup-prometheus.sh.j2
-    dest: /usr/local/bin/backup-prometheus.sh
-    owner: root
-    group: root
-    mode: "0755"
-  when: prometheus_backup_enabled
-  tags:
-    - prometheus
-    - prometheus_install
-    - backup
+    - name: Create Prometheus systemd service
+      template:
+        src: prometheus.service.j2
+        dest: /etc/systemd/system/prometheus.service
+        owner: root
+        group: root
+        mode: "0644"
+      notify: restart prometheus
+      tags:
+        - prometheus
+        - prometheus_install
+        - systemd
 
-- name: Configure Prometheus backup cron job
-  cron:
-    name: "Backup Prometheus data"
-    hour: "2"
-    minute: "0"
-    job: "/usr/local/bin/backup-prometheus.sh >> {{ prometheus_log_dir }}/backup.log 2>&1"
-    user: "{{ prometheus_user }}"
-    state: present
-  when: prometheus_backup_enabled
-  tags:
-    - prometheus
-    - prometheus_install
-    - backup
+    - name: Create Prometheus environment file
+      template:
+        src: prometheus.environment.j2
+        dest: /etc/default/prometheus
+        owner: root
+        group: root
+        mode: "0644"
+      notify: restart prometheus
+      tags:
+        - prometheus
+        - prometheus_install
+        - systemd
 
-- name: Enable and start Prometheus service
-  systemd:
-    name: prometheus
-    enabled: "{{ prometheus_service_enabled }}"
-    state: "{{ prometheus_service_state }}"
-  tags:
-    - prometheus
-    - prometheus_install
-    - service
+    - name: Reload systemd daemon
+      systemd:
+        daemon_reload: true
+      tags:
+        - prometheus
+        - prometheus_install
+        - systemd
 
-- name: Wait for Prometheus to start
-  wait_for:
-    port: 9090
-    host: "{{ ansible_default_ipv4.address }}"
-    timeout: 60
-  when: prometheus_service_state == "started"
-  tags:
-    - prometheus
-    - prometheus_install
-    - service
+    - name: Configure firewall for Prometheus
+      firewalld:
+        port: "{{ item }}"
+        permanent: true
+        state: enabled
+        zone: "{{ prometheus_firewall_zone }}"
+        immediate: true
+      loop: "{{ prometheus_firewall_ports }}"
+      when: prometheus_firewall_enabled and ansible_os_family == "RedHat"
+      tags:
+        - prometheus
+        - prometheus_install
+        - firewall
 
-- name: Verify Prometheus is responding
-  uri:
-    url: "http://localhost:9090/-/healthy"
-    status_code: 200
-    timeout: 30
-  retries: 5
-  delay: 10
-  when: prometheus_service_state == "started"
-  tags:
-    - prometheus
-    - prometheus_install
-    - verification
+    - name: Configure SELinux for Prometheus
+      seport:
+        ports: "{{ item.port }}"
+        proto: "{{ item.proto }}"
+        setype: "{{ item.setype }}"
+        state: present
+      loop: "{{ prometheus_selinux_ports }}"
+      when: prometheus_selinux_enabled and ansible_selinux.status == "enabled"
+      tags:
+        - prometheus
+        - prometheus_install
+        - selinux
 
-- name: Display Prometheus installation information
-  debug:
-    msg:
-      - "Prometheus {{ prometheus_version }} has been successfully installed"
-      - "Web UI: http://{{ ansible_fqdn }}:9090"
-      - "Config: {{ prometheus_config_dir }}/prometheus.yml"
-      - "Data: {{ prometheus_data_dir }}"
-      - "Logs: {{ prometheus_log_dir }}"
-  tags:
-    - prometheus
-    - prometheus_install
+    - name: Set SELinux context for Prometheus directories
+      sefcontext:
+        target: "{{ item }}(/.*)?"
+        setype: prometheus_var_lib_t
+        state: present
+      loop:
+        - "{{ prometheus_data_dir }}"
+        - "{{ prometheus_log_dir }}"
+      when: prometheus_selinux_enabled and ansible_selinux.status == "enabled"
+      tags:
+        - prometheus
+        - prometheus_install
+        - selinux
+
+    - name: Apply SELinux context to Prometheus directories
+      command: "restorecon -Rv {{ item }}"
+      loop:
+        - "{{ prometheus_data_dir }}"
+        - "{{ prometheus_log_dir }}"
+      when: prometheus_selinux_enabled and ansible_selinux.status == "enabled"
+      changed_when: false
+      tags:
+        - prometheus
+        - prometheus_install
+        - selinux
+
+    - name: Create Prometheus backup directory
+      file:
+        path: "{{ prometheus_backup_dir }}"
+        state: directory
+        owner: "{{ prometheus_user }}"
+        group: "{{ prometheus_group }}"
+        mode: "0755"
+      when: prometheus_backup_enabled
+      tags:
+        - prometheus
+        - prometheus_install
+        - backup
+
+    - name: Create Prometheus backup script
+      template:
+        src: backup-prometheus.sh.j2
+        dest: /usr/local/bin/backup-prometheus.sh
+        owner: root
+        group: root
+        mode: "0755"
+      when: prometheus_backup_enabled
+      tags:
+        - prometheus
+        - prometheus_install
+        - backup
+
+    - name: Configure Prometheus backup cron job
+      cron:
+        name: "Backup Prometheus data"
+        hour: "2"
+        minute: "0"
+        job: "/usr/local/bin/backup-prometheus.sh >> {{ prometheus_log_dir }}/backup.log 2>&1"
+        user: "{{ prometheus_user }}"
+        state: present
+      when: prometheus_backup_enabled
+      tags:
+        - prometheus
+        - prometheus_install
+        - backup
+
+    - name: Enable and start Prometheus service
+      systemd:
+        name: prometheus
+        enabled: "{{ prometheus_service_enabled }}"
+        state: "{{ prometheus_service_state }}"
+      tags:
+        - prometheus
+        - prometheus_install
+        - service
+
+    - name: Wait for Prometheus to start
+      wait_for:
+        port: 9090
+        host: "{{ ansible_default_ipv4.address }}"
+        timeout: 60
+      when: prometheus_service_state == "started"
+      tags:
+        - prometheus
+        - prometheus_install
+        - service
+
+    - name: Verify Prometheus is responding
+      uri:
+        url: "http://localhost:9090/-/healthy"
+        status_code: 200
+        timeout: 30
+      retries: 5
+      delay: 10
+      when: prometheus_service_state == "started"
+      tags:
+        - prometheus
+        - prometheus_install
+        - verification
+
+    - name: Display Prometheus installation information
+      debug:
+        msg:
+          - "Prometheus {{ prometheus_version }} has been successfully installed"
+          - "Web UI: http://{{ ansible_fqdn }}:9090"
+          - "Config: {{ prometheus_config_dir }}/prometheus.yml"
+          - "Data: {{ prometheus_data_dir }}"
+          - "Logs: {{ prometheus_log_dir }}"
+      tags:
+        - prometheus
+        - prometheus_install
+
+    # ----------------------------- postflight -------------------
+
+    - name: "prometheus_grafana/prometheus_install | Postflight | Verify the guarded body ran after a passing preflight"
+      ansible.builtin.assert:
+        that:
+          - fe_prometheus_grafana_prometheus_install_preflight_passed | bool
+          - fe_prometheus_grafana_prometheus_install_status in ['running', 'succeeded']
+        fail_msg: >-
+          prometheus_grafana/prometheus_install: postflight validation failed - preflight passed
+          ={{ fe_prometheus_grafana_prometheus_install_preflight_passed | default(false) }},
+          status={{ fe_prometheus_grafana_prometheus_install_status | default('unknown') }}.
+        success_msg: "prometheus_grafana/prometheus_install: postflight validation passed."
+        quiet: true
+      tags:
+        - always
+        - postflight
+        - validation
+
+    - name: "prometheus_grafana/prometheus_install | Postflight | Record the successful outcome"
+      ansible.builtin.set_fact:
+        fe_prometheus_grafana_prometheus_install_postflight_passed: true
+        fe_prometheus_grafana_prometheus_install_status: "succeeded"
+      tags:
+        - always
+        - postflight
+        - validation
+
+  rescue:
+
+    - name: "prometheus_grafana/prometheus_install | Rescue | Capture the failing task and error detail"
+      ansible.builtin.set_fact:
+        fe_prometheus_grafana_prometheus_install_status: "failed"
+        fe_prometheus_grafana_prometheus_install_postflight_passed: false
+        fe_prometheus_grafana_prometheus_install_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+        fe_prometheus_grafana_prometheus_install_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+      tags:
+        - always
+        - rescue
+
+    - name: "prometheus_grafana/prometheus_install | Rescue | Report the failure"
+      ansible.builtin.debug:
+        msg: >-
+          prometheus_grafana/prometheus_install: FAILED at '{{ fe_prometheus_grafana_prometheus_install_failed_task }}' on
+          {{ inventory_hostname }} - {{ fe_prometheus_grafana_prometheus_install_error }}
+      tags:
+        - always
+        - rescue
+
+    - name: "prometheus_grafana/prometheus_install | Rescue | Re-raise the failure unless the caller opted to continue"
+      ansible.builtin.fail:
+        msg: >-
+          prometheus_grafana/prometheus_install failed at '{{ fe_prometheus_grafana_prometheus_install_failed_task }}': {{ fe_prometheus_grafana_prometheus_install_error }}
+      when: not (fe_validation_continue_on_error | default(false) | bool)
+      tags:
+        - always
+        - rescue
+
+  always:
+
+    - name: "prometheus_grafana/prometheus_install | Always | Compute the execution duration"
+      ansible.builtin.set_fact:
+        fe_prometheus_grafana_prometheus_install_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+        fe_prometheus_grafana_prometheus_install_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_prometheus_grafana_prometheus_install_start_epoch | default(0) | int) }}"
+      tags:
+        - always
+
+    - name: "prometheus_grafana/prometheus_install | Always | Publish the validation result with set_stats"
+      ansible.builtin.set_stats:
+        data:
+          fe_validation_results:
+            "prometheus_grafana/prometheus_install":
+              component: "prometheus_grafana/prometheus_install"
+              type: "role"
+              platform: "prometheus_grafana"
+              host: "{{ inventory_hostname }}"
+              status: "{{ fe_prometheus_grafana_prometheus_install_status | default('unknown') }}"
+              preflight_passed: "{{ fe_prometheus_grafana_prometheus_install_preflight_passed | default(false) | bool }}"
+              postflight_passed: "{{ fe_prometheus_grafana_prometheus_install_postflight_passed | default(false) | bool }}"
+              started_at: "{{ fe_prometheus_grafana_prometheus_install_started_at | default('') }}"
+              ended_at: "{{ fe_prometheus_grafana_prometheus_install_ended_at | default('') }}"
+              duration_seconds: "{{ fe_prometheus_grafana_prometheus_install_duration_seconds | default(0) | int }}"
+              failed_task: "{{ fe_prometheus_grafana_prometheus_install_failed_task | default('') }}"
+              error: "{{ fe_prometheus_grafana_prometheus_install_error | default('') }}"
+              check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+          fe_validation_executions: 1
+          fe_validation_succeeded: "{{ 1 if fe_prometheus_grafana_prometheus_install_status | default('') == 'succeeded' else 0 }}"
+          fe_validation_failed: "{{ 0 if fe_prometheus_grafana_prometheus_install_status | default('') == 'succeeded' else 1 }}"
+          fe_validation_duration_seconds: "{{ fe_prometheus_grafana_prometheus_install_duration_seconds | default(0) | int }}"
+          fe_validation_failed_components: >-
+            {{ [] if fe_prometheus_grafana_prometheus_install_status | default('') == 'succeeded' else ['prometheus_grafana/prometheus_install'] }}
+        aggregate: true
+        per_host: false
+      tags:
+        - always
+
+    - name: "prometheus_grafana/prometheus_install | Always | Mark the validation statistics as published"
+      ansible.builtin.set_fact:
+        fe_prometheus_grafana_prometheus_install_stats_published: true
+      tags:
+        - always

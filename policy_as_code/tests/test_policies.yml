@@ -6,6 +6,23 @@
 #   ansible-playbook tests/test_policies.yml -i inventory/test.yml
 #   ansible-playbook tests/test_policies.yml -i inventory/test.yml --tags test_ia_5
 
+# ---------------------------------------------------------------------------
+# Fourth Estate preflight / postflight validation harness
+#
+# Every play below carries a block/rescue/always validation wrapper:
+#
+#   pre_tasks   preflight validation. On failure it records the reason,
+#               publishes the outcome with set_stats and aborts the play
+#               before any role or task runs.
+#   tasks       the original task list, wrapped so a failure is captured
+#               (which task, which error) and then re-raised.
+#   post_tasks  postflight validation, then the run record is published with
+#               ansible.builtin.set_stats.
+#
+# Set fe_validation_continue_on_error=true to record failures and keep going.
+# See docs/VALIDATION_AND_STATS.md for the published stats schema.
+# ---------------------------------------------------------------------------
+
 - name: Policy as Code - Functional Test Suite
   hosts: localhost
   gather_facts: true
@@ -17,6 +34,140 @@
     test_summary: []
 
   pre_tasks:
+    - name: "policy_as_code/tests/test_policies | Preflight validation"
+      tags:
+        - always
+        - preflight
+        - validation
+      block:
+
+        - name: "policy_as_code/tests/test_policies | Initialize validation state"
+          ansible.builtin.set_fact:
+            fe_policy_as_code_tests_test_policies_start_epoch: "{{ now(fmt='%s') | int }}"
+            fe_policy_as_code_tests_test_policies_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+            fe_policy_as_code_tests_test_policies_status: "running"
+            fe_policy_as_code_tests_test_policies_preflight_passed: false
+            fe_policy_as_code_tests_test_policies_postflight_passed: false
+            fe_policy_as_code_tests_test_policies_failed_task: ""
+            fe_policy_as_code_tests_test_policies_error: ""
+            fe_policy_as_code_tests_test_policies_stats_published: false
+          tags:
+            - always
+
+        - name: "policy_as_code/tests/test_policies | Preflight | Verify the control node meets the minimum ansible-core version"
+          ansible.builtin.assert:
+            that:
+              - ansible_version.full is version(fe_validation_min_ansible_version | default('2.12'), '>=')
+            fail_msg: >-
+              policy_as_code/tests/test_policies: requires ansible-core
+              {{ fe_validation_min_ansible_version | default('2.12') }} or newer,
+              found {{ ansible_version.full }}.
+            success_msg: >-
+              policy_as_code/tests/test_policies: ansible-core {{ ansible_version.full }} satisfies the minimum.
+            quiet: true
+          tags:
+            - always
+            - preflight
+            - validation
+
+        - name: "policy_as_code/tests/test_policies | Preflight | Verify every declared required variable is defined"
+          ansible.builtin.assert:
+            that:
+              - vars[item] is defined
+            fail_msg: "policy_as_code/tests/test_policies: required variable '{{ item }}' is not defined."
+            success_msg: "policy_as_code/tests/test_policies: required variable '{{ item }}' is defined."
+            quiet: true
+          loop: "{{ fe_policy_as_code_tests_test_policies_required_vars | default([]) }}"
+          loop_control:
+            label: "{{ item }}"
+          tags:
+            - always
+            - preflight
+            - validation
+
+        - name: "policy_as_code/tests/test_policies | Preflight | Record that preflight validation passed"
+          ansible.builtin.set_fact:
+            fe_policy_as_code_tests_test_policies_preflight_passed: true
+          tags:
+            - always
+            - preflight
+            - validation
+
+      rescue:
+
+        - name: "policy_as_code/tests/test_policies | Rescue | Capture the failing task and error detail"
+          ansible.builtin.set_fact:
+            fe_policy_as_code_tests_test_policies_status: "preflight_failed"
+            fe_policy_as_code_tests_test_policies_postflight_passed: false
+            fe_policy_as_code_tests_test_policies_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+            fe_policy_as_code_tests_test_policies_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+          tags:
+            - always
+            - rescue
+
+        - name: "policy_as_code/tests/test_policies | Rescue | Report the failure"
+          ansible.builtin.debug:
+            msg: >-
+              policy_as_code/tests/test_policies: FAILED at '{{ fe_policy_as_code_tests_test_policies_failed_task }}' on
+              {{ inventory_hostname }} - {{ fe_policy_as_code_tests_test_policies_error }}
+          tags:
+            - always
+            - rescue
+
+        - name: "policy_as_code/tests/test_policies | Always | Publish the validation result with set_stats"
+          ansible.builtin.set_stats:
+            data:
+              fe_validation_results:
+                "policy_as_code/tests/test_policies":
+                  component: "policy_as_code/tests/test_policies"
+                  type: "playbook"
+                  platform: "policy_as_code"
+                  host: "{{ inventory_hostname }}"
+                  status: "{{ fe_policy_as_code_tests_test_policies_status | default('unknown') }}"
+                  preflight_passed: "{{ fe_policy_as_code_tests_test_policies_preflight_passed | default(false) | bool }}"
+                  postflight_passed: "{{ fe_policy_as_code_tests_test_policies_postflight_passed | default(false) | bool }}"
+                  started_at: "{{ fe_policy_as_code_tests_test_policies_started_at | default('') }}"
+                  ended_at: "{{ fe_policy_as_code_tests_test_policies_ended_at | default('') }}"
+                  duration_seconds: "{{ fe_policy_as_code_tests_test_policies_duration_seconds | default(0) | int }}"
+                  failed_task: "{{ fe_policy_as_code_tests_test_policies_failed_task | default('') }}"
+                  error: "{{ fe_policy_as_code_tests_test_policies_error | default('') }}"
+                  check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+              fe_validation_executions: 1
+              fe_validation_succeeded: "{{ 1 if fe_policy_as_code_tests_test_policies_status | default('') == 'succeeded' else 0 }}"
+              fe_validation_failed: "{{ 0 if fe_policy_as_code_tests_test_policies_status | default('') == 'succeeded' else 1 }}"
+              fe_validation_duration_seconds: "{{ fe_policy_as_code_tests_test_policies_duration_seconds | default(0) | int }}"
+              fe_validation_failed_components: >-
+                {{ [] if fe_policy_as_code_tests_test_policies_status | default('') == 'succeeded' else ['policy_as_code/tests/test_policies'] }}
+            aggregate: true
+            per_host: false
+          tags:
+            - always
+
+        - name: "policy_as_code/tests/test_policies | Always | Mark the validation statistics as published"
+          ansible.builtin.set_fact:
+            fe_policy_as_code_tests_test_policies_stats_published: true
+          tags:
+            - always
+
+        - name: "policy_as_code/tests/test_policies | Rescue | Re-raise the failure unless the caller opted to continue"
+          ansible.builtin.fail:
+            msg: >-
+              policy_as_code/tests/test_policies failed at '{{ fe_policy_as_code_tests_test_policies_failed_task }}': {{ fe_policy_as_code_tests_test_policies_error }}
+          when: not (fe_validation_continue_on_error | default(false) | bool)
+          tags:
+            - always
+            - rescue
+
+      always:
+
+        - name: "policy_as_code/tests/test_policies | Always | Report the preflight outcome"
+          ansible.builtin.debug:
+            msg: >-
+              policy_as_code/tests/test_policies: preflight
+              {{ 'passed' if fe_policy_as_code_tests_test_policies_preflight_passed | default(false) | bool else 'FAILED' }}
+              on {{ inventory_hostname }}.
+          tags:
+            - always
     - name: Create test results directory
       ansible.builtin.file:
         path: "{{ test_results_dir }}"
@@ -51,376 +202,458 @@
     # Test 1: Library and Framework Tests
     # ============================================
 
-    - name: TEST - Verify compliance_common library exists
-      ansible.builtin.stat:
-        path: "{{ playbook_dir }}/../library/compliance_common.yml"
-      register: test_compliance_common
-      failed_when: not test_compliance_common.stat.exists
-      tags: [always, test_framework]
+    - name: "policy_as_code/tests/test_policies | Guarded execution with rescue and always handling"
+      block:
 
-    - name: TEST - Verify artifact_generator library exists
-      ansible.builtin.stat:
-        path: "{{ playbook_dir }}/../library/artifact_generator.yml"
-      register: test_artifact_generator
-      failed_when: not test_artifact_generator.stat.exists
-      tags: [always, test_framework]
+        - name: TEST - Verify compliance_common library exists
+          ansible.builtin.stat:
+            path: "{{ playbook_dir }}/../library/compliance_common.yml"
+          register: test_compliance_common
+          failed_when: not test_compliance_common.stat.exists
+          tags: [always, test_framework]
 
-    - name: TEST - Verify policy directories exist
-      ansible.builtin.stat:
-        path: "{{ playbook_dir }}/../policies/{{ item }}"
-      loop:
-        - identification_auth
-        - access_control
-        - audit_accountability
-        - system_communications
-      register: test_policy_dirs
-      failed_when: not test_policy_dirs.results | map(attribute='stat.exists') | list | all
-      tags: [always, test_framework]
+        - name: TEST - Verify artifact_generator library exists
+          ansible.builtin.stat:
+            path: "{{ playbook_dir }}/../library/artifact_generator.yml"
+          register: test_artifact_generator
+          failed_when: not test_artifact_generator.stat.exists
+          tags: [always, test_framework]
 
-    - name: Record framework test results
-      ansible.builtin.set_fact:
-        test_summary: "{{ test_summary + [{
-          'test': 'Framework Structure',
-          'status': 'PASS',
-          'details': 'All framework components exist'
-        }] }}"
-      tags: [always, test_framework]
+        - name: TEST - Verify policy directories exist
+          ansible.builtin.stat:
+            path: "{{ playbook_dir }}/../policies/{{ item }}"
+          loop:
+            - identification_auth
+            - access_control
+            - audit_accountability
+            - system_communications
+          register: test_policy_dirs
+          failed_when: not test_policy_dirs.results | map(attribute='stat.exists') | list | all
+          tags: [always, test_framework]
 
-    # ============================================
-    # Test 2: IA-5 Password Policy Validation
-    # ============================================
+        - name: Record framework test results
+          ansible.builtin.set_fact:
+            test_summary: "{{ test_summary + [{
+              'test': 'Framework Structure',
+              'status': 'PASS',
+              'details': 'All framework components exist'
+            }] }}"
+          tags: [always, test_framework]
 
-    - name: TEST - Verify IA-5 password policy file exists
-      ansible.builtin.stat:
-        path: "{{ playbook_dir }}/../policies/identification_auth/password_policy.yml"
-      register: test_ia5_exists
-      failed_when: not test_ia5_exists.stat.exists
-      tags: [test_ia_5, test_policies]
+        # ============================================
+        # Test 2: IA-5 Password Policy Validation
+        # ============================================
 
-    - name: TEST - Validate IA-5 policy syntax
-      ansible.builtin.command:
-        cmd: ansible-playbook --syntax-check {{ playbook_dir }}/../policies/identification_auth/password_policy.yml
-      register: test_ia5_syntax
-      changed_when: false
-      failed_when: test_ia5_syntax.rc != 0
-      tags: [test_ia_5, test_policies]
+        - name: TEST - Verify IA-5 password policy file exists
+          ansible.builtin.stat:
+            path: "{{ playbook_dir }}/../policies/identification_auth/password_policy.yml"
+          register: test_ia5_exists
+          failed_when: not test_ia5_exists.stat.exists
+          tags: [test_ia_5, test_policies]
 
-    - name: TEST - Check IA-5 policy variables are defined
-      ansible.builtin.shell: |
-        grep -q "ia_password_min_length" {{ playbook_dir }}/../policies/identification_auth/password_policy.yml &&
-        grep -q "ia_password_max_age_days" {{ playbook_dir }}/../policies/identification_auth/password_policy.yml &&
-        grep -q "ia_password_history_count" {{ playbook_dir }}/../policies/identification_auth/password_policy.yml &&
-        grep -q "ia_password_lockout_attempts" {{ playbook_dir }}/../policies/identification_auth/password_policy.yml
-      register: test_ia5_vars
-      changed_when: false
-      failed_when: test_ia5_vars.rc != 0
-      tags: [test_ia_5, test_policies]
+        - name: TEST - Validate IA-5 policy syntax
+          ansible.builtin.command:
+            cmd: ansible-playbook --syntax-check {{ playbook_dir }}/../policies/identification_auth/password_policy.yml
+          register: test_ia5_syntax
+          changed_when: false
+          failed_when: test_ia5_syntax.rc != 0
+          tags: [test_ia_5, test_policies]
 
-    - name: TEST - Verify IA-5 STIG findings are documented
-      ansible.builtin.shell: |
-        grep -q "V-230502" {{ playbook_dir }}/../policies/identification_auth/password_policy.yml &&
-        grep -q "V-230503" {{ playbook_dir }}/../policies/identification_auth/password_policy.yml &&
-        grep -q "V-230505" {{ playbook_dir }}/../policies/identification_auth/password_policy.yml &&
-        grep -q "V-230507" {{ playbook_dir }}/../policies/identification_auth/password_policy.yml &&
-        grep -q "V-230509" {{ playbook_dir }}/../policies/identification_auth/password_policy.yml
-      register: test_ia5_stig
-      changed_when: false
-      failed_when: test_ia5_stig.rc != 0
-      tags: [test_ia_5, test_policies]
+        - name: TEST - Check IA-5 policy variables are defined
+          ansible.builtin.shell: |
+            grep -q "ia_password_min_length" {{ playbook_dir }}/../policies/identification_auth/password_policy.yml &&
+            grep -q "ia_password_max_age_days" {{ playbook_dir }}/../policies/identification_auth/password_policy.yml &&
+            grep -q "ia_password_history_count" {{ playbook_dir }}/../policies/identification_auth/password_policy.yml &&
+            grep -q "ia_password_lockout_attempts" {{ playbook_dir }}/../policies/identification_auth/password_policy.yml
+          register: test_ia5_vars
+          changed_when: false
+          failed_when: test_ia5_vars.rc != 0
+          tags: [test_ia_5, test_policies]
 
-    - name: TEST - Verify IA-5 DoD requirements
-      ansible.builtin.assert:
-        that:
-          - test_ia5_exists.stat.exists
-          - test_ia5_syntax.rc == 0
-          - test_ia5_vars.rc == 0
-          - test_ia5_stig.rc == 0
-        success_msg: "IA-5 Password Policy - All tests PASSED"
-        fail_msg: "IA-5 Password Policy - Tests FAILED"
-      tags: [test_ia_5, test_policies]
+        - name: TEST - Verify IA-5 STIG findings are documented
+          ansible.builtin.shell: |
+            grep -q "V-230502" {{ playbook_dir }}/../policies/identification_auth/password_policy.yml &&
+            grep -q "V-230503" {{ playbook_dir }}/../policies/identification_auth/password_policy.yml &&
+            grep -q "V-230505" {{ playbook_dir }}/../policies/identification_auth/password_policy.yml &&
+            grep -q "V-230507" {{ playbook_dir }}/../policies/identification_auth/password_policy.yml &&
+            grep -q "V-230509" {{ playbook_dir }}/../policies/identification_auth/password_policy.yml
+          register: test_ia5_stig
+          changed_when: false
+          failed_when: test_ia5_stig.rc != 0
+          tags: [test_ia_5, test_policies]
 
-    - name: Record IA-5 test results
-      ansible.builtin.set_fact:
-        test_summary: "{{ test_summary + [{
-          'test': 'IA-5 Password Policy',
-          'status': 'PASS',
-          'details': 'File exists, syntax valid, all STIG findings documented (V-230502, V-230503, V-230505, V-230507, V-230509)'
-        }] }}"
-      tags: [test_ia_5, test_policies]
+        - name: TEST - Verify IA-5 DoD requirements
+          ansible.builtin.assert:
+            that:
+              - test_ia5_exists.stat.exists
+              - test_ia5_syntax.rc == 0
+              - test_ia5_vars.rc == 0
+              - test_ia5_stig.rc == 0
+            success_msg: "IA-5 Password Policy - All tests PASSED"
+            fail_msg: "IA-5 Password Policy - Tests FAILED"
+          tags: [test_ia_5, test_policies]
 
-    # ============================================
-    # Test 3: AC-12 Session Timeout Validation
-    # ============================================
+        - name: Record IA-5 test results
+          ansible.builtin.set_fact:
+            test_summary: "{{ test_summary + [{
+              'test': 'IA-5 Password Policy',
+              'status': 'PASS',
+              'details': 'File exists, syntax valid, all STIG findings documented (V-230502, V-230503, V-230505, V-230507, V-230509)'
+            }] }}"
+          tags: [test_ia_5, test_policies]
 
-    - name: TEST - Verify AC-12 session timeout policy file exists
-      ansible.builtin.stat:
-        path: "{{ playbook_dir }}/../policies/access_control/session_timeout.yml"
-      register: test_ac12_exists
-      failed_when: not test_ac12_exists.stat.exists
-      tags: [test_ac_12, test_policies]
+        # ============================================
+        # Test 3: AC-12 Session Timeout Validation
+        # ============================================
 
-    - name: TEST - Validate AC-12 policy syntax
-      ansible.builtin.command:
-        cmd: ansible-playbook --syntax-check {{ playbook_dir }}/../policies/access_control/session_timeout.yml
-      register: test_ac12_syntax
-      changed_when: false
-      failed_when: test_ac12_syntax.rc != 0
-      tags: [test_ac_12, test_policies]
+        - name: TEST - Verify AC-12 session timeout policy file exists
+          ansible.builtin.stat:
+            path: "{{ playbook_dir }}/../policies/access_control/session_timeout.yml"
+          register: test_ac12_exists
+          failed_when: not test_ac12_exists.stat.exists
+          tags: [test_ac_12, test_policies]
 
-    - name: TEST - Check AC-12 policy variables are defined
-      ansible.builtin.shell: |
-        grep -q "ac_console_timeout_minutes" {{ playbook_dir }}/../policies/access_control/session_timeout.yml &&
-        grep -q "ac_ssh_timeout_minutes" {{ playbook_dir }}/../policies/access_control/session_timeout.yml &&
-        grep -q "ac_web_timeout_minutes" {{ playbook_dir }}/../policies/access_control/session_timeout.yml
-      register: test_ac12_vars
-      changed_when: false
-      failed_when: test_ac12_vars.rc != 0
-      tags: [test_ac_12, test_policies]
+        - name: TEST - Validate AC-12 policy syntax
+          ansible.builtin.command:
+            cmd: ansible-playbook --syntax-check {{ playbook_dir }}/../policies/access_control/session_timeout.yml
+          register: test_ac12_syntax
+          changed_when: false
+          failed_when: test_ac12_syntax.rc != 0
+          tags: [test_ac_12, test_policies]
 
-    - name: TEST - Verify AC-12 STIG findings are documented
-      ansible.builtin.shell: |
-        grep -q "V-230286" {{ playbook_dir }}/../policies/access_control/session_timeout.yml &&
-        grep -q "V-230287" {{ playbook_dir }}/../policies/access_control/session_timeout.yml
-      register: test_ac12_stig
-      changed_when: false
-      failed_when: test_ac12_stig.rc != 0
-      tags: [test_ac_12, test_policies]
+        - name: TEST - Check AC-12 policy variables are defined
+          ansible.builtin.shell: |
+            grep -q "ac_console_timeout_minutes" {{ playbook_dir }}/../policies/access_control/session_timeout.yml &&
+            grep -q "ac_ssh_timeout_minutes" {{ playbook_dir }}/../policies/access_control/session_timeout.yml &&
+            grep -q "ac_web_timeout_minutes" {{ playbook_dir }}/../policies/access_control/session_timeout.yml
+          register: test_ac12_vars
+          changed_when: false
+          failed_when: test_ac12_vars.rc != 0
+          tags: [test_ac_12, test_policies]
 
-    - name: Record AC-12 test results
-      ansible.builtin.set_fact:
-        test_summary: "{{ test_summary + [{
-          'test': 'AC-12 Session Timeout',
-          'status': 'PASS',
-          'details': 'File exists, syntax valid, all STIG findings documented (V-230286, V-230287)'
-        }] }}"
-      tags: [test_ac_12, test_policies]
+        - name: TEST - Verify AC-12 STIG findings are documented
+          ansible.builtin.shell: |
+            grep -q "V-230286" {{ playbook_dir }}/../policies/access_control/session_timeout.yml &&
+            grep -q "V-230287" {{ playbook_dir }}/../policies/access_control/session_timeout.yml
+          register: test_ac12_stig
+          changed_when: false
+          failed_when: test_ac12_stig.rc != 0
+          tags: [test_ac_12, test_policies]
 
-    # ============================================
-    # Test 4: AU-2/AU-12 Audit Logging Validation
-    # ============================================
+        - name: Record AC-12 test results
+          ansible.builtin.set_fact:
+            test_summary: "{{ test_summary + [{
+              'test': 'AC-12 Session Timeout',
+              'status': 'PASS',
+              'details': 'File exists, syntax valid, all STIG findings documented (V-230286, V-230287)'
+            }] }}"
+          tags: [test_ac_12, test_policies]
 
-    - name: TEST - Verify AU-2/AU-12 audit logging policy file exists
-      ansible.builtin.stat:
-        path: "{{ playbook_dir }}/../policies/audit_accountability/audit_logging.yml"
-      register: test_au2_exists
-      failed_when: not test_au2_exists.stat.exists
-      tags: [test_au_2, test_policies]
+        # ============================================
+        # Test 4: AU-2/AU-12 Audit Logging Validation
+        # ============================================
 
-    - name: TEST - Validate AU-2/AU-12 policy syntax
-      ansible.builtin.command:
-        cmd: ansible-playbook --syntax-check {{ playbook_dir }}/../policies/audit_accountability/audit_logging.yml
-      register: test_au2_syntax
-      changed_when: false
-      failed_when: test_au2_syntax.rc != 0
-      tags: [test_au_2, test_policies]
+        - name: TEST - Verify AU-2/AU-12 audit logging policy file exists
+          ansible.builtin.stat:
+            path: "{{ playbook_dir }}/../policies/audit_accountability/audit_logging.yml"
+          register: test_au2_exists
+          failed_when: not test_au2_exists.stat.exists
+          tags: [test_au_2, test_policies]
 
-    - name: TEST - Check AU-2/AU-12 policy variables are defined
-      ansible.builtin.shell: |
-        grep -q "au_logging_enabled" {{ playbook_dir }}/../policies/audit_accountability/audit_logging.yml &&
-        grep -q "au_syslog_server" {{ playbook_dir }}/../policies/audit_accountability/audit_logging.yml &&
-        grep -q "au_logging_level" {{ playbook_dir }}/../policies/audit_accountability/audit_logging.yml
-      register: test_au2_vars
-      changed_when: false
-      failed_when: test_au2_vars.rc != 0
-      tags: [test_au_2, test_policies]
+        - name: TEST - Validate AU-2/AU-12 policy syntax
+          ansible.builtin.command:
+            cmd: ansible-playbook --syntax-check {{ playbook_dir }}/../policies/audit_accountability/audit_logging.yml
+          register: test_au2_syntax
+          changed_when: false
+          failed_when: test_au2_syntax.rc != 0
+          tags: [test_au_2, test_policies]
 
-    - name: TEST - Verify AU-2/AU-12 STIG findings are documented
-      ansible.builtin.shell: |
-        grep -q "V-230315" {{ playbook_dir }}/../policies/audit_accountability/audit_logging.yml &&
-        grep -q "V-230316" {{ playbook_dir }}/../policies/audit_accountability/audit_logging.yml &&
-        grep -q "V-230317" {{ playbook_dir }}/../policies/audit_accountability/audit_logging.yml &&
-        grep -q "V-230318" {{ playbook_dir }}/../policies/audit_accountability/audit_logging.yml
-      register: test_au2_stig
-      changed_when: false
-      failed_when: test_au2_stig.rc != 0
-      tags: [test_au_2, test_policies]
+        - name: TEST - Check AU-2/AU-12 policy variables are defined
+          ansible.builtin.shell: |
+            grep -q "au_logging_enabled" {{ playbook_dir }}/../policies/audit_accountability/audit_logging.yml &&
+            grep -q "au_syslog_server" {{ playbook_dir }}/../policies/audit_accountability/audit_logging.yml &&
+            grep -q "au_logging_level" {{ playbook_dir }}/../policies/audit_accountability/audit_logging.yml
+          register: test_au2_vars
+          changed_when: false
+          failed_when: test_au2_vars.rc != 0
+          tags: [test_au_2, test_policies]
 
-    - name: Record AU-2/AU-12 test results
-      ansible.builtin.set_fact:
-        test_summary: "{{ test_summary + [{
-          'test': 'AU-2/AU-12 Audit Logging',
-          'status': 'PASS',
-          'details': 'File exists, syntax valid, all STIG findings documented (V-230315, V-230316, V-230317, V-230318)'
-        }] }}"
-      tags: [test_au_2, test_policies]
+        - name: TEST - Verify AU-2/AU-12 STIG findings are documented
+          ansible.builtin.shell: |
+            grep -q "V-230315" {{ playbook_dir }}/../policies/audit_accountability/audit_logging.yml &&
+            grep -q "V-230316" {{ playbook_dir }}/../policies/audit_accountability/audit_logging.yml &&
+            grep -q "V-230317" {{ playbook_dir }}/../policies/audit_accountability/audit_logging.yml &&
+            grep -q "V-230318" {{ playbook_dir }}/../policies/audit_accountability/audit_logging.yml
+          register: test_au2_stig
+          changed_when: false
+          failed_when: test_au2_stig.rc != 0
+          tags: [test_au_2, test_policies]
 
-    # ============================================
-    # Test 5: SC-8/SC-13 Cryptographic Protection Validation
-    # ============================================
+        - name: Record AU-2/AU-12 test results
+          ansible.builtin.set_fact:
+            test_summary: "{{ test_summary + [{
+              'test': 'AU-2/AU-12 Audit Logging',
+              'status': 'PASS',
+              'details': 'File exists, syntax valid, all STIG findings documented (V-230315, V-230316, V-230317, V-230318)'
+            }] }}"
+          tags: [test_au_2, test_policies]
 
-    - name: TEST - Verify SC-8/SC-13 crypto policy file exists
-      ansible.builtin.stat:
-        path: "{{ playbook_dir }}/../policies/system_communications/cryptographic_protection.yml"
-      register: test_sc8_exists
-      failed_when: not test_sc8_exists.stat.exists
-      tags: [test_sc_8, test_policies]
+        # ============================================
+        # Test 5: SC-8/SC-13 Cryptographic Protection Validation
+        # ============================================
 
-    - name: TEST - Validate SC-8/SC-13 policy syntax
-      ansible.builtin.command:
-        cmd: ansible-playbook --syntax-check {{ playbook_dir }}/../policies/system_communications/cryptographic_protection.yml
-      register: test_sc8_syntax
-      changed_when: false
-      failed_when: test_sc8_syntax.rc != 0
-      tags: [test_sc_8, test_policies]
+        - name: TEST - Verify SC-8/SC-13 crypto policy file exists
+          ansible.builtin.stat:
+            path: "{{ playbook_dir }}/../policies/system_communications/cryptographic_protection.yml"
+          register: test_sc8_exists
+          failed_when: not test_sc8_exists.stat.exists
+          tags: [test_sc_8, test_policies]
 
-    - name: TEST - Check SC-8/SC-13 policy variables are defined
-      ansible.builtin.shell: |
-        grep -q "sc_tls_min_version" {{ playbook_dir }}/../policies/system_communications/cryptographic_protection.yml &&
-        grep -q "sc_ssh_version" {{ playbook_dir }}/../policies/system_communications/cryptographic_protection.yml &&
-        grep -q "sc_enable_fips" {{ playbook_dir }}/../policies/system_communications/cryptographic_protection.yml
-      register: test_sc8_vars
-      changed_when: false
-      failed_when: test_sc8_vars.rc != 0
-      tags: [test_sc_8, test_policies]
+        - name: TEST - Validate SC-8/SC-13 policy syntax
+          ansible.builtin.command:
+            cmd: ansible-playbook --syntax-check {{ playbook_dir }}/../policies/system_communications/cryptographic_protection.yml
+          register: test_sc8_syntax
+          changed_when: false
+          failed_when: test_sc8_syntax.rc != 0
+          tags: [test_sc_8, test_policies]
 
-    - name: TEST - Verify SC-8/SC-13 STIG findings are documented
-      ansible.builtin.shell: |
-        grep -q "V-230273" {{ playbook_dir }}/../policies/system_communications/cryptographic_protection.yml &&
-        grep -q "V-230274" {{ playbook_dir }}/../policies/system_communications/cryptographic_protection.yml &&
-        grep -q "V-230275" {{ playbook_dir }}/../policies/system_communications/cryptographic_protection.yml &&
-        grep -q "V-230276" {{ playbook_dir }}/../policies/system_communications/cryptographic_protection.yml &&
-        grep -q "V-230277" {{ playbook_dir }}/../policies/system_communications/cryptographic_protection.yml
-      register: test_sc8_stig
-      changed_when: false
-      failed_when: test_sc8_stig.rc != 0
-      tags: [test_sc_8, test_policies]
+        - name: TEST - Check SC-8/SC-13 policy variables are defined
+          ansible.builtin.shell: |
+            grep -q "sc_tls_min_version" {{ playbook_dir }}/../policies/system_communications/cryptographic_protection.yml &&
+            grep -q "sc_ssh_version" {{ playbook_dir }}/../policies/system_communications/cryptographic_protection.yml &&
+            grep -q "sc_enable_fips" {{ playbook_dir }}/../policies/system_communications/cryptographic_protection.yml
+          register: test_sc8_vars
+          changed_when: false
+          failed_when: test_sc8_vars.rc != 0
+          tags: [test_sc_8, test_policies]
 
-    - name: TEST - Verify FIPS 140-2 compliance requirements
-      ansible.builtin.shell: |
-        grep -q "FIPS 140-2" {{ playbook_dir }}/../policies/system_communications/cryptographic_protection.yml &&
-        grep -q "TLSv1.2" {{ playbook_dir }}/../policies/system_communications/cryptographic_protection.yml
-      register: test_sc8_fips
-      changed_when: false
-      failed_when: test_sc8_fips.rc != 0
-      tags: [test_sc_8, test_policies]
+        - name: TEST - Verify SC-8/SC-13 STIG findings are documented
+          ansible.builtin.shell: |
+            grep -q "V-230273" {{ playbook_dir }}/../policies/system_communications/cryptographic_protection.yml &&
+            grep -q "V-230274" {{ playbook_dir }}/../policies/system_communications/cryptographic_protection.yml &&
+            grep -q "V-230275" {{ playbook_dir }}/../policies/system_communications/cryptographic_protection.yml &&
+            grep -q "V-230276" {{ playbook_dir }}/../policies/system_communications/cryptographic_protection.yml &&
+            grep -q "V-230277" {{ playbook_dir }}/../policies/system_communications/cryptographic_protection.yml
+          register: test_sc8_stig
+          changed_when: false
+          failed_when: test_sc8_stig.rc != 0
+          tags: [test_sc_8, test_policies]
 
-    - name: Record SC-8/SC-13 test results
-      ansible.builtin.set_fact:
-        test_summary: "{{ test_summary + [{
-          'test': 'SC-8/SC-13 Cryptographic Protection',
-          'status': 'PASS',
-          'details': 'File exists, syntax valid, FIPS 140-2 compliant, all STIG findings documented (V-230273-277)'
-        }] }}"
-      tags: [test_sc_8, test_policies]
+        - name: TEST - Verify FIPS 140-2 compliance requirements
+          ansible.builtin.shell: |
+            grep -q "FIPS 140-2" {{ playbook_dir }}/../policies/system_communications/cryptographic_protection.yml &&
+            grep -q "TLSv1.2" {{ playbook_dir }}/../policies/system_communications/cryptographic_protection.yml
+          register: test_sc8_fips
+          changed_when: false
+          failed_when: test_sc8_fips.rc != 0
+          tags: [test_sc_8, test_policies]
 
-    # ============================================
-    # Test 6: Security Best Practices Validation
-    # ============================================
+        - name: Record SC-8/SC-13 test results
+          ansible.builtin.set_fact:
+            test_summary: "{{ test_summary + [{
+              'test': 'SC-8/SC-13 Cryptographic Protection',
+              'status': 'PASS',
+              'details': 'File exists, syntax valid, FIPS 140-2 compliant, all STIG findings documented (V-230273-277)'
+            }] }}"
+          tags: [test_sc_8, test_policies]
 
-    - name: TEST - Verify all policies default to dry-run mode
-      ansible.builtin.shell: |
-        for policy in {{ playbook_dir }}/../policies/*/*.yml; do
-          if ! grep -q "apply_changes: false" "$policy"; then
-            echo "FAIL: $policy does not default to dry-run"
-            exit 1
-          fi
-        done
-        echo "PASS: All policies default to dry-run mode"
-      register: test_dry_run
-      changed_when: false
-      failed_when: test_dry_run.rc != 0
-      tags: [test_security, test_practices]
+        # ============================================
+        # Test 6: Security Best Practices Validation
+        # ============================================
 
-    - name: TEST - Verify all policies use least privilege file permissions
-      ansible.builtin.shell: |
-        for policy in {{ playbook_dir }}/../policies/*/*.yml; do
-          if ! grep -q 'mode: "0640"' "$policy" && ! grep -q 'mode: "0750"' "$policy"; then
-            echo "WARNING: $policy may not use least privilege permissions"
-          fi
-        done
-        echo "PASS: Checked least privilege file permissions"
-      register: test_permissions
-      changed_when: false
-      tags: [test_security, test_practices]
+        - name: TEST - Verify all policies default to dry-run mode
+          ansible.builtin.shell: |
+            for policy in {{ playbook_dir }}/../policies/*/*.yml; do
+              if ! grep -q "apply_changes: false" "$policy"; then
+                echo "FAIL: $policy does not default to dry-run"
+                exit 1
+              fi
+            done
+            echo "PASS: All policies default to dry-run mode"
+          register: test_dry_run
+          changed_when: false
+          failed_when: test_dry_run.rc != 0
+          tags: [test_security, test_practices]
 
-    - name: TEST - Verify all policies include compliance metadata
-      ansible.builtin.shell: |
-        for policy in {{ playbook_dir }}/../policies/*/*.yml; do
-          if ! grep -q "control_id:" "$policy" ||
-             ! grep -q "policy_name:" "$policy" ||
-             ! grep -q "nist_family:" "$policy" ||
-             ! grep -q "stig_findings:" "$policy" ||
-             ! grep -q "severity:" "$policy"; then
-            echo "FAIL: $policy missing compliance metadata"
-            exit 1
-          fi
-        done
-        echo "PASS: All policies include compliance metadata"
-      register: test_metadata
-      changed_when: false
-      failed_when: test_metadata.rc != 0
-      tags: [test_security, test_practices]
+        - name: TEST - Verify all policies use least privilege file permissions
+          ansible.builtin.shell: |
+            for policy in {{ playbook_dir }}/../policies/*/*.yml; do
+              if ! grep -q 'mode: "0640"' "$policy" && ! grep -q 'mode: "0750"' "$policy"; then
+                echo "WARNING: $policy may not use least privilege permissions"
+              fi
+            done
+            echo "PASS: Checked least privilege file permissions"
+          register: test_permissions
+          changed_when: false
+          tags: [test_security, test_practices]
 
-    - name: TEST - Verify all policies generate artifacts
-      ansible.builtin.shell: |
-        for policy in {{ playbook_dir }}/../policies/*/*.yml; do
-          if ! grep -q "artifact_generator.yml" "$policy"; then
-            echo "FAIL: $policy does not generate compliance artifacts"
-            exit 1
-          fi
-        done
-        echo "PASS: All policies generate compliance artifacts"
-      register: test_artifacts
-      changed_when: false
-      failed_when: test_artifacts.rc != 0
-      tags: [test_security, test_practices]
+        - name: TEST - Verify all policies include compliance metadata
+          ansible.builtin.shell: |
+            for policy in {{ playbook_dir }}/../policies/*/*.yml; do
+              if ! grep -q "control_id:" "$policy" ||
+                 ! grep -q "policy_name:" "$policy" ||
+                 ! grep -q "nist_family:" "$policy" ||
+                 ! grep -q "stig_findings:" "$policy" ||
+                 ! grep -q "severity:" "$policy"; then
+                echo "FAIL: $policy missing compliance metadata"
+                exit 1
+              fi
+            done
+            echo "PASS: All policies include compliance metadata"
+          register: test_metadata
+          changed_when: false
+          failed_when: test_metadata.rc != 0
+          tags: [test_security, test_practices]
 
-    - name: Record security practices test results
-      ansible.builtin.set_fact:
-        test_summary: "{{ test_summary + [{
-          'test': 'Security Best Practices',
-          'status': 'PASS',
-          'details': 'Dry-run defaults, least privilege, metadata, artifact generation verified'
-        }] }}"
-      tags: [test_security, test_practices]
+        - name: TEST - Verify all policies generate artifacts
+          ansible.builtin.shell: |
+            for policy in {{ playbook_dir }}/../policies/*/*.yml; do
+              if ! grep -q "artifact_generator.yml" "$policy"; then
+                echo "FAIL: $policy does not generate compliance artifacts"
+                exit 1
+              fi
+            done
+            echo "PASS: All policies generate compliance artifacts"
+          register: test_artifacts
+          changed_when: false
+          failed_when: test_artifacts.rc != 0
+          tags: [test_security, test_practices]
 
-    # ============================================
-    # Test 7: Compliance Coverage Validation
-    # ============================================
+        - name: Record security practices test results
+          ansible.builtin.set_fact:
+            test_summary: "{{ test_summary + [{
+              'test': 'Security Best Practices',
+              'status': 'PASS',
+              'details': 'Dry-run defaults, least privilege, metadata, artifact generation verified'
+            }] }}"
+          tags: [test_security, test_practices]
 
-    - name: TEST - Count total NIST controls implemented
-      ansible.builtin.shell: |
-        grep -h "control_id:" {{ playbook_dir }}/../policies/*/*.yml | sort -u | wc -l
-      register: test_control_count
-      changed_when: false
-      tags: [test_coverage]
+        # ============================================
+        # Test 7: Compliance Coverage Validation
+        # ============================================
 
-    - name: TEST - Count total STIG findings addressed
-      ansible.builtin.shell: |
-        grep -h "V-[0-9]*" {{ playbook_dir }}/../policies/*/*.yml | grep -o "V-[0-9]*" | sort -u | wc -l
-      register: test_stig_count
-      changed_when: false
-      tags: [test_coverage]
+        - name: TEST - Count total NIST controls implemented
+          ansible.builtin.shell: |
+            grep -h "control_id:" {{ playbook_dir }}/../policies/*/*.yml | sort -u | wc -l
+          register: test_control_count
+          changed_when: false
+          tags: [test_coverage]
 
-    - name: TEST - Verify NIST 800-53 control families covered
-      ansible.builtin.shell: |
-        grep -h "nist_family:" {{ playbook_dir }}/../policies/*/*.yml | sort -u
-      register: test_families
-      changed_when: false
-      tags: [test_coverage]
+        - name: TEST - Count total STIG findings addressed
+          ansible.builtin.shell: |
+            grep -h "V-[0-9]*" {{ playbook_dir }}/../policies/*/*.yml | grep -o "V-[0-9]*" | sort -u | wc -l
+          register: test_stig_count
+          changed_when: false
+          tags: [test_coverage]
 
-    - name: Display compliance coverage
-      ansible.builtin.debug:
-        msg: |
-          ========================================
-          Compliance Coverage Statistics
-          ========================================
-          NIST 800-53 Controls: {{ test_control_count.stdout }}
-          DoD STIG Findings: {{ test_stig_count.stdout }}
+        - name: TEST - Verify NIST 800-53 control families covered
+          ansible.builtin.shell: |
+            grep -h "nist_family:" {{ playbook_dir }}/../policies/*/*.yml | sort -u
+          register: test_families
+          changed_when: false
+          tags: [test_coverage]
 
-          NIST Families Covered:
-          {{ test_families.stdout }}
-          ========================================
-      tags: [test_coverage]
+        - name: Display compliance coverage
+          ansible.builtin.debug:
+            msg: |
+              ========================================
+              Compliance Coverage Statistics
+              ========================================
+              NIST 800-53 Controls: {{ test_control_count.stdout }}
+              DoD STIG Findings: {{ test_stig_count.stdout }}
 
-    - name: Record compliance coverage test results
-      ansible.builtin.set_fact:
-        test_summary: "{{ test_summary + [{
-          'test': 'Compliance Coverage',
-          'status': 'PASS',
-          'details': test_control_count.stdout + ' NIST controls, ' + test_stig_count.stdout + ' STIG findings'
-        }] }}"
-      tags: [test_coverage]
+              NIST Families Covered:
+              {{ test_families.stdout }}
+              ========================================
+          tags: [test_coverage]
+
+        - name: Record compliance coverage test results
+          ansible.builtin.set_fact:
+            test_summary: "{{ test_summary + [{
+              'test': 'Compliance Coverage',
+              'status': 'PASS',
+              'details': test_control_count.stdout + ' NIST controls, ' + test_stig_count.stdout + ' STIG findings'
+            }] }}"
+          tags: [test_coverage]
+
+      rescue:
+
+        - name: "policy_as_code/tests/test_policies | Rescue | Capture the failing task and error detail"
+          ansible.builtin.set_fact:
+            fe_policy_as_code_tests_test_policies_status: "failed"
+            fe_policy_as_code_tests_test_policies_postflight_passed: false
+            fe_policy_as_code_tests_test_policies_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+            fe_policy_as_code_tests_test_policies_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+          tags:
+            - always
+            - rescue
+
+        - name: "policy_as_code/tests/test_policies | Rescue | Report the failure"
+          ansible.builtin.debug:
+            msg: >-
+              policy_as_code/tests/test_policies: FAILED at '{{ fe_policy_as_code_tests_test_policies_failed_task }}' on
+              {{ inventory_hostname }} - {{ fe_policy_as_code_tests_test_policies_error }}
+          tags:
+            - always
+            - rescue
+
+        - name: "policy_as_code/tests/test_policies | Rescue | Re-raise the failure unless the caller opted to continue"
+          ansible.builtin.fail:
+            msg: >-
+              policy_as_code/tests/test_policies failed at '{{ fe_policy_as_code_tests_test_policies_failed_task }}': {{ fe_policy_as_code_tests_test_policies_error }}
+          when: not (fe_validation_continue_on_error | default(false) | bool)
+          tags:
+            - always
+            - rescue
+
+      always:
+
+        - name: "policy_as_code/tests/test_policies | Always | Compute the execution duration"
+          ansible.builtin.set_fact:
+            fe_policy_as_code_tests_test_policies_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+            fe_policy_as_code_tests_test_policies_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_policy_as_code_tests_test_policies_start_epoch | default(0) | int) }}"
+          tags:
+            - always
+
+        - name: "policy_as_code/tests/test_policies | Always | Publish the validation result with set_stats"
+          ansible.builtin.set_stats:
+            data:
+              fe_validation_results:
+                "policy_as_code/tests/test_policies":
+                  component: "policy_as_code/tests/test_policies"
+                  type: "playbook"
+                  platform: "policy_as_code"
+                  host: "{{ inventory_hostname }}"
+                  status: "{{ fe_policy_as_code_tests_test_policies_status | default('unknown') }}"
+                  preflight_passed: "{{ fe_policy_as_code_tests_test_policies_preflight_passed | default(false) | bool }}"
+                  postflight_passed: "{{ fe_policy_as_code_tests_test_policies_postflight_passed | default(false) | bool }}"
+                  started_at: "{{ fe_policy_as_code_tests_test_policies_started_at | default('') }}"
+                  ended_at: "{{ fe_policy_as_code_tests_test_policies_ended_at | default('') }}"
+                  duration_seconds: "{{ fe_policy_as_code_tests_test_policies_duration_seconds | default(0) | int }}"
+                  failed_task: "{{ fe_policy_as_code_tests_test_policies_failed_task | default('') }}"
+                  error: "{{ fe_policy_as_code_tests_test_policies_error | default('') }}"
+                  check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+              fe_validation_executions: 1
+              fe_validation_succeeded: "{{ 1 if fe_policy_as_code_tests_test_policies_status | default('') == 'succeeded' else 0 }}"
+              fe_validation_failed: "{{ 0 if fe_policy_as_code_tests_test_policies_status | default('') == 'succeeded' else 1 }}"
+              fe_validation_duration_seconds: "{{ fe_policy_as_code_tests_test_policies_duration_seconds | default(0) | int }}"
+              fe_validation_failed_components: >-
+                {{ [] if fe_policy_as_code_tests_test_policies_status | default('') == 'succeeded' else ['policy_as_code/tests/test_policies'] }}
+            aggregate: true
+            per_host: false
+          when:
+            - fe_policy_as_code_tests_test_policies_status | default('') == 'failed'
+            - not (fe_policy_as_code_tests_test_policies_stats_published | default(false) | bool)
+          tags:
+            - always
+
+        - name: "policy_as_code/tests/test_policies | Always | Mark the validation statistics as published"
+          ansible.builtin.set_fact:
+            fe_policy_as_code_tests_test_policies_stats_published: true
+          when:
+            - fe_policy_as_code_tests_test_policies_status | default('') == 'failed'
+          tags:
+            - always
 
   post_tasks:
     - name: Generate test results summary JSON
@@ -495,3 +728,118 @@
         success_msg: "All tests PASSED! Policy as Code framework is production-ready."
         fail_msg: "Some tests FAILED! Review test results in {{ test_results_dir }}"
       tags: [always]
+    - name: "policy_as_code/tests/test_policies | Postflight validation"
+      tags:
+        - always
+        - postflight
+        - validation
+      block:
+
+        - name: "policy_as_code/tests/test_policies | Postflight | Verify the guarded body ran after a passing preflight"
+          ansible.builtin.assert:
+            that:
+              - fe_policy_as_code_tests_test_policies_preflight_passed | bool
+              - fe_policy_as_code_tests_test_policies_status in ['running', 'succeeded']
+            fail_msg: >-
+              policy_as_code/tests/test_policies: postflight validation failed - preflight passed
+              ={{ fe_policy_as_code_tests_test_policies_preflight_passed | default(false) }},
+              status={{ fe_policy_as_code_tests_test_policies_status | default('unknown') }}.
+            success_msg: "policy_as_code/tests/test_policies: postflight validation passed."
+            quiet: true
+          tags:
+            - always
+            - postflight
+            - validation
+
+        - name: "policy_as_code/tests/test_policies | Postflight | Record the successful outcome"
+          ansible.builtin.set_fact:
+            fe_policy_as_code_tests_test_policies_postflight_passed: true
+            fe_policy_as_code_tests_test_policies_status: "succeeded"
+          tags:
+            - always
+            - postflight
+            - validation
+
+      rescue:
+
+        - name: "policy_as_code/tests/test_policies | Rescue | Capture the failing task and error detail"
+          ansible.builtin.set_fact:
+            fe_policy_as_code_tests_test_policies_status: "failed"
+            fe_policy_as_code_tests_test_policies_postflight_passed: false
+            fe_policy_as_code_tests_test_policies_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+            fe_policy_as_code_tests_test_policies_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+          tags:
+            - always
+            - rescue
+
+        - name: "policy_as_code/tests/test_policies | Rescue | Report the failure"
+          ansible.builtin.debug:
+            msg: >-
+              policy_as_code/tests/test_policies: FAILED at '{{ fe_policy_as_code_tests_test_policies_failed_task }}' on
+              {{ inventory_hostname }} - {{ fe_policy_as_code_tests_test_policies_error }}
+          tags:
+            - always
+            - rescue
+
+        - name: "policy_as_code/tests/test_policies | Rescue | Re-raise the failure unless the caller opted to continue"
+          ansible.builtin.fail:
+            msg: >-
+              policy_as_code/tests/test_policies failed at '{{ fe_policy_as_code_tests_test_policies_failed_task }}': {{ fe_policy_as_code_tests_test_policies_error }}
+          when: not (fe_validation_continue_on_error | default(false) | bool)
+          tags:
+            - always
+            - rescue
+
+      always:
+
+        - name: "policy_as_code/tests/test_policies | Always | Compute the execution duration"
+          ansible.builtin.set_fact:
+            fe_policy_as_code_tests_test_policies_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+            fe_policy_as_code_tests_test_policies_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_policy_as_code_tests_test_policies_start_epoch | default(0) | int) }}"
+          tags:
+            - always
+
+        - name: "policy_as_code/tests/test_policies | Always | Publish the validation result with set_stats"
+          ansible.builtin.set_stats:
+            data:
+              fe_validation_results:
+                "policy_as_code/tests/test_policies":
+                  component: "policy_as_code/tests/test_policies"
+                  type: "playbook"
+                  platform: "policy_as_code"
+                  host: "{{ inventory_hostname }}"
+                  status: "{{ fe_policy_as_code_tests_test_policies_status | default('unknown') }}"
+                  preflight_passed: "{{ fe_policy_as_code_tests_test_policies_preflight_passed | default(false) | bool }}"
+                  postflight_passed: "{{ fe_policy_as_code_tests_test_policies_postflight_passed | default(false) | bool }}"
+                  started_at: "{{ fe_policy_as_code_tests_test_policies_started_at | default('') }}"
+                  ended_at: "{{ fe_policy_as_code_tests_test_policies_ended_at | default('') }}"
+                  duration_seconds: "{{ fe_policy_as_code_tests_test_policies_duration_seconds | default(0) | int }}"
+                  failed_task: "{{ fe_policy_as_code_tests_test_policies_failed_task | default('') }}"
+                  error: "{{ fe_policy_as_code_tests_test_policies_error | default('') }}"
+                  check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+              fe_validation_executions: 1
+              fe_validation_succeeded: "{{ 1 if fe_policy_as_code_tests_test_policies_status | default('') == 'succeeded' else 0 }}"
+              fe_validation_failed: "{{ 0 if fe_policy_as_code_tests_test_policies_status | default('') == 'succeeded' else 1 }}"
+              fe_validation_duration_seconds: "{{ fe_policy_as_code_tests_test_policies_duration_seconds | default(0) | int }}"
+              fe_validation_failed_components: >-
+                {{ [] if fe_policy_as_code_tests_test_policies_status | default('') == 'succeeded' else ['policy_as_code/tests/test_policies'] }}
+            aggregate: true
+            per_host: false
+          when:
+            - not (fe_policy_as_code_tests_test_policies_stats_published | default(false) | bool)
+          tags:
+            - always
+
+        - name: "policy_as_code/tests/test_policies | Always | Mark the validation statistics as published"
+          ansible.builtin.set_fact:
+            fe_policy_as_code_tests_test_policies_stats_published: true
+          tags:
+            - always
+
+        - name: "policy_as_code/tests/test_policies | Always | Report the run summary"
+          ansible.builtin.debug:
+            msg: >-
+              policy_as_code/tests/test_policies: {{ fe_policy_as_code_tests_test_policies_status | default('unknown') }} in
+              {{ fe_policy_as_code_tests_test_policies_duration_seconds | default(0) }}s on {{ inventory_hostname }}.
+          tags:
+            - always

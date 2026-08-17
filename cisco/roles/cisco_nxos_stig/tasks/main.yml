@@ -1,49 +1,232 @@
 ---
 # tasks file for cisco_nxos_stig
 
-- name: Ensure local artifacts directory exists
-  ansible.builtin.file:
-    path: "{{ artifacts_dir }}"
-    state: directory
-    mode: "0750"
-  delegate_to: localhost
-  run_once: true
-  changed_when: false
-  tags: [always]
+# ---------------------------------------------------------------------------
+# Fourth Estate preflight / postflight validation harness
+#
+# The task file body below is wrapped in an Ansible block/rescue/always structure:
+#
+#   block   preflight validation runs first, then the original task file body, then
+#           postflight validation. Any failure transfers control to rescue.
+#   rescue  records which task failed and why, then re-raises so a failure is
+#           never silently swallowed. Set fe_validation_continue_on_error=true
+#           to record the failure and keep going instead.
+#   always  computes the run duration and publishes the outcome through
+#           ansible.builtin.set_stats, so a wrapping playbook, AWX/AAP or CI can
+#           consume the result without scraping log output.
+#
+# Published stats (see docs/VALIDATION_AND_STATS.md):
+#   fe_validation_results['cisco/cisco_nxos_stig']  per-component record
+#   fe_validation_executions / _succeeded / _failed / _duration_seconds
+#   fe_validation_failed_components
+#
+# Add component-specific preflight checks without editing this file by setting
+#   fe_cisco_cisco_nxos_stig_required_vars: [var_one, var_two]
+# ---------------------------------------------------------------------------
 
-- name: Show run mode
-  ansible.builtin.debug:
-    msg: >-
-      cisco_nxos_stig on {{ inventory_hostname }} -
-      {{ 'ENFORCING' if apply_changes | bool else 'DRY-RUN / check mode only' }}
-  tags: [always]
+- name: "cisco/cisco_nxos_stig | Initialize validation state"
+  ansible.builtin.set_fact:
+    fe_cisco_cisco_nxos_stig_start_epoch: "{{ now(fmt='%s') | int }}"
+    fe_cisco_cisco_nxos_stig_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+    fe_cisco_cisco_nxos_stig_status: "running"
+    fe_cisco_cisco_nxos_stig_preflight_passed: false
+    fe_cisco_cisco_nxos_stig_postflight_passed: false
+    fe_cisco_cisco_nxos_stig_failed_task: ""
+    fe_cisco_cisco_nxos_stig_error: ""
+    fe_cisco_cisco_nxos_stig_stats_published: false
+  tags:
+    - always
 
-- name: Feature hygiene (CISC-ND-001310/001440)
-  ansible.builtin.import_tasks: ndm_features.yml
-  when: stig_ndm_features | bool
-  tags: [stig, ndm, features]
+- name: "cisco/cisco_nxos_stig | Guarded execution with preflight and postflight validation"
+  block:
 
-- name: AAA, SSH, banner, VTY (CISC-ND-000010/000160/000280/000490/001000)
-  ansible.builtin.import_tasks: ndm_aaa.yml
-  when: stig_ndm_aaa | bool
-  tags: [stig, ndm, aaa]
+    # ----------------------------- preflight --------------------
 
-- name: Logging and authenticated NTP (CISC-ND-000090/000470)
-  ansible.builtin.import_tasks: ndm_logging_ntp.yml
-  when: stig_ndm_logging_ntp | bool
-  tags: [stig, ndm, logging, ntp]
+    - name: "cisco/cisco_nxos_stig | Preflight | Verify the control node meets the minimum ansible-core version"
+      ansible.builtin.assert:
+        that:
+          - ansible_version.full is version(fe_validation_min_ansible_version | default('2.12'), '>=')
+        fail_msg: >-
+          cisco/cisco_nxos_stig: requires ansible-core
+          {{ fe_validation_min_ansible_version | default('2.12') }} or newer,
+          found {{ ansible_version.full }}.
+        success_msg: >-
+          cisco/cisco_nxos_stig: ansible-core {{ ansible_version.full }} satisfies the minimum.
+        quiet: true
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: SNMPv3 only (CISC-ND-000150/000160)
-  ansible.builtin.import_tasks: ndm_snmp.yml
-  when: stig_ndm_snmp | bool
-  tags: [stig, ndm, snmp]
+    - name: "cisco/cisco_nxos_stig | Preflight | Verify every declared required variable is defined"
+      ansible.builtin.assert:
+        that:
+          - vars[item] is defined
+        fail_msg: "cisco/cisco_nxos_stig: required variable '{{ item }}' is not defined."
+        success_msg: "cisco/cisco_nxos_stig: required variable '{{ item }}' is defined."
+        quiet: true
+      loop: "{{ fe_cisco_cisco_nxos_stig_required_vars | default([]) }}"
+      loop_control:
+        label: "{{ item }}"
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: Layer-2 hardening and CoPP (CISC-L2-XXXXXX, CISC-ND-001220)
-  ansible.builtin.import_tasks: l2_hardening.yml
-  when: stig_l2_hardening | bool
-  tags: [stig, l2]
+    - name: "cisco/cisco_nxos_stig | Preflight | Record that preflight validation passed"
+      ansible.builtin.set_fact:
+        fe_cisco_cisco_nxos_stig_preflight_passed: true
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: Compliance report
-  ansible.builtin.import_tasks: compliance_report.yml
-  when: stig_compliance_report | bool
-  tags: [stig, report]
+    # ----------------------------- execute ----------------------
+
+    - name: Ensure local artifacts directory exists
+      ansible.builtin.file:
+        path: "{{ artifacts_dir }}"
+        state: directory
+        mode: "0750"
+      delegate_to: localhost
+      run_once: true
+      changed_when: false
+      tags: [always]
+
+    - name: Show run mode
+      ansible.builtin.debug:
+        msg: >-
+          cisco_nxos_stig on {{ inventory_hostname }} -
+          {{ 'ENFORCING' if apply_changes | bool else 'DRY-RUN / check mode only' }}
+      tags: [always]
+
+    - name: Feature hygiene (CISC-ND-001310/001440)
+      ansible.builtin.import_tasks: ndm_features.yml
+      when: stig_ndm_features | bool
+      tags: [stig, ndm, features]
+
+    - name: AAA, SSH, banner, VTY (CISC-ND-000010/000160/000280/000490/001000)
+      ansible.builtin.import_tasks: ndm_aaa.yml
+      when: stig_ndm_aaa | bool
+      tags: [stig, ndm, aaa]
+
+    - name: Logging and authenticated NTP (CISC-ND-000090/000470)
+      ansible.builtin.import_tasks: ndm_logging_ntp.yml
+      when: stig_ndm_logging_ntp | bool
+      tags: [stig, ndm, logging, ntp]
+
+    - name: SNMPv3 only (CISC-ND-000150/000160)
+      ansible.builtin.import_tasks: ndm_snmp.yml
+      when: stig_ndm_snmp | bool
+      tags: [stig, ndm, snmp]
+
+    - name: Layer-2 hardening and CoPP (CISC-L2-XXXXXX, CISC-ND-001220)
+      ansible.builtin.import_tasks: l2_hardening.yml
+      when: stig_l2_hardening | bool
+      tags: [stig, l2]
+
+    - name: Compliance report
+      ansible.builtin.import_tasks: compliance_report.yml
+      when: stig_compliance_report | bool
+      tags: [stig, report]
+
+    # ----------------------------- postflight -------------------
+
+    - name: "cisco/cisco_nxos_stig | Postflight | Verify the guarded body ran after a passing preflight"
+      ansible.builtin.assert:
+        that:
+          - fe_cisco_cisco_nxos_stig_preflight_passed | bool
+          - fe_cisco_cisco_nxos_stig_status in ['running', 'succeeded']
+        fail_msg: >-
+          cisco/cisco_nxos_stig: postflight validation failed - preflight passed
+          ={{ fe_cisco_cisco_nxos_stig_preflight_passed | default(false) }},
+          status={{ fe_cisco_cisco_nxos_stig_status | default('unknown') }}.
+        success_msg: "cisco/cisco_nxos_stig: postflight validation passed."
+        quiet: true
+      tags:
+        - always
+        - postflight
+        - validation
+
+    - name: "cisco/cisco_nxos_stig | Postflight | Record the successful outcome"
+      ansible.builtin.set_fact:
+        fe_cisco_cisco_nxos_stig_postflight_passed: true
+        fe_cisco_cisco_nxos_stig_status: "succeeded"
+      tags:
+        - always
+        - postflight
+        - validation
+
+  rescue:
+
+    - name: "cisco/cisco_nxos_stig | Rescue | Capture the failing task and error detail"
+      ansible.builtin.set_fact:
+        fe_cisco_cisco_nxos_stig_status: "failed"
+        fe_cisco_cisco_nxos_stig_postflight_passed: false
+        fe_cisco_cisco_nxos_stig_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+        fe_cisco_cisco_nxos_stig_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+      tags:
+        - always
+        - rescue
+
+    - name: "cisco/cisco_nxos_stig | Rescue | Report the failure"
+      ansible.builtin.debug:
+        msg: >-
+          cisco/cisco_nxos_stig: FAILED at '{{ fe_cisco_cisco_nxos_stig_failed_task }}' on
+          {{ inventory_hostname }} - {{ fe_cisco_cisco_nxos_stig_error }}
+      tags:
+        - always
+        - rescue
+
+    - name: "cisco/cisco_nxos_stig | Rescue | Re-raise the failure unless the caller opted to continue"
+      ansible.builtin.fail:
+        msg: >-
+          cisco/cisco_nxos_stig failed at '{{ fe_cisco_cisco_nxos_stig_failed_task }}': {{ fe_cisco_cisco_nxos_stig_error }}
+      when: not (fe_validation_continue_on_error | default(false) | bool)
+      tags:
+        - always
+        - rescue
+
+  always:
+
+    - name: "cisco/cisco_nxos_stig | Always | Compute the execution duration"
+      ansible.builtin.set_fact:
+        fe_cisco_cisco_nxos_stig_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+        fe_cisco_cisco_nxos_stig_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_cisco_cisco_nxos_stig_start_epoch | default(0) | int) }}"
+      tags:
+        - always
+
+    - name: "cisco/cisco_nxos_stig | Always | Publish the validation result with set_stats"
+      ansible.builtin.set_stats:
+        data:
+          fe_validation_results:
+            "cisco/cisco_nxos_stig":
+              component: "cisco/cisco_nxos_stig"
+              type: "role"
+              platform: "cisco"
+              host: "{{ inventory_hostname }}"
+              status: "{{ fe_cisco_cisco_nxos_stig_status | default('unknown') }}"
+              preflight_passed: "{{ fe_cisco_cisco_nxos_stig_preflight_passed | default(false) | bool }}"
+              postflight_passed: "{{ fe_cisco_cisco_nxos_stig_postflight_passed | default(false) | bool }}"
+              started_at: "{{ fe_cisco_cisco_nxos_stig_started_at | default('') }}"
+              ended_at: "{{ fe_cisco_cisco_nxos_stig_ended_at | default('') }}"
+              duration_seconds: "{{ fe_cisco_cisco_nxos_stig_duration_seconds | default(0) | int }}"
+              failed_task: "{{ fe_cisco_cisco_nxos_stig_failed_task | default('') }}"
+              error: "{{ fe_cisco_cisco_nxos_stig_error | default('') }}"
+              check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+          fe_validation_executions: 1
+          fe_validation_succeeded: "{{ 1 if fe_cisco_cisco_nxos_stig_status | default('') == 'succeeded' else 0 }}"
+          fe_validation_failed: "{{ 0 if fe_cisco_cisco_nxos_stig_status | default('') == 'succeeded' else 1 }}"
+          fe_validation_duration_seconds: "{{ fe_cisco_cisco_nxos_stig_duration_seconds | default(0) | int }}"
+          fe_validation_failed_components: >-
+            {{ [] if fe_cisco_cisco_nxos_stig_status | default('') == 'succeeded' else ['cisco/cisco_nxos_stig'] }}
+        aggregate: true
+        per_host: false
+      tags:
+        - always
+
+    - name: "cisco/cisco_nxos_stig | Always | Mark the validation statistics as published"
+      ansible.builtin.set_fact:
+        fe_cisco_cisco_nxos_stig_stats_published: true
+      tags:
+        - always

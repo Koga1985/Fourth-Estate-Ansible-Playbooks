@@ -15,335 +15,518 @@
 # Sets fact:
 #   ot_acls_applied   (int) — number of rules successfully written to PCE
 
-- name: Set common PCE API headers
+# ---------------------------------------------------------------------------
+# Fourth Estate preflight / postflight validation harness
+#
+# The task file body below is wrapped in an Ansible block/rescue/always structure:
+#
+#   block   preflight validation runs first, then the original task file body, then
+#           postflight validation. Any failure transfers control to rescue.
+#   rescue  records which task failed and why, then re-raises so a failure is
+#           never silently swallowed. Set fe_validation_continue_on_error=true
+#           to record the failure and keep going instead.
+#   always  computes the run duration and publishes the outcome through
+#           ansible.builtin.set_stats, so a wrapping playbook, AWX/AAP or CI can
+#           consume the result without scraping log output.
+#
+# Published stats (see docs/VALIDATION_AND_STATS.md):
+#   fe_validation_results['illumio/illumio_ot_acl_deployment/includes/illumio_ot__apply_acls']  per-component record
+#   fe_validation_executions / _succeeded / _failed / _duration_seconds
+#   fe_validation_failed_components
+#
+# Add component-specific preflight checks without editing this file by setting
+#   fe_illumio_illumio_ot_acl_deployment_includes_illumio_ot__apply_acls_required_vars: [var_one, var_two]
+# ---------------------------------------------------------------------------
+
+- name: "illumio/illumio_ot_acl_deployment/includes/illumio_ot__apply_acls | Initialize validation state"
   ansible.builtin.set_fact:
-    illumio_headers:
-      Accept: "application/json"
-      Content-Type: "application/json"
-      X-Illumio-Org: "{{ org_id }}"
+    fe_illumio_illumio_ot_acl_deployment_includes_illumio_ot__apply_acls_start_epoch: "{{ now(fmt='%s') | int }}"
+    fe_illumio_illumio_ot_acl_deployment_includes_illumio_ot__apply_acls_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+    fe_illumio_illumio_ot_acl_deployment_includes_illumio_ot__apply_acls_status: "running"
+    fe_illumio_illumio_ot_acl_deployment_includes_illumio_ot__apply_acls_preflight_passed: false
+    fe_illumio_illumio_ot_acl_deployment_includes_illumio_ot__apply_acls_postflight_passed: false
+    fe_illumio_illumio_ot_acl_deployment_includes_illumio_ot__apply_acls_failed_task: ""
+    fe_illumio_illumio_ot_acl_deployment_includes_illumio_ot__apply_acls_error: ""
+    fe_illumio_illumio_ot_acl_deployment_includes_illumio_ot__apply_acls_stats_published: false
+  tags:
+    - always
 
-- name: Initialize applied-ACL counter
-  ansible.builtin.set_fact:
-    ot_acls_applied: 0
-    ot_apply_artifacts: []
-
-# ── DRY-RUN preview ──────────────────────────────────────────────────────────
-- name: Preview ACLs that would be applied (dry run)
-  ansible.builtin.debug:
-    msg:
-      - "DRY RUN — the following rule would be created in PCE:"
-      - "  Name         : {{ item.name }}"
-      - "  Description  : {{ item.description | default('N/A') }}"
-      - "  Rule Set     : {{ item.rule_set_name }}"
-      - "  Services     : {{ item.services | to_json }}"
-      - "  Providers    : {{ item.providers | to_json }}"
-      - "  Consumers    : {{ item.consumers | to_json }}"
-      - "  Ticket       : {{ item.ticket_ref | default('N/A') }}"
-      - "  Enabled      : {{ item.enabled | default(true) }}"
-  loop: "{{ ot_acls | selectattr('enabled', 'defined') | selectattr('enabled') | list
-            + ot_acls | rejectattr('enabled', 'defined') | list }}"
-  loop_control:
-    label: "{{ item.name }}"
-  when: not (apply_changes | bool)
-
-- name: Show dry-run gate message
-  ansible.builtin.debug:
-    msg:
-      - "═══ DRY RUN COMPLETE ═══"
-      - "No changes have been made to PCE."
-      - "To apply: re-run with -e 'apply_changes=true'"
-  when: not (apply_changes | bool)
-
-# ── LIVE APPLY ────────────────────────────────────────────────────────────────
-
-# Step 1: Resolve IP lists (create if absent)
-- name: Ensure IP lists exist for ip_list-type providers/consumers
-  when: apply_changes | bool
+- name: "illumio/illumio_ot_acl_deployment/includes/illumio_ot__apply_acls | Guarded execution with preflight and postflight validation"
   block:
-    - name: Gather all ip_list entries from ACLs
+
+    # ----------------------------- preflight --------------------
+
+    - name: "illumio/illumio_ot_acl_deployment/includes/illumio_ot__apply_acls | Preflight | Verify the control node meets the minimum ansible-core version"
+      ansible.builtin.assert:
+        that:
+          - ansible_version.full is version(fe_validation_min_ansible_version | default('2.12'), '>=')
+        fail_msg: >-
+          illumio/illumio_ot_acl_deployment/includes/illumio_ot__apply_acls: requires ansible-core
+          {{ fe_validation_min_ansible_version | default('2.12') }} or newer,
+          found {{ ansible_version.full }}.
+        success_msg: >-
+          illumio/illumio_ot_acl_deployment/includes/illumio_ot__apply_acls: ansible-core {{ ansible_version.full }} satisfies the minimum.
+        quiet: true
+      tags:
+        - always
+        - preflight
+        - validation
+
+    - name: "illumio/illumio_ot_acl_deployment/includes/illumio_ot__apply_acls | Preflight | Verify every declared required variable is defined"
+      ansible.builtin.assert:
+        that:
+          - vars[item] is defined
+        fail_msg: "illumio/illumio_ot_acl_deployment/includes/illumio_ot__apply_acls: required variable '{{ item }}' is not defined."
+        success_msg: "illumio/illumio_ot_acl_deployment/includes/illumio_ot__apply_acls: required variable '{{ item }}' is defined."
+        quiet: true
+      loop: "{{ fe_illumio_illumio_ot_acl_deployment_includes_illumio_ot__apply_acls_required_vars | default([]) }}"
+      loop_control:
+        label: "{{ item }}"
+      tags:
+        - always
+        - preflight
+        - validation
+
+    - name: "illumio/illumio_ot_acl_deployment/includes/illumio_ot__apply_acls | Preflight | Record that preflight validation passed"
       ansible.builtin.set_fact:
-        _all_ip_list_specs: >-
-          {{
-            ot_acls
-            | map(attribute='providers') | flatten
-            | selectattr('type', 'equalto', 'ip_list')
-            | list
-            + ot_acls
-            | map(attribute='consumers') | flatten
-            | selectattr('type', 'equalto', 'ip_list')
-            | list
-          }}
+        fe_illumio_illumio_ot_acl_deployment_includes_illumio_ot__apply_acls_preflight_passed: true
+      tags:
+        - always
+        - preflight
+        - validation
 
-    - name: Look up existing IP list by name
-      ansible.builtin.uri:
-        url: "{{ pce_url }}/api/v2/orgs/{{ org_id }}/ip_lists?name={{ ip_spec.name | urlencode }}"
-        method: GET
-        user: "{{ api_user }}"
-        password: "{{ api_key }}"
-        force_basic_auth: true
-        validate_certs: "{{ verify_ssl | default(true) }}"
-        headers: "{{ illumio_headers }}"
-        return_content: true
-        status_code: [200]
-      no_log: true
-      register: _ip_list_lookup
-      loop: "{{ _all_ip_list_specs | unique(attribute='name') }}"
-      loop_control:
-        loop_var: ip_spec
-        label: "{{ ip_spec.name }}"
+    # ----------------------------- execute ----------------------
 
-    - name: Create IP lists that do not yet exist in PCE
-      ansible.builtin.uri:
-        url: "{{ pce_url }}/api/v2/orgs/{{ org_id }}/ip_lists"
-        method: POST
-        user: "{{ api_user }}"
-        password: "{{ api_key }}"
-        force_basic_auth: true
-        validate_certs: "{{ verify_ssl | default(true) }}"
-        headers: "{{ illumio_headers }}"
-        body_format: json
-        body:
-          name: "{{ ip_result.ip_spec.name }}"
-          description: "OT ACL deployment — {{ ip_result.ip_spec.name }}"
-          ip_ranges: >-
-            {{
-              ip_result.ip_spec.ranges | default([])
-              | map('combine', {'exclusion': false})
-              | list
-            }}
-        return_content: true
-        status_code: [201]
-      no_log: true
-      register: _ip_list_create
-      loop: "{{ _ip_list_lookup.results }}"
-      loop_control:
-        loop_var: ip_result
-        label: "{{ ip_result.ip_spec.name }}"
-      when: (ip_result.json | default([])) | length == 0
-
-# Step 2: Resolve label HREFs
-- name: Resolve label HREFs for label-type providers/consumers
-  when: apply_changes | bool
-  block:
-    - name: Gather all label specs
+    - name: Set common PCE API headers
       ansible.builtin.set_fact:
-        _all_label_specs: >-
-          {{
-            ot_acls
-            | map(attribute='providers') | flatten
-            | selectattr('type', 'equalto', 'label')
-            | list
-            + ot_acls
-            | map(attribute='consumers') | flatten
-            | selectattr('type', 'equalto', 'label')
-            | list
-          }}
+        illumio_headers:
+          Accept: "application/json"
+          Content-Type: "application/json"
+          X-Illumio-Org: "{{ org_id }}"
 
-    - name: Look up label HREFs from PCE
-      ansible.builtin.uri:
-        url: "{{ pce_url }}/api/v2/orgs/{{ org_id }}/labels?key={{ lbl.key }}&value={{ lbl.value | urlencode }}"
-        method: GET
-        user: "{{ api_user }}"
-        password: "{{ api_key }}"
-        force_basic_auth: true
-        validate_certs: "{{ verify_ssl | default(true) }}"
-        headers: "{{ illumio_headers }}"
-        return_content: true
-        status_code: [200]
-      no_log: true
-      register: _label_lookups
-      loop: "{{ _all_label_specs | unique(attribute='value') }}"
-      loop_control:
-        loop_var: lbl
-        label: "{{ lbl.key }}={{ lbl.value }}"
-
-    - name: Build label-href lookup dict
+    - name: Initialize applied-ACL counter
       ansible.builtin.set_fact:
-        _label_href_map: >-
-          {{
-            _label_href_map | default({})
-            | combine({
-                (lbl_result.lbl.key + '=' + lbl_result.lbl.value):
-                  (lbl_result.json | first).href | default('')
-              })
-          }}
-      loop: "{{ _label_lookups.results }}"
-      loop_control:
-        loop_var: lbl_result
-        label: "{{ lbl_result.lbl.key }}={{ lbl_result.lbl.value }}"
-      when: (lbl_result.json | default([])) | length > 0
+        ot_acls_applied: 0
+        ot_apply_artifacts: []
 
-    - name: Warn on labels not found in PCE
+    # ── DRY-RUN preview ──────────────────────────────────────────────────────────
+    - name: Preview ACLs that would be applied (dry run)
+      ansible.builtin.debug:
+        msg:
+          - "DRY RUN — the following rule would be created in PCE:"
+          - "  Name         : {{ item.name }}"
+          - "  Description  : {{ item.description | default('N/A') }}"
+          - "  Rule Set     : {{ item.rule_set_name }}"
+          - "  Services     : {{ item.services | to_json }}"
+          - "  Providers    : {{ item.providers | to_json }}"
+          - "  Consumers    : {{ item.consumers | to_json }}"
+          - "  Ticket       : {{ item.ticket_ref | default('N/A') }}"
+          - "  Enabled      : {{ item.enabled | default(true) }}"
+      loop: "{{ ot_acls | selectattr('enabled', 'defined') | selectattr('enabled') | list
+                + ot_acls | rejectattr('enabled', 'defined') | list }}"
+      loop_control:
+        label: "{{ item.name }}"
+      when: not (apply_changes | bool)
+
+    - name: Show dry-run gate message
+      ansible.builtin.debug:
+        msg:
+          - "═══ DRY RUN COMPLETE ═══"
+          - "No changes have been made to PCE."
+          - "To apply: re-run with -e 'apply_changes=true'"
+      when: not (apply_changes | bool)
+
+    # ── LIVE APPLY ────────────────────────────────────────────────────────────────
+
+    # Step 1: Resolve IP lists (create if absent)
+    - name: Ensure IP lists exist for ip_list-type providers/consumers
+      when: apply_changes | bool
+      block:
+        - name: Gather all ip_list entries from ACLs
+          ansible.builtin.set_fact:
+            _all_ip_list_specs: >-
+              {{
+                ot_acls
+                | map(attribute='providers') | flatten
+                | selectattr('type', 'equalto', 'ip_list')
+                | list
+                + ot_acls
+                | map(attribute='consumers') | flatten
+                | selectattr('type', 'equalto', 'ip_list')
+                | list
+              }}
+
+        - name: Look up existing IP list by name
+          ansible.builtin.uri:
+            url: "{{ pce_url }}/api/v2/orgs/{{ org_id }}/ip_lists?name={{ ip_spec.name | urlencode }}"
+            method: GET
+            user: "{{ api_user }}"
+            password: "{{ api_key }}"
+            force_basic_auth: true
+            validate_certs: "{{ verify_ssl | default(true) }}"
+            headers: "{{ illumio_headers }}"
+            return_content: true
+            status_code: [200]
+          no_log: true
+          register: _ip_list_lookup
+          loop: "{{ _all_ip_list_specs | unique(attribute='name') }}"
+          loop_control:
+            loop_var: ip_spec
+            label: "{{ ip_spec.name }}"
+
+        - name: Create IP lists that do not yet exist in PCE
+          ansible.builtin.uri:
+            url: "{{ pce_url }}/api/v2/orgs/{{ org_id }}/ip_lists"
+            method: POST
+            user: "{{ api_user }}"
+            password: "{{ api_key }}"
+            force_basic_auth: true
+            validate_certs: "{{ verify_ssl | default(true) }}"
+            headers: "{{ illumio_headers }}"
+            body_format: json
+            body:
+              name: "{{ ip_result.ip_spec.name }}"
+              description: "OT ACL deployment — {{ ip_result.ip_spec.name }}"
+              ip_ranges: >-
+                {{
+                  ip_result.ip_spec.ranges | default([])
+                  | map('combine', {'exclusion': false})
+                  | list
+                }}
+            return_content: true
+            status_code: [201]
+          no_log: true
+          register: _ip_list_create
+          loop: "{{ _ip_list_lookup.results }}"
+          loop_control:
+            loop_var: ip_result
+            label: "{{ ip_result.ip_spec.name }}"
+          when: (ip_result.json | default([])) | length == 0
+
+    # Step 2: Resolve label HREFs
+    - name: Resolve label HREFs for label-type providers/consumers
+      when: apply_changes | bool
+      block:
+        - name: Gather all label specs
+          ansible.builtin.set_fact:
+            _all_label_specs: >-
+              {{
+                ot_acls
+                | map(attribute='providers') | flatten
+                | selectattr('type', 'equalto', 'label')
+                | list
+                + ot_acls
+                | map(attribute='consumers') | flatten
+                | selectattr('type', 'equalto', 'label')
+                | list
+              }}
+
+        - name: Look up label HREFs from PCE
+          ansible.builtin.uri:
+            url: "{{ pce_url }}/api/v2/orgs/{{ org_id }}/labels?key={{ lbl.key }}&value={{ lbl.value | urlencode }}"
+            method: GET
+            user: "{{ api_user }}"
+            password: "{{ api_key }}"
+            force_basic_auth: true
+            validate_certs: "{{ verify_ssl | default(true) }}"
+            headers: "{{ illumio_headers }}"
+            return_content: true
+            status_code: [200]
+          no_log: true
+          register: _label_lookups
+          loop: "{{ _all_label_specs | unique(attribute='value') }}"
+          loop_control:
+            loop_var: lbl
+            label: "{{ lbl.key }}={{ lbl.value }}"
+
+        - name: Build label-href lookup dict
+          ansible.builtin.set_fact:
+            _label_href_map: >-
+              {{
+                _label_href_map | default({})
+                | combine({
+                    (lbl_result.lbl.key + '=' + lbl_result.lbl.value):
+                      (lbl_result.json | first).href | default('')
+                  })
+              }}
+          loop: "{{ _label_lookups.results }}"
+          loop_control:
+            loop_var: lbl_result
+            label: "{{ lbl_result.lbl.key }}={{ lbl_result.lbl.value }}"
+          when: (lbl_result.json | default([])) | length > 0
+
+        - name: Warn on labels not found in PCE
+          ansible.builtin.debug:
+            msg: >-
+              WARNING: Label {{ lbl_result.lbl.key }}={{ lbl_result.lbl.value }}
+              was not found in the PCE. This rule may fail to create.
+              Verify the label exists in PCE before applying.
+          loop: "{{ _label_lookups.results }}"
+          loop_control:
+            loop_var: lbl_result
+            label: "{{ lbl_result.lbl.key }}={{ lbl_result.lbl.value }}"
+          when: (lbl_result.json | default([])) | length == 0
+
+    # Step 3: Ensure rule sets exist
+    - name: Ensure rule set exists for each ACL
+      when: apply_changes | bool
+      block:
+        - name: Look up rule set by name
+          ansible.builtin.uri:
+            url: "{{ pce_url }}/api/v2/orgs/{{ org_id }}/rule_sets?name={{ item.rule_set_name | urlencode }}"
+            method: GET
+            user: "{{ api_user }}"
+            password: "{{ api_key }}"
+            force_basic_auth: true
+            validate_certs: "{{ verify_ssl | default(true) }}"
+            headers: "{{ illumio_headers }}"
+            return_content: true
+            status_code: [200]
+          no_log: true
+          register: _rule_set_lookups
+          loop: "{{ ot_acls }}"
+          loop_control:
+            label: "{{ item.rule_set_name }}"
+
+        - name: Create rule sets that do not yet exist
+          ansible.builtin.uri:
+            url: "{{ pce_url }}/api/v2/orgs/{{ org_id }}/rule_sets"
+            method: POST
+            user: "{{ api_user }}"
+            password: "{{ api_key }}"
+            force_basic_auth: true
+            validate_certs: "{{ verify_ssl | default(true) }}"
+            headers: "{{ illumio_headers }}"
+            body_format: json
+            body:
+              name: "{{ rs_result.item.rule_set_name }}"
+              description: "OT ACL deployment — created by Ansible"
+              scopes: [[]]
+              enabled: true
+            return_content: true
+            status_code: [201]
+          no_log: true
+          register: _rule_set_creates
+          loop: "{{ _rule_set_lookups.results }}"
+          loop_control:
+            loop_var: rs_result
+            label: "{{ rs_result.item.rule_set_name }}"
+          when: (rs_result.json | default([])) | length == 0
+
+        - name: Build rule-set-href lookup dict
+          ansible.builtin.set_fact:
+            _rule_set_href_map: >-
+              {{
+                _rule_set_href_map | default({})
+                | combine({
+                    rs_result.item.rule_set_name:
+                      ((rs_result.json | first).href | default(''))
+                  })
+              }}
+          loop: "{{ _rule_set_lookups.results }}"
+          loop_control:
+            loop_var: rs_result
+            label: "{{ rs_result.item.rule_set_name }}"
+          when: (rs_result.json | default([])) | length > 0
+
+        - name: Update rule-set-href lookup with newly created rule sets
+          ansible.builtin.set_fact:
+            _rule_set_href_map: >-
+              {{
+                _rule_set_href_map | default({})
+                | combine({
+                    rs_create.rs_result.item.rule_set_name:
+                      (rs_create.json.href | default(''))
+                  })
+              }}
+          loop: "{{ _rule_set_creates.results | default([]) }}"
+          loop_control:
+            loop_var: rs_create
+            label: "{{ rs_create.rs_result.item.rule_set_name }}"
+          when:
+            - rs_create.skipped is not defined or not rs_create.skipped
+            - rs_create.json is defined
+
+    # Step 4: Create security rules
+    - name: Create security rules in PCE
+      when: apply_changes | bool
+      block:
+        - name: Build resolution selector for each ACL
+          ansible.builtin.set_fact:
+            _acl_rule_bodies: >-
+              {{
+                _acl_rule_bodies | default([])
+                + [{
+                    'acl_name': acl.name,
+                    'rule_set_href': _rule_set_href_map.get(acl.rule_set_name, ''),
+                    'body': {
+                      'enabled': acl.enabled | default(true),
+                      'description': (acl.description | default('')) + ' [ticket: ' + acl.ticket_ref | default('N/A') + ']',
+                      'ingress_services': acl.services | map('combine', {'proto': {'tcp': 6, 'udp': 17, 'icmp': 1}.get(item.proto, 6)}) | list,
+                      'providers': acl.providers | map(attribute='value') | map('regex_replace', '^(.*)$', '/orgs/' + org_id | string + '/labels/') | list,
+                      'consumers': acl.consumers | map(attribute='value') | map('regex_replace', '^(.*)$', '/orgs/' + org_id | string + '/labels/') | list,
+                      'resolve_labels_as': {
+                        'providers': ['workloads'],
+                        'consumers': ['workloads']
+                      }
+                    }
+                  }]
+              }}
+          loop: "{{ ot_acls | selectattr('enabled', 'undefined') | list + ot_acls | selectattr('enabled', 'defined') | selectattr('enabled') | list }}"
+          loop_control:
+            loop_var: acl
+            label: "{{ acl.name }}"
+
+        - name: POST security rules to PCE rule sets
+          ansible.builtin.uri:
+            url: "{{ pce_url }}/api/v2{{ rule_body.rule_set_href }}/sec_rules"
+            method: POST
+            user: "{{ api_user }}"
+            password: "{{ api_key }}"
+            force_basic_auth: true
+            validate_certs: "{{ verify_ssl | default(true) }}"
+            headers: "{{ illumio_headers }}"
+            body_format: json
+            body: "{{ rule_body.body }}"
+            return_content: true
+            status_code: [201]
+          no_log: true
+          register: _rule_create_results
+          loop: "{{ _acl_rule_bodies | default([]) }}"
+          loop_control:
+            loop_var: rule_body
+            label: "{{ rule_body.acl_name }}"
+          when: rule_body.rule_set_href | length > 0
+
+        - name: Increment applied counter
+          ansible.builtin.set_fact:
+            ot_acls_applied: "{{ _rule_create_results.results | default([]) | selectattr('status', 'equalto', 201) | list | length }}"
+
+        - name: Save apply artifact
+          ansible.builtin.copy:
+            dest: "{{ ot_artifacts_dir }}/acl_apply_{{ ansible_date_time.date }}.json"
+            mode: '0640'
+            content: >-
+              {{
+                {
+                  'apply_time': ansible_date_time.iso8601,
+                  'operator': ansible_user_id,
+                  'pce_url': pce_url,
+                  'org_id': org_id,
+                  'acls_requested': ot_acls | length,
+                  'acls_applied': ot_acls_applied,
+                  'rules': _rule_create_results.results | default([])
+                           | selectattr('json', 'defined')
+                           | map(attribute='json')
+                           | list
+                } | to_nice_json
+              }}
+
+    - name: Display apply summary
+      ansible.builtin.debug:
+        msg:
+          - "═══ ACL Apply {{ 'Complete' if apply_changes | bool else 'Skipped (dry run)' }} ═══"
+          - "ACLs requested : {{ ot_acls | length }}"
+          - "ACLs applied   : {{ ot_acls_applied | default(0) }}"
+          - "PCE status     : {{ 'DRAFT (not yet enforced)' if apply_changes | bool else 'UNCHANGED (dry run)' }}"
+
+    # ----------------------------- postflight -------------------
+
+    - name: "illumio/illumio_ot_acl_deployment/includes/illumio_ot__apply_acls | Postflight | Verify the guarded body ran after a passing preflight"
+      ansible.builtin.assert:
+        that:
+          - fe_illumio_illumio_ot_acl_deployment_includes_illumio_ot__apply_acls_preflight_passed | bool
+          - fe_illumio_illumio_ot_acl_deployment_includes_illumio_ot__apply_acls_status in ['running', 'succeeded']
+        fail_msg: >-
+          illumio/illumio_ot_acl_deployment/includes/illumio_ot__apply_acls: postflight validation failed - preflight passed
+          ={{ fe_illumio_illumio_ot_acl_deployment_includes_illumio_ot__apply_acls_preflight_passed | default(false) }},
+          status={{ fe_illumio_illumio_ot_acl_deployment_includes_illumio_ot__apply_acls_status | default('unknown') }}.
+        success_msg: "illumio/illumio_ot_acl_deployment/includes/illumio_ot__apply_acls: postflight validation passed."
+        quiet: true
+      tags:
+        - always
+        - postflight
+        - validation
+
+    - name: "illumio/illumio_ot_acl_deployment/includes/illumio_ot__apply_acls | Postflight | Record the successful outcome"
+      ansible.builtin.set_fact:
+        fe_illumio_illumio_ot_acl_deployment_includes_illumio_ot__apply_acls_postflight_passed: true
+        fe_illumio_illumio_ot_acl_deployment_includes_illumio_ot__apply_acls_status: "succeeded"
+      tags:
+        - always
+        - postflight
+        - validation
+
+  rescue:
+
+    - name: "illumio/illumio_ot_acl_deployment/includes/illumio_ot__apply_acls | Rescue | Capture the failing task and error detail"
+      ansible.builtin.set_fact:
+        fe_illumio_illumio_ot_acl_deployment_includes_illumio_ot__apply_acls_status: "failed"
+        fe_illumio_illumio_ot_acl_deployment_includes_illumio_ot__apply_acls_postflight_passed: false
+        fe_illumio_illumio_ot_acl_deployment_includes_illumio_ot__apply_acls_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+        fe_illumio_illumio_ot_acl_deployment_includes_illumio_ot__apply_acls_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+      tags:
+        - always
+        - rescue
+
+    - name: "illumio/illumio_ot_acl_deployment/includes/illumio_ot__apply_acls | Rescue | Report the failure"
       ansible.builtin.debug:
         msg: >-
-          WARNING: Label {{ lbl_result.lbl.key }}={{ lbl_result.lbl.value }}
-          was not found in the PCE. This rule may fail to create.
-          Verify the label exists in PCE before applying.
-      loop: "{{ _label_lookups.results }}"
-      loop_control:
-        loop_var: lbl_result
-        label: "{{ lbl_result.lbl.key }}={{ lbl_result.lbl.value }}"
-      when: (lbl_result.json | default([])) | length == 0
+          illumio/illumio_ot_acl_deployment/includes/illumio_ot__apply_acls: FAILED at '{{ fe_illumio_illumio_ot_acl_deployment_includes_illumio_ot__apply_acls_failed_task }}' on
+          {{ inventory_hostname }} - {{ fe_illumio_illumio_ot_acl_deployment_includes_illumio_ot__apply_acls_error }}
+      tags:
+        - always
+        - rescue
 
-# Step 3: Ensure rule sets exist
-- name: Ensure rule set exists for each ACL
-  when: apply_changes | bool
-  block:
-    - name: Look up rule set by name
-      ansible.builtin.uri:
-        url: "{{ pce_url }}/api/v2/orgs/{{ org_id }}/rule_sets?name={{ item.rule_set_name | urlencode }}"
-        method: GET
-        user: "{{ api_user }}"
-        password: "{{ api_key }}"
-        force_basic_auth: true
-        validate_certs: "{{ verify_ssl | default(true) }}"
-        headers: "{{ illumio_headers }}"
-        return_content: true
-        status_code: [200]
-      no_log: true
-      register: _rule_set_lookups
-      loop: "{{ ot_acls }}"
-      loop_control:
-        label: "{{ item.rule_set_name }}"
+    - name: "illumio/illumio_ot_acl_deployment/includes/illumio_ot__apply_acls | Rescue | Re-raise the failure unless the caller opted to continue"
+      ansible.builtin.fail:
+        msg: >-
+          illumio/illumio_ot_acl_deployment/includes/illumio_ot__apply_acls failed at '{{ fe_illumio_illumio_ot_acl_deployment_includes_illumio_ot__apply_acls_failed_task }}': {{ fe_illumio_illumio_ot_acl_deployment_includes_illumio_ot__apply_acls_error }}
+      when: not (fe_validation_continue_on_error | default(false) | bool)
+      tags:
+        - always
+        - rescue
 
-    - name: Create rule sets that do not yet exist
-      ansible.builtin.uri:
-        url: "{{ pce_url }}/api/v2/orgs/{{ org_id }}/rule_sets"
-        method: POST
-        user: "{{ api_user }}"
-        password: "{{ api_key }}"
-        force_basic_auth: true
-        validate_certs: "{{ verify_ssl | default(true) }}"
-        headers: "{{ illumio_headers }}"
-        body_format: json
-        body:
-          name: "{{ rs_result.item.rule_set_name }}"
-          description: "OT ACL deployment — created by Ansible"
-          scopes: [[]]
-          enabled: true
-        return_content: true
-        status_code: [201]
-      no_log: true
-      register: _rule_set_creates
-      loop: "{{ _rule_set_lookups.results }}"
-      loop_control:
-        loop_var: rs_result
-        label: "{{ rs_result.item.rule_set_name }}"
-      when: (rs_result.json | default([])) | length == 0
+  always:
 
-    - name: Build rule-set-href lookup dict
+    - name: "illumio/illumio_ot_acl_deployment/includes/illumio_ot__apply_acls | Always | Compute the execution duration"
       ansible.builtin.set_fact:
-        _rule_set_href_map: >-
-          {{
-            _rule_set_href_map | default({})
-            | combine({
-                rs_result.item.rule_set_name:
-                  ((rs_result.json | first).href | default(''))
-              })
-          }}
-      loop: "{{ _rule_set_lookups.results }}"
-      loop_control:
-        loop_var: rs_result
-        label: "{{ rs_result.item.rule_set_name }}"
-      when: (rs_result.json | default([])) | length > 0
+        fe_illumio_illumio_ot_acl_deployment_includes_illumio_ot__apply_acls_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+        fe_illumio_illumio_ot_acl_deployment_includes_illumio_ot__apply_acls_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_illumio_illumio_ot_acl_deployment_includes_illumio_ot__apply_acls_start_epoch | default(0) | int) }}"
+      tags:
+        - always
 
-    - name: Update rule-set-href lookup with newly created rule sets
+    - name: "illumio/illumio_ot_acl_deployment/includes/illumio_ot__apply_acls | Always | Publish the validation result with set_stats"
+      ansible.builtin.set_stats:
+        data:
+          fe_validation_results:
+            "illumio/illumio_ot_acl_deployment/includes/illumio_ot__apply_acls":
+              component: "illumio/illumio_ot_acl_deployment/includes/illumio_ot__apply_acls"
+              type: "role-tasks"
+              platform: "illumio"
+              host: "{{ inventory_hostname }}"
+              status: "{{ fe_illumio_illumio_ot_acl_deployment_includes_illumio_ot__apply_acls_status | default('unknown') }}"
+              preflight_passed: "{{ fe_illumio_illumio_ot_acl_deployment_includes_illumio_ot__apply_acls_preflight_passed | default(false) | bool }}"
+              postflight_passed: "{{ fe_illumio_illumio_ot_acl_deployment_includes_illumio_ot__apply_acls_postflight_passed | default(false) | bool }}"
+              started_at: "{{ fe_illumio_illumio_ot_acl_deployment_includes_illumio_ot__apply_acls_started_at | default('') }}"
+              ended_at: "{{ fe_illumio_illumio_ot_acl_deployment_includes_illumio_ot__apply_acls_ended_at | default('') }}"
+              duration_seconds: "{{ fe_illumio_illumio_ot_acl_deployment_includes_illumio_ot__apply_acls_duration_seconds | default(0) | int }}"
+              failed_task: "{{ fe_illumio_illumio_ot_acl_deployment_includes_illumio_ot__apply_acls_failed_task | default('') }}"
+              error: "{{ fe_illumio_illumio_ot_acl_deployment_includes_illumio_ot__apply_acls_error | default('') }}"
+              check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+          fe_validation_executions: 1
+          fe_validation_succeeded: "{{ 1 if fe_illumio_illumio_ot_acl_deployment_includes_illumio_ot__apply_acls_status | default('') == 'succeeded' else 0 }}"
+          fe_validation_failed: "{{ 0 if fe_illumio_illumio_ot_acl_deployment_includes_illumio_ot__apply_acls_status | default('') == 'succeeded' else 1 }}"
+          fe_validation_duration_seconds: "{{ fe_illumio_illumio_ot_acl_deployment_includes_illumio_ot__apply_acls_duration_seconds | default(0) | int }}"
+          fe_validation_failed_components: >-
+            {{ [] if fe_illumio_illumio_ot_acl_deployment_includes_illumio_ot__apply_acls_status | default('') == 'succeeded' else ['illumio/illumio_ot_acl_deployment/includes/illumio_ot__apply_acls'] }}
+        aggregate: true
+        per_host: false
+      tags:
+        - always
+
+    - name: "illumio/illumio_ot_acl_deployment/includes/illumio_ot__apply_acls | Always | Mark the validation statistics as published"
       ansible.builtin.set_fact:
-        _rule_set_href_map: >-
-          {{
-            _rule_set_href_map | default({})
-            | combine({
-                rs_create.rs_result.item.rule_set_name:
-                  (rs_create.json.href | default(''))
-              })
-          }}
-      loop: "{{ _rule_set_creates.results | default([]) }}"
-      loop_control:
-        loop_var: rs_create
-        label: "{{ rs_create.rs_result.item.rule_set_name }}"
-      when:
-        - rs_create.skipped is not defined or not rs_create.skipped
-        - rs_create.json is defined
-
-# Step 4: Create security rules
-- name: Create security rules in PCE
-  when: apply_changes | bool
-  block:
-    - name: Build resolution selector for each ACL
-      ansible.builtin.set_fact:
-        _acl_rule_bodies: >-
-          {{
-            _acl_rule_bodies | default([])
-            + [{
-                'acl_name': acl.name,
-                'rule_set_href': _rule_set_href_map.get(acl.rule_set_name, ''),
-                'body': {
-                  'enabled': acl.enabled | default(true),
-                  'description': (acl.description | default('')) + ' [ticket: ' + acl.ticket_ref | default('N/A') + ']',
-                  'ingress_services': acl.services | map('combine', {'proto': {'tcp': 6, 'udp': 17, 'icmp': 1}.get(item.proto, 6)}) | list,
-                  'providers': acl.providers | map(attribute='value') | map('regex_replace', '^(.*)$', '/orgs/' + org_id | string + '/labels/') | list,
-                  'consumers': acl.consumers | map(attribute='value') | map('regex_replace', '^(.*)$', '/orgs/' + org_id | string + '/labels/') | list,
-                  'resolve_labels_as': {
-                    'providers': ['workloads'],
-                    'consumers': ['workloads']
-                  }
-                }
-              }]
-          }}
-      loop: "{{ ot_acls | selectattr('enabled', 'undefined') | list + ot_acls | selectattr('enabled', 'defined') | selectattr('enabled') | list }}"
-      loop_control:
-        loop_var: acl
-        label: "{{ acl.name }}"
-
-    - name: POST security rules to PCE rule sets
-      ansible.builtin.uri:
-        url: "{{ pce_url }}/api/v2{{ rule_body.rule_set_href }}/sec_rules"
-        method: POST
-        user: "{{ api_user }}"
-        password: "{{ api_key }}"
-        force_basic_auth: true
-        validate_certs: "{{ verify_ssl | default(true) }}"
-        headers: "{{ illumio_headers }}"
-        body_format: json
-        body: "{{ rule_body.body }}"
-        return_content: true
-        status_code: [201]
-      no_log: true
-      register: _rule_create_results
-      loop: "{{ _acl_rule_bodies | default([]) }}"
-      loop_control:
-        loop_var: rule_body
-        label: "{{ rule_body.acl_name }}"
-      when: rule_body.rule_set_href | length > 0
-
-    - name: Increment applied counter
-      ansible.builtin.set_fact:
-        ot_acls_applied: "{{ _rule_create_results.results | default([]) | selectattr('status', 'equalto', 201) | list | length }}"
-
-    - name: Save apply artifact
-      ansible.builtin.copy:
-        dest: "{{ ot_artifacts_dir }}/acl_apply_{{ ansible_date_time.date }}.json"
-        mode: '0640'
-        content: >-
-          {{
-            {
-              'apply_time': ansible_date_time.iso8601,
-              'operator': ansible_user_id,
-              'pce_url': pce_url,
-              'org_id': org_id,
-              'acls_requested': ot_acls | length,
-              'acls_applied': ot_acls_applied,
-              'rules': _rule_create_results.results | default([])
-                       | selectattr('json', 'defined')
-                       | map(attribute='json')
-                       | list
-            } | to_nice_json
-          }}
-
-- name: Display apply summary
-  ansible.builtin.debug:
-    msg:
-      - "═══ ACL Apply {{ 'Complete' if apply_changes | bool else 'Skipped (dry run)' }} ═══"
-      - "ACLs requested : {{ ot_acls | length }}"
-      - "ACLs applied   : {{ ot_acls_applied | default(0) }}"
-      - "PCE status     : {{ 'DRAFT (not yet enforced)' if apply_changes | bool else 'UNCHANGED (dry run)' }}"
+        fe_illumio_illumio_ot_acl_deployment_includes_illumio_ot__apply_acls_stats_published: true
+      tags:
+        - always

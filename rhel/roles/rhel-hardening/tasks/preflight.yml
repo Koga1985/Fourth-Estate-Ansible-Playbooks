@@ -1,80 +1,263 @@
 ---
 # tasks/preflight.yml - Pre-flight validation checks
 
-- name: Gather distribution facts
-  ansible.builtin.setup:
-    gather_subset:
-      - distribution
+# ---------------------------------------------------------------------------
+# Fourth Estate preflight / postflight validation harness
+#
+# The task file body below is wrapped in an Ansible block/rescue/always structure:
+#
+#   block   preflight validation runs first, then the original task file body, then
+#           postflight validation. Any failure transfers control to rescue.
+#   rescue  records which task failed and why, then re-raises so a failure is
+#           never silently swallowed. Set fe_validation_continue_on_error=true
+#           to record the failure and keep going instead.
+#   always  computes the run duration and publishes the outcome through
+#           ansible.builtin.set_stats, so a wrapping playbook, AWX/AAP or CI can
+#           consume the result without scraping log output.
+#
+# Published stats (see docs/VALIDATION_AND_STATS.md):
+#   fe_validation_results['rhel/rhel-hardening/preflight']  per-component record
+#   fe_validation_executions / _succeeded / _failed / _duration_seconds
+#   fe_validation_failed_components
+#
+# Add component-specific preflight checks without editing this file by setting
+#   fe_rhel_rhel_hardening_preflight_required_vars: [var_one, var_two]
+# ---------------------------------------------------------------------------
+
+- name: "rhel/rhel-hardening/preflight | Initialize validation state"
+  ansible.builtin.set_fact:
+    fe_rhel_rhel_hardening_preflight_start_epoch: "{{ now(fmt='%s') | int }}"
+    fe_rhel_rhel_hardening_preflight_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+    fe_rhel_rhel_hardening_preflight_status: "running"
+    fe_rhel_rhel_hardening_preflight_preflight_passed: false
+    fe_rhel_rhel_hardening_preflight_postflight_passed: false
+    fe_rhel_rhel_hardening_preflight_failed_task: ""
+    fe_rhel_rhel_hardening_preflight_error: ""
+    fe_rhel_rhel_hardening_preflight_stats_published: false
   tags:
     - always
 
-- name: Validate RHEL distribution
-  ansible.builtin.assert:
-    that:
-      - ansible_distribution == "RedHat"
-      - ansible_distribution_major_version in ["8", "9"]
-    fail_msg: "This role only supports RHEL 8 and RHEL 9"
-    success_msg: "Running on {{ ansible_distribution }} {{ ansible_distribution_version }}"
-  tags:
-    - always
+- name: "rhel/rhel-hardening/preflight | Guarded execution with preflight and postflight validation"
+  block:
 
-- name: Check if system is registered with Red Hat
-  ansible.builtin.command: subscription-manager status
-  register: rhel_subscription_status
-  changed_when: false
-  failed_when: false
-  when: rhel_check_subscription | bool
-  tags:
-    - always
+    # ----------------------------- preflight --------------------
 
-- name: Display subscription status
-  ansible.builtin.debug:
-    msg: "System subscription status: {{ rhel_subscription_status.stdout_lines | default(['Not checked']) }}"
-  when: rhel_check_subscription | bool
-  tags:
-    - always
+    - name: "rhel/rhel-hardening/preflight | Preflight | Verify the control node meets the minimum ansible-core version"
+      ansible.builtin.assert:
+        that:
+          - ansible_version.full is version(fe_validation_min_ansible_version | default('2.12'), '>=')
+        fail_msg: >-
+          rhel/rhel-hardening/preflight: requires ansible-core
+          {{ fe_validation_min_ansible_version | default('2.12') }} or newer,
+          found {{ ansible_version.full }}.
+        success_msg: >-
+          rhel/rhel-hardening/preflight: ansible-core {{ ansible_version.full }} satisfies the minimum.
+        quiet: true
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: Validate required packages are available
-  ansible.builtin.package_facts:
-    manager: auto
-  tags:
-    - always
+    - name: "rhel/rhel-hardening/preflight | Preflight | Verify every declared required variable is defined"
+      ansible.builtin.assert:
+        that:
+          - vars[item] is defined
+        fail_msg: "rhel/rhel-hardening/preflight: required variable '{{ item }}' is not defined."
+        success_msg: "rhel/rhel-hardening/preflight: required variable '{{ item }}' is defined."
+        quiet: true
+      loop: "{{ fe_rhel_rhel_hardening_preflight_required_vars | default([]) }}"
+      loop_control:
+        label: "{{ item }}"
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: Check available disk space
-  ansible.builtin.shell: df -h / | tail -1 | awk '{print $5}' | sed 's/%//'
-  register: disk_usage
-  changed_when: false
-  tags:
-    - always
+    - name: "rhel/rhel-hardening/preflight | Preflight | Record that preflight validation passed"
+      ansible.builtin.set_fact:
+        fe_rhel_rhel_hardening_preflight_preflight_passed: true
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: Validate sufficient disk space
-  ansible.builtin.assert:
-    that:
-      - disk_usage.stdout | int < 90
-    fail_msg: "Insufficient disk space ({{ disk_usage.stdout }}% used). Please ensure at least 10% free space."
-    success_msg: "Sufficient disk space available ({{ disk_usage.stdout }}% used)"
-  tags:
-    - always
+    # ----------------------------- execute ----------------------
 
-- name: Check if system requires reboot
-  ansible.builtin.stat:
-    path: /var/run/reboot-required
-  register: reboot_required
-  tags:
-    - always
+    - name: Gather distribution facts
+      ansible.builtin.setup:
+        gather_subset:
+          - distribution
+      tags:
+        - always
 
-- name: Display reboot status
-  ansible.builtin.debug:
-    msg: "System reboot required: {{ reboot_required.stat.exists }}"
-  tags:
-    - always
+    - name: Validate RHEL distribution
+      ansible.builtin.assert:
+        that:
+          - ansible_distribution == "RedHat"
+          - ansible_distribution_major_version in ["8", "9"]
+        fail_msg: "This role only supports RHEL 8 and RHEL 9"
+        success_msg: "Running on {{ ansible_distribution }} {{ ansible_distribution_version }}"
+      tags:
+        - always
 
-- name: Pre-flight checks completed
-  ansible.builtin.debug:
-    msg:
-      - "Pre-flight checks completed successfully"
-      - "Distribution: {{ ansible_distribution }} {{ ansible_distribution_version }}"
-      - "Architecture: {{ ansible_architecture }}"
-      - "Kernel: {{ ansible_kernel }}"
-  tags:
-    - always
+    - name: Check if system is registered with Red Hat
+      ansible.builtin.command: subscription-manager status
+      register: rhel_subscription_status
+      changed_when: false
+      failed_when: false
+      when: rhel_check_subscription | bool
+      tags:
+        - always
+
+    - name: Display subscription status
+      ansible.builtin.debug:
+        msg: "System subscription status: {{ rhel_subscription_status.stdout_lines | default(['Not checked']) }}"
+      when: rhel_check_subscription | bool
+      tags:
+        - always
+
+    - name: Validate required packages are available
+      ansible.builtin.package_facts:
+        manager: auto
+      tags:
+        - always
+
+    - name: Check available disk space
+      ansible.builtin.shell: df -h / | tail -1 | awk '{print $5}' | sed 's/%//'
+      register: disk_usage
+      changed_when: false
+      tags:
+        - always
+
+    - name: Validate sufficient disk space
+      ansible.builtin.assert:
+        that:
+          - disk_usage.stdout | int < 90
+        fail_msg: "Insufficient disk space ({{ disk_usage.stdout }}% used). Please ensure at least 10% free space."
+        success_msg: "Sufficient disk space available ({{ disk_usage.stdout }}% used)"
+      tags:
+        - always
+
+    - name: Check if system requires reboot
+      ansible.builtin.stat:
+        path: /var/run/reboot-required
+      register: reboot_required
+      tags:
+        - always
+
+    - name: Display reboot status
+      ansible.builtin.debug:
+        msg: "System reboot required: {{ reboot_required.stat.exists }}"
+      tags:
+        - always
+
+    - name: Pre-flight checks completed
+      ansible.builtin.debug:
+        msg:
+          - "Pre-flight checks completed successfully"
+          - "Distribution: {{ ansible_distribution }} {{ ansible_distribution_version }}"
+          - "Architecture: {{ ansible_architecture }}"
+          - "Kernel: {{ ansible_kernel }}"
+      tags:
+        - always
+
+    # ----------------------------- postflight -------------------
+
+    - name: "rhel/rhel-hardening/preflight | Postflight | Verify the guarded body ran after a passing preflight"
+      ansible.builtin.assert:
+        that:
+          - fe_rhel_rhel_hardening_preflight_preflight_passed | bool
+          - fe_rhel_rhel_hardening_preflight_status in ['running', 'succeeded']
+        fail_msg: >-
+          rhel/rhel-hardening/preflight: postflight validation failed - preflight passed
+          ={{ fe_rhel_rhel_hardening_preflight_preflight_passed | default(false) }},
+          status={{ fe_rhel_rhel_hardening_preflight_status | default('unknown') }}.
+        success_msg: "rhel/rhel-hardening/preflight: postflight validation passed."
+        quiet: true
+      tags:
+        - always
+        - postflight
+        - validation
+
+    - name: "rhel/rhel-hardening/preflight | Postflight | Record the successful outcome"
+      ansible.builtin.set_fact:
+        fe_rhel_rhel_hardening_preflight_postflight_passed: true
+        fe_rhel_rhel_hardening_preflight_status: "succeeded"
+      tags:
+        - always
+        - postflight
+        - validation
+
+  rescue:
+
+    - name: "rhel/rhel-hardening/preflight | Rescue | Capture the failing task and error detail"
+      ansible.builtin.set_fact:
+        fe_rhel_rhel_hardening_preflight_status: "failed"
+        fe_rhel_rhel_hardening_preflight_postflight_passed: false
+        fe_rhel_rhel_hardening_preflight_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+        fe_rhel_rhel_hardening_preflight_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+      tags:
+        - always
+        - rescue
+
+    - name: "rhel/rhel-hardening/preflight | Rescue | Report the failure"
+      ansible.builtin.debug:
+        msg: >-
+          rhel/rhel-hardening/preflight: FAILED at '{{ fe_rhel_rhel_hardening_preflight_failed_task }}' on
+          {{ inventory_hostname }} - {{ fe_rhel_rhel_hardening_preflight_error }}
+      tags:
+        - always
+        - rescue
+
+    - name: "rhel/rhel-hardening/preflight | Rescue | Re-raise the failure unless the caller opted to continue"
+      ansible.builtin.fail:
+        msg: >-
+          rhel/rhel-hardening/preflight failed at '{{ fe_rhel_rhel_hardening_preflight_failed_task }}': {{ fe_rhel_rhel_hardening_preflight_error }}
+      when: not (fe_validation_continue_on_error | default(false) | bool)
+      tags:
+        - always
+        - rescue
+
+  always:
+
+    - name: "rhel/rhel-hardening/preflight | Always | Compute the execution duration"
+      ansible.builtin.set_fact:
+        fe_rhel_rhel_hardening_preflight_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+        fe_rhel_rhel_hardening_preflight_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_rhel_rhel_hardening_preflight_start_epoch | default(0) | int) }}"
+      tags:
+        - always
+
+    - name: "rhel/rhel-hardening/preflight | Always | Publish the validation result with set_stats"
+      ansible.builtin.set_stats:
+        data:
+          fe_validation_results:
+            "rhel/rhel-hardening/preflight":
+              component: "rhel/rhel-hardening/preflight"
+              type: "role-tasks"
+              platform: "rhel"
+              host: "{{ inventory_hostname }}"
+              status: "{{ fe_rhel_rhel_hardening_preflight_status | default('unknown') }}"
+              preflight_passed: "{{ fe_rhel_rhel_hardening_preflight_preflight_passed | default(false) | bool }}"
+              postflight_passed: "{{ fe_rhel_rhel_hardening_preflight_postflight_passed | default(false) | bool }}"
+              started_at: "{{ fe_rhel_rhel_hardening_preflight_started_at | default('') }}"
+              ended_at: "{{ fe_rhel_rhel_hardening_preflight_ended_at | default('') }}"
+              duration_seconds: "{{ fe_rhel_rhel_hardening_preflight_duration_seconds | default(0) | int }}"
+              failed_task: "{{ fe_rhel_rhel_hardening_preflight_failed_task | default('') }}"
+              error: "{{ fe_rhel_rhel_hardening_preflight_error | default('') }}"
+              check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+          fe_validation_executions: 1
+          fe_validation_succeeded: "{{ 1 if fe_rhel_rhel_hardening_preflight_status | default('') == 'succeeded' else 0 }}"
+          fe_validation_failed: "{{ 0 if fe_rhel_rhel_hardening_preflight_status | default('') == 'succeeded' else 1 }}"
+          fe_validation_duration_seconds: "{{ fe_rhel_rhel_hardening_preflight_duration_seconds | default(0) | int }}"
+          fe_validation_failed_components: >-
+            {{ [] if fe_rhel_rhel_hardening_preflight_status | default('') == 'succeeded' else ['rhel/rhel-hardening/preflight'] }}
+        aggregate: true
+        per_host: false
+      tags:
+        - always
+
+    - name: "rhel/rhel-hardening/preflight | Always | Mark the validation statistics as published"
+      ansible.builtin.set_fact:
+        fe_rhel_rhel_hardening_preflight_stats_published: true
+      tags:
+        - always

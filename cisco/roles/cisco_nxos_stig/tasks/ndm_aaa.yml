@@ -4,93 +4,276 @@
 # CISC-ND-000490 (mgmt ACL) | CISC-ND-001000/001210 (SSH)
 # NIST IA-2, AC-8, AC-12, SC-23
 
-- name: CISC-ND-000160 - Configure TACACS+ servers
-  cisco.nxos.nxos_config:
-    lines:
-      - "tacacs-server host {{ item.host }} key 7 {{ item.key }}"
-  loop: "{{ nxos_tacacs_servers }}"
-  loop_control:
-    label: "{{ item.host }}"
-  no_log: true
-  check_mode: "{{ not (apply_changes | bool) }}"
-  register: nxos_tacacs_hosts
-  notify: save running-config
-  tags: [stig_cat2, "CISC-ND-000160"]
+# ---------------------------------------------------------------------------
+# Fourth Estate preflight / postflight validation harness
+#
+# The task file body below is wrapped in an Ansible block/rescue/always structure:
+#
+#   block   preflight validation runs first, then the original task file body, then
+#           postflight validation. Any failure transfers control to rescue.
+#   rescue  records which task failed and why, then re-raises so a failure is
+#           never silently swallowed. Set fe_validation_continue_on_error=true
+#           to record the failure and keep going instead.
+#   always  computes the run duration and publishes the outcome through
+#           ansible.builtin.set_stats, so a wrapping playbook, AWX/AAP or CI can
+#           consume the result without scraping log output.
+#
+# Published stats (see docs/VALIDATION_AND_STATS.md):
+#   fe_validation_results['cisco/cisco_nxos_stig/ndm_aaa']  per-component record
+#   fe_validation_executions / _succeeded / _failed / _duration_seconds
+#   fe_validation_failed_components
+#
+# Add component-specific preflight checks without editing this file by setting
+#   fe_cisco_cisco_nxos_stig_ndm_aaa_required_vars: [var_one, var_two]
+# ---------------------------------------------------------------------------
 
-- name: CISC-ND-000160 - Configure TACACS+ server group
-  cisco.nxos.nxos_config:
-    parents: "aaa group server tacacs+ {{ nxos_tacacs_group }}"
-    lines: "{{ nxos_tacacs_servers | map(attribute='host') | map('regex_replace', '^(.*)$', 'server \\1') | list }}"
-  check_mode: "{{ not (apply_changes | bool) }}"
-  register: nxos_tacacs_grp
-  notify: save running-config
-  tags: [stig_cat2, "CISC-ND-000160"]
+- name: "cisco/cisco_nxos_stig/ndm_aaa | Initialize validation state"
+  ansible.builtin.set_fact:
+    fe_cisco_cisco_nxos_stig_ndm_aaa_start_epoch: "{{ now(fmt='%s') | int }}"
+    fe_cisco_cisco_nxos_stig_ndm_aaa_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+    fe_cisco_cisco_nxos_stig_ndm_aaa_status: "running"
+    fe_cisco_cisco_nxos_stig_ndm_aaa_preflight_passed: false
+    fe_cisco_cisco_nxos_stig_ndm_aaa_postflight_passed: false
+    fe_cisco_cisco_nxos_stig_ndm_aaa_failed_task: ""
+    fe_cisco_cisco_nxos_stig_ndm_aaa_error: ""
+    fe_cisco_cisco_nxos_stig_ndm_aaa_stats_published: false
+  tags:
+    - always
 
-- name: CISC-ND-000160 - AAA authentication/accounting with local fallback
-  cisco.nxos.nxos_config:
-    lines:
-      - "aaa authentication login default group {{ nxos_tacacs_group }}"
-      - aaa authentication login error-enable
-      - "aaa accounting default group {{ nxos_tacacs_group }}"
-  check_mode: "{{ not (apply_changes | bool) }}"
-  register: nxos_aaa_methods
-  notify: save running-config
-  tags: [stig_cat2, "CISC-ND-000160", "CISC-ND-000550"]
+- name: "cisco/cisco_nxos_stig/ndm_aaa | Guarded execution with preflight and postflight validation"
+  block:
 
-- name: CISC-ND-001000/001210 - Enforce SSH key strength
-  cisco.nxos.nxos_config:
-    lines:
-      - "ssh key {{ nxos_ssh_key_type }} {{ nxos_ssh_key_size }} force"
-  check_mode: "{{ not (apply_changes | bool) }}"
-  register: nxos_ssh_key
-  notify: save running-config
-  tags: [stig_cat2, "CISC-ND-001000", "CISC-ND-001210"]
+    # ----------------------------- preflight --------------------
 
-- name: CISC-ND-000010 - Configure DoD login banner
-  cisco.nxos.nxos_config:
-    lines:
-      - "banner motd ^{{ nxos_login_banner }}^"
-  check_mode: "{{ not (apply_changes | bool) }}"
-  register: nxos_banner
-  notify: save running-config
-  tags: [stig_cat3, "CISC-ND-000010"]
+    - name: "cisco/cisco_nxos_stig/ndm_aaa | Preflight | Verify the control node meets the minimum ansible-core version"
+      ansible.builtin.assert:
+        that:
+          - ansible_version.full is version(fe_validation_min_ansible_version | default('2.12'), '>=')
+        fail_msg: >-
+          cisco/cisco_nxos_stig/ndm_aaa: requires ansible-core
+          {{ fe_validation_min_ansible_version | default('2.12') }} or newer,
+          found {{ ansible_version.full }}.
+        success_msg: >-
+          cisco/cisco_nxos_stig/ndm_aaa: ansible-core {{ ansible_version.full }} satisfies the minimum.
+        quiet: true
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: CISC-ND-000490 - Build management access ACL
-  cisco.nxos.nxos_config:
-    parents: "ip access-list {{ nxos_mgmt_acl_name }}"
-    lines: "{{ nxos_management_subnets | map('regex_replace', '^(.*)$', 'permit tcp \\1 any eq 22') | list }}"
-  check_mode: "{{ not (apply_changes | bool) }}"
-  register: nxos_mgmt_acl
-  notify: save running-config
-  tags: [stig_cat2, "CISC-ND-000490"]
+    - name: "cisco/cisco_nxos_stig/ndm_aaa | Preflight | Verify every declared required variable is defined"
+      ansible.builtin.assert:
+        that:
+          - vars[item] is defined
+        fail_msg: "cisco/cisco_nxos_stig/ndm_aaa: required variable '{{ item }}' is not defined."
+        success_msg: "cisco/cisco_nxos_stig/ndm_aaa: required variable '{{ item }}' is defined."
+        quiet: true
+      loop: "{{ fe_cisco_cisco_nxos_stig_ndm_aaa_required_vars | default([]) }}"
+      loop_control:
+        label: "{{ item }}"
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: CISC-ND-000280 - Harden VTY lines (idle timeout, ACL, SSH only)
-  cisco.nxos.nxos_config:
-    parents: "line vty"
-    lines:
-      - "exec-timeout {{ nxos_exec_timeout_minutes }}"
-      - "access-class {{ nxos_mgmt_acl_name }} in"
-      - session-limit 2
-  check_mode: "{{ not (apply_changes | bool) }}"
-  register: nxos_vty
-  notify: save running-config
-  tags: [stig_cat2, "CISC-ND-000280"]
+    - name: "cisco/cisco_nxos_stig/ndm_aaa | Preflight | Record that preflight validation passed"
+      ansible.builtin.set_fact:
+        fe_cisco_cisco_nxos_stig_ndm_aaa_preflight_passed: true
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: CISC-ND-000280 - Harden console idle timeout
-  cisco.nxos.nxos_config:
-    parents: "line console"
-    lines:
-      - "exec-timeout {{ nxos_exec_timeout_minutes }}"
-  check_mode: "{{ not (apply_changes | bool) }}"
-  register: nxos_con
-  notify: save running-config
-  tags: [stig_cat2, "CISC-ND-000280"]
+    # ----------------------------- execute ----------------------
 
-- name: CISC-ND-000380 - Enforce password strength policy
-  cisco.nxos.nxos_config:
-    lines:
-      - password strength-check
-  check_mode: "{{ not (apply_changes | bool) }}"
-  register: nxos_pwd_strength
-  notify: save running-config
-  tags: [stig_cat2, "CISC-ND-000380"]
+    - name: CISC-ND-000160 - Configure TACACS+ servers
+      cisco.nxos.nxos_config:
+        lines:
+          - "tacacs-server host {{ item.host }} key 7 {{ item.key }}"
+      loop: "{{ nxos_tacacs_servers }}"
+      loop_control:
+        label: "{{ item.host }}"
+      no_log: true
+      check_mode: "{{ not (apply_changes | bool) }}"
+      register: nxos_tacacs_hosts
+      notify: save running-config
+      tags: [stig_cat2, "CISC-ND-000160"]
+
+    - name: CISC-ND-000160 - Configure TACACS+ server group
+      cisco.nxos.nxos_config:
+        parents: "aaa group server tacacs+ {{ nxos_tacacs_group }}"
+        lines: "{{ nxos_tacacs_servers | map(attribute='host') | map('regex_replace', '^(.*)$', 'server \\1') | list }}"
+      check_mode: "{{ not (apply_changes | bool) }}"
+      register: nxos_tacacs_grp
+      notify: save running-config
+      tags: [stig_cat2, "CISC-ND-000160"]
+
+    - name: CISC-ND-000160 - AAA authentication/accounting with local fallback
+      cisco.nxos.nxos_config:
+        lines:
+          - "aaa authentication login default group {{ nxos_tacacs_group }}"
+          - aaa authentication login error-enable
+          - "aaa accounting default group {{ nxos_tacacs_group }}"
+      check_mode: "{{ not (apply_changes | bool) }}"
+      register: nxos_aaa_methods
+      notify: save running-config
+      tags: [stig_cat2, "CISC-ND-000160", "CISC-ND-000550"]
+
+    - name: CISC-ND-001000/001210 - Enforce SSH key strength
+      cisco.nxos.nxos_config:
+        lines:
+          - "ssh key {{ nxos_ssh_key_type }} {{ nxos_ssh_key_size }} force"
+      check_mode: "{{ not (apply_changes | bool) }}"
+      register: nxos_ssh_key
+      notify: save running-config
+      tags: [stig_cat2, "CISC-ND-001000", "CISC-ND-001210"]
+
+    - name: CISC-ND-000010 - Configure DoD login banner
+      cisco.nxos.nxos_config:
+        lines:
+          - "banner motd ^{{ nxos_login_banner }}^"
+      check_mode: "{{ not (apply_changes | bool) }}"
+      register: nxos_banner
+      notify: save running-config
+      tags: [stig_cat3, "CISC-ND-000010"]
+
+    - name: CISC-ND-000490 - Build management access ACL
+      cisco.nxos.nxos_config:
+        parents: "ip access-list {{ nxos_mgmt_acl_name }}"
+        lines: "{{ nxos_management_subnets | map('regex_replace', '^(.*)$', 'permit tcp \\1 any eq 22') | list }}"
+      check_mode: "{{ not (apply_changes | bool) }}"
+      register: nxos_mgmt_acl
+      notify: save running-config
+      tags: [stig_cat2, "CISC-ND-000490"]
+
+    - name: CISC-ND-000280 - Harden VTY lines (idle timeout, ACL, SSH only)
+      cisco.nxos.nxos_config:
+        parents: "line vty"
+        lines:
+          - "exec-timeout {{ nxos_exec_timeout_minutes }}"
+          - "access-class {{ nxos_mgmt_acl_name }} in"
+          - session-limit 2
+      check_mode: "{{ not (apply_changes | bool) }}"
+      register: nxos_vty
+      notify: save running-config
+      tags: [stig_cat2, "CISC-ND-000280"]
+
+    - name: CISC-ND-000280 - Harden console idle timeout
+      cisco.nxos.nxos_config:
+        parents: "line console"
+        lines:
+          - "exec-timeout {{ nxos_exec_timeout_minutes }}"
+      check_mode: "{{ not (apply_changes | bool) }}"
+      register: nxos_con
+      notify: save running-config
+      tags: [stig_cat2, "CISC-ND-000280"]
+
+    - name: CISC-ND-000380 - Enforce password strength policy
+      cisco.nxos.nxos_config:
+        lines:
+          - password strength-check
+      check_mode: "{{ not (apply_changes | bool) }}"
+      register: nxos_pwd_strength
+      notify: save running-config
+      tags: [stig_cat2, "CISC-ND-000380"]
+
+    # ----------------------------- postflight -------------------
+
+    - name: "cisco/cisco_nxos_stig/ndm_aaa | Postflight | Verify the guarded body ran after a passing preflight"
+      ansible.builtin.assert:
+        that:
+          - fe_cisco_cisco_nxos_stig_ndm_aaa_preflight_passed | bool
+          - fe_cisco_cisco_nxos_stig_ndm_aaa_status in ['running', 'succeeded']
+        fail_msg: >-
+          cisco/cisco_nxos_stig/ndm_aaa: postflight validation failed - preflight passed
+          ={{ fe_cisco_cisco_nxos_stig_ndm_aaa_preflight_passed | default(false) }},
+          status={{ fe_cisco_cisco_nxos_stig_ndm_aaa_status | default('unknown') }}.
+        success_msg: "cisco/cisco_nxos_stig/ndm_aaa: postflight validation passed."
+        quiet: true
+      tags:
+        - always
+        - postflight
+        - validation
+
+    - name: "cisco/cisco_nxos_stig/ndm_aaa | Postflight | Record the successful outcome"
+      ansible.builtin.set_fact:
+        fe_cisco_cisco_nxos_stig_ndm_aaa_postflight_passed: true
+        fe_cisco_cisco_nxos_stig_ndm_aaa_status: "succeeded"
+      tags:
+        - always
+        - postflight
+        - validation
+
+  rescue:
+
+    - name: "cisco/cisco_nxos_stig/ndm_aaa | Rescue | Capture the failing task and error detail"
+      ansible.builtin.set_fact:
+        fe_cisco_cisco_nxos_stig_ndm_aaa_status: "failed"
+        fe_cisco_cisco_nxos_stig_ndm_aaa_postflight_passed: false
+        fe_cisco_cisco_nxos_stig_ndm_aaa_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+        fe_cisco_cisco_nxos_stig_ndm_aaa_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+      tags:
+        - always
+        - rescue
+
+    - name: "cisco/cisco_nxos_stig/ndm_aaa | Rescue | Report the failure"
+      ansible.builtin.debug:
+        msg: >-
+          cisco/cisco_nxos_stig/ndm_aaa: FAILED at '{{ fe_cisco_cisco_nxos_stig_ndm_aaa_failed_task }}' on
+          {{ inventory_hostname }} - {{ fe_cisco_cisco_nxos_stig_ndm_aaa_error }}
+      tags:
+        - always
+        - rescue
+
+    - name: "cisco/cisco_nxos_stig/ndm_aaa | Rescue | Re-raise the failure unless the caller opted to continue"
+      ansible.builtin.fail:
+        msg: >-
+          cisco/cisco_nxos_stig/ndm_aaa failed at '{{ fe_cisco_cisco_nxos_stig_ndm_aaa_failed_task }}': {{ fe_cisco_cisco_nxos_stig_ndm_aaa_error }}
+      when: not (fe_validation_continue_on_error | default(false) | bool)
+      tags:
+        - always
+        - rescue
+
+  always:
+
+    - name: "cisco/cisco_nxos_stig/ndm_aaa | Always | Compute the execution duration"
+      ansible.builtin.set_fact:
+        fe_cisco_cisco_nxos_stig_ndm_aaa_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+        fe_cisco_cisco_nxos_stig_ndm_aaa_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_cisco_cisco_nxos_stig_ndm_aaa_start_epoch | default(0) | int) }}"
+      tags:
+        - always
+
+    - name: "cisco/cisco_nxos_stig/ndm_aaa | Always | Publish the validation result with set_stats"
+      ansible.builtin.set_stats:
+        data:
+          fe_validation_results:
+            "cisco/cisco_nxos_stig/ndm_aaa":
+              component: "cisco/cisco_nxos_stig/ndm_aaa"
+              type: "role-tasks"
+              platform: "cisco"
+              host: "{{ inventory_hostname }}"
+              status: "{{ fe_cisco_cisco_nxos_stig_ndm_aaa_status | default('unknown') }}"
+              preflight_passed: "{{ fe_cisco_cisco_nxos_stig_ndm_aaa_preflight_passed | default(false) | bool }}"
+              postflight_passed: "{{ fe_cisco_cisco_nxos_stig_ndm_aaa_postflight_passed | default(false) | bool }}"
+              started_at: "{{ fe_cisco_cisco_nxos_stig_ndm_aaa_started_at | default('') }}"
+              ended_at: "{{ fe_cisco_cisco_nxos_stig_ndm_aaa_ended_at | default('') }}"
+              duration_seconds: "{{ fe_cisco_cisco_nxos_stig_ndm_aaa_duration_seconds | default(0) | int }}"
+              failed_task: "{{ fe_cisco_cisco_nxos_stig_ndm_aaa_failed_task | default('') }}"
+              error: "{{ fe_cisco_cisco_nxos_stig_ndm_aaa_error | default('') }}"
+              check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+          fe_validation_executions: 1
+          fe_validation_succeeded: "{{ 1 if fe_cisco_cisco_nxos_stig_ndm_aaa_status | default('') == 'succeeded' else 0 }}"
+          fe_validation_failed: "{{ 0 if fe_cisco_cisco_nxos_stig_ndm_aaa_status | default('') == 'succeeded' else 1 }}"
+          fe_validation_duration_seconds: "{{ fe_cisco_cisco_nxos_stig_ndm_aaa_duration_seconds | default(0) | int }}"
+          fe_validation_failed_components: >-
+            {{ [] if fe_cisco_cisco_nxos_stig_ndm_aaa_status | default('') == 'succeeded' else ['cisco/cisco_nxos_stig/ndm_aaa'] }}
+        aggregate: true
+        per_host: false
+      tags:
+        - always
+
+    - name: "cisco/cisco_nxos_stig/ndm_aaa | Always | Mark the validation statistics as published"
+      ansible.builtin.set_fact:
+        fe_cisco_cisco_nxos_stig_ndm_aaa_stats_published: true
+      tags:
+        - always

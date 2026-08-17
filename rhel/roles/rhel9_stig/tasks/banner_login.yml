@@ -3,37 +3,220 @@
 # RHEL-09-211010 (/etc/issue banner) | RHEL-09-211045/211050 (ctrl-alt-del)
 # NIST AC-8, CM-6
 
-- name: RHEL-09-211010 - Configure the DoD login banner in /etc/issue
-  ansible.builtin.copy:
-    dest: /etc/issue
-    content: "{{ rhel9_dod_banner }}"
-    owner: root
-    group: root
-    mode: "0644"
-  check_mode: "{{ not (apply_changes | bool) }}"
-  register: r_banner_issue
-  tags: [stig_cat2, "RHEL-09-211010"]
+# ---------------------------------------------------------------------------
+# Fourth Estate preflight / postflight validation harness
+#
+# The task file body below is wrapped in an Ansible block/rescue/always structure:
+#
+#   block   preflight validation runs first, then the original task file body, then
+#           postflight validation. Any failure transfers control to rescue.
+#   rescue  records which task failed and why, then re-raises so a failure is
+#           never silently swallowed. Set fe_validation_continue_on_error=true
+#           to record the failure and keep going instead.
+#   always  computes the run duration and publishes the outcome through
+#           ansible.builtin.set_stats, so a wrapping playbook, AWX/AAP or CI can
+#           consume the result without scraping log output.
+#
+# Published stats (see docs/VALIDATION_AND_STATS.md):
+#   fe_validation_results['rhel/rhel9_stig/banner_login']  per-component record
+#   fe_validation_executions / _succeeded / _failed / _duration_seconds
+#   fe_validation_failed_components
+#
+# Add component-specific preflight checks without editing this file by setting
+#   fe_rhel_rhel9_stig_banner_login_required_vars: [var_one, var_two]
+# ---------------------------------------------------------------------------
 
-- name: RHEL-09-211045 - Disable the ctrl-alt-del.target (reboot)
-  ansible.builtin.systemd:
-    name: ctrl-alt-del.target
-    masked: true
-    state: stopped
-  check_mode: "{{ not (apply_changes | bool) }}"
-  register: r_cad_target
-  failed_when:
-    - r_cad_target is failed
-    - "'Could not find the requested service' not in (r_cad_target.msg | default(''))"
-  tags: [stig_cat1, "RHEL-09-211045"]
+- name: "rhel/rhel9_stig/banner_login | Initialize validation state"
+  ansible.builtin.set_fact:
+    fe_rhel_rhel9_stig_banner_login_start_epoch: "{{ now(fmt='%s') | int }}"
+    fe_rhel_rhel9_stig_banner_login_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+    fe_rhel_rhel9_stig_banner_login_status: "running"
+    fe_rhel_rhel9_stig_banner_login_preflight_passed: false
+    fe_rhel_rhel9_stig_banner_login_postflight_passed: false
+    fe_rhel_rhel9_stig_banner_login_failed_task: ""
+    fe_rhel_rhel9_stig_banner_login_error: ""
+    fe_rhel_rhel9_stig_banner_login_stats_published: false
+  tags:
+    - always
 
-- name: RHEL-09-211050 - Disable the ctrl-alt-del burst action
-  ansible.builtin.lineinfile:
-    path: /etc/systemd/system.conf
-    regexp: '^#?CtrlAltDelBurstAction='
-    line: 'CtrlAltDelBurstAction=none'
-    owner: root
-    group: root
-    mode: "0644"
-  check_mode: "{{ not (apply_changes | bool) }}"
-  register: r_cad_burst
-  tags: [stig_cat1, "RHEL-09-211050"]
+- name: "rhel/rhel9_stig/banner_login | Guarded execution with preflight and postflight validation"
+  block:
+
+    # ----------------------------- preflight --------------------
+
+    - name: "rhel/rhel9_stig/banner_login | Preflight | Verify the control node meets the minimum ansible-core version"
+      ansible.builtin.assert:
+        that:
+          - ansible_version.full is version(fe_validation_min_ansible_version | default('2.12'), '>=')
+        fail_msg: >-
+          rhel/rhel9_stig/banner_login: requires ansible-core
+          {{ fe_validation_min_ansible_version | default('2.12') }} or newer,
+          found {{ ansible_version.full }}.
+        success_msg: >-
+          rhel/rhel9_stig/banner_login: ansible-core {{ ansible_version.full }} satisfies the minimum.
+        quiet: true
+      tags:
+        - always
+        - preflight
+        - validation
+
+    - name: "rhel/rhel9_stig/banner_login | Preflight | Verify every declared required variable is defined"
+      ansible.builtin.assert:
+        that:
+          - vars[item] is defined
+        fail_msg: "rhel/rhel9_stig/banner_login: required variable '{{ item }}' is not defined."
+        success_msg: "rhel/rhel9_stig/banner_login: required variable '{{ item }}' is defined."
+        quiet: true
+      loop: "{{ fe_rhel_rhel9_stig_banner_login_required_vars | default([]) }}"
+      loop_control:
+        label: "{{ item }}"
+      tags:
+        - always
+        - preflight
+        - validation
+
+    - name: "rhel/rhel9_stig/banner_login | Preflight | Record that preflight validation passed"
+      ansible.builtin.set_fact:
+        fe_rhel_rhel9_stig_banner_login_preflight_passed: true
+      tags:
+        - always
+        - preflight
+        - validation
+
+    # ----------------------------- execute ----------------------
+
+    - name: RHEL-09-211010 - Configure the DoD login banner in /etc/issue
+      ansible.builtin.copy:
+        dest: /etc/issue
+        content: "{{ rhel9_dod_banner }}"
+        owner: root
+        group: root
+        mode: "0644"
+      check_mode: "{{ not (apply_changes | bool) }}"
+      register: r_banner_issue
+      tags: [stig_cat2, "RHEL-09-211010"]
+
+    - name: RHEL-09-211045 - Disable the ctrl-alt-del.target (reboot)
+      ansible.builtin.systemd:
+        name: ctrl-alt-del.target
+        masked: true
+        state: stopped
+      check_mode: "{{ not (apply_changes | bool) }}"
+      register: r_cad_target
+      failed_when:
+        - r_cad_target is failed
+        - "'Could not find the requested service' not in (r_cad_target.msg | default(''))"
+      tags: [stig_cat1, "RHEL-09-211045"]
+
+    - name: RHEL-09-211050 - Disable the ctrl-alt-del burst action
+      ansible.builtin.lineinfile:
+        path: /etc/systemd/system.conf
+        regexp: '^#?CtrlAltDelBurstAction='
+        line: 'CtrlAltDelBurstAction=none'
+        owner: root
+        group: root
+        mode: "0644"
+      check_mode: "{{ not (apply_changes | bool) }}"
+      register: r_cad_burst
+      tags: [stig_cat1, "RHEL-09-211050"]
+
+    # ----------------------------- postflight -------------------
+
+    - name: "rhel/rhel9_stig/banner_login | Postflight | Verify the guarded body ran after a passing preflight"
+      ansible.builtin.assert:
+        that:
+          - fe_rhel_rhel9_stig_banner_login_preflight_passed | bool
+          - fe_rhel_rhel9_stig_banner_login_status in ['running', 'succeeded']
+        fail_msg: >-
+          rhel/rhel9_stig/banner_login: postflight validation failed - preflight passed
+          ={{ fe_rhel_rhel9_stig_banner_login_preflight_passed | default(false) }},
+          status={{ fe_rhel_rhel9_stig_banner_login_status | default('unknown') }}.
+        success_msg: "rhel/rhel9_stig/banner_login: postflight validation passed."
+        quiet: true
+      tags:
+        - always
+        - postflight
+        - validation
+
+    - name: "rhel/rhel9_stig/banner_login | Postflight | Record the successful outcome"
+      ansible.builtin.set_fact:
+        fe_rhel_rhel9_stig_banner_login_postflight_passed: true
+        fe_rhel_rhel9_stig_banner_login_status: "succeeded"
+      tags:
+        - always
+        - postflight
+        - validation
+
+  rescue:
+
+    - name: "rhel/rhel9_stig/banner_login | Rescue | Capture the failing task and error detail"
+      ansible.builtin.set_fact:
+        fe_rhel_rhel9_stig_banner_login_status: "failed"
+        fe_rhel_rhel9_stig_banner_login_postflight_passed: false
+        fe_rhel_rhel9_stig_banner_login_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+        fe_rhel_rhel9_stig_banner_login_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+      tags:
+        - always
+        - rescue
+
+    - name: "rhel/rhel9_stig/banner_login | Rescue | Report the failure"
+      ansible.builtin.debug:
+        msg: >-
+          rhel/rhel9_stig/banner_login: FAILED at '{{ fe_rhel_rhel9_stig_banner_login_failed_task }}' on
+          {{ inventory_hostname }} - {{ fe_rhel_rhel9_stig_banner_login_error }}
+      tags:
+        - always
+        - rescue
+
+    - name: "rhel/rhel9_stig/banner_login | Rescue | Re-raise the failure unless the caller opted to continue"
+      ansible.builtin.fail:
+        msg: >-
+          rhel/rhel9_stig/banner_login failed at '{{ fe_rhel_rhel9_stig_banner_login_failed_task }}': {{ fe_rhel_rhel9_stig_banner_login_error }}
+      when: not (fe_validation_continue_on_error | default(false) | bool)
+      tags:
+        - always
+        - rescue
+
+  always:
+
+    - name: "rhel/rhel9_stig/banner_login | Always | Compute the execution duration"
+      ansible.builtin.set_fact:
+        fe_rhel_rhel9_stig_banner_login_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+        fe_rhel_rhel9_stig_banner_login_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_rhel_rhel9_stig_banner_login_start_epoch | default(0) | int) }}"
+      tags:
+        - always
+
+    - name: "rhel/rhel9_stig/banner_login | Always | Publish the validation result with set_stats"
+      ansible.builtin.set_stats:
+        data:
+          fe_validation_results:
+            "rhel/rhel9_stig/banner_login":
+              component: "rhel/rhel9_stig/banner_login"
+              type: "role-tasks"
+              platform: "rhel"
+              host: "{{ inventory_hostname }}"
+              status: "{{ fe_rhel_rhel9_stig_banner_login_status | default('unknown') }}"
+              preflight_passed: "{{ fe_rhel_rhel9_stig_banner_login_preflight_passed | default(false) | bool }}"
+              postflight_passed: "{{ fe_rhel_rhel9_stig_banner_login_postflight_passed | default(false) | bool }}"
+              started_at: "{{ fe_rhel_rhel9_stig_banner_login_started_at | default('') }}"
+              ended_at: "{{ fe_rhel_rhel9_stig_banner_login_ended_at | default('') }}"
+              duration_seconds: "{{ fe_rhel_rhel9_stig_banner_login_duration_seconds | default(0) | int }}"
+              failed_task: "{{ fe_rhel_rhel9_stig_banner_login_failed_task | default('') }}"
+              error: "{{ fe_rhel_rhel9_stig_banner_login_error | default('') }}"
+              check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+          fe_validation_executions: 1
+          fe_validation_succeeded: "{{ 1 if fe_rhel_rhel9_stig_banner_login_status | default('') == 'succeeded' else 0 }}"
+          fe_validation_failed: "{{ 0 if fe_rhel_rhel9_stig_banner_login_status | default('') == 'succeeded' else 1 }}"
+          fe_validation_duration_seconds: "{{ fe_rhel_rhel9_stig_banner_login_duration_seconds | default(0) | int }}"
+          fe_validation_failed_components: >-
+            {{ [] if fe_rhel_rhel9_stig_banner_login_status | default('') == 'succeeded' else ['rhel/rhel9_stig/banner_login'] }}
+        aggregate: true
+        per_host: false
+      tags:
+        - always
+
+    - name: "rhel/rhel9_stig/banner_login | Always | Mark the validation statistics as published"
+      ansible.builtin.set_fact:
+        fe_rhel_rhel9_stig_banner_login_stats_published: true
+      tags:
+        - always

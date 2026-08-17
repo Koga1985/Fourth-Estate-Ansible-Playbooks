@@ -1,3 +1,4 @@
+---
 # Apply and enforce RBAC policy in vSphere
 #
 # Vars you provide (examples below):
@@ -30,166 +31,349 @@
 # rbac_dry_run: true          # show planned changes only
 # rbac_allow_removal: false   # when true (and exclusive:true), remove non-policy bindings
 
-- name: Set defaults
+# ---------------------------------------------------------------------------
+# Fourth Estate preflight / postflight validation harness
+#
+# The task file body below is wrapped in an Ansible block/rescue/always structure:
+#
+#   block   preflight validation runs first, then the original task file body, then
+#           postflight validation. Any failure transfers control to rescue.
+#   rescue  records which task failed and why, then re-raises so a failure is
+#           never silently swallowed. Set fe_validation_continue_on_error=true
+#           to record the failure and keep going instead.
+#   always  computes the run duration and publishes the outcome through
+#           ansible.builtin.set_stats, so a wrapping playbook, AWX/AAP or CI can
+#           consume the result without scraping log output.
+#
+# Published stats (see docs/VALIDATION_AND_STATS.md):
+#   fe_validation_results['vmware/enforce_vsphere_rbac']  per-component record
+#   fe_validation_executions / _succeeded / _failed / _duration_seconds
+#   fe_validation_failed_components
+#
+# Add component-specific preflight checks without editing this file by setting
+#   fe_vmware_enforce_vsphere_rbac_required_vars: [var_one, var_two]
+# ---------------------------------------------------------------------------
+
+- name: "vmware/enforce_vsphere_rbac | Initialize validation state"
   ansible.builtin.set_fact:
-    vcenter_validate_certs: "{{ vcenter_validate_certs | default(false) }}"
-    policy_roles: "{{ policy_roles | default([]) }}"
-    policy_bindings: "{{ policy_bindings | default([]) }}"
-    rbac_dry_run: "{{ rbac_dry_run | default(true) }}"
-    rbac_allow_removal: "{{ rbac_allow_removal | default(false) }}"
+    fe_vmware_enforce_vsphere_rbac_start_epoch: "{{ now(fmt='%s') | int }}"
+    fe_vmware_enforce_vsphere_rbac_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+    fe_vmware_enforce_vsphere_rbac_status: "running"
+    fe_vmware_enforce_vsphere_rbac_preflight_passed: false
+    fe_vmware_enforce_vsphere_rbac_postflight_passed: false
+    fe_vmware_enforce_vsphere_rbac_failed_task: ""
+    fe_vmware_enforce_vsphere_rbac_error: ""
+    fe_vmware_enforce_vsphere_rbac_stats_published: false
+  tags:
+    - always
 
-# -------------------------
-# Ensure local roles exist
-# -------------------------
-- name: Create/update custom local roles (optional)
-  community.vmware.vmware_local_role_manager:
-    hostname: "{{ vcenter_hostname }}"
-    username: "{{ vcenter_username }}"
-    password: "{{ vcenter_password }}"
-    validate_certs: "{{ vcenter_validate_certs }}"
-    local_role_name: "{{ item.name }}"
-    privileges: "{{ item.privileges | default(omit) }}"
-    state: present
-  no_log: true
-  loop: "{{ policy_roles }}"
-  loop_control: { label: "{{ item.name }}" }
-  delegate_to: localhost
+- name: "vmware/enforce_vsphere_rbac | Guarded execution with preflight and postflight validation"
+  block:
 
-# ---------------------------------------------
-# For each object, reconcile desired vs current
-# ---------------------------------------------
-- name: Init change sets
-  ansible.builtin.set_fact:
-    _rbac_to_add: []
-    _rbac_to_remove: []
+    # ----------------------------- preflight --------------------
 
-- name: Fetch current permissions per object
-  community.vmware.vmware_object_role_permission_info:
-    hostname: "{{ vcenter_hostname }}"
-    username: "{{ vcenter_username }}"
-    password: "{{ vcenter_password }}"
-    validate_certs: "{{ vcenter_validate_certs }}"
-    object_type: "{{ item.object.type }}"
-    object_name: "{{ item.object.name }}"
-  no_log: true
-  loop: "{{ policy_bindings }}"
-  loop_control: { label: "{{ item.object.type }} {{ item.object.name }}" }
-  delegate_to: localhost
-  register: _rbac_info
+    - name: "vmware/enforce_vsphere_rbac | Preflight | Verify the control node meets the minimum ansible-core version"
+      ansible.builtin.assert:
+        that:
+          - ansible_version.full is version(fe_validation_min_ansible_version | default('2.12'), '>=')
+        fail_msg: >-
+          vmware/enforce_vsphere_rbac: requires ansible-core
+          {{ fe_validation_min_ansible_version | default('2.12') }} or newer,
+          found {{ ansible_version.full }}.
+        success_msg: >-
+          vmware/enforce_vsphere_rbac: ansible-core {{ ansible_version.full }} satisfies the minimum.
+        quiet: true
+      tags:
+        - always
+        - preflight
+        - validation
 
-# Build planned adds/removals
-- name: Compute RBAC deltas
-  ansible.builtin.set_fact:
-    _rbac_to_add: >-
-      {%- set adds = [] -%}
-      {%- for i in range(_rbac_info.results | length) -%}
-        {%- set b = policy_bindings[i] -%}
-        {%- set propagate = (b.object.propagate | default(true)) | bool -%}
-        {%- set desired = (b.grants | default([])) -%}
-        {%- set current = (_rbac_info.results[i].permission_info | default([])) -%}
-        {%- set desired_keys = desired
-             | map('combine', {'propagate': propagate})
-             | map('combine', {'object_type': b.object.type, 'object_name': b.object.name})
-             | map('combine', {'_key': None})
-             | list -%}
-        {%- for d in desired_keys -%}
-          {%- set _ = d.update({'_key': d.principal ~ '|' ~ d.role ~ '|' ~ (d.propagate | string)}) -%}
-        {%- endfor -%}
-        {%- set current_keys = current
-             | map('combine', {'object_type': b.object.type, 'object_name': b.object.name})
-             | map('combine', {'_key': None})
-             | list -%}
-        {%- for c in current_keys -%}
-          {%- set _ = c.update({'_key': c.principal ~ '|' ~ c.role_name ~ '|' ~ (c.propagate | string)}) -%}
-        {%- endfor -%}
-        {%- for d in desired_keys -%}
-          {%- if not (current_keys | selectattr('_key', 'equalto', d._key) | list) -%}
-            {%- set _ = adds.append(d) -%}
-          {%- endif -%}
-        {%- endfor -%}
-      {%- endfor -%}
-      {{ _rbac_to_add + adds }}
-    _rbac_to_remove: >-
-      {%- set removals = [] -%}
-      {%- for i in range(_rbac_info.results | length) -%}
-        {%- set b = policy_bindings[i] -%}
-        {%- set exclusive = b.exclusive | default(false) | bool -%}
-        {%- set ignore = (b.ignore_principals | default([])) -%}
-        {%- set desired = (b.grants | default([])) -%}
-        {%- set current = (_rbac_info.results[i].permission_info | default([])) -%}
-        {%- if exclusive -%}
-          {%- for c in current -%}
-            {%- set is_system = (c.principal in ignore) -%}
-            {%- set match_role = (desired | selectattr('principal', 'equalto', c.principal) | selectattr('role', 'equalto', c.role_name) | list | length) > 0 -%}
-            {%- if (not is_system) and (not match_role) -%}
-              {%- set _ = removals.append({
-                    'object_type': b.object.type,
-                    'object_name': b.object.name,
-                    'principal': c.principal,
-                    'role': c.role_name,
-                    'propagate': c.propagate | default(true)
-                  }) -%}
+    - name: "vmware/enforce_vsphere_rbac | Preflight | Verify every declared required variable is defined"
+      ansible.builtin.assert:
+        that:
+          - vars[item] is defined
+        fail_msg: "vmware/enforce_vsphere_rbac: required variable '{{ item }}' is not defined."
+        success_msg: "vmware/enforce_vsphere_rbac: required variable '{{ item }}' is defined."
+        quiet: true
+      loop: "{{ fe_vmware_enforce_vsphere_rbac_required_vars | default([]) }}"
+      loop_control:
+        label: "{{ item }}"
+      tags:
+        - always
+        - preflight
+        - validation
+
+    - name: "vmware/enforce_vsphere_rbac | Preflight | Record that preflight validation passed"
+      ansible.builtin.set_fact:
+        fe_vmware_enforce_vsphere_rbac_preflight_passed: true
+      tags:
+        - always
+        - preflight
+        - validation
+
+    # ----------------------------- execute ----------------------
+
+    - name: Set defaults
+      ansible.builtin.set_fact:
+        vcenter_validate_certs: "{{ vcenter_validate_certs | default(false) }}"
+        policy_roles: "{{ policy_roles | default([]) }}"
+        policy_bindings: "{{ policy_bindings | default([]) }}"
+        rbac_dry_run: "{{ rbac_dry_run | default(true) }}"
+        rbac_allow_removal: "{{ rbac_allow_removal | default(false) }}"
+
+    # -------------------------
+    # Ensure local roles exist
+    # -------------------------
+    - name: Create/update custom local roles (optional)
+      community.vmware.vmware_local_role_manager:
+        hostname: "{{ vcenter_hostname }}"
+        username: "{{ vcenter_username }}"
+        password: "{{ vcenter_password }}"
+        validate_certs: "{{ vcenter_validate_certs }}"
+        local_role_name: "{{ item.name }}"
+        privileges: "{{ item.privileges | default(omit) }}"
+        state: present
+      no_log: true
+      loop: "{{ policy_roles }}"
+      loop_control: { label: "{{ item.name }}" }
+      delegate_to: localhost
+
+    # ---------------------------------------------
+    # For each object, reconcile desired vs current
+    # ---------------------------------------------
+    - name: Init change sets
+      ansible.builtin.set_fact:
+        _rbac_to_add: []
+        _rbac_to_remove: []
+
+    - name: Fetch current permissions per object
+      community.vmware.vmware_object_role_permission_info:
+        hostname: "{{ vcenter_hostname }}"
+        username: "{{ vcenter_username }}"
+        password: "{{ vcenter_password }}"
+        validate_certs: "{{ vcenter_validate_certs }}"
+        object_type: "{{ item.object.type }}"
+        object_name: "{{ item.object.name }}"
+      no_log: true
+      loop: "{{ policy_bindings }}"
+      loop_control: { label: "{{ item.object.type }} {{ item.object.name }}" }
+      delegate_to: localhost
+      register: _rbac_info
+
+    # Build planned adds/removals
+    - name: Compute RBAC deltas
+      ansible.builtin.set_fact:
+        _rbac_to_add: >-
+          {%- set adds = [] -%}
+          {%- for i in range(_rbac_info.results | length) -%}
+            {%- set b = policy_bindings[i] -%}
+            {%- set propagate = (b.object.propagate | default(true)) | bool -%}
+            {%- set desired = (b.grants | default([])) -%}
+            {%- set current = (_rbac_info.results[i].permission_info | default([])) -%}
+            {%- set desired_keys = desired
+                 | map('combine', {'propagate': propagate})
+                 | map('combine', {'object_type': b.object.type, 'object_name': b.object.name})
+                 | map('combine', {'_key': None})
+                 | list -%}
+            {%- for d in desired_keys -%}
+              {%- set _ = d.update({'_key': d.principal ~ '|' ~ d.role ~ '|' ~ (d.propagate | string)}) -%}
+            {%- endfor -%}
+            {%- set current_keys = current
+                 | map('combine', {'object_type': b.object.type, 'object_name': b.object.name})
+                 | map('combine', {'_key': None})
+                 | list -%}
+            {%- for c in current_keys -%}
+              {%- set _ = c.update({'_key': c.principal ~ '|' ~ c.role_name ~ '|' ~ (c.propagate | string)}) -%}
+            {%- endfor -%}
+            {%- for d in desired_keys -%}
+              {%- if not (current_keys | selectattr('_key', 'equalto', d._key) | list) -%}
+                {%- set _ = adds.append(d) -%}
+              {%- endif -%}
+            {%- endfor -%}
+          {%- endfor -%}
+          {{ _rbac_to_add + adds }}
+        _rbac_to_remove: >-
+          {%- set removals = [] -%}
+          {%- for i in range(_rbac_info.results | length) -%}
+            {%- set b = policy_bindings[i] -%}
+            {%- set exclusive = b.exclusive | default(false) | bool -%}
+            {%- set ignore = (b.ignore_principals | default([])) -%}
+            {%- set desired = (b.grants | default([])) -%}
+            {%- set current = (_rbac_info.results[i].permission_info | default([])) -%}
+            {%- if exclusive -%}
+              {%- for c in current -%}
+                {%- set is_system = (c.principal in ignore) -%}
+                {%- set match_role = (desired | selectattr('principal', 'equalto', c.principal) | selectattr('role', 'equalto', c.role_name) | list | length) > 0 -%}
+                {%- if (not is_system) and (not match_role) -%}
+                  {%- set _ = removals.append({
+                        'object_type': b.object.type,
+                        'object_name': b.object.name,
+                        'principal': c.principal,
+                        'role': c.role_name,
+                        'propagate': c.propagate | default(true)
+                      }) -%}
+                {%- endif -%}
+              {%- endfor -%}
             {%- endif -%}
           {%- endfor -%}
-        {%- endif -%}
-      {%- endfor -%}
-      {{ _rbac_to_remove + removals }}
+          {{ _rbac_to_remove + removals }}
 
-# Preview
-- name: RBAC plan (dry-run preview)
-  ansible.builtin.debug:
-    msg:
-      to_add: "{{ _rbac_to_add }}"
-      to_remove: "{{ _rbac_to_remove }}"
-      removals_enabled: "{{ rbac_allow_removal }}"
-  when: rbac_dry_run | bool
+    # Preview
+    - name: RBAC plan (dry-run preview)
+      ansible.builtin.debug:
+        msg:
+          to_add: "{{ _rbac_to_add }}"
+          to_remove: "{{ _rbac_to_remove }}"
+          removals_enabled: "{{ rbac_allow_removal }}"
+      when: rbac_dry_run | bool
 
-# Apply adds
-- name: Apply required role bindings (present)
-  community.vmware.vmware_object_role_permission:
-    hostname: "{{ vcenter_hostname }}"
-    username: "{{ vcenter_username }}"
-    password: "{{ vcenter_password }}"
-    validate_certs: "{{ vcenter_validate_certs }}"
-    object_type: "{{ item.object_type }}"
-    object_name: "{{ item.object_name }}"
-    principal: "{{ item.principal }}"
-    role: "{{ item.role }}"
-    propagate: "{{ item.propagate | default(true) }}"
-    state: present
-  no_log: true
-  loop: "{{ _rbac_to_add }}"
-  loop_control:
-    label: "{{ item.object_type }} {{ item.object_name }} -> {{ item.principal }} : {{ item.role }}"
-  when: not rbac_dry_run | bool
-  delegate_to: localhost
+    # Apply adds
+    - name: Apply required role bindings (present)
+      community.vmware.vmware_object_role_permission:
+        hostname: "{{ vcenter_hostname }}"
+        username: "{{ vcenter_username }}"
+        password: "{{ vcenter_password }}"
+        validate_certs: "{{ vcenter_validate_certs }}"
+        object_type: "{{ item.object_type }}"
+        object_name: "{{ item.object_name }}"
+        principal: "{{ item.principal }}"
+        role: "{{ item.role }}"
+        propagate: "{{ item.propagate | default(true) }}"
+        state: present
+      no_log: true
+      loop: "{{ _rbac_to_add }}"
+      loop_control:
+        label: "{{ item.object_type }} {{ item.object_name }} -> {{ item.principal }} : {{ item.role }}"
+      when: not rbac_dry_run | bool
+      delegate_to: localhost
 
-# Apply removals (guarded)
-- name: Remove non-policy bindings (exclusive scopes)
-  community.vmware.vmware_object_role_permission:
-    hostname: "{{ vcenter_hostname }}"
-    username: "{{ vcenter_username }}"
-    password: "{{ vcenter_password }}"
-    validate_certs: "{{ vcenter_validate_certs }}"
-    object_type: "{{ item.object_type }}"
-    object_name: "{{ item.object_name }}"
-    principal: "{{ item.principal }}"
-    role: "{{ item.role }}"
-    propagate: "{{ item.propagate | default(true) }}"
-    state: absent
-  no_log: true
-  loop: "{{ _rbac_to_remove }}"
-  loop_control:
-    label: "REMOVE {{ item.object_type }} {{ item.object_name }} -> {{ item.principal }} : {{ item.role }}"
-  when:
-    - not rbac_dry_run | bool
-    - rbac_allow_removal | bool
-  delegate_to: localhost
+    # Apply removals (guarded)
+    - name: Remove non-policy bindings (exclusive scopes)
+      community.vmware.vmware_object_role_permission:
+        hostname: "{{ vcenter_hostname }}"
+        username: "{{ vcenter_username }}"
+        password: "{{ vcenter_password }}"
+        validate_certs: "{{ vcenter_validate_certs }}"
+        object_type: "{{ item.object_type }}"
+        object_name: "{{ item.object_name }}"
+        principal: "{{ item.principal }}"
+        role: "{{ item.role }}"
+        propagate: "{{ item.propagate | default(true) }}"
+        state: absent
+      no_log: true
+      loop: "{{ _rbac_to_remove }}"
+      loop_control:
+        label: "REMOVE {{ item.object_type }} {{ item.object_name }} -> {{ item.principal }} : {{ item.role }}"
+      when:
+        - not rbac_dry_run | bool
+        - rbac_allow_removal | bool
+      delegate_to: localhost
 
-- name: Enforcement summary
-  ansible.builtin.debug:
-    msg:
-      added: "{{ _rbac_to_add | length }}"
-      removed: "{{ _rbac_to_remove | length }}"
-      dry_run: "{{ rbac_dry_run }}"
-      removals_enabled: "{{ rbac_allow_removal }}"
+    - name: Enforcement summary
+      ansible.builtin.debug:
+        msg:
+          added: "{{ _rbac_to_add | length }}"
+          removed: "{{ _rbac_to_remove | length }}"
+          dry_run: "{{ rbac_dry_run }}"
+          removals_enabled: "{{ rbac_allow_removal }}"
+
+    # ----------------------------- postflight -------------------
+
+    - name: "vmware/enforce_vsphere_rbac | Postflight | Verify the guarded body ran after a passing preflight"
+      ansible.builtin.assert:
+        that:
+          - fe_vmware_enforce_vsphere_rbac_preflight_passed | bool
+          - fe_vmware_enforce_vsphere_rbac_status in ['running', 'succeeded']
+        fail_msg: >-
+          vmware/enforce_vsphere_rbac: postflight validation failed - preflight passed
+          ={{ fe_vmware_enforce_vsphere_rbac_preflight_passed | default(false) }},
+          status={{ fe_vmware_enforce_vsphere_rbac_status | default('unknown') }}.
+        success_msg: "vmware/enforce_vsphere_rbac: postflight validation passed."
+        quiet: true
+      tags:
+        - always
+        - postflight
+        - validation
+
+    - name: "vmware/enforce_vsphere_rbac | Postflight | Record the successful outcome"
+      ansible.builtin.set_fact:
+        fe_vmware_enforce_vsphere_rbac_postflight_passed: true
+        fe_vmware_enforce_vsphere_rbac_status: "succeeded"
+      tags:
+        - always
+        - postflight
+        - validation
+
+  rescue:
+
+    - name: "vmware/enforce_vsphere_rbac | Rescue | Capture the failing task and error detail"
+      ansible.builtin.set_fact:
+        fe_vmware_enforce_vsphere_rbac_status: "failed"
+        fe_vmware_enforce_vsphere_rbac_postflight_passed: false
+        fe_vmware_enforce_vsphere_rbac_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+        fe_vmware_enforce_vsphere_rbac_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+      tags:
+        - always
+        - rescue
+
+    - name: "vmware/enforce_vsphere_rbac | Rescue | Report the failure"
+      ansible.builtin.debug:
+        msg: >-
+          vmware/enforce_vsphere_rbac: FAILED at '{{ fe_vmware_enforce_vsphere_rbac_failed_task }}' on
+          {{ inventory_hostname }} - {{ fe_vmware_enforce_vsphere_rbac_error }}
+      tags:
+        - always
+        - rescue
+
+    - name: "vmware/enforce_vsphere_rbac | Rescue | Re-raise the failure unless the caller opted to continue"
+      ansible.builtin.fail:
+        msg: >-
+          vmware/enforce_vsphere_rbac failed at '{{ fe_vmware_enforce_vsphere_rbac_failed_task }}': {{ fe_vmware_enforce_vsphere_rbac_error }}
+      when: not (fe_validation_continue_on_error | default(false) | bool)
+      tags:
+        - always
+        - rescue
+
+  always:
+
+    - name: "vmware/enforce_vsphere_rbac | Always | Compute the execution duration"
+      ansible.builtin.set_fact:
+        fe_vmware_enforce_vsphere_rbac_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+        fe_vmware_enforce_vsphere_rbac_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_vmware_enforce_vsphere_rbac_start_epoch | default(0) | int) }}"
+      tags:
+        - always
+
+    - name: "vmware/enforce_vsphere_rbac | Always | Publish the validation result with set_stats"
+      ansible.builtin.set_stats:
+        data:
+          fe_validation_results:
+            "vmware/enforce_vsphere_rbac":
+              component: "vmware/enforce_vsphere_rbac"
+              type: "tasks"
+              platform: "vmware"
+              host: "{{ inventory_hostname }}"
+              status: "{{ fe_vmware_enforce_vsphere_rbac_status | default('unknown') }}"
+              preflight_passed: "{{ fe_vmware_enforce_vsphere_rbac_preflight_passed | default(false) | bool }}"
+              postflight_passed: "{{ fe_vmware_enforce_vsphere_rbac_postflight_passed | default(false) | bool }}"
+              started_at: "{{ fe_vmware_enforce_vsphere_rbac_started_at | default('') }}"
+              ended_at: "{{ fe_vmware_enforce_vsphere_rbac_ended_at | default('') }}"
+              duration_seconds: "{{ fe_vmware_enforce_vsphere_rbac_duration_seconds | default(0) | int }}"
+              failed_task: "{{ fe_vmware_enforce_vsphere_rbac_failed_task | default('') }}"
+              error: "{{ fe_vmware_enforce_vsphere_rbac_error | default('') }}"
+              check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+          fe_validation_executions: 1
+          fe_validation_succeeded: "{{ 1 if fe_vmware_enforce_vsphere_rbac_status | default('') == 'succeeded' else 0 }}"
+          fe_validation_failed: "{{ 0 if fe_vmware_enforce_vsphere_rbac_status | default('') == 'succeeded' else 1 }}"
+          fe_validation_duration_seconds: "{{ fe_vmware_enforce_vsphere_rbac_duration_seconds | default(0) | int }}"
+          fe_validation_failed_components: >-
+            {{ [] if fe_vmware_enforce_vsphere_rbac_status | default('') == 'succeeded' else ['vmware/enforce_vsphere_rbac'] }}
+        aggregate: true
+        per_host: false
+      tags:
+        - always
+
+    - name: "vmware/enforce_vsphere_rbac | Always | Mark the validation statistics as published"
+      ansible.builtin.set_fact:
+        fe_vmware_enforce_vsphere_rbac_stats_published: true
+      tags:
+        - always

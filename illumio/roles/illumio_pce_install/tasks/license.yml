@@ -1,75 +1,258 @@
 ---
 # PCE license activation
 
-- name: Check if license file exists
-  stat:
-    path: "{{ illumio_pce_license_file }}"
-  delegate_to: localhost
-  register: license_file_stat
+# ---------------------------------------------------------------------------
+# Fourth Estate preflight / postflight validation harness
+#
+# The task file body below is wrapped in an Ansible block/rescue/always structure:
+#
+#   block   preflight validation runs first, then the original task file body, then
+#           postflight validation. Any failure transfers control to rescue.
+#   rescue  records which task failed and why, then re-raises so a failure is
+#           never silently swallowed. Set fe_validation_continue_on_error=true
+#           to record the failure and keep going instead.
+#   always  computes the run duration and publishes the outcome through
+#           ansible.builtin.set_stats, so a wrapping playbook, AWX/AAP or CI can
+#           consume the result without scraping log output.
+#
+# Published stats (see docs/VALIDATION_AND_STATS.md):
+#   fe_validation_results['illumio/illumio_pce_install/license']  per-component record
+#   fe_validation_executions / _succeeded / _failed / _duration_seconds
+#   fe_validation_failed_components
+#
+# Add component-specific preflight checks without editing this file by setting
+#   fe_illumio_illumio_pce_install_license_required_vars: [var_one, var_two]
+# ---------------------------------------------------------------------------
 
-- name: Fail if license file not found
-  fail:
-    msg: "License file not found: {{ illumio_pce_license_file }}"
-  when: not license_file_stat.stat.exists
+- name: "illumio/illumio_pce_install/license | Initialize validation state"
+  ansible.builtin.set_fact:
+    fe_illumio_illumio_pce_install_license_start_epoch: "{{ now(fmt='%s') | int }}"
+    fe_illumio_illumio_pce_install_license_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+    fe_illumio_illumio_pce_install_license_status: "running"
+    fe_illumio_illumio_pce_install_license_preflight_passed: false
+    fe_illumio_illumio_pce_install_license_postflight_passed: false
+    fe_illumio_illumio_pce_install_license_failed_task: ""
+    fe_illumio_illumio_pce_install_license_error: ""
+    fe_illumio_illumio_pce_install_license_stats_published: false
+  tags:
+    - always
 
-- name: Copy license file to PCE
-  copy:
-    src: "{{ illumio_pce_license_file }}"
-    dest: /tmp/illumio_license.json
-    mode: '0600'
+- name: "illumio/illumio_pce_install/license | Guarded execution with preflight and postflight validation"
+  block:
 
-- name: Upload license to PCE
-  uri:
-    url: "https://{{ illumio_pce_fqdn }}:{{ illumio_pce_port }}/api/v2/orgs/{{ illumio_org_id }}/licenses"
-    method: POST
-    user: "{{ illumio_pce_admin_user }}"
-    password: "{{ illumio_pce_admin_password }}"
-    force_basic_auth: yes
-    validate_certs: no
-    body: "{{ lookup('file', '/tmp/illumio_license.json') }}"
-    body_format: json
-    status_code: [201, 409]
-  register: license_upload
-  no_log: true
+    # ----------------------------- preflight --------------------
 
-- name: Get license information
-  uri:
-    url: "https://{{ illumio_pce_fqdn }}:{{ illumio_pce_port }}/api/v2/orgs/{{ illumio_org_id }}/licenses"
-    method: GET
-    user: "{{ illumio_pce_admin_user }}"
-    password: "{{ illumio_pce_admin_password }}"
-    force_basic_auth: yes
-    validate_certs: no
-    return_content: yes
-  register: license_info
-  no_log: true
+    - name: "illumio/illumio_pce_install/license | Preflight | Verify the control node meets the minimum ansible-core version"
+      ansible.builtin.assert:
+        that:
+          - ansible_version.full is version(fe_validation_min_ansible_version | default('2.12'), '>=')
+        fail_msg: >-
+          illumio/illumio_pce_install/license: requires ansible-core
+          {{ fe_validation_min_ansible_version | default('2.12') }} or newer,
+          found {{ ansible_version.full }}.
+        success_msg: >-
+          illumio/illumio_pce_install/license: ansible-core {{ ansible_version.full }} satisfies the minimum.
+        quiet: true
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: Parse license details
-  set_fact:
-    license_expiration: "{{ license_info.json[0].expiration_date if license_info.json | length > 0 else 'Unknown' }}"
-    license_max_workloads: "{{ license_info.json[0].max_workloads if license_info.json | length > 0 else 'Unknown' }}"
+    - name: "illumio/illumio_pce_install/license | Preflight | Verify every declared required variable is defined"
+      ansible.builtin.assert:
+        that:
+          - vars[item] is defined
+        fail_msg: "illumio/illumio_pce_install/license: required variable '{{ item }}' is not defined."
+        success_msg: "illumio/illumio_pce_install/license: required variable '{{ item }}' is defined."
+        quiet: true
+      loop: "{{ fe_illumio_illumio_pce_install_license_required_vars | default([]) }}"
+      loop_control:
+        label: "{{ item }}"
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: Display license information
-  debug:
-    msg: |
-      License activated successfully
-      - Expiration: {{ license_expiration }}
-      - Max Workloads: {{ license_max_workloads }}
+    - name: "illumio/illumio_pce_install/license | Preflight | Record that preflight validation passed"
+      ansible.builtin.set_fact:
+        fe_illumio_illumio_pce_install_license_preflight_passed: true
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: Remove temporary license file
-  file:
-    path: /tmp/illumio_license.json
-    state: absent
+    # ----------------------------- execute ----------------------
 
-- name: Create license expiration reminder
-  cron:
-    name: "Check Illumio PCE license expiration"
-    minute: "0"
-    hour: "9"
-    day: "1"
-    job: |
-      /usr/bin/curl -s -u {{ illumio_pce_admin_user }}:{{ illumio_pce_admin_password }} \
-      https://{{ illumio_pce_fqdn }}:{{ illumio_pce_port }}/api/v2/orgs/{{ illumio_org_id }}/licenses \
-      | grep -q "expiration_date" && echo "PCE license check completed" || \
-      echo "WARNING: PCE license check failed" | mail -s "Illumio PCE License Alert" {{ illumio_pce_admin_email }}
-  when: illumio_pce_admin_email is defined
+    - name: Check if license file exists
+      stat:
+        path: "{{ illumio_pce_license_file }}"
+      delegate_to: localhost
+      register: license_file_stat
+
+    - name: Fail if license file not found
+      fail:
+        msg: "License file not found: {{ illumio_pce_license_file }}"
+      when: not license_file_stat.stat.exists
+
+    - name: Copy license file to PCE
+      copy:
+        src: "{{ illumio_pce_license_file }}"
+        dest: /tmp/illumio_license.json
+        mode: '0600'
+
+    - name: Upload license to PCE
+      uri:
+        url: "https://{{ illumio_pce_fqdn }}:{{ illumio_pce_port }}/api/v2/orgs/{{ illumio_org_id }}/licenses"
+        method: POST
+        user: "{{ illumio_pce_admin_user }}"
+        password: "{{ illumio_pce_admin_password }}"
+        force_basic_auth: yes
+        validate_certs: no
+        body: "{{ lookup('file', '/tmp/illumio_license.json') }}"
+        body_format: json
+        status_code: [201, 409]
+      register: license_upload
+      no_log: true
+
+    - name: Get license information
+      uri:
+        url: "https://{{ illumio_pce_fqdn }}:{{ illumio_pce_port }}/api/v2/orgs/{{ illumio_org_id }}/licenses"
+        method: GET
+        user: "{{ illumio_pce_admin_user }}"
+        password: "{{ illumio_pce_admin_password }}"
+        force_basic_auth: yes
+        validate_certs: no
+        return_content: yes
+      register: license_info
+      no_log: true
+
+    - name: Parse license details
+      set_fact:
+        license_expiration: "{{ license_info.json[0].expiration_date if license_info.json | length > 0 else 'Unknown' }}"
+        license_max_workloads: "{{ license_info.json[0].max_workloads if license_info.json | length > 0 else 'Unknown' }}"
+
+    - name: Display license information
+      debug:
+        msg: |
+          License activated successfully
+          - Expiration: {{ license_expiration }}
+          - Max Workloads: {{ license_max_workloads }}
+
+    - name: Remove temporary license file
+      file:
+        path: /tmp/illumio_license.json
+        state: absent
+
+    - name: Create license expiration reminder
+      cron:
+        name: "Check Illumio PCE license expiration"
+        minute: "0"
+        hour: "9"
+        day: "1"
+        job: |
+          /usr/bin/curl -s -u {{ illumio_pce_admin_user }}:{{ illumio_pce_admin_password }} \
+          https://{{ illumio_pce_fqdn }}:{{ illumio_pce_port }}/api/v2/orgs/{{ illumio_org_id }}/licenses \
+          | grep -q "expiration_date" && echo "PCE license check completed" || \
+          echo "WARNING: PCE license check failed" | mail -s "Illumio PCE License Alert" {{ illumio_pce_admin_email }}
+      when: illumio_pce_admin_email is defined
+
+    # ----------------------------- postflight -------------------
+
+    - name: "illumio/illumio_pce_install/license | Postflight | Verify the guarded body ran after a passing preflight"
+      ansible.builtin.assert:
+        that:
+          - fe_illumio_illumio_pce_install_license_preflight_passed | bool
+          - fe_illumio_illumio_pce_install_license_status in ['running', 'succeeded']
+        fail_msg: >-
+          illumio/illumio_pce_install/license: postflight validation failed - preflight passed
+          ={{ fe_illumio_illumio_pce_install_license_preflight_passed | default(false) }},
+          status={{ fe_illumio_illumio_pce_install_license_status | default('unknown') }}.
+        success_msg: "illumio/illumio_pce_install/license: postflight validation passed."
+        quiet: true
+      tags:
+        - always
+        - postflight
+        - validation
+
+    - name: "illumio/illumio_pce_install/license | Postflight | Record the successful outcome"
+      ansible.builtin.set_fact:
+        fe_illumio_illumio_pce_install_license_postflight_passed: true
+        fe_illumio_illumio_pce_install_license_status: "succeeded"
+      tags:
+        - always
+        - postflight
+        - validation
+
+  rescue:
+
+    - name: "illumio/illumio_pce_install/license | Rescue | Capture the failing task and error detail"
+      ansible.builtin.set_fact:
+        fe_illumio_illumio_pce_install_license_status: "failed"
+        fe_illumio_illumio_pce_install_license_postflight_passed: false
+        fe_illumio_illumio_pce_install_license_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+        fe_illumio_illumio_pce_install_license_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+      tags:
+        - always
+        - rescue
+
+    - name: "illumio/illumio_pce_install/license | Rescue | Report the failure"
+      ansible.builtin.debug:
+        msg: >-
+          illumio/illumio_pce_install/license: FAILED at '{{ fe_illumio_illumio_pce_install_license_failed_task }}' on
+          {{ inventory_hostname }} - {{ fe_illumio_illumio_pce_install_license_error }}
+      tags:
+        - always
+        - rescue
+
+    - name: "illumio/illumio_pce_install/license | Rescue | Re-raise the failure unless the caller opted to continue"
+      ansible.builtin.fail:
+        msg: >-
+          illumio/illumio_pce_install/license failed at '{{ fe_illumio_illumio_pce_install_license_failed_task }}': {{ fe_illumio_illumio_pce_install_license_error }}
+      when: not (fe_validation_continue_on_error | default(false) | bool)
+      tags:
+        - always
+        - rescue
+
+  always:
+
+    - name: "illumio/illumio_pce_install/license | Always | Compute the execution duration"
+      ansible.builtin.set_fact:
+        fe_illumio_illumio_pce_install_license_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+        fe_illumio_illumio_pce_install_license_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_illumio_illumio_pce_install_license_start_epoch | default(0) | int) }}"
+      tags:
+        - always
+
+    - name: "illumio/illumio_pce_install/license | Always | Publish the validation result with set_stats"
+      ansible.builtin.set_stats:
+        data:
+          fe_validation_results:
+            "illumio/illumio_pce_install/license":
+              component: "illumio/illumio_pce_install/license"
+              type: "role-tasks"
+              platform: "illumio"
+              host: "{{ inventory_hostname }}"
+              status: "{{ fe_illumio_illumio_pce_install_license_status | default('unknown') }}"
+              preflight_passed: "{{ fe_illumio_illumio_pce_install_license_preflight_passed | default(false) | bool }}"
+              postflight_passed: "{{ fe_illumio_illumio_pce_install_license_postflight_passed | default(false) | bool }}"
+              started_at: "{{ fe_illumio_illumio_pce_install_license_started_at | default('') }}"
+              ended_at: "{{ fe_illumio_illumio_pce_install_license_ended_at | default('') }}"
+              duration_seconds: "{{ fe_illumio_illumio_pce_install_license_duration_seconds | default(0) | int }}"
+              failed_task: "{{ fe_illumio_illumio_pce_install_license_failed_task | default('') }}"
+              error: "{{ fe_illumio_illumio_pce_install_license_error | default('') }}"
+              check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+          fe_validation_executions: 1
+          fe_validation_succeeded: "{{ 1 if fe_illumio_illumio_pce_install_license_status | default('') == 'succeeded' else 0 }}"
+          fe_validation_failed: "{{ 0 if fe_illumio_illumio_pce_install_license_status | default('') == 'succeeded' else 1 }}"
+          fe_validation_duration_seconds: "{{ fe_illumio_illumio_pce_install_license_duration_seconds | default(0) | int }}"
+          fe_validation_failed_components: >-
+            {{ [] if fe_illumio_illumio_pce_install_license_status | default('') == 'succeeded' else ['illumio/illumio_pce_install/license'] }}
+        aggregate: true
+        per_host: false
+      tags:
+        - always
+
+    - name: "illumio/illumio_pce_install/license | Always | Mark the validation statistics as published"
+      ansible.builtin.set_fact:
+        fe_illumio_illumio_pce_install_license_stats_published: true
+      tags:
+        - always

@@ -2,6 +2,23 @@
 # Cisco UCS Fabric Interconnect Configuration Playbook
 # Configures Fabric Interconnects A and B for Fourth Estate deployment
 
+# ---------------------------------------------------------------------------
+# Fourth Estate preflight / postflight validation harness
+#
+# Every play below carries a block/rescue/always validation wrapper:
+#
+#   pre_tasks   preflight validation. On failure it records the reason,
+#               publishes the outcome with set_stats and aborts the play
+#               before any role or task runs.
+#   tasks       the original task list, wrapped so a failure is captured
+#               (which task, which error) and then re-raised.
+#   post_tasks  postflight validation, then the run record is published with
+#               ansible.builtin.set_stats.
+#
+# Set fe_validation_continue_on_error=true to record failures and keep going.
+# See docs/VALIDATION_AND_STATS.md for the published stats schema.
+# ---------------------------------------------------------------------------
+
 - name: Configure Cisco UCS Fabric Interconnects
   hosts: localhost
   gather_facts: yes
@@ -23,6 +40,140 @@
     # fi_mgmt_gateway: "192.168.1.1"
 
   pre_tasks:
+    - name: "cisco/40_ucs_fabric_interconnect_config | Preflight validation"
+      tags:
+        - always
+        - preflight
+        - validation
+      block:
+
+        - name: "cisco/40_ucs_fabric_interconnect_config | Initialize validation state"
+          ansible.builtin.set_fact:
+            fe_cisco_40_ucs_fabric_interconnect_config_start_epoch: "{{ now(fmt='%s') | int }}"
+            fe_cisco_40_ucs_fabric_interconnect_config_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+            fe_cisco_40_ucs_fabric_interconnect_config_status: "running"
+            fe_cisco_40_ucs_fabric_interconnect_config_preflight_passed: false
+            fe_cisco_40_ucs_fabric_interconnect_config_postflight_passed: false
+            fe_cisco_40_ucs_fabric_interconnect_config_failed_task: ""
+            fe_cisco_40_ucs_fabric_interconnect_config_error: ""
+            fe_cisco_40_ucs_fabric_interconnect_config_stats_published: false
+          tags:
+            - always
+
+        - name: "cisco/40_ucs_fabric_interconnect_config | Preflight | Verify the control node meets the minimum ansible-core version"
+          ansible.builtin.assert:
+            that:
+              - ansible_version.full is version(fe_validation_min_ansible_version | default('2.12'), '>=')
+            fail_msg: >-
+              cisco/40_ucs_fabric_interconnect_config: requires ansible-core
+              {{ fe_validation_min_ansible_version | default('2.12') }} or newer,
+              found {{ ansible_version.full }}.
+            success_msg: >-
+              cisco/40_ucs_fabric_interconnect_config: ansible-core {{ ansible_version.full }} satisfies the minimum.
+            quiet: true
+          tags:
+            - always
+            - preflight
+            - validation
+
+        - name: "cisco/40_ucs_fabric_interconnect_config | Preflight | Verify every declared required variable is defined"
+          ansible.builtin.assert:
+            that:
+              - vars[item] is defined
+            fail_msg: "cisco/40_ucs_fabric_interconnect_config: required variable '{{ item }}' is not defined."
+            success_msg: "cisco/40_ucs_fabric_interconnect_config: required variable '{{ item }}' is defined."
+            quiet: true
+          loop: "{{ fe_cisco_40_ucs_fabric_interconnect_config_required_vars | default([]) }}"
+          loop_control:
+            label: "{{ item }}"
+          tags:
+            - always
+            - preflight
+            - validation
+
+        - name: "cisco/40_ucs_fabric_interconnect_config | Preflight | Record that preflight validation passed"
+          ansible.builtin.set_fact:
+            fe_cisco_40_ucs_fabric_interconnect_config_preflight_passed: true
+          tags:
+            - always
+            - preflight
+            - validation
+
+      rescue:
+
+        - name: "cisco/40_ucs_fabric_interconnect_config | Rescue | Capture the failing task and error detail"
+          ansible.builtin.set_fact:
+            fe_cisco_40_ucs_fabric_interconnect_config_status: "preflight_failed"
+            fe_cisco_40_ucs_fabric_interconnect_config_postflight_passed: false
+            fe_cisco_40_ucs_fabric_interconnect_config_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+            fe_cisco_40_ucs_fabric_interconnect_config_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+          tags:
+            - always
+            - rescue
+
+        - name: "cisco/40_ucs_fabric_interconnect_config | Rescue | Report the failure"
+          ansible.builtin.debug:
+            msg: >-
+              cisco/40_ucs_fabric_interconnect_config: FAILED at '{{ fe_cisco_40_ucs_fabric_interconnect_config_failed_task }}' on
+              {{ inventory_hostname }} - {{ fe_cisco_40_ucs_fabric_interconnect_config_error }}
+          tags:
+            - always
+            - rescue
+
+        - name: "cisco/40_ucs_fabric_interconnect_config | Always | Publish the validation result with set_stats"
+          ansible.builtin.set_stats:
+            data:
+              fe_validation_results:
+                "cisco/40_ucs_fabric_interconnect_config":
+                  component: "cisco/40_ucs_fabric_interconnect_config"
+                  type: "playbook"
+                  platform: "cisco"
+                  host: "{{ inventory_hostname }}"
+                  status: "{{ fe_cisco_40_ucs_fabric_interconnect_config_status | default('unknown') }}"
+                  preflight_passed: "{{ fe_cisco_40_ucs_fabric_interconnect_config_preflight_passed | default(false) | bool }}"
+                  postflight_passed: "{{ fe_cisco_40_ucs_fabric_interconnect_config_postflight_passed | default(false) | bool }}"
+                  started_at: "{{ fe_cisco_40_ucs_fabric_interconnect_config_started_at | default('') }}"
+                  ended_at: "{{ fe_cisco_40_ucs_fabric_interconnect_config_ended_at | default('') }}"
+                  duration_seconds: "{{ fe_cisco_40_ucs_fabric_interconnect_config_duration_seconds | default(0) | int }}"
+                  failed_task: "{{ fe_cisco_40_ucs_fabric_interconnect_config_failed_task | default('') }}"
+                  error: "{{ fe_cisco_40_ucs_fabric_interconnect_config_error | default('') }}"
+                  check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+              fe_validation_executions: 1
+              fe_validation_succeeded: "{{ 1 if fe_cisco_40_ucs_fabric_interconnect_config_status | default('') == 'succeeded' else 0 }}"
+              fe_validation_failed: "{{ 0 if fe_cisco_40_ucs_fabric_interconnect_config_status | default('') == 'succeeded' else 1 }}"
+              fe_validation_duration_seconds: "{{ fe_cisco_40_ucs_fabric_interconnect_config_duration_seconds | default(0) | int }}"
+              fe_validation_failed_components: >-
+                {{ [] if fe_cisco_40_ucs_fabric_interconnect_config_status | default('') == 'succeeded' else ['cisco/40_ucs_fabric_interconnect_config'] }}
+            aggregate: true
+            per_host: false
+          tags:
+            - always
+
+        - name: "cisco/40_ucs_fabric_interconnect_config | Always | Mark the validation statistics as published"
+          ansible.builtin.set_fact:
+            fe_cisco_40_ucs_fabric_interconnect_config_stats_published: true
+          tags:
+            - always
+
+        - name: "cisco/40_ucs_fabric_interconnect_config | Rescue | Re-raise the failure unless the caller opted to continue"
+          ansible.builtin.fail:
+            msg: >-
+              cisco/40_ucs_fabric_interconnect_config failed at '{{ fe_cisco_40_ucs_fabric_interconnect_config_failed_task }}': {{ fe_cisco_40_ucs_fabric_interconnect_config_error }}
+          when: not (fe_validation_continue_on_error | default(false) | bool)
+          tags:
+            - always
+            - rescue
+
+      always:
+
+        - name: "cisco/40_ucs_fabric_interconnect_config | Always | Report the preflight outcome"
+          ansible.builtin.debug:
+            msg: >-
+              cisco/40_ucs_fabric_interconnect_config: preflight
+              {{ 'passed' if fe_cisco_40_ucs_fabric_interconnect_config_preflight_passed | default(false) | bool else 'FAILED' }}
+              on {{ inventory_hostname }}.
+          tags:
+            - always
     - name: Display Fabric Interconnect configuration banner
       ansible.builtin.debug:
         msg: |
@@ -75,13 +226,95 @@
           - Version: {{ ucs_connection_test.objects[0].version }}
 
   tasks:
-    - name: Configure Fabric Interconnects
-      ansible.builtin.include_role:
-        name: ucs_prod_infrastructure
-        tasks_from: fabric_interconnects
-      tags:
-        - fabric_interconnects
-        - fi_config
+    - name: "cisco/40_ucs_fabric_interconnect_config | Guarded execution with rescue and always handling"
+      block:
+
+        - name: Configure Fabric Interconnects
+          ansible.builtin.include_role:
+            name: ucs_prod_infrastructure
+            tasks_from: fabric_interconnects
+          tags:
+            - fabric_interconnects
+            - fi_config
+
+      rescue:
+
+        - name: "cisco/40_ucs_fabric_interconnect_config | Rescue | Capture the failing task and error detail"
+          ansible.builtin.set_fact:
+            fe_cisco_40_ucs_fabric_interconnect_config_status: "failed"
+            fe_cisco_40_ucs_fabric_interconnect_config_postflight_passed: false
+            fe_cisco_40_ucs_fabric_interconnect_config_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+            fe_cisco_40_ucs_fabric_interconnect_config_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+          tags:
+            - always
+            - rescue
+
+        - name: "cisco/40_ucs_fabric_interconnect_config | Rescue | Report the failure"
+          ansible.builtin.debug:
+            msg: >-
+              cisco/40_ucs_fabric_interconnect_config: FAILED at '{{ fe_cisco_40_ucs_fabric_interconnect_config_failed_task }}' on
+              {{ inventory_hostname }} - {{ fe_cisco_40_ucs_fabric_interconnect_config_error }}
+          tags:
+            - always
+            - rescue
+
+        - name: "cisco/40_ucs_fabric_interconnect_config | Rescue | Re-raise the failure unless the caller opted to continue"
+          ansible.builtin.fail:
+            msg: >-
+              cisco/40_ucs_fabric_interconnect_config failed at '{{ fe_cisco_40_ucs_fabric_interconnect_config_failed_task }}': {{ fe_cisco_40_ucs_fabric_interconnect_config_error }}
+          when: not (fe_validation_continue_on_error | default(false) | bool)
+          tags:
+            - always
+            - rescue
+
+      always:
+
+        - name: "cisco/40_ucs_fabric_interconnect_config | Always | Compute the execution duration"
+          ansible.builtin.set_fact:
+            fe_cisco_40_ucs_fabric_interconnect_config_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+            fe_cisco_40_ucs_fabric_interconnect_config_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_cisco_40_ucs_fabric_interconnect_config_start_epoch | default(0) | int) }}"
+          tags:
+            - always
+
+        - name: "cisco/40_ucs_fabric_interconnect_config | Always | Publish the validation result with set_stats"
+          ansible.builtin.set_stats:
+            data:
+              fe_validation_results:
+                "cisco/40_ucs_fabric_interconnect_config":
+                  component: "cisco/40_ucs_fabric_interconnect_config"
+                  type: "playbook"
+                  platform: "cisco"
+                  host: "{{ inventory_hostname }}"
+                  status: "{{ fe_cisco_40_ucs_fabric_interconnect_config_status | default('unknown') }}"
+                  preflight_passed: "{{ fe_cisco_40_ucs_fabric_interconnect_config_preflight_passed | default(false) | bool }}"
+                  postflight_passed: "{{ fe_cisco_40_ucs_fabric_interconnect_config_postflight_passed | default(false) | bool }}"
+                  started_at: "{{ fe_cisco_40_ucs_fabric_interconnect_config_started_at | default('') }}"
+                  ended_at: "{{ fe_cisco_40_ucs_fabric_interconnect_config_ended_at | default('') }}"
+                  duration_seconds: "{{ fe_cisco_40_ucs_fabric_interconnect_config_duration_seconds | default(0) | int }}"
+                  failed_task: "{{ fe_cisco_40_ucs_fabric_interconnect_config_failed_task | default('') }}"
+                  error: "{{ fe_cisco_40_ucs_fabric_interconnect_config_error | default('') }}"
+                  check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+              fe_validation_executions: 1
+              fe_validation_succeeded: "{{ 1 if fe_cisco_40_ucs_fabric_interconnect_config_status | default('') == 'succeeded' else 0 }}"
+              fe_validation_failed: "{{ 0 if fe_cisco_40_ucs_fabric_interconnect_config_status | default('') == 'succeeded' else 1 }}"
+              fe_validation_duration_seconds: "{{ fe_cisco_40_ucs_fabric_interconnect_config_duration_seconds | default(0) | int }}"
+              fe_validation_failed_components: >-
+                {{ [] if fe_cisco_40_ucs_fabric_interconnect_config_status | default('') == 'succeeded' else ['cisco/40_ucs_fabric_interconnect_config'] }}
+            aggregate: true
+            per_host: false
+          when:
+            - fe_cisco_40_ucs_fabric_interconnect_config_status | default('') == 'failed'
+            - not (fe_cisco_40_ucs_fabric_interconnect_config_stats_published | default(false) | bool)
+          tags:
+            - always
+
+        - name: "cisco/40_ucs_fabric_interconnect_config | Always | Mark the validation statistics as published"
+          ansible.builtin.set_fact:
+            fe_cisco_40_ucs_fabric_interconnect_config_stats_published: true
+          when:
+            - fe_cisco_40_ucs_fabric_interconnect_config_status | default('') == 'failed'
+          tags:
+            - always
 
   post_tasks:
     - name: Display deployment summary
@@ -117,3 +350,118 @@
       loop: "{{ artifact_files.files }}"
       loop_control:
         label: "{{ item.path | basename }}"
+    - name: "cisco/40_ucs_fabric_interconnect_config | Postflight validation"
+      tags:
+        - always
+        - postflight
+        - validation
+      block:
+
+        - name: "cisco/40_ucs_fabric_interconnect_config | Postflight | Verify the guarded body ran after a passing preflight"
+          ansible.builtin.assert:
+            that:
+              - fe_cisco_40_ucs_fabric_interconnect_config_preflight_passed | bool
+              - fe_cisco_40_ucs_fabric_interconnect_config_status in ['running', 'succeeded']
+            fail_msg: >-
+              cisco/40_ucs_fabric_interconnect_config: postflight validation failed - preflight passed
+              ={{ fe_cisco_40_ucs_fabric_interconnect_config_preflight_passed | default(false) }},
+              status={{ fe_cisco_40_ucs_fabric_interconnect_config_status | default('unknown') }}.
+            success_msg: "cisco/40_ucs_fabric_interconnect_config: postflight validation passed."
+            quiet: true
+          tags:
+            - always
+            - postflight
+            - validation
+
+        - name: "cisco/40_ucs_fabric_interconnect_config | Postflight | Record the successful outcome"
+          ansible.builtin.set_fact:
+            fe_cisco_40_ucs_fabric_interconnect_config_postflight_passed: true
+            fe_cisco_40_ucs_fabric_interconnect_config_status: "succeeded"
+          tags:
+            - always
+            - postflight
+            - validation
+
+      rescue:
+
+        - name: "cisco/40_ucs_fabric_interconnect_config | Rescue | Capture the failing task and error detail"
+          ansible.builtin.set_fact:
+            fe_cisco_40_ucs_fabric_interconnect_config_status: "failed"
+            fe_cisco_40_ucs_fabric_interconnect_config_postflight_passed: false
+            fe_cisco_40_ucs_fabric_interconnect_config_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+            fe_cisco_40_ucs_fabric_interconnect_config_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+          tags:
+            - always
+            - rescue
+
+        - name: "cisco/40_ucs_fabric_interconnect_config | Rescue | Report the failure"
+          ansible.builtin.debug:
+            msg: >-
+              cisco/40_ucs_fabric_interconnect_config: FAILED at '{{ fe_cisco_40_ucs_fabric_interconnect_config_failed_task }}' on
+              {{ inventory_hostname }} - {{ fe_cisco_40_ucs_fabric_interconnect_config_error }}
+          tags:
+            - always
+            - rescue
+
+        - name: "cisco/40_ucs_fabric_interconnect_config | Rescue | Re-raise the failure unless the caller opted to continue"
+          ansible.builtin.fail:
+            msg: >-
+              cisco/40_ucs_fabric_interconnect_config failed at '{{ fe_cisco_40_ucs_fabric_interconnect_config_failed_task }}': {{ fe_cisco_40_ucs_fabric_interconnect_config_error }}
+          when: not (fe_validation_continue_on_error | default(false) | bool)
+          tags:
+            - always
+            - rescue
+
+      always:
+
+        - name: "cisco/40_ucs_fabric_interconnect_config | Always | Compute the execution duration"
+          ansible.builtin.set_fact:
+            fe_cisco_40_ucs_fabric_interconnect_config_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+            fe_cisco_40_ucs_fabric_interconnect_config_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_cisco_40_ucs_fabric_interconnect_config_start_epoch | default(0) | int) }}"
+          tags:
+            - always
+
+        - name: "cisco/40_ucs_fabric_interconnect_config | Always | Publish the validation result with set_stats"
+          ansible.builtin.set_stats:
+            data:
+              fe_validation_results:
+                "cisco/40_ucs_fabric_interconnect_config":
+                  component: "cisco/40_ucs_fabric_interconnect_config"
+                  type: "playbook"
+                  platform: "cisco"
+                  host: "{{ inventory_hostname }}"
+                  status: "{{ fe_cisco_40_ucs_fabric_interconnect_config_status | default('unknown') }}"
+                  preflight_passed: "{{ fe_cisco_40_ucs_fabric_interconnect_config_preflight_passed | default(false) | bool }}"
+                  postflight_passed: "{{ fe_cisco_40_ucs_fabric_interconnect_config_postflight_passed | default(false) | bool }}"
+                  started_at: "{{ fe_cisco_40_ucs_fabric_interconnect_config_started_at | default('') }}"
+                  ended_at: "{{ fe_cisco_40_ucs_fabric_interconnect_config_ended_at | default('') }}"
+                  duration_seconds: "{{ fe_cisco_40_ucs_fabric_interconnect_config_duration_seconds | default(0) | int }}"
+                  failed_task: "{{ fe_cisco_40_ucs_fabric_interconnect_config_failed_task | default('') }}"
+                  error: "{{ fe_cisco_40_ucs_fabric_interconnect_config_error | default('') }}"
+                  check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+              fe_validation_executions: 1
+              fe_validation_succeeded: "{{ 1 if fe_cisco_40_ucs_fabric_interconnect_config_status | default('') == 'succeeded' else 0 }}"
+              fe_validation_failed: "{{ 0 if fe_cisco_40_ucs_fabric_interconnect_config_status | default('') == 'succeeded' else 1 }}"
+              fe_validation_duration_seconds: "{{ fe_cisco_40_ucs_fabric_interconnect_config_duration_seconds | default(0) | int }}"
+              fe_validation_failed_components: >-
+                {{ [] if fe_cisco_40_ucs_fabric_interconnect_config_status | default('') == 'succeeded' else ['cisco/40_ucs_fabric_interconnect_config'] }}
+            aggregate: true
+            per_host: false
+          when:
+            - not (fe_cisco_40_ucs_fabric_interconnect_config_stats_published | default(false) | bool)
+          tags:
+            - always
+
+        - name: "cisco/40_ucs_fabric_interconnect_config | Always | Mark the validation statistics as published"
+          ansible.builtin.set_fact:
+            fe_cisco_40_ucs_fabric_interconnect_config_stats_published: true
+          tags:
+            - always
+
+        - name: "cisco/40_ucs_fabric_interconnect_config | Always | Report the run summary"
+          ansible.builtin.debug:
+            msg: >-
+              cisco/40_ucs_fabric_interconnect_config: {{ fe_cisco_40_ucs_fabric_interconnect_config_status | default('unknown') }} in
+              {{ fe_cisco_40_ucs_fabric_interconnect_config_duration_seconds | default(0) }}s on {{ inventory_hostname }}.
+          tags:
+            - always

@@ -1,4 +1,21 @@
 ---
+# ---------------------------------------------------------------------------
+# Fourth Estate preflight / postflight validation harness
+#
+# Every play below carries a block/rescue/always validation wrapper:
+#
+#   pre_tasks   preflight validation. On failure it records the reason,
+#               publishes the outcome with set_stats and aborts the play
+#               before any role or task runs.
+#   tasks       the original task list, wrapped so a failure is captured
+#               (which task, which error) and then re-raised.
+#   post_tasks  postflight validation, then the run record is published with
+#               ansible.builtin.set_stats.
+#
+# Set fe_validation_continue_on_error=true to record failures and keep going.
+# See docs/VALIDATION_AND_STATS.md for the published stats schema.
+# ---------------------------------------------------------------------------
+
 - name: ans_ops__artifacts_retention.yml
   hosts: localhost
   connection: local
@@ -14,6 +31,140 @@
     apply_changes: "{{ apply_changes | default(false) }}"
     report_path: "{{ report_path | default(artifacts_dir ~ '/artifacts_retention_report.csv') }}"
   pre_tasks:
+    - name: "ansible/tasks/ans_ops__artifacts_retention | Preflight validation"
+      tags:
+        - always
+        - preflight
+        - validation
+      block:
+
+        - name: "ansible/tasks/ans_ops__artifacts_retention | Initialize validation state"
+          ansible.builtin.set_fact:
+            fe_ansible_tasks_ans_ops__artifacts_retention_start_epoch: "{{ now(fmt='%s') | int }}"
+            fe_ansible_tasks_ans_ops__artifacts_retention_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+            fe_ansible_tasks_ans_ops__artifacts_retention_status: "running"
+            fe_ansible_tasks_ans_ops__artifacts_retention_preflight_passed: false
+            fe_ansible_tasks_ans_ops__artifacts_retention_postflight_passed: false
+            fe_ansible_tasks_ans_ops__artifacts_retention_failed_task: ""
+            fe_ansible_tasks_ans_ops__artifacts_retention_error: ""
+            fe_ansible_tasks_ans_ops__artifacts_retention_stats_published: false
+          tags:
+            - always
+
+        - name: "ansible/tasks/ans_ops__artifacts_retention | Preflight | Verify the control node meets the minimum ansible-core version"
+          ansible.builtin.assert:
+            that:
+              - ansible_version.full is version(fe_validation_min_ansible_version | default('2.12'), '>=')
+            fail_msg: >-
+              ansible/tasks/ans_ops__artifacts_retention: requires ansible-core
+              {{ fe_validation_min_ansible_version | default('2.12') }} or newer,
+              found {{ ansible_version.full }}.
+            success_msg: >-
+              ansible/tasks/ans_ops__artifacts_retention: ansible-core {{ ansible_version.full }} satisfies the minimum.
+            quiet: true
+          tags:
+            - always
+            - preflight
+            - validation
+
+        - name: "ansible/tasks/ans_ops__artifacts_retention | Preflight | Verify every declared required variable is defined"
+          ansible.builtin.assert:
+            that:
+              - vars[item] is defined
+            fail_msg: "ansible/tasks/ans_ops__artifacts_retention: required variable '{{ item }}' is not defined."
+            success_msg: "ansible/tasks/ans_ops__artifacts_retention: required variable '{{ item }}' is defined."
+            quiet: true
+          loop: "{{ fe_ansible_tasks_ans_ops__artifacts_retention_required_vars | default([]) }}"
+          loop_control:
+            label: "{{ item }}"
+          tags:
+            - always
+            - preflight
+            - validation
+
+        - name: "ansible/tasks/ans_ops__artifacts_retention | Preflight | Record that preflight validation passed"
+          ansible.builtin.set_fact:
+            fe_ansible_tasks_ans_ops__artifacts_retention_preflight_passed: true
+          tags:
+            - always
+            - preflight
+            - validation
+
+      rescue:
+
+        - name: "ansible/tasks/ans_ops__artifacts_retention | Rescue | Capture the failing task and error detail"
+          ansible.builtin.set_fact:
+            fe_ansible_tasks_ans_ops__artifacts_retention_status: "preflight_failed"
+            fe_ansible_tasks_ans_ops__artifacts_retention_postflight_passed: false
+            fe_ansible_tasks_ans_ops__artifacts_retention_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+            fe_ansible_tasks_ans_ops__artifacts_retention_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+          tags:
+            - always
+            - rescue
+
+        - name: "ansible/tasks/ans_ops__artifacts_retention | Rescue | Report the failure"
+          ansible.builtin.debug:
+            msg: >-
+              ansible/tasks/ans_ops__artifacts_retention: FAILED at '{{ fe_ansible_tasks_ans_ops__artifacts_retention_failed_task }}' on
+              {{ inventory_hostname }} - {{ fe_ansible_tasks_ans_ops__artifacts_retention_error }}
+          tags:
+            - always
+            - rescue
+
+        - name: "ansible/tasks/ans_ops__artifacts_retention | Always | Publish the validation result with set_stats"
+          ansible.builtin.set_stats:
+            data:
+              fe_validation_results:
+                "ansible/tasks/ans_ops__artifacts_retention":
+                  component: "ansible/tasks/ans_ops__artifacts_retention"
+                  type: "playbook"
+                  platform: "ansible"
+                  host: "{{ inventory_hostname }}"
+                  status: "{{ fe_ansible_tasks_ans_ops__artifacts_retention_status | default('unknown') }}"
+                  preflight_passed: "{{ fe_ansible_tasks_ans_ops__artifacts_retention_preflight_passed | default(false) | bool }}"
+                  postflight_passed: "{{ fe_ansible_tasks_ans_ops__artifacts_retention_postflight_passed | default(false) | bool }}"
+                  started_at: "{{ fe_ansible_tasks_ans_ops__artifacts_retention_started_at | default('') }}"
+                  ended_at: "{{ fe_ansible_tasks_ans_ops__artifacts_retention_ended_at | default('') }}"
+                  duration_seconds: "{{ fe_ansible_tasks_ans_ops__artifacts_retention_duration_seconds | default(0) | int }}"
+                  failed_task: "{{ fe_ansible_tasks_ans_ops__artifacts_retention_failed_task | default('') }}"
+                  error: "{{ fe_ansible_tasks_ans_ops__artifacts_retention_error | default('') }}"
+                  check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+              fe_validation_executions: 1
+              fe_validation_succeeded: "{{ 1 if fe_ansible_tasks_ans_ops__artifacts_retention_status | default('') == 'succeeded' else 0 }}"
+              fe_validation_failed: "{{ 0 if fe_ansible_tasks_ans_ops__artifacts_retention_status | default('') == 'succeeded' else 1 }}"
+              fe_validation_duration_seconds: "{{ fe_ansible_tasks_ans_ops__artifacts_retention_duration_seconds | default(0) | int }}"
+              fe_validation_failed_components: >-
+                {{ [] if fe_ansible_tasks_ans_ops__artifacts_retention_status | default('') == 'succeeded' else ['ansible/tasks/ans_ops__artifacts_retention'] }}
+            aggregate: true
+            per_host: false
+          tags:
+            - always
+
+        - name: "ansible/tasks/ans_ops__artifacts_retention | Always | Mark the validation statistics as published"
+          ansible.builtin.set_fact:
+            fe_ansible_tasks_ans_ops__artifacts_retention_stats_published: true
+          tags:
+            - always
+
+        - name: "ansible/tasks/ans_ops__artifacts_retention | Rescue | Re-raise the failure unless the caller opted to continue"
+          ansible.builtin.fail:
+            msg: >-
+              ansible/tasks/ans_ops__artifacts_retention failed at '{{ fe_ansible_tasks_ans_ops__artifacts_retention_failed_task }}': {{ fe_ansible_tasks_ans_ops__artifacts_retention_error }}
+          when: not (fe_validation_continue_on_error | default(false) | bool)
+          tags:
+            - always
+            - rescue
+
+      always:
+
+        - name: "ansible/tasks/ans_ops__artifacts_retention | Always | Report the preflight outcome"
+          ansible.builtin.debug:
+            msg: >-
+              ansible/tasks/ans_ops__artifacts_retention: preflight
+              {{ 'passed' if fe_ansible_tasks_ans_ops__artifacts_retention_preflight_passed | default(false) | bool else 'FAILED' }}
+              on {{ inventory_hostname }}.
+          tags:
+            - always
     - name: Ensure artifacts directory
       ansible.builtin.file:
         path: "{{ artifacts_dir }}"
@@ -21,95 +172,293 @@
         mode: "0755"
 
   tasks:
-    - name: Build paths list (artifacts_dir + paths_extra)
-      ansible.builtin.set_fact:
-        prune_paths: "{{ [artifacts_dir] + paths_extra }}"
-    
-    - name: Find candidate files older than retention_days
-      ansible.builtin.find:
-        paths: "{{ prune_paths }}"
-        patterns: "{{ match_globs }}"
-        excludes: "{{ exclude_globs }}"
-        age: "{{ retention_days }}d"
-        age_stamp: mtime
-        file_type: file
-        recurse: true
-      register: old_files
+    - name: "ansible/tasks/ans_ops__artifacts_retention | Guarded execution with rescue and always handling"
+      block:
 
-    - name: Sort files by mtime (oldest first) and compute totals
-      ansible.builtin.set_fact:
-        old_sorted: "{{ old_files.files | sort(attribute='mtime', reverse=false) }}"
-        total_bytes_old: "{{ (old_files.files | map(attribute='size') | list | sum) | default(0) }}"
-    
-    - name: Write report header
-      ansible.builtin.copy:
-        dest: "{{ report_path }}"
-        mode: "0644"
-        content: "path,size_bytes,mtime,dry_run\n"
+        - name: Build paths list (artifacts_dir + paths_extra)
+          ansible.builtin.set_fact:
+            prune_paths: "{{ [artifacts_dir] + paths_extra }}"
 
-    - name: Append file lines to report
-      ansible.builtin.lineinfile:
-        path: "{{ report_path }}"
-        line: "{{ item.path }},{{ item.size }},{{ item.mtime }},{{ dry_run | ternary('true','false') }}"
-        create: yes
-      loop: "{{ old_sorted }}"
-      loop_control:
-        label: "{{ item.path }}"
-    
-    - name: Prune old files (age-based) — guarded
-      when: apply_changes | bool and (not dry_run | bool) and (old_sorted | length > 0)
-      ansible.builtin.file:
-        path: "{{ item.path }}"
-        state: absent
-      loop: "{{ old_sorted }}"
-      loop_control:
-        label: "{{ item.path }}"
-    
-    - name: Optional size-based guard — compute current size per root
-      ansible.builtin.command: >
-        du -sb {{ item | quote }}
-      register: du_sizes
-      changed_when: false
-      loop: "{{ prune_paths }}"
-    
-    - name: Build size map
-      ansible.builtin.set_fact:
-        size_map: "{{ dict( (du_sizes.results | map(attribute='item') | list) | zip( (du_sizes.results | map(attribute='stdout') | map('split','\t') | map('first') | map('int') | list) ) ) }}"
-    
-    - name: Enforce max_total_size_gb if set (>0) — plan which extra files to remove
-      when: (max_total_size_gb | int) > 0
-      ansible.builtin.set_fact:
-        size_limit_bytes: "{{ (max_total_size_gb | int) * 1024 * 1024 * 1024 }}"
-        overflow_candidates: >-
-          {{
-            old_sorted | list
-          }}
-    
-    - name: Calculate overflow per root and select extra removals
-      when: (max_total_size_gb | int) > 0
-      ansible.builtin.set_fact:
-        overflow_remove: >-
-          {{
-            (
-              old_sorted |
-              selectattr('path','search', (prune_paths | join('|')) ) |
-              list
-            )
-          }}
-    
-    - name: Prune extra (size-based) — guarded
-      when: apply_changes | bool and (not dry_run | bool) and (max_total_size_gb | int) > 0 and (overflow_remove | length > 0)
-      ansible.builtin.file:
-        path: "{{ item.path }}"
-        state: absent
-      loop: "{{ overflow_remove }}"
-      loop_control:
-        label: "{{ item.path }}"
+        - name: Find candidate files older than retention_days
+          ansible.builtin.find:
+            paths: "{{ prune_paths }}"
+            patterns: "{{ match_globs }}"
+            excludes: "{{ exclude_globs }}"
+            age: "{{ retention_days }}d"
+            age_stamp: mtime
+            file_type: file
+            recurse: true
+          register: old_files
 
-    - name: Summary
-      ansible.builtin.debug:
-        msg:
-          - "Report written to: {{ report_path }}"
-          - "Age-based candidates: {{ old_sorted | length }}"
-          - "Total old size (bytes): {{ total_bytes_old }}"
-          - "Applied deletions: {{ (apply_changes and (not dry_run)) | ternary('yes','no') }}"
+        - name: Sort files by mtime (oldest first) and compute totals
+          ansible.builtin.set_fact:
+            old_sorted: "{{ old_files.files | sort(attribute='mtime', reverse=false) }}"
+            total_bytes_old: "{{ (old_files.files | map(attribute='size') | list | sum) | default(0) }}"
+
+        - name: Write report header
+          ansible.builtin.copy:
+            dest: "{{ report_path }}"
+            mode: "0644"
+            content: "path,size_bytes,mtime,dry_run\n"
+
+        - name: Append file lines to report
+          ansible.builtin.lineinfile:
+            path: "{{ report_path }}"
+            line: "{{ item.path }},{{ item.size }},{{ item.mtime }},{{ dry_run | ternary('true','false') }}"
+            create: yes
+          loop: "{{ old_sorted }}"
+          loop_control:
+            label: "{{ item.path }}"
+
+        - name: Prune old files (age-based) — guarded
+          when: apply_changes | bool and (not dry_run | bool) and (old_sorted | length > 0)
+          ansible.builtin.file:
+            path: "{{ item.path }}"
+            state: absent
+          loop: "{{ old_sorted }}"
+          loop_control:
+            label: "{{ item.path }}"
+
+        - name: Optional size-based guard — compute current size per root
+          ansible.builtin.command: >
+            du -sb {{ item | quote }}
+          register: du_sizes
+          changed_when: false
+          loop: "{{ prune_paths }}"
+
+        - name: Build size map
+          ansible.builtin.set_fact:
+            size_map: "{{ dict( (du_sizes.results | map(attribute='item') | list) | zip( (du_sizes.results | map(attribute='stdout') | map('split','\t') | map('first') | map('int') | list) ) ) }}"
+
+        - name: Enforce max_total_size_gb if set (>0) — plan which extra files to remove
+          when: (max_total_size_gb | int) > 0
+          ansible.builtin.set_fact:
+            size_limit_bytes: "{{ (max_total_size_gb | int) * 1024 * 1024 * 1024 }}"
+            overflow_candidates: >-
+              {{
+                old_sorted | list
+              }}
+
+        - name: Calculate overflow per root and select extra removals
+          when: (max_total_size_gb | int) > 0
+          ansible.builtin.set_fact:
+            overflow_remove: >-
+              {{
+                (
+                  old_sorted |
+                  selectattr('path','search', (prune_paths | join('|')) ) |
+                  list
+                )
+              }}
+
+        - name: Prune extra (size-based) — guarded
+          when: apply_changes | bool and (not dry_run | bool) and (max_total_size_gb | int) > 0 and (overflow_remove | length > 0)
+          ansible.builtin.file:
+            path: "{{ item.path }}"
+            state: absent
+          loop: "{{ overflow_remove }}"
+          loop_control:
+            label: "{{ item.path }}"
+
+        - name: Summary
+          ansible.builtin.debug:
+            msg:
+              - "Report written to: {{ report_path }}"
+              - "Age-based candidates: {{ old_sorted | length }}"
+              - "Total old size (bytes): {{ total_bytes_old }}"
+              - "Applied deletions: {{ (apply_changes and (not dry_run)) | ternary('yes','no') }}"
+
+      rescue:
+
+        - name: "ansible/tasks/ans_ops__artifacts_retention | Rescue | Capture the failing task and error detail"
+          ansible.builtin.set_fact:
+            fe_ansible_tasks_ans_ops__artifacts_retention_status: "failed"
+            fe_ansible_tasks_ans_ops__artifacts_retention_postflight_passed: false
+            fe_ansible_tasks_ans_ops__artifacts_retention_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+            fe_ansible_tasks_ans_ops__artifacts_retention_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+          tags:
+            - always
+            - rescue
+
+        - name: "ansible/tasks/ans_ops__artifacts_retention | Rescue | Report the failure"
+          ansible.builtin.debug:
+            msg: >-
+              ansible/tasks/ans_ops__artifacts_retention: FAILED at '{{ fe_ansible_tasks_ans_ops__artifacts_retention_failed_task }}' on
+              {{ inventory_hostname }} - {{ fe_ansible_tasks_ans_ops__artifacts_retention_error }}
+          tags:
+            - always
+            - rescue
+
+        - name: "ansible/tasks/ans_ops__artifacts_retention | Rescue | Re-raise the failure unless the caller opted to continue"
+          ansible.builtin.fail:
+            msg: >-
+              ansible/tasks/ans_ops__artifacts_retention failed at '{{ fe_ansible_tasks_ans_ops__artifacts_retention_failed_task }}': {{ fe_ansible_tasks_ans_ops__artifacts_retention_error }}
+          when: not (fe_validation_continue_on_error | default(false) | bool)
+          tags:
+            - always
+            - rescue
+
+      always:
+
+        - name: "ansible/tasks/ans_ops__artifacts_retention | Always | Compute the execution duration"
+          ansible.builtin.set_fact:
+            fe_ansible_tasks_ans_ops__artifacts_retention_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+            fe_ansible_tasks_ans_ops__artifacts_retention_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_ansible_tasks_ans_ops__artifacts_retention_start_epoch | default(0) | int) }}"
+          tags:
+            - always
+
+        - name: "ansible/tasks/ans_ops__artifacts_retention | Always | Publish the validation result with set_stats"
+          ansible.builtin.set_stats:
+            data:
+              fe_validation_results:
+                "ansible/tasks/ans_ops__artifacts_retention":
+                  component: "ansible/tasks/ans_ops__artifacts_retention"
+                  type: "playbook"
+                  platform: "ansible"
+                  host: "{{ inventory_hostname }}"
+                  status: "{{ fe_ansible_tasks_ans_ops__artifacts_retention_status | default('unknown') }}"
+                  preflight_passed: "{{ fe_ansible_tasks_ans_ops__artifacts_retention_preflight_passed | default(false) | bool }}"
+                  postflight_passed: "{{ fe_ansible_tasks_ans_ops__artifacts_retention_postflight_passed | default(false) | bool }}"
+                  started_at: "{{ fe_ansible_tasks_ans_ops__artifacts_retention_started_at | default('') }}"
+                  ended_at: "{{ fe_ansible_tasks_ans_ops__artifacts_retention_ended_at | default('') }}"
+                  duration_seconds: "{{ fe_ansible_tasks_ans_ops__artifacts_retention_duration_seconds | default(0) | int }}"
+                  failed_task: "{{ fe_ansible_tasks_ans_ops__artifacts_retention_failed_task | default('') }}"
+                  error: "{{ fe_ansible_tasks_ans_ops__artifacts_retention_error | default('') }}"
+                  check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+              fe_validation_executions: 1
+              fe_validation_succeeded: "{{ 1 if fe_ansible_tasks_ans_ops__artifacts_retention_status | default('') == 'succeeded' else 0 }}"
+              fe_validation_failed: "{{ 0 if fe_ansible_tasks_ans_ops__artifacts_retention_status | default('') == 'succeeded' else 1 }}"
+              fe_validation_duration_seconds: "{{ fe_ansible_tasks_ans_ops__artifacts_retention_duration_seconds | default(0) | int }}"
+              fe_validation_failed_components: >-
+                {{ [] if fe_ansible_tasks_ans_ops__artifacts_retention_status | default('') == 'succeeded' else ['ansible/tasks/ans_ops__artifacts_retention'] }}
+            aggregate: true
+            per_host: false
+          when:
+            - fe_ansible_tasks_ans_ops__artifacts_retention_status | default('') == 'failed'
+            - not (fe_ansible_tasks_ans_ops__artifacts_retention_stats_published | default(false) | bool)
+          tags:
+            - always
+
+        - name: "ansible/tasks/ans_ops__artifacts_retention | Always | Mark the validation statistics as published"
+          ansible.builtin.set_fact:
+            fe_ansible_tasks_ans_ops__artifacts_retention_stats_published: true
+          when:
+            - fe_ansible_tasks_ans_ops__artifacts_retention_status | default('') == 'failed'
+          tags:
+            - always
+  post_tasks:
+    - name: "ansible/tasks/ans_ops__artifacts_retention | Postflight validation"
+      tags:
+        - always
+        - postflight
+        - validation
+      block:
+
+        - name: "ansible/tasks/ans_ops__artifacts_retention | Postflight | Verify the guarded body ran after a passing preflight"
+          ansible.builtin.assert:
+            that:
+              - fe_ansible_tasks_ans_ops__artifacts_retention_preflight_passed | bool
+              - fe_ansible_tasks_ans_ops__artifacts_retention_status in ['running', 'succeeded']
+            fail_msg: >-
+              ansible/tasks/ans_ops__artifacts_retention: postflight validation failed - preflight passed
+              ={{ fe_ansible_tasks_ans_ops__artifacts_retention_preflight_passed | default(false) }},
+              status={{ fe_ansible_tasks_ans_ops__artifacts_retention_status | default('unknown') }}.
+            success_msg: "ansible/tasks/ans_ops__artifacts_retention: postflight validation passed."
+            quiet: true
+          tags:
+            - always
+            - postflight
+            - validation
+
+        - name: "ansible/tasks/ans_ops__artifacts_retention | Postflight | Record the successful outcome"
+          ansible.builtin.set_fact:
+            fe_ansible_tasks_ans_ops__artifacts_retention_postflight_passed: true
+            fe_ansible_tasks_ans_ops__artifacts_retention_status: "succeeded"
+          tags:
+            - always
+            - postflight
+            - validation
+
+      rescue:
+
+        - name: "ansible/tasks/ans_ops__artifacts_retention | Rescue | Capture the failing task and error detail"
+          ansible.builtin.set_fact:
+            fe_ansible_tasks_ans_ops__artifacts_retention_status: "failed"
+            fe_ansible_tasks_ans_ops__artifacts_retention_postflight_passed: false
+            fe_ansible_tasks_ans_ops__artifacts_retention_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+            fe_ansible_tasks_ans_ops__artifacts_retention_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+          tags:
+            - always
+            - rescue
+
+        - name: "ansible/tasks/ans_ops__artifacts_retention | Rescue | Report the failure"
+          ansible.builtin.debug:
+            msg: >-
+              ansible/tasks/ans_ops__artifacts_retention: FAILED at '{{ fe_ansible_tasks_ans_ops__artifacts_retention_failed_task }}' on
+              {{ inventory_hostname }} - {{ fe_ansible_tasks_ans_ops__artifacts_retention_error }}
+          tags:
+            - always
+            - rescue
+
+        - name: "ansible/tasks/ans_ops__artifacts_retention | Rescue | Re-raise the failure unless the caller opted to continue"
+          ansible.builtin.fail:
+            msg: >-
+              ansible/tasks/ans_ops__artifacts_retention failed at '{{ fe_ansible_tasks_ans_ops__artifacts_retention_failed_task }}': {{ fe_ansible_tasks_ans_ops__artifacts_retention_error }}
+          when: not (fe_validation_continue_on_error | default(false) | bool)
+          tags:
+            - always
+            - rescue
+
+      always:
+
+        - name: "ansible/tasks/ans_ops__artifacts_retention | Always | Compute the execution duration"
+          ansible.builtin.set_fact:
+            fe_ansible_tasks_ans_ops__artifacts_retention_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+            fe_ansible_tasks_ans_ops__artifacts_retention_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_ansible_tasks_ans_ops__artifacts_retention_start_epoch | default(0) | int) }}"
+          tags:
+            - always
+
+        - name: "ansible/tasks/ans_ops__artifacts_retention | Always | Publish the validation result with set_stats"
+          ansible.builtin.set_stats:
+            data:
+              fe_validation_results:
+                "ansible/tasks/ans_ops__artifacts_retention":
+                  component: "ansible/tasks/ans_ops__artifacts_retention"
+                  type: "playbook"
+                  platform: "ansible"
+                  host: "{{ inventory_hostname }}"
+                  status: "{{ fe_ansible_tasks_ans_ops__artifacts_retention_status | default('unknown') }}"
+                  preflight_passed: "{{ fe_ansible_tasks_ans_ops__artifacts_retention_preflight_passed | default(false) | bool }}"
+                  postflight_passed: "{{ fe_ansible_tasks_ans_ops__artifacts_retention_postflight_passed | default(false) | bool }}"
+                  started_at: "{{ fe_ansible_tasks_ans_ops__artifacts_retention_started_at | default('') }}"
+                  ended_at: "{{ fe_ansible_tasks_ans_ops__artifacts_retention_ended_at | default('') }}"
+                  duration_seconds: "{{ fe_ansible_tasks_ans_ops__artifacts_retention_duration_seconds | default(0) | int }}"
+                  failed_task: "{{ fe_ansible_tasks_ans_ops__artifacts_retention_failed_task | default('') }}"
+                  error: "{{ fe_ansible_tasks_ans_ops__artifacts_retention_error | default('') }}"
+                  check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+              fe_validation_executions: 1
+              fe_validation_succeeded: "{{ 1 if fe_ansible_tasks_ans_ops__artifacts_retention_status | default('') == 'succeeded' else 0 }}"
+              fe_validation_failed: "{{ 0 if fe_ansible_tasks_ans_ops__artifacts_retention_status | default('') == 'succeeded' else 1 }}"
+              fe_validation_duration_seconds: "{{ fe_ansible_tasks_ans_ops__artifacts_retention_duration_seconds | default(0) | int }}"
+              fe_validation_failed_components: >-
+                {{ [] if fe_ansible_tasks_ans_ops__artifacts_retention_status | default('') == 'succeeded' else ['ansible/tasks/ans_ops__artifacts_retention'] }}
+            aggregate: true
+            per_host: false
+          when:
+            - not (fe_ansible_tasks_ans_ops__artifacts_retention_stats_published | default(false) | bool)
+          tags:
+            - always
+
+        - name: "ansible/tasks/ans_ops__artifacts_retention | Always | Mark the validation statistics as published"
+          ansible.builtin.set_fact:
+            fe_ansible_tasks_ans_ops__artifacts_retention_stats_published: true
+          tags:
+            - always
+
+        - name: "ansible/tasks/ans_ops__artifacts_retention | Always | Report the run summary"
+          ansible.builtin.debug:
+            msg: >-
+              ansible/tasks/ans_ops__artifacts_retention: {{ fe_ansible_tasks_ans_ops__artifacts_retention_status | default('unknown') }} in
+              {{ fe_ansible_tasks_ans_ops__artifacts_retention_duration_seconds | default(0) }}s on {{ inventory_hostname }}.
+          tags:
+            - always

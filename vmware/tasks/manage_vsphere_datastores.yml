@@ -1,3 +1,4 @@
+---
 # Manage vSphere datastores (VMFS or NFS) on one or many ESXi hosts.
 #
 # Expected vars (examples below):
@@ -37,140 +38,323 @@
 #     state: present           # present|absent
 #     add_members: true        # add ds_name to the cluster if present
 
-- name: Ensure collection vars default
+# ---------------------------------------------------------------------------
+# Fourth Estate preflight / postflight validation harness
+#
+# The task file body below is wrapped in an Ansible block/rescue/always structure:
+#
+#   block   preflight validation runs first, then the original task file body, then
+#           postflight validation. Any failure transfers control to rescue.
+#   rescue  records which task failed and why, then re-raises so a failure is
+#           never silently swallowed. Set fe_validation_continue_on_error=true
+#           to record the failure and keep going instead.
+#   always  computes the run duration and publishes the outcome through
+#           ansible.builtin.set_stats, so a wrapping playbook, AWX/AAP or CI can
+#           consume the result without scraping log output.
+#
+# Published stats (see docs/VALIDATION_AND_STATS.md):
+#   fe_validation_results['vmware/manage_vsphere_datastores']  per-component record
+#   fe_validation_executions / _succeeded / _failed / _duration_seconds
+#   fe_validation_failed_components
+#
+# Add component-specific preflight checks without editing this file by setting
+#   fe_vmware_manage_vsphere_datastores_required_vars: [var_one, var_two]
+# ---------------------------------------------------------------------------
+
+- name: "vmware/manage_vsphere_datastores | Initialize validation state"
   ansible.builtin.set_fact:
-    vcenter_validate_certs: "{{ vcenter_validate_certs | default(false) }}"
-    ds_state: "{{ ds_state | default('present') }}"
-    ds_type: "{{ ds_type | default('vmfs') }}"
-    nfs_version: "{{ nfs_version | default('3') }}"
-    nfs_readonly: "{{ nfs_readonly | default(false) }}"
-    nfs_security: "{{ nfs_security | default('AUTH_SYS') }}"
+    fe_vmware_manage_vsphere_datastores_start_epoch: "{{ now(fmt='%s') | int }}"
+    fe_vmware_manage_vsphere_datastores_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+    fe_vmware_manage_vsphere_datastores_status: "running"
+    fe_vmware_manage_vsphere_datastores_preflight_passed: false
+    fe_vmware_manage_vsphere_datastores_postflight_passed: false
+    fe_vmware_manage_vsphere_datastores_failed_task: ""
+    fe_vmware_manage_vsphere_datastores_error: ""
+    fe_vmware_manage_vsphere_datastores_stats_published: false
+  tags:
+    - always
 
-- name: Validate common vars
-  ansible.builtin.assert:
-    that:
-      - vcenter_hostname | length > 0
-      - vcenter_username | length > 0
-      - vcenter_password | length > 0
-      - vcenter_datacenter | length > 0
-      - esxi_hosts is defined
-      - esxi_hosts | length > 0
-      - ds_name | length > 0
-      - ds_type in ['vmfs','nfs']
-      - ds_state in ['present','absent']
-    fail_msg: "Missing or invalid inputs. Check vCenter/Datacenter/esxi_hosts/ds_name/ds_type/ds_state."
+- name: "vmware/manage_vsphere_datastores | Guarded execution with preflight and postflight validation"
+  block:
 
-- name: Validate VMFS vars when needed
-  ansible.builtin.assert:
-    that:
-      - vmfs_device_name | length > 0
-    fail_msg: "vmfs_device_name is required for VMFS operations."
-  when: ds_type == 'vmfs' and ds_state == 'present'
+    # ----------------------------- preflight --------------------
 
-- name: Validate NFS vars when needed
-  ansible.builtin.assert:
-    that:
-      - nfs_server | length > 0
-      - nfs_path | length > 0
-      - nfs_version in ['3','4.1']
-    fail_msg: "nfs_server, nfs_path and valid nfs_version ('3' or '4.1') are required for NFS."
-  when: ds_type == 'nfs'
+    - name: "vmware/manage_vsphere_datastores | Preflight | Verify the control node meets the minimum ansible-core version"
+      ansible.builtin.assert:
+        that:
+          - ansible_version.full is version(fe_validation_min_ansible_version | default('2.12'), '>=')
+        fail_msg: >-
+          vmware/manage_vsphere_datastores: requires ansible-core
+          {{ fe_validation_min_ansible_version | default('2.12') }} or newer,
+          found {{ ansible_version.full }}.
+        success_msg: >-
+          vmware/manage_vsphere_datastores: ansible-core {{ ansible_version.full }} satisfies the minimum.
+        quiet: true
+      tags:
+        - always
+        - preflight
+        - validation
 
-# -----------------------
-# VMFS DATASTORE (create/remove/mount)
-# -----------------------
-- name: "VMFS | Ensure datastore {{ ds_name }} on {{ item }}"
-  community.vmware.vmware_host_vmfs_datastore:
-    hostname: "{{ vcenter_hostname }}"
-    username: "{{ vcenter_username }}"
-    password: "{{ vcenter_password }}"
-    validate_certs: "{{ vcenter_validate_certs }}"
-    datacenter: "{{ vcenter_datacenter }}"
-    esxi_hostname: "{{ item }}"
-    datastore_name: "{{ ds_name }}"
-    state: "{{ ds_state }}"
-    device_name: "{{ vmfs_device_name }}"
-    vmfs_version: "{{ vmfs_version | default(omit) }}"
-  no_log: true
-  loop: "{{ esxi_hosts }}"
-  when: ds_type == 'vmfs'
-  delegate_to: localhost
-  tags: ['datastore','vmfs']
+    - name: "vmware/manage_vsphere_datastores | Preflight | Verify every declared required variable is defined"
+      ansible.builtin.assert:
+        that:
+          - vars[item] is defined
+        fail_msg: "vmware/manage_vsphere_datastores: required variable '{{ item }}' is not defined."
+        success_msg: "vmware/manage_vsphere_datastores: required variable '{{ item }}' is defined."
+        quiet: true
+      loop: "{{ fe_vmware_manage_vsphere_datastores_required_vars | default([]) }}"
+      loop_control:
+        label: "{{ item }}"
+      tags:
+        - always
+        - preflight
+        - validation
 
-# -----------------------
-# NFS DATASTORE (mount/unmount)
-# -----------------------
-- name: "NFS | Ensure datastore {{ ds_name }} on {{ item }}"
-  community.vmware.vmware_host_nfs_datastore:
-    hostname: "{{ vcenter_hostname }}"
-    username: "{{ vcenter_username }}"
-    password: "{{ vcenter_password }}"
-    validate_certs: "{{ vcenter_validate_certs }}"
-    datacenter: "{{ vcenter_datacenter }}"
-    esxi_hostname: "{{ item }}"
-    datastore_name: "{{ ds_name }}"
-    nfs_server: "{{ nfs_server }}"
-    nfs_path: "{{ nfs_path }}"
-    nfs_ro: "{{ nfs_readonly | bool }}"
-    nfs_version: "{{ nfs_version }}"
-    security_type: "{{ nfs_security }}"
-    state: "{{ ds_state }}"
-  no_log: true
-  loop: "{{ esxi_hosts }}"
-  when: ds_type == 'nfs'
-  delegate_to: localhost
-  tags: ['datastore','nfs']
+    - name: "vmware/manage_vsphere_datastores | Preflight | Record that preflight validation passed"
+      ansible.builtin.set_fact:
+        fe_vmware_manage_vsphere_datastores_preflight_passed: true
+      tags:
+        - always
+        - preflight
+        - validation
 
-# -----------------------
-# Optional: Datastore maintenance mode
-# -----------------------
-- name: "Datastore Maintenance | {{ ds_maintenance.action | default('enter') }} mode for {{ ds_name }}"
-  community.vmware.vmware_datastore_maintenancemode:
-    hostname: "{{ vcenter_hostname }}"
-    username: "{{ vcenter_username }}"
-    password: "{{ vcenter_password }}"
-    validate_certs: "{{ vcenter_validate_certs }}"
-    datacenter: "{{ vcenter_datacenter }}"
-    datastore_name: "{{ ds_name }}"
-    evacuation_mode: "{{ ds_maintenance.mode | default('evacuateAllData') }}"
-    state: "{{ (ds_maintenance.action | default('enter')) == 'enter' | ternary('present','absent') }}"
-  no_log: true
-  when: ds_maintenance is defined and ds_maintenance.enabled | default(false) | bool
-  delegate_to: localhost
-  tags: ['datastore','maintenance']
+    # ----------------------------- execute ----------------------
 
-# -----------------------
-# Optional: Datastore Cluster (SDRS) create/update and membership
-# -----------------------
-- name: "SDRS | Ensure Datastore Cluster {{ sdrs.name }}"
-  community.vmware.vmware_datastore_cluster:
-    hostname: "{{ vcenter_hostname }}"
-    username: "{{ vcenter_username }}"
-    password: "{{ vcenter_password }}"
-    validate_certs: "{{ vcenter_validate_certs }}"
-    datacenter: "{{ vcenter_datacenter }}"
-    name: "{{ sdrs.name }}"
-    state: "{{ sdrs.state | default('present') }}"
-  no_log: true
-  when: sdrs is defined and sdrs.enabled | default(false) | bool
-  delegate_to: localhost
-  tags: ['datastore','sdrs']
+    - name: Ensure collection vars default
+      ansible.builtin.set_fact:
+        vcenter_validate_certs: "{{ vcenter_validate_certs | default(false) }}"
+        ds_state: "{{ ds_state | default('present') }}"
+        ds_type: "{{ ds_type | default('vmfs') }}"
+        nfs_version: "{{ nfs_version | default('3') }}"
+        nfs_readonly: "{{ nfs_readonly | default(false) }}"
+        nfs_security: "{{ nfs_security | default('AUTH_SYS') }}"
 
-- name: "SDRS | Add {{ ds_name }} as a member"
-  community.vmware.vmware_datastore_cluster:
-    hostname: "{{ vcenter_hostname }}"
-    username: "{{ vcenter_username }}"
-    password: "{{ vcenter_password }}"
-    validate_certs: "{{ vcenter_validate_certs }}"
-    datacenter: "{{ vcenter_datacenter }}"
-    name: "{{ sdrs.name }}"
-    member_datastores:
-      - "{{ ds_name }}"
-    state: present
-  no_log: true
-  when:
-    - sdrs is defined and sdrs.enabled | default(false) | bool
-    - sdrs.add_members | default(true) | bool
-    - ds_state == 'present'
-  delegate_to: localhost
-  tags: ['datastore','sdrs']
+    - name: Validate common vars
+      ansible.builtin.assert:
+        that:
+          - vcenter_hostname | length > 0
+          - vcenter_username | length > 0
+          - vcenter_password | length > 0
+          - vcenter_datacenter | length > 0
+          - esxi_hosts is defined
+          - esxi_hosts | length > 0
+          - ds_name | length > 0
+          - ds_type in ['vmfs','nfs']
+          - ds_state in ['present','absent']
+        fail_msg: "Missing or invalid inputs. Check vCenter/Datacenter/esxi_hosts/ds_name/ds_type/ds_state."
+
+    - name: Validate VMFS vars when needed
+      ansible.builtin.assert:
+        that:
+          - vmfs_device_name | length > 0
+        fail_msg: "vmfs_device_name is required for VMFS operations."
+      when: ds_type == 'vmfs' and ds_state == 'present'
+
+    - name: Validate NFS vars when needed
+      ansible.builtin.assert:
+        that:
+          - nfs_server | length > 0
+          - nfs_path | length > 0
+          - nfs_version in ['3','4.1']
+        fail_msg: "nfs_server, nfs_path and valid nfs_version ('3' or '4.1') are required for NFS."
+      when: ds_type == 'nfs'
+
+    # -----------------------
+    # VMFS DATASTORE (create/remove/mount)
+    # -----------------------
+    - name: "VMFS | Ensure datastore {{ ds_name }} on {{ item }}"
+      community.vmware.vmware_host_vmfs_datastore:
+        hostname: "{{ vcenter_hostname }}"
+        username: "{{ vcenter_username }}"
+        password: "{{ vcenter_password }}"
+        validate_certs: "{{ vcenter_validate_certs }}"
+        datacenter: "{{ vcenter_datacenter }}"
+        esxi_hostname: "{{ item }}"
+        datastore_name: "{{ ds_name }}"
+        state: "{{ ds_state }}"
+        device_name: "{{ vmfs_device_name }}"
+        vmfs_version: "{{ vmfs_version | default(omit) }}"
+      no_log: true
+      loop: "{{ esxi_hosts }}"
+      when: ds_type == 'vmfs'
+      delegate_to: localhost
+      tags: ['datastore','vmfs']
+
+    # -----------------------
+    # NFS DATASTORE (mount/unmount)
+    # -----------------------
+    - name: "NFS | Ensure datastore {{ ds_name }} on {{ item }}"
+      community.vmware.vmware_host_nfs_datastore:
+        hostname: "{{ vcenter_hostname }}"
+        username: "{{ vcenter_username }}"
+        password: "{{ vcenter_password }}"
+        validate_certs: "{{ vcenter_validate_certs }}"
+        datacenter: "{{ vcenter_datacenter }}"
+        esxi_hostname: "{{ item }}"
+        datastore_name: "{{ ds_name }}"
+        nfs_server: "{{ nfs_server }}"
+        nfs_path: "{{ nfs_path }}"
+        nfs_ro: "{{ nfs_readonly | bool }}"
+        nfs_version: "{{ nfs_version }}"
+        security_type: "{{ nfs_security }}"
+        state: "{{ ds_state }}"
+      no_log: true
+      loop: "{{ esxi_hosts }}"
+      when: ds_type == 'nfs'
+      delegate_to: localhost
+      tags: ['datastore','nfs']
+
+    # -----------------------
+    # Optional: Datastore maintenance mode
+    # -----------------------
+    - name: "Datastore Maintenance | {{ ds_maintenance.action | default('enter') }} mode for {{ ds_name }}"
+      community.vmware.vmware_datastore_maintenancemode:
+        hostname: "{{ vcenter_hostname }}"
+        username: "{{ vcenter_username }}"
+        password: "{{ vcenter_password }}"
+        validate_certs: "{{ vcenter_validate_certs }}"
+        datacenter: "{{ vcenter_datacenter }}"
+        datastore_name: "{{ ds_name }}"
+        evacuation_mode: "{{ ds_maintenance.mode | default('evacuateAllData') }}"
+        state: "{{ (ds_maintenance.action | default('enter')) == 'enter' | ternary('present','absent') }}"
+      no_log: true
+      when: ds_maintenance is defined and ds_maintenance.enabled | default(false) | bool
+      delegate_to: localhost
+      tags: ['datastore','maintenance']
+
+    # -----------------------
+    # Optional: Datastore Cluster (SDRS) create/update and membership
+    # -----------------------
+    - name: "SDRS | Ensure Datastore Cluster {{ sdrs.name }}"
+      community.vmware.vmware_datastore_cluster:
+        hostname: "{{ vcenter_hostname }}"
+        username: "{{ vcenter_username }}"
+        password: "{{ vcenter_password }}"
+        validate_certs: "{{ vcenter_validate_certs }}"
+        datacenter: "{{ vcenter_datacenter }}"
+        name: "{{ sdrs.name }}"
+        state: "{{ sdrs.state | default('present') }}"
+      no_log: true
+      when: sdrs is defined and sdrs.enabled | default(false) | bool
+      delegate_to: localhost
+      tags: ['datastore','sdrs']
+
+    - name: "SDRS | Add {{ ds_name }} as a member"
+      community.vmware.vmware_datastore_cluster:
+        hostname: "{{ vcenter_hostname }}"
+        username: "{{ vcenter_username }}"
+        password: "{{ vcenter_password }}"
+        validate_certs: "{{ vcenter_validate_certs }}"
+        datacenter: "{{ vcenter_datacenter }}"
+        name: "{{ sdrs.name }}"
+        member_datastores:
+          - "{{ ds_name }}"
+        state: present
+      no_log: true
+      when:
+        - sdrs is defined and sdrs.enabled | default(false) | bool
+        - sdrs.add_members | default(true) | bool
+        - ds_state == 'present'
+      delegate_to: localhost
+      tags: ['datastore','sdrs']
+
+    # ----------------------------- postflight -------------------
+
+    - name: "vmware/manage_vsphere_datastores | Postflight | Verify the guarded body ran after a passing preflight"
+      ansible.builtin.assert:
+        that:
+          - fe_vmware_manage_vsphere_datastores_preflight_passed | bool
+          - fe_vmware_manage_vsphere_datastores_status in ['running', 'succeeded']
+        fail_msg: >-
+          vmware/manage_vsphere_datastores: postflight validation failed - preflight passed
+          ={{ fe_vmware_manage_vsphere_datastores_preflight_passed | default(false) }},
+          status={{ fe_vmware_manage_vsphere_datastores_status | default('unknown') }}.
+        success_msg: "vmware/manage_vsphere_datastores: postflight validation passed."
+        quiet: true
+      tags:
+        - always
+        - postflight
+        - validation
+
+    - name: "vmware/manage_vsphere_datastores | Postflight | Record the successful outcome"
+      ansible.builtin.set_fact:
+        fe_vmware_manage_vsphere_datastores_postflight_passed: true
+        fe_vmware_manage_vsphere_datastores_status: "succeeded"
+      tags:
+        - always
+        - postflight
+        - validation
+
+  rescue:
+
+    - name: "vmware/manage_vsphere_datastores | Rescue | Capture the failing task and error detail"
+      ansible.builtin.set_fact:
+        fe_vmware_manage_vsphere_datastores_status: "failed"
+        fe_vmware_manage_vsphere_datastores_postflight_passed: false
+        fe_vmware_manage_vsphere_datastores_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+        fe_vmware_manage_vsphere_datastores_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+      tags:
+        - always
+        - rescue
+
+    - name: "vmware/manage_vsphere_datastores | Rescue | Report the failure"
+      ansible.builtin.debug:
+        msg: >-
+          vmware/manage_vsphere_datastores: FAILED at '{{ fe_vmware_manage_vsphere_datastores_failed_task }}' on
+          {{ inventory_hostname }} - {{ fe_vmware_manage_vsphere_datastores_error }}
+      tags:
+        - always
+        - rescue
+
+    - name: "vmware/manage_vsphere_datastores | Rescue | Re-raise the failure unless the caller opted to continue"
+      ansible.builtin.fail:
+        msg: >-
+          vmware/manage_vsphere_datastores failed at '{{ fe_vmware_manage_vsphere_datastores_failed_task }}': {{ fe_vmware_manage_vsphere_datastores_error }}
+      when: not (fe_validation_continue_on_error | default(false) | bool)
+      tags:
+        - always
+        - rescue
+
+  always:
+
+    - name: "vmware/manage_vsphere_datastores | Always | Compute the execution duration"
+      ansible.builtin.set_fact:
+        fe_vmware_manage_vsphere_datastores_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+        fe_vmware_manage_vsphere_datastores_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_vmware_manage_vsphere_datastores_start_epoch | default(0) | int) }}"
+      tags:
+        - always
+
+    - name: "vmware/manage_vsphere_datastores | Always | Publish the validation result with set_stats"
+      ansible.builtin.set_stats:
+        data:
+          fe_validation_results:
+            "vmware/manage_vsphere_datastores":
+              component: "vmware/manage_vsphere_datastores"
+              type: "tasks"
+              platform: "vmware"
+              host: "{{ inventory_hostname }}"
+              status: "{{ fe_vmware_manage_vsphere_datastores_status | default('unknown') }}"
+              preflight_passed: "{{ fe_vmware_manage_vsphere_datastores_preflight_passed | default(false) | bool }}"
+              postflight_passed: "{{ fe_vmware_manage_vsphere_datastores_postflight_passed | default(false) | bool }}"
+              started_at: "{{ fe_vmware_manage_vsphere_datastores_started_at | default('') }}"
+              ended_at: "{{ fe_vmware_manage_vsphere_datastores_ended_at | default('') }}"
+              duration_seconds: "{{ fe_vmware_manage_vsphere_datastores_duration_seconds | default(0) | int }}"
+              failed_task: "{{ fe_vmware_manage_vsphere_datastores_failed_task | default('') }}"
+              error: "{{ fe_vmware_manage_vsphere_datastores_error | default('') }}"
+              check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+          fe_validation_executions: 1
+          fe_validation_succeeded: "{{ 1 if fe_vmware_manage_vsphere_datastores_status | default('') == 'succeeded' else 0 }}"
+          fe_validation_failed: "{{ 0 if fe_vmware_manage_vsphere_datastores_status | default('') == 'succeeded' else 1 }}"
+          fe_validation_duration_seconds: "{{ fe_vmware_manage_vsphere_datastores_duration_seconds | default(0) | int }}"
+          fe_validation_failed_components: >-
+            {{ [] if fe_vmware_manage_vsphere_datastores_status | default('') == 'succeeded' else ['vmware/manage_vsphere_datastores'] }}
+        aggregate: true
+        per_host: false
+      tags:
+        - always
+
+    - name: "vmware/manage_vsphere_datastores | Always | Mark the validation statistics as published"
+      ansible.builtin.set_fact:
+        fe_vmware_manage_vsphere_datastores_stats_published: true
+      tags:
+        - always

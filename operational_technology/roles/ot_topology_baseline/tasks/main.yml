@@ -1,3 +1,187 @@
 ---
-- ansible.builtin.include_tasks: includes/flows_export.yml
-- ansible.builtin.include_tasks: includes/golden_diff.yml
+
+# ---------------------------------------------------------------------------
+# Fourth Estate preflight / postflight validation harness
+#
+# The task file body below is wrapped in an Ansible block/rescue/always structure:
+#
+#   block   preflight validation runs first, then the original task file body, then
+#           postflight validation. Any failure transfers control to rescue.
+#   rescue  records which task failed and why, then re-raises so a failure is
+#           never silently swallowed. Set fe_validation_continue_on_error=true
+#           to record the failure and keep going instead.
+#   always  computes the run duration and publishes the outcome through
+#           ansible.builtin.set_stats, so a wrapping playbook, AWX/AAP or CI can
+#           consume the result without scraping log output.
+#
+# Published stats (see docs/VALIDATION_AND_STATS.md):
+#   fe_validation_results['operational_technology/ot_topology_baseline']  per-component record
+#   fe_validation_executions / _succeeded / _failed / _duration_seconds
+#   fe_validation_failed_components
+#
+# Add component-specific preflight checks without editing this file by setting
+#   fe_operational_technology_ot_topology_baseline_required_vars: [var_one, var_two]
+# ---------------------------------------------------------------------------
+
+- name: "operational_technology/ot_topology_baseline | Initialize validation state"
+  ansible.builtin.set_fact:
+    fe_operational_technology_ot_topology_baseline_start_epoch: "{{ now(fmt='%s') | int }}"
+    fe_operational_technology_ot_topology_baseline_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+    fe_operational_technology_ot_topology_baseline_status: "running"
+    fe_operational_technology_ot_topology_baseline_preflight_passed: false
+    fe_operational_technology_ot_topology_baseline_postflight_passed: false
+    fe_operational_technology_ot_topology_baseline_failed_task: ""
+    fe_operational_technology_ot_topology_baseline_error: ""
+    fe_operational_technology_ot_topology_baseline_stats_published: false
+  tags:
+    - always
+
+- name: "operational_technology/ot_topology_baseline | Guarded execution with preflight and postflight validation"
+  block:
+
+    # ----------------------------- preflight --------------------
+
+    - name: "operational_technology/ot_topology_baseline | Preflight | Verify the control node meets the minimum ansible-core version"
+      ansible.builtin.assert:
+        that:
+          - ansible_version.full is version(fe_validation_min_ansible_version | default('2.12'), '>=')
+        fail_msg: >-
+          operational_technology/ot_topology_baseline: requires ansible-core
+          {{ fe_validation_min_ansible_version | default('2.12') }} or newer,
+          found {{ ansible_version.full }}.
+        success_msg: >-
+          operational_technology/ot_topology_baseline: ansible-core {{ ansible_version.full }} satisfies the minimum.
+        quiet: true
+      tags:
+        - always
+        - preflight
+        - validation
+
+    - name: "operational_technology/ot_topology_baseline | Preflight | Verify every declared required variable is defined"
+      ansible.builtin.assert:
+        that:
+          - vars[item] is defined
+        fail_msg: "operational_technology/ot_topology_baseline: required variable '{{ item }}' is not defined."
+        success_msg: "operational_technology/ot_topology_baseline: required variable '{{ item }}' is defined."
+        quiet: true
+      loop: "{{ fe_operational_technology_ot_topology_baseline_required_vars | default([]) }}"
+      loop_control:
+        label: "{{ item }}"
+      tags:
+        - always
+        - preflight
+        - validation
+
+    - name: "operational_technology/ot_topology_baseline | Preflight | Record that preflight validation passed"
+      ansible.builtin.set_fact:
+        fe_operational_technology_ot_topology_baseline_preflight_passed: true
+      tags:
+        - always
+        - preflight
+        - validation
+
+    # ----------------------------- execute ----------------------
+
+    - ansible.builtin.include_tasks: includes/flows_export.yml
+    - ansible.builtin.include_tasks: includes/golden_diff.yml
+
+    # ----------------------------- postflight -------------------
+
+    - name: "operational_technology/ot_topology_baseline | Postflight | Verify the guarded body ran after a passing preflight"
+      ansible.builtin.assert:
+        that:
+          - fe_operational_technology_ot_topology_baseline_preflight_passed | bool
+          - fe_operational_technology_ot_topology_baseline_status in ['running', 'succeeded']
+        fail_msg: >-
+          operational_technology/ot_topology_baseline: postflight validation failed - preflight passed
+          ={{ fe_operational_technology_ot_topology_baseline_preflight_passed | default(false) }},
+          status={{ fe_operational_technology_ot_topology_baseline_status | default('unknown') }}.
+        success_msg: "operational_technology/ot_topology_baseline: postflight validation passed."
+        quiet: true
+      tags:
+        - always
+        - postflight
+        - validation
+
+    - name: "operational_technology/ot_topology_baseline | Postflight | Record the successful outcome"
+      ansible.builtin.set_fact:
+        fe_operational_technology_ot_topology_baseline_postflight_passed: true
+        fe_operational_technology_ot_topology_baseline_status: "succeeded"
+      tags:
+        - always
+        - postflight
+        - validation
+
+  rescue:
+
+    - name: "operational_technology/ot_topology_baseline | Rescue | Capture the failing task and error detail"
+      ansible.builtin.set_fact:
+        fe_operational_technology_ot_topology_baseline_status: "failed"
+        fe_operational_technology_ot_topology_baseline_postflight_passed: false
+        fe_operational_technology_ot_topology_baseline_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+        fe_operational_technology_ot_topology_baseline_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+      tags:
+        - always
+        - rescue
+
+    - name: "operational_technology/ot_topology_baseline | Rescue | Report the failure"
+      ansible.builtin.debug:
+        msg: >-
+          operational_technology/ot_topology_baseline: FAILED at '{{ fe_operational_technology_ot_topology_baseline_failed_task }}' on
+          {{ inventory_hostname }} - {{ fe_operational_technology_ot_topology_baseline_error }}
+      tags:
+        - always
+        - rescue
+
+    - name: "operational_technology/ot_topology_baseline | Rescue | Re-raise the failure unless the caller opted to continue"
+      ansible.builtin.fail:
+        msg: >-
+          operational_technology/ot_topology_baseline failed at '{{ fe_operational_technology_ot_topology_baseline_failed_task }}': {{ fe_operational_technology_ot_topology_baseline_error }}
+      when: not (fe_validation_continue_on_error | default(false) | bool)
+      tags:
+        - always
+        - rescue
+
+  always:
+
+    - name: "operational_technology/ot_topology_baseline | Always | Compute the execution duration"
+      ansible.builtin.set_fact:
+        fe_operational_technology_ot_topology_baseline_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+        fe_operational_technology_ot_topology_baseline_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_operational_technology_ot_topology_baseline_start_epoch | default(0) | int) }}"
+      tags:
+        - always
+
+    - name: "operational_technology/ot_topology_baseline | Always | Publish the validation result with set_stats"
+      ansible.builtin.set_stats:
+        data:
+          fe_validation_results:
+            "operational_technology/ot_topology_baseline":
+              component: "operational_technology/ot_topology_baseline"
+              type: "role"
+              platform: "operational_technology"
+              host: "{{ inventory_hostname }}"
+              status: "{{ fe_operational_technology_ot_topology_baseline_status | default('unknown') }}"
+              preflight_passed: "{{ fe_operational_technology_ot_topology_baseline_preflight_passed | default(false) | bool }}"
+              postflight_passed: "{{ fe_operational_technology_ot_topology_baseline_postflight_passed | default(false) | bool }}"
+              started_at: "{{ fe_operational_technology_ot_topology_baseline_started_at | default('') }}"
+              ended_at: "{{ fe_operational_technology_ot_topology_baseline_ended_at | default('') }}"
+              duration_seconds: "{{ fe_operational_technology_ot_topology_baseline_duration_seconds | default(0) | int }}"
+              failed_task: "{{ fe_operational_technology_ot_topology_baseline_failed_task | default('') }}"
+              error: "{{ fe_operational_technology_ot_topology_baseline_error | default('') }}"
+              check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+          fe_validation_executions: 1
+          fe_validation_succeeded: "{{ 1 if fe_operational_technology_ot_topology_baseline_status | default('') == 'succeeded' else 0 }}"
+          fe_validation_failed: "{{ 0 if fe_operational_technology_ot_topology_baseline_status | default('') == 'succeeded' else 1 }}"
+          fe_validation_duration_seconds: "{{ fe_operational_technology_ot_topology_baseline_duration_seconds | default(0) | int }}"
+          fe_validation_failed_components: >-
+            {{ [] if fe_operational_technology_ot_topology_baseline_status | default('') == 'succeeded' else ['operational_technology/ot_topology_baseline'] }}
+        aggregate: true
+        per_host: false
+      tags:
+        - always
+
+    - name: "operational_technology/ot_topology_baseline | Always | Mark the validation statistics as published"
+      ansible.builtin.set_fact:
+        fe_operational_technology_ot_topology_baseline_stats_published: true
+      tags:
+        - always

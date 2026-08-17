@@ -8,45 +8,229 @@
 # vManage Login Banner
 # Applies the DoD warning banner to the vManage web UI and CLI
 # ============================================================
-- name: "STIG AC-8 [CISC-ND-000080] - Configure vManage login banner"
-  ansible.builtin.uri:
-    url: "https://{{ sdwan_vmanage_host }}:{{ sdwan_vmanage_port }}/dataservice/settings/configuration/banner"
-    method: POST
-    headers:
-      Cookie: "{{ sdwan_session_cookie }}"
-      X-XSRF-TOKEN: "{{ sdwan_csrf_token }}"
-      Content-Type: "application/json"
-    body_format: json
-    body:
-      mode: "on"
-      bannerDetail: "{{ sdwan_login_banner }}"
-    validate_certs: "{{ sdwan_vmanage_verify_ssl }}"
-    timeout: "{{ sdwan_vmanage_timeout }}"
-    status_code: [200, 201]
-  when: apply_changes | bool
-  no_log: false
-  register: sdwan_banner_result
-  tags: [sdwan, security, stig, stig_cat3, banners, nist_ac]
 
-- name: "STIG AC-8 [CISC-ND-000080] - Verify vManage banner is configured (dry run)"
-  ansible.builtin.uri:
-    url: "https://{{ sdwan_vmanage_host }}:{{ sdwan_vmanage_port }}/dataservice/settings/configuration/banner"
-    method: GET
-    headers:
-      Cookie: "{{ sdwan_session_cookie }}"
-      X-XSRF-TOKEN: "{{ sdwan_csrf_token }}"
-    validate_certs: "{{ sdwan_vmanage_verify_ssl }}"
-    timeout: "{{ sdwan_vmanage_timeout }}"
-  when: not apply_changes | bool
-  register: sdwan_banner_check
-  check_mode: false
-  tags: [sdwan, security, stig, stig_cat3, banners, nist_ac]
+# ---------------------------------------------------------------------------
+# Fourth Estate preflight / postflight validation harness
+#
+# The task file body below is wrapped in an Ansible block/rescue/always structure:
+#
+#   block   preflight validation runs first, then the original task file body, then
+#           postflight validation. Any failure transfers control to rescue.
+#   rescue  records which task failed and why, then re-raises so a failure is
+#           never silently swallowed. Set fe_validation_continue_on_error=true
+#           to record the failure and keep going instead.
+#   always  computes the run duration and publishes the outcome through
+#           ansible.builtin.set_stats, so a wrapping playbook, AWX/AAP or CI can
+#           consume the result without scraping log output.
+#
+# Published stats (see docs/VALIDATION_AND_STATS.md):
+#   fe_validation_results['cisco/sdwan_security_hardening/banner']  per-component record
+#   fe_validation_executions / _succeeded / _failed / _duration_seconds
+#   fe_validation_failed_components
+#
+# Add component-specific preflight checks without editing this file by setting
+#   fe_cisco_sdwan_security_hardening_banner_required_vars: [var_one, var_two]
+# ---------------------------------------------------------------------------
 
-- name: Display banner compliance status
-  ansible.builtin.debug:
-    msg:
-      - "STIG Control: CISC-ND-000080 (AC-8 - System Use Notification)"
-      - "Finding: DoD login banner"
-      - "Status: {{ apply_changes | ternary('APPLIED', 'CHECK ONLY') }}"
-      - "Banner length: {{ sdwan_login_banner | length }} chars"
-  tags: [sdwan, security, stig, stig_cat3, banners, nist_ac]
+- name: "cisco/sdwan_security_hardening/banner | Initialize validation state"
+  ansible.builtin.set_fact:
+    fe_cisco_sdwan_security_hardening_banner_start_epoch: "{{ now(fmt='%s') | int }}"
+    fe_cisco_sdwan_security_hardening_banner_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+    fe_cisco_sdwan_security_hardening_banner_status: "running"
+    fe_cisco_sdwan_security_hardening_banner_preflight_passed: false
+    fe_cisco_sdwan_security_hardening_banner_postflight_passed: false
+    fe_cisco_sdwan_security_hardening_banner_failed_task: ""
+    fe_cisco_sdwan_security_hardening_banner_error: ""
+    fe_cisco_sdwan_security_hardening_banner_stats_published: false
+  tags:
+    - always
+
+- name: "cisco/sdwan_security_hardening/banner | Guarded execution with preflight and postflight validation"
+  block:
+
+    # ----------------------------- preflight --------------------
+
+    - name: "cisco/sdwan_security_hardening/banner | Preflight | Verify the control node meets the minimum ansible-core version"
+      ansible.builtin.assert:
+        that:
+          - ansible_version.full is version(fe_validation_min_ansible_version | default('2.12'), '>=')
+        fail_msg: >-
+          cisco/sdwan_security_hardening/banner: requires ansible-core
+          {{ fe_validation_min_ansible_version | default('2.12') }} or newer,
+          found {{ ansible_version.full }}.
+        success_msg: >-
+          cisco/sdwan_security_hardening/banner: ansible-core {{ ansible_version.full }} satisfies the minimum.
+        quiet: true
+      tags:
+        - always
+        - preflight
+        - validation
+
+    - name: "cisco/sdwan_security_hardening/banner | Preflight | Verify every declared required variable is defined"
+      ansible.builtin.assert:
+        that:
+          - vars[item] is defined
+        fail_msg: "cisco/sdwan_security_hardening/banner: required variable '{{ item }}' is not defined."
+        success_msg: "cisco/sdwan_security_hardening/banner: required variable '{{ item }}' is defined."
+        quiet: true
+      loop: "{{ fe_cisco_sdwan_security_hardening_banner_required_vars | default([]) }}"
+      loop_control:
+        label: "{{ item }}"
+      tags:
+        - always
+        - preflight
+        - validation
+
+    - name: "cisco/sdwan_security_hardening/banner | Preflight | Record that preflight validation passed"
+      ansible.builtin.set_fact:
+        fe_cisco_sdwan_security_hardening_banner_preflight_passed: true
+      tags:
+        - always
+        - preflight
+        - validation
+
+    # ----------------------------- execute ----------------------
+
+    - name: "STIG AC-8 [CISC-ND-000080] - Configure vManage login banner"
+      ansible.builtin.uri:
+        url: "https://{{ sdwan_vmanage_host }}:{{ sdwan_vmanage_port }}/dataservice/settings/configuration/banner"
+        method: POST
+        headers:
+          Cookie: "{{ sdwan_session_cookie }}"
+          X-XSRF-TOKEN: "{{ sdwan_csrf_token }}"
+          Content-Type: "application/json"
+        body_format: json
+        body:
+          mode: "on"
+          bannerDetail: "{{ sdwan_login_banner }}"
+        validate_certs: "{{ sdwan_vmanage_verify_ssl }}"
+        timeout: "{{ sdwan_vmanage_timeout }}"
+        status_code: [200, 201]
+      when: apply_changes | bool
+      no_log: false
+      register: sdwan_banner_result
+      tags: [sdwan, security, stig, stig_cat3, banners, nist_ac]
+
+    - name: "STIG AC-8 [CISC-ND-000080] - Verify vManage banner is configured (dry run)"
+      ansible.builtin.uri:
+        url: "https://{{ sdwan_vmanage_host }}:{{ sdwan_vmanage_port }}/dataservice/settings/configuration/banner"
+        method: GET
+        headers:
+          Cookie: "{{ sdwan_session_cookie }}"
+          X-XSRF-TOKEN: "{{ sdwan_csrf_token }}"
+        validate_certs: "{{ sdwan_vmanage_verify_ssl }}"
+        timeout: "{{ sdwan_vmanage_timeout }}"
+      when: not apply_changes | bool
+      register: sdwan_banner_check
+      check_mode: false
+      tags: [sdwan, security, stig, stig_cat3, banners, nist_ac]
+
+    - name: Display banner compliance status
+      ansible.builtin.debug:
+        msg:
+          - "STIG Control: CISC-ND-000080 (AC-8 - System Use Notification)"
+          - "Finding: DoD login banner"
+          - "Status: {{ apply_changes | ternary('APPLIED', 'CHECK ONLY') }}"
+          - "Banner length: {{ sdwan_login_banner | length }} chars"
+      tags: [sdwan, security, stig, stig_cat3, banners, nist_ac]
+
+    # ----------------------------- postflight -------------------
+
+    - name: "cisco/sdwan_security_hardening/banner | Postflight | Verify the guarded body ran after a passing preflight"
+      ansible.builtin.assert:
+        that:
+          - fe_cisco_sdwan_security_hardening_banner_preflight_passed | bool
+          - fe_cisco_sdwan_security_hardening_banner_status in ['running', 'succeeded']
+        fail_msg: >-
+          cisco/sdwan_security_hardening/banner: postflight validation failed - preflight passed
+          ={{ fe_cisco_sdwan_security_hardening_banner_preflight_passed | default(false) }},
+          status={{ fe_cisco_sdwan_security_hardening_banner_status | default('unknown') }}.
+        success_msg: "cisco/sdwan_security_hardening/banner: postflight validation passed."
+        quiet: true
+      tags:
+        - always
+        - postflight
+        - validation
+
+    - name: "cisco/sdwan_security_hardening/banner | Postflight | Record the successful outcome"
+      ansible.builtin.set_fact:
+        fe_cisco_sdwan_security_hardening_banner_postflight_passed: true
+        fe_cisco_sdwan_security_hardening_banner_status: "succeeded"
+      tags:
+        - always
+        - postflight
+        - validation
+
+  rescue:
+
+    - name: "cisco/sdwan_security_hardening/banner | Rescue | Capture the failing task and error detail"
+      ansible.builtin.set_fact:
+        fe_cisco_sdwan_security_hardening_banner_status: "failed"
+        fe_cisco_sdwan_security_hardening_banner_postflight_passed: false
+        fe_cisco_sdwan_security_hardening_banner_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+        fe_cisco_sdwan_security_hardening_banner_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+      tags:
+        - always
+        - rescue
+
+    - name: "cisco/sdwan_security_hardening/banner | Rescue | Report the failure"
+      ansible.builtin.debug:
+        msg: >-
+          cisco/sdwan_security_hardening/banner: FAILED at '{{ fe_cisco_sdwan_security_hardening_banner_failed_task }}' on
+          {{ inventory_hostname }} - {{ fe_cisco_sdwan_security_hardening_banner_error }}
+      tags:
+        - always
+        - rescue
+
+    - name: "cisco/sdwan_security_hardening/banner | Rescue | Re-raise the failure unless the caller opted to continue"
+      ansible.builtin.fail:
+        msg: >-
+          cisco/sdwan_security_hardening/banner failed at '{{ fe_cisco_sdwan_security_hardening_banner_failed_task }}': {{ fe_cisco_sdwan_security_hardening_banner_error }}
+      when: not (fe_validation_continue_on_error | default(false) | bool)
+      tags:
+        - always
+        - rescue
+
+  always:
+
+    - name: "cisco/sdwan_security_hardening/banner | Always | Compute the execution duration"
+      ansible.builtin.set_fact:
+        fe_cisco_sdwan_security_hardening_banner_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+        fe_cisco_sdwan_security_hardening_banner_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_cisco_sdwan_security_hardening_banner_start_epoch | default(0) | int) }}"
+      tags:
+        - always
+
+    - name: "cisco/sdwan_security_hardening/banner | Always | Publish the validation result with set_stats"
+      ansible.builtin.set_stats:
+        data:
+          fe_validation_results:
+            "cisco/sdwan_security_hardening/banner":
+              component: "cisco/sdwan_security_hardening/banner"
+              type: "role-tasks"
+              platform: "cisco"
+              host: "{{ inventory_hostname }}"
+              status: "{{ fe_cisco_sdwan_security_hardening_banner_status | default('unknown') }}"
+              preflight_passed: "{{ fe_cisco_sdwan_security_hardening_banner_preflight_passed | default(false) | bool }}"
+              postflight_passed: "{{ fe_cisco_sdwan_security_hardening_banner_postflight_passed | default(false) | bool }}"
+              started_at: "{{ fe_cisco_sdwan_security_hardening_banner_started_at | default('') }}"
+              ended_at: "{{ fe_cisco_sdwan_security_hardening_banner_ended_at | default('') }}"
+              duration_seconds: "{{ fe_cisco_sdwan_security_hardening_banner_duration_seconds | default(0) | int }}"
+              failed_task: "{{ fe_cisco_sdwan_security_hardening_banner_failed_task | default('') }}"
+              error: "{{ fe_cisco_sdwan_security_hardening_banner_error | default('') }}"
+              check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+          fe_validation_executions: 1
+          fe_validation_succeeded: "{{ 1 if fe_cisco_sdwan_security_hardening_banner_status | default('') == 'succeeded' else 0 }}"
+          fe_validation_failed: "{{ 0 if fe_cisco_sdwan_security_hardening_banner_status | default('') == 'succeeded' else 1 }}"
+          fe_validation_duration_seconds: "{{ fe_cisco_sdwan_security_hardening_banner_duration_seconds | default(0) | int }}"
+          fe_validation_failed_components: >-
+            {{ [] if fe_cisco_sdwan_security_hardening_banner_status | default('') == 'succeeded' else ['cisco/sdwan_security_hardening/banner'] }}
+        aggregate: true
+        per_host: false
+      tags:
+        - always
+
+    - name: "cisco/sdwan_security_hardening/banner | Always | Mark the validation statistics as published"
+      ansible.builtin.set_fact:
+        fe_cisco_sdwan_security_hardening_banner_stats_published: true
+      tags:
+        - always

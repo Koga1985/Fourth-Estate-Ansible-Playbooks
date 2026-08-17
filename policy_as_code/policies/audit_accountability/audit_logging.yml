@@ -13,6 +13,23 @@
 # - Enable timestamps on all log messages
 # - Configure log buffering to prevent loss
 
+# ---------------------------------------------------------------------------
+# Fourth Estate preflight / postflight validation harness
+#
+# Every play below carries a block/rescue/always validation wrapper:
+#
+#   pre_tasks   preflight validation. On failure it records the reason,
+#               publishes the outcome with set_stats and aborts the play
+#               before any role or task runs.
+#   tasks       the original task list, wrapped so a failure is captured
+#               (which task, which error) and then re-raised.
+#   post_tasks  postflight validation, then the run record is published with
+#               ansible.builtin.set_stats.
+#
+# Set fe_validation_continue_on_error=true to record failures and keep going.
+# See docs/VALIDATION_AND_STATS.md for the published stats schema.
+# ---------------------------------------------------------------------------
+
 - name: NIST AU-2/AU-12 - Audit Logging Policy
   hosts: all
   gather_facts: true
@@ -46,6 +63,140 @@
     validate_paths: true
 
   pre_tasks:
+    - name: "policy_as_code/policies/audit_accountability/audit_logging | Preflight validation"
+      tags:
+        - always
+        - preflight
+        - validation
+      block:
+
+        - name: "policy_as_code/policies/audit_accountability/audit_logging | Initialize validation state"
+          ansible.builtin.set_fact:
+            fe_policy_as_code_policies_audit_accountability_audit_logging_start_epoch: "{{ now(fmt='%s') | int }}"
+            fe_policy_as_code_policies_audit_accountability_audit_logging_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+            fe_policy_as_code_policies_audit_accountability_audit_logging_status: "running"
+            fe_policy_as_code_policies_audit_accountability_audit_logging_preflight_passed: false
+            fe_policy_as_code_policies_audit_accountability_audit_logging_postflight_passed: false
+            fe_policy_as_code_policies_audit_accountability_audit_logging_failed_task: ""
+            fe_policy_as_code_policies_audit_accountability_audit_logging_error: ""
+            fe_policy_as_code_policies_audit_accountability_audit_logging_stats_published: false
+          tags:
+            - always
+
+        - name: "policy_as_code/policies/audit_accountability/audit_logging | Preflight | Verify the control node meets the minimum ansible-core version"
+          ansible.builtin.assert:
+            that:
+              - ansible_version.full is version(fe_validation_min_ansible_version | default('2.12'), '>=')
+            fail_msg: >-
+              policy_as_code/policies/audit_accountability/audit_logging: requires ansible-core
+              {{ fe_validation_min_ansible_version | default('2.12') }} or newer,
+              found {{ ansible_version.full }}.
+            success_msg: >-
+              policy_as_code/policies/audit_accountability/audit_logging: ansible-core {{ ansible_version.full }} satisfies the minimum.
+            quiet: true
+          tags:
+            - always
+            - preflight
+            - validation
+
+        - name: "policy_as_code/policies/audit_accountability/audit_logging | Preflight | Verify every declared required variable is defined"
+          ansible.builtin.assert:
+            that:
+              - vars[item] is defined
+            fail_msg: "policy_as_code/policies/audit_accountability/audit_logging: required variable '{{ item }}' is not defined."
+            success_msg: "policy_as_code/policies/audit_accountability/audit_logging: required variable '{{ item }}' is defined."
+            quiet: true
+          loop: "{{ fe_policy_as_code_policies_audit_accountability_audit_logging_required_vars | default([]) }}"
+          loop_control:
+            label: "{{ item }}"
+          tags:
+            - always
+            - preflight
+            - validation
+
+        - name: "policy_as_code/policies/audit_accountability/audit_logging | Preflight | Record that preflight validation passed"
+          ansible.builtin.set_fact:
+            fe_policy_as_code_policies_audit_accountability_audit_logging_preflight_passed: true
+          tags:
+            - always
+            - preflight
+            - validation
+
+      rescue:
+
+        - name: "policy_as_code/policies/audit_accountability/audit_logging | Rescue | Capture the failing task and error detail"
+          ansible.builtin.set_fact:
+            fe_policy_as_code_policies_audit_accountability_audit_logging_status: "preflight_failed"
+            fe_policy_as_code_policies_audit_accountability_audit_logging_postflight_passed: false
+            fe_policy_as_code_policies_audit_accountability_audit_logging_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+            fe_policy_as_code_policies_audit_accountability_audit_logging_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+          tags:
+            - always
+            - rescue
+
+        - name: "policy_as_code/policies/audit_accountability/audit_logging | Rescue | Report the failure"
+          ansible.builtin.debug:
+            msg: >-
+              policy_as_code/policies/audit_accountability/audit_logging: FAILED at '{{ fe_policy_as_code_policies_audit_accountability_audit_logging_failed_task }}' on
+              {{ inventory_hostname }} - {{ fe_policy_as_code_policies_audit_accountability_audit_logging_error }}
+          tags:
+            - always
+            - rescue
+
+        - name: "policy_as_code/policies/audit_accountability/audit_logging | Always | Publish the validation result with set_stats"
+          ansible.builtin.set_stats:
+            data:
+              fe_validation_results:
+                "policy_as_code/policies/audit_accountability/audit_logging":
+                  component: "policy_as_code/policies/audit_accountability/audit_logging"
+                  type: "playbook"
+                  platform: "policy_as_code"
+                  host: "{{ inventory_hostname }}"
+                  status: "{{ fe_policy_as_code_policies_audit_accountability_audit_logging_status | default('unknown') }}"
+                  preflight_passed: "{{ fe_policy_as_code_policies_audit_accountability_audit_logging_preflight_passed | default(false) | bool }}"
+                  postflight_passed: "{{ fe_policy_as_code_policies_audit_accountability_audit_logging_postflight_passed | default(false) | bool }}"
+                  started_at: "{{ fe_policy_as_code_policies_audit_accountability_audit_logging_started_at | default('') }}"
+                  ended_at: "{{ fe_policy_as_code_policies_audit_accountability_audit_logging_ended_at | default('') }}"
+                  duration_seconds: "{{ fe_policy_as_code_policies_audit_accountability_audit_logging_duration_seconds | default(0) | int }}"
+                  failed_task: "{{ fe_policy_as_code_policies_audit_accountability_audit_logging_failed_task | default('') }}"
+                  error: "{{ fe_policy_as_code_policies_audit_accountability_audit_logging_error | default('') }}"
+                  check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+              fe_validation_executions: 1
+              fe_validation_succeeded: "{{ 1 if fe_policy_as_code_policies_audit_accountability_audit_logging_status | default('') == 'succeeded' else 0 }}"
+              fe_validation_failed: "{{ 0 if fe_policy_as_code_policies_audit_accountability_audit_logging_status | default('') == 'succeeded' else 1 }}"
+              fe_validation_duration_seconds: "{{ fe_policy_as_code_policies_audit_accountability_audit_logging_duration_seconds | default(0) | int }}"
+              fe_validation_failed_components: >-
+                {{ [] if fe_policy_as_code_policies_audit_accountability_audit_logging_status | default('') == 'succeeded' else ['policy_as_code/policies/audit_accountability/audit_logging'] }}
+            aggregate: true
+            per_host: false
+          tags:
+            - always
+
+        - name: "policy_as_code/policies/audit_accountability/audit_logging | Always | Mark the validation statistics as published"
+          ansible.builtin.set_fact:
+            fe_policy_as_code_policies_audit_accountability_audit_logging_stats_published: true
+          tags:
+            - always
+
+        - name: "policy_as_code/policies/audit_accountability/audit_logging | Rescue | Re-raise the failure unless the caller opted to continue"
+          ansible.builtin.fail:
+            msg: >-
+              policy_as_code/policies/audit_accountability/audit_logging failed at '{{ fe_policy_as_code_policies_audit_accountability_audit_logging_failed_task }}': {{ fe_policy_as_code_policies_audit_accountability_audit_logging_error }}
+          when: not (fe_validation_continue_on_error | default(false) | bool)
+          tags:
+            - always
+            - rescue
+
+      always:
+
+        - name: "policy_as_code/policies/audit_accountability/audit_logging | Always | Report the preflight outcome"
+          ansible.builtin.debug:
+            msg: >-
+              policy_as_code/policies/audit_accountability/audit_logging: preflight
+              {{ 'passed' if fe_policy_as_code_policies_audit_accountability_audit_logging_preflight_passed | default(false) | bool else 'FAILED' }}
+              on {{ inventory_hostname }}.
+          tags:
+            - always
     - name: Include compliance common library
       ansible.builtin.include_tasks: ../../library/compliance_common.yml
       tags: [always]
@@ -56,308 +207,390 @@
     # DoD STIG V-230315
     # ============================================
 
-    - name: AU-2 - Query current logging configuration
-      ansible.builtin.command:
-        cmd: show running-config | include logging
-      register: current_logging
-      changed_when: false
-      failed_when: false
-      check_mode: false
-      tags: [nist_au_2, nist_au_12, stig_cat2, audit_logging, query]
+    - name: "policy_as_code/policies/audit_accountability/audit_logging | Guarded execution with rescue and always handling"
+      block:
 
-    - name: AU-2 - Enable logging globally
-      ansible.builtin.command:
-        cmd: |
-          configure terminal
-          logging on
-          logging buffered {{ au_buffer_size }} {{ au_logging_level }}
-          logging monitor {{ au_logging_level }}
-          logging console critical
-          end
-      when:
-        - apply_changes | bool
-        - au_logging_enabled | bool
-        - current_logging.stdout is not search("logging on")
-      register: set_logging
-      changed_when: set_logging.rc == 0
-      tags: [nist_au_2, nist_au_12, stig_cat2, audit_logging, apply]
+        - name: AU-2 - Query current logging configuration
+          ansible.builtin.command:
+            cmd: show running-config | include logging
+          register: current_logging
+          changed_when: false
+          failed_when: false
+          check_mode: false
+          tags: [nist_au_2, nist_au_12, stig_cat2, audit_logging, query]
 
-    - name: AU-2 - Verify logging is enabled
-      ansible.builtin.command:
-        cmd: show running-config | include "logging on"
-      register: verify_logging
-      changed_when: false
-      failed_when: verify_logging.stdout | length == 0
-      check_mode: false
-      tags: [nist_au_2, nist_au_12, stig_cat2, audit_logging, verify]
+        - name: AU-2 - Enable logging globally
+          ansible.builtin.command:
+            cmd: |
+              configure terminal
+              logging on
+              logging buffered {{ au_buffer_size }} {{ au_logging_level }}
+              logging monitor {{ au_logging_level }}
+              logging console critical
+              end
+          when:
+            - apply_changes | bool
+            - au_logging_enabled | bool
+            - current_logging.stdout is not search("logging on")
+          register: set_logging
+          changed_when: set_logging.rc == 0
+          tags: [nist_au_2, nist_au_12, stig_cat2, audit_logging, apply]
 
-    - name: AU-2 - Generate logging enablement compliance artifact
-      ansible.builtin.include_tasks: ../../library/artifact_generator.yml
-      vars:
-        control_description: "Enable comprehensive audit logging"
-        implementation_status: >-
-          {{ 'COMPLIANT' if (verify_logging.stdout | length > 0) else 'NON_COMPLIANT' }}
-        implementation_details:
-          finding: "V-230315"
-          requirement: "System must enable audit logging for all security-relevant events"
-          current_setting: "{{ verify_logging.stdout | default('Not configured') }}"
-          expected_setting: "logging on, buffered {{ au_buffer_size }}, level {{ au_logging_level }}"
-          changed: "{{ set_logging.changed | default(false) }}"
-        applied_settings:
-          logging_enabled: "{{ au_logging_enabled }}"
-          buffer_size: "{{ au_buffer_size }}"
-          logging_level: "{{ au_logging_level }}"
-        verification_method: "Automated - CLI verification"
-        verification_status: >-
-          {{ 'Verified' if (verify_logging.rc == 0) else 'Failed' }}
-      tags: [nist_au_2, stig_cat2, artifact]
+        - name: AU-2 - Verify logging is enabled
+          ansible.builtin.command:
+            cmd: show running-config | include "logging on"
+          register: verify_logging
+          changed_when: false
+          failed_when: verify_logging.stdout | length == 0
+          check_mode: false
+          tags: [nist_au_2, nist_au_12, stig_cat2, audit_logging, verify]
 
-    # ============================================
-    # NIST AU-3 - Configure Remote Syslog Server
-    # DoD STIG V-230316
-    # ============================================
+        - name: AU-2 - Generate logging enablement compliance artifact
+          ansible.builtin.include_tasks: ../../library/artifact_generator.yml
+          vars:
+            control_description: "Enable comprehensive audit logging"
+            implementation_status: >-
+              {{ 'COMPLIANT' if (verify_logging.stdout | length > 0) else 'NON_COMPLIANT' }}
+            implementation_details:
+              finding: "V-230315"
+              requirement: "System must enable audit logging for all security-relevant events"
+              current_setting: "{{ verify_logging.stdout | default('Not configured') }}"
+              expected_setting: "logging on, buffered {{ au_buffer_size }}, level {{ au_logging_level }}"
+              changed: "{{ set_logging.changed | default(false) }}"
+            applied_settings:
+              logging_enabled: "{{ au_logging_enabled }}"
+              buffer_size: "{{ au_buffer_size }}"
+              logging_level: "{{ au_logging_level }}"
+            verification_method: "Automated - CLI verification"
+            verification_status: >-
+              {{ 'Verified' if (verify_logging.rc == 0) else 'Failed' }}
+          tags: [nist_au_2, stig_cat2, artifact]
 
-    - name: AU-3 - Query current syslog server configuration
-      ansible.builtin.command:
-        cmd: show running-config | include "logging host"
-      register: current_syslog
-      changed_when: false
-      failed_when: false
-      check_mode: false
-      tags: [nist_au_3, stig_cat2, audit_logging, query]
+        # ============================================
+        # NIST AU-3 - Configure Remote Syslog Server
+        # DoD STIG V-230316
+        # ============================================
 
-    - name: AU-3 - Configure remote syslog server
-      ansible.builtin.command:
-        cmd: |
-          configure terminal
-          logging host {{ au_syslog_server }} transport udp port {{ au_syslog_port }}
-          logging facility {{ au_syslog_facility }}
-          logging trap {{ au_logging_level }}
-          logging source-interface Management0
-          end
-      when:
-        - apply_changes | bool
-        - current_syslog.stdout is not search(au_syslog_server)
-      register: set_syslog
-      changed_when: set_syslog.rc == 0
-      tags: [nist_au_3, stig_cat2, audit_logging, apply]
+        - name: AU-3 - Query current syslog server configuration
+          ansible.builtin.command:
+            cmd: show running-config | include "logging host"
+          register: current_syslog
+          changed_when: false
+          failed_when: false
+          check_mode: false
+          tags: [nist_au_3, stig_cat2, audit_logging, query]
 
-    - name: AU-3 - Verify syslog server configuration
-      ansible.builtin.command:
-        cmd: show running-config | include "logging host"
-      register: verify_syslog
-      changed_when: false
-      failed_when: verify_syslog.stdout is not search(au_syslog_server)
-      check_mode: false
-      tags: [nist_au_3, stig_cat2, audit_logging, verify]
+        - name: AU-3 - Configure remote syslog server
+          ansible.builtin.command:
+            cmd: |
+              configure terminal
+              logging host {{ au_syslog_server }} transport udp port {{ au_syslog_port }}
+              logging facility {{ au_syslog_facility }}
+              logging trap {{ au_logging_level }}
+              logging source-interface Management0
+              end
+          when:
+            - apply_changes | bool
+            - current_syslog.stdout is not search(au_syslog_server)
+          register: set_syslog
+          changed_when: set_syslog.rc == 0
+          tags: [nist_au_3, stig_cat2, audit_logging, apply]
 
-    - name: AU-3 - Generate syslog compliance artifact
-      ansible.builtin.include_tasks: ../../library/artifact_generator.yml
-      vars:
-        control_description: "Configure remote syslog server for centralized logging"
-        implementation_status: >-
-          {{ 'COMPLIANT' if (verify_syslog.stdout is search(au_syslog_server)) else 'NON_COMPLIANT' }}
-        implementation_details:
-          finding: "V-230316"
-          requirement: "System must send audit logs to remote syslog server"
-          current_setting: "{{ verify_syslog.stdout | default('Not configured') }}"
-          expected_setting: "logging host {{ au_syslog_server }} port {{ au_syslog_port }}"
-          changed: "{{ set_syslog.changed | default(false) }}"
-        applied_settings:
-          syslog_server: "{{ au_syslog_server }}"
-          syslog_port: "{{ au_syslog_port }}"
-          facility: "{{ au_syslog_facility }}"
-          transport: "udp"
-        verification_method: "Automated - CLI verification"
-        verification_status: >-
-          {{ 'Verified' if (verify_syslog.rc == 0) else 'Failed' }}
-      tags: [nist_au_3, stig_cat2, artifact]
+        - name: AU-3 - Verify syslog server configuration
+          ansible.builtin.command:
+            cmd: show running-config | include "logging host"
+          register: verify_syslog
+          changed_when: false
+          failed_when: verify_syslog.stdout is not search(au_syslog_server)
+          check_mode: false
+          tags: [nist_au_3, stig_cat2, audit_logging, verify]
 
-    # ============================================
-    # NIST AU-12 - Configure Logging Level
-    # DoD STIG V-230317
-    # ============================================
+        - name: AU-3 - Generate syslog compliance artifact
+          ansible.builtin.include_tasks: ../../library/artifact_generator.yml
+          vars:
+            control_description: "Configure remote syslog server for centralized logging"
+            implementation_status: >-
+              {{ 'COMPLIANT' if (verify_syslog.stdout is search(au_syslog_server)) else 'NON_COMPLIANT' }}
+            implementation_details:
+              finding: "V-230316"
+              requirement: "System must send audit logs to remote syslog server"
+              current_setting: "{{ verify_syslog.stdout | default('Not configured') }}"
+              expected_setting: "logging host {{ au_syslog_server }} port {{ au_syslog_port }}"
+              changed: "{{ set_syslog.changed | default(false) }}"
+            applied_settings:
+              syslog_server: "{{ au_syslog_server }}"
+              syslog_port: "{{ au_syslog_port }}"
+              facility: "{{ au_syslog_facility }}"
+              transport: "udp"
+            verification_method: "Automated - CLI verification"
+            verification_status: >-
+              {{ 'Verified' if (verify_syslog.rc == 0) else 'Failed' }}
+          tags: [nist_au_3, stig_cat2, artifact]
 
-    - name: AU-12 - Query current logging level
-      ansible.builtin.command:
-        cmd: show running-config | include "logging trap"
-      register: current_log_level
-      changed_when: false
-      failed_when: false
-      check_mode: false
-      tags: [nist_au_12, stig_cat2, audit_logging, query]
+        # ============================================
+        # NIST AU-12 - Configure Logging Level
+        # DoD STIG V-230317
+        # ============================================
 
-    - name: AU-12 - Verify logging level is informational or higher
-      ansible.builtin.assert:
-        that:
-          - >-
-            verify_logging.stdout is search("informational") or
-            verify_logging.stdout is search("notifications") or
-            verify_logging.stdout is search("debugging")
-        success_msg: "Logging level is compliant (informational or higher)"
-        fail_msg: "Logging level must be informational or higher"
-      when: verify_logging.stdout is defined
-      tags: [nist_au_12, stig_cat2, audit_logging, verify]
+        - name: AU-12 - Query current logging level
+          ansible.builtin.command:
+            cmd: show running-config | include "logging trap"
+          register: current_log_level
+          changed_when: false
+          failed_when: false
+          check_mode: false
+          tags: [nist_au_12, stig_cat2, audit_logging, query]
 
-    - name: AU-12 - Generate logging level compliance artifact
-      ansible.builtin.include_tasks: ../../library/artifact_generator.yml
-      vars:
-        control_description: "Configure appropriate logging level (informational)"
-        implementation_status: "COMPLIANT"
-        implementation_details:
-          finding: "V-230317"
-          requirement: "System must log all security-relevant events at informational level or higher"
-          current_setting: "{{ current_log_level.stdout | default('Not configured') }}"
-          expected_setting: "logging trap {{ au_logging_level }}"
-          changed: false
-        applied_settings:
-          logging_level: "{{ au_logging_level }}"
-          events_logged:
-            - "Authentication attempts (success/failure)"
-            - "Authorization changes"
-            - "Configuration changes"
-            - "System startup/shutdown"
-            - "Interface status changes"
-            - "Access list matches"
-        verification_method: "Automated - CLI verification"
-        verification_status: "Verified"
-      tags: [nist_au_12, stig_cat2, artifact]
+        - name: AU-12 - Verify logging level is informational or higher
+          ansible.builtin.assert:
+            that:
+              - >-
+                verify_logging.stdout is search("informational") or
+                verify_logging.stdout is search("notifications") or
+                verify_logging.stdout is search("debugging")
+            success_msg: "Logging level is compliant (informational or higher)"
+            fail_msg: "Logging level must be informational or higher"
+          when: verify_logging.stdout is defined
+          tags: [nist_au_12, stig_cat2, audit_logging, verify]
 
-    # ============================================
-    # NIST AU-3(1) - Enable Timestamps
-    # DoD STIG V-230318
-    # ============================================
+        - name: AU-12 - Generate logging level compliance artifact
+          ansible.builtin.include_tasks: ../../library/artifact_generator.yml
+          vars:
+            control_description: "Configure appropriate logging level (informational)"
+            implementation_status: "COMPLIANT"
+            implementation_details:
+              finding: "V-230317"
+              requirement: "System must log all security-relevant events at informational level or higher"
+              current_setting: "{{ current_log_level.stdout | default('Not configured') }}"
+              expected_setting: "logging trap {{ au_logging_level }}"
+              changed: false
+            applied_settings:
+              logging_level: "{{ au_logging_level }}"
+              events_logged:
+                - "Authentication attempts (success/failure)"
+                - "Authorization changes"
+                - "Configuration changes"
+                - "System startup/shutdown"
+                - "Interface status changes"
+                - "Access list matches"
+            verification_method: "Automated - CLI verification"
+            verification_status: "Verified"
+          tags: [nist_au_12, stig_cat2, artifact]
 
-    - name: AU-3(1) - Query current timestamp configuration
-      ansible.builtin.command:
-        cmd: show running-config | include "service timestamps"
-      register: current_timestamps
-      changed_when: false
-      failed_when: false
-      check_mode: false
-      tags: [nist_au_3, stig_cat2, audit_logging, query]
+        # ============================================
+        # NIST AU-3(1) - Enable Timestamps
+        # DoD STIG V-230318
+        # ============================================
 
-    - name: AU-3(1) - Enable timestamps on log messages
-      ansible.builtin.command:
-        cmd: |
-          configure terminal
-          service timestamps log {{ au_timestamp_format }} msec localtime show-timezone
-          service timestamps debug {{ au_timestamp_format }} msec localtime show-timezone
-          service sequence-numbers
-          clock timezone UTC 0 0
-          ntp server time.nist.gov
-          end
-      when:
-        - apply_changes | bool
-        - current_timestamps.stdout is not search(au_timestamp_format)
-      register: set_timestamps
-      changed_when: set_timestamps.rc == 0
-      tags: [nist_au_3, stig_cat2, audit_logging, apply]
+        - name: AU-3(1) - Query current timestamp configuration
+          ansible.builtin.command:
+            cmd: show running-config | include "service timestamps"
+          register: current_timestamps
+          changed_when: false
+          failed_when: false
+          check_mode: false
+          tags: [nist_au_3, stig_cat2, audit_logging, query]
 
-    - name: AU-3(1) - Verify timestamp configuration
-      ansible.builtin.command:
-        cmd: show running-config | include "service timestamps"
-      register: verify_timestamps
-      changed_when: false
-      failed_when: verify_timestamps.stdout is not search(au_timestamp_format)
-      check_mode: false
-      tags: [nist_au_3, stig_cat2, audit_logging, verify]
+        - name: AU-3(1) - Enable timestamps on log messages
+          ansible.builtin.command:
+            cmd: |
+              configure terminal
+              service timestamps log {{ au_timestamp_format }} msec localtime show-timezone
+              service timestamps debug {{ au_timestamp_format }} msec localtime show-timezone
+              service sequence-numbers
+              clock timezone UTC 0 0
+              ntp server time.nist.gov
+              end
+          when:
+            - apply_changes | bool
+            - current_timestamps.stdout is not search(au_timestamp_format)
+          register: set_timestamps
+          changed_when: set_timestamps.rc == 0
+          tags: [nist_au_3, stig_cat2, audit_logging, apply]
 
-    - name: AU-3(1) - Generate timestamp compliance artifact
-      ansible.builtin.include_tasks: ../../library/artifact_generator.yml
-      vars:
-        control_description: "Enable timestamps on all log messages"
-        implementation_status: >-
-          {{ 'COMPLIANT' if (verify_timestamps.stdout is search(au_timestamp_format)) else 'NON_COMPLIANT' }}
-        implementation_details:
-          finding: "V-230318"
-          requirement: "System must timestamp all audit records with accurate time"
-          current_setting: "{{ verify_timestamps.stdout | default('Not configured') }}"
-          expected_setting: "service timestamps log {{ au_timestamp_format }} msec localtime show-timezone"
-          changed: "{{ set_timestamps.changed | default(false) }}"
-        applied_settings:
-          timestamp_format: "{{ au_timestamp_format }}"
-          milliseconds: true
-          localtime: true
-          timezone: true
-          sequence_numbers: "{{ au_sequence_numbers }}"
-          ntp_configured: true
-        verification_method: "Automated - CLI verification"
-        verification_status: >-
-          {{ 'Verified' if (verify_timestamps.rc == 0) else 'Failed' }}
-      tags: [nist_au_3, stig_cat2, artifact]
+        - name: AU-3(1) - Verify timestamp configuration
+          ansible.builtin.command:
+            cmd: show running-config | include "service timestamps"
+          register: verify_timestamps
+          changed_when: false
+          failed_when: verify_timestamps.stdout is not search(au_timestamp_format)
+          check_mode: false
+          tags: [nist_au_3, stig_cat2, audit_logging, verify]
 
-    # ============================================
-    # NIST AU-4 - Verify Audit Storage Capacity
-    # ============================================
+        - name: AU-3(1) - Generate timestamp compliance artifact
+          ansible.builtin.include_tasks: ../../library/artifact_generator.yml
+          vars:
+            control_description: "Enable timestamps on all log messages"
+            implementation_status: >-
+              {{ 'COMPLIANT' if (verify_timestamps.stdout is search(au_timestamp_format)) else 'NON_COMPLIANT' }}
+            implementation_details:
+              finding: "V-230318"
+              requirement: "System must timestamp all audit records with accurate time"
+              current_setting: "{{ verify_timestamps.stdout | default('Not configured') }}"
+              expected_setting: "service timestamps log {{ au_timestamp_format }} msec localtime show-timezone"
+              changed: "{{ set_timestamps.changed | default(false) }}"
+            applied_settings:
+              timestamp_format: "{{ au_timestamp_format }}"
+              milliseconds: true
+              localtime: true
+              timezone: true
+              sequence_numbers: "{{ au_sequence_numbers }}"
+              ntp_configured: true
+            verification_method: "Automated - CLI verification"
+            verification_status: >-
+              {{ 'Verified' if (verify_timestamps.rc == 0) else 'Failed' }}
+          tags: [nist_au_3, stig_cat2, artifact]
 
-    - name: AU-4 - Query logging buffer size
-      ansible.builtin.command:
-        cmd: show logging | include "Buffer logging"
-      register: current_buffer
-      changed_when: false
-      failed_when: false
-      check_mode: false
-      tags: [nist_au_4, audit_logging, query]
+        # ============================================
+        # NIST AU-4 - Verify Audit Storage Capacity
+        # ============================================
 
-    - name: AU-4 - Generate storage capacity compliance artifact
-      ansible.builtin.include_tasks: ../../library/artifact_generator.yml
-      vars:
-        control_description: "Configure adequate audit storage capacity"
-        implementation_status: "COMPLIANT"
-        implementation_details:
-          requirement: "System must allocate sufficient storage for audit logs"
-          current_setting: "{{ current_buffer.stdout | default('Unknown') }}"
-          expected_setting: "logging buffered {{ au_buffer_size }}"
-          notes: "Remote syslog provides long-term storage; local buffer provides short-term retention"
-        applied_settings:
-          local_buffer_size: "{{ au_buffer_size }}"
-          remote_logging: true
-          retention_policy: "365 days on remote syslog server"
-        verification_method: "Design Review"
-        verification_status: "Verified"
-      tags: [nist_au_4, artifact]
+        - name: AU-4 - Query logging buffer size
+          ansible.builtin.command:
+            cmd: show logging | include "Buffer logging"
+          register: current_buffer
+          changed_when: false
+          failed_when: false
+          check_mode: false
+          tags: [nist_au_4, audit_logging, query]
 
-    # ============================================
-    # NIST AU-12 - Log Security Events
-    # ============================================
+        - name: AU-4 - Generate storage capacity compliance artifact
+          ansible.builtin.include_tasks: ../../library/artifact_generator.yml
+          vars:
+            control_description: "Configure adequate audit storage capacity"
+            implementation_status: "COMPLIANT"
+            implementation_details:
+              requirement: "System must allocate sufficient storage for audit logs"
+              current_setting: "{{ current_buffer.stdout | default('Unknown') }}"
+              expected_setting: "logging buffered {{ au_buffer_size }}"
+              notes: "Remote syslog provides long-term storage; local buffer provides short-term retention"
+            applied_settings:
+              local_buffer_size: "{{ au_buffer_size }}"
+              remote_logging: true
+              retention_policy: "365 days on remote syslog server"
+            verification_method: "Design Review"
+            verification_status: "Verified"
+          tags: [nist_au_4, artifact]
 
-    - name: AU-12 - Configure security event logging
-      ansible.builtin.command:
-        cmd: |
-          configure terminal
-          logging discriminator SECURITY msg-body includes DENIED|CHANGED|FAILED|SUCCESS
-          logging buffered discriminator SECURITY
-          logging history {{ au_logging_level }}
-          logging history size 500
-          end
-      when:
-        - apply_changes | bool
-      register: set_security_logging
-      changed_when: set_security_logging.rc == 0
-      tags: [nist_au_12, stig_cat2, audit_logging, apply]
+        # ============================================
+        # NIST AU-12 - Log Security Events
+        # ============================================
 
-    - name: AU-12 - Generate security events compliance artifact
-      ansible.builtin.include_tasks: ../../library/artifact_generator.yml
-      vars:
-        control_description: "Log all security-relevant events"
-        implementation_status: "COMPLIANT"
-        implementation_details:
-          requirement: "System must generate audit records for security-relevant events"
-          implementation: "Discriminator configured to capture DENIED, CHANGED, FAILED, SUCCESS events"
-          changed: "{{ set_security_logging.changed | default(false) }}"
-        applied_settings:
-          security_events_logged:
-            - "Authentication attempts (login/logout)"
-            - "Authorization failures (DENIED)"
-            - "Configuration changes (CHANGED)"
-            - "Failed command attempts (FAILED)"
-            - "Successful privileged operations (SUCCESS)"
-            - "ACL matches"
-            - "Interface state changes"
-        verification_method: "Configuration Review"
-        verification_status: "Verified"
-      tags: [nist_au_12, artifact]
+        - name: AU-12 - Configure security event logging
+          ansible.builtin.command:
+            cmd: |
+              configure terminal
+              logging discriminator SECURITY msg-body includes DENIED|CHANGED|FAILED|SUCCESS
+              logging buffered discriminator SECURITY
+              logging history {{ au_logging_level }}
+              logging history size 500
+              end
+          when:
+            - apply_changes | bool
+          register: set_security_logging
+          changed_when: set_security_logging.rc == 0
+          tags: [nist_au_12, stig_cat2, audit_logging, apply]
+
+        - name: AU-12 - Generate security events compliance artifact
+          ansible.builtin.include_tasks: ../../library/artifact_generator.yml
+          vars:
+            control_description: "Log all security-relevant events"
+            implementation_status: "COMPLIANT"
+            implementation_details:
+              requirement: "System must generate audit records for security-relevant events"
+              implementation: "Discriminator configured to capture DENIED, CHANGED, FAILED, SUCCESS events"
+              changed: "{{ set_security_logging.changed | default(false) }}"
+            applied_settings:
+              security_events_logged:
+                - "Authentication attempts (login/logout)"
+                - "Authorization failures (DENIED)"
+                - "Configuration changes (CHANGED)"
+                - "Failed command attempts (FAILED)"
+                - "Successful privileged operations (SUCCESS)"
+                - "ACL matches"
+                - "Interface state changes"
+            verification_method: "Configuration Review"
+            verification_status: "Verified"
+          tags: [nist_au_12, artifact]
+
+      rescue:
+
+        - name: "policy_as_code/policies/audit_accountability/audit_logging | Rescue | Capture the failing task and error detail"
+          ansible.builtin.set_fact:
+            fe_policy_as_code_policies_audit_accountability_audit_logging_status: "failed"
+            fe_policy_as_code_policies_audit_accountability_audit_logging_postflight_passed: false
+            fe_policy_as_code_policies_audit_accountability_audit_logging_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+            fe_policy_as_code_policies_audit_accountability_audit_logging_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+          tags:
+            - always
+            - rescue
+
+        - name: "policy_as_code/policies/audit_accountability/audit_logging | Rescue | Report the failure"
+          ansible.builtin.debug:
+            msg: >-
+              policy_as_code/policies/audit_accountability/audit_logging: FAILED at '{{ fe_policy_as_code_policies_audit_accountability_audit_logging_failed_task }}' on
+              {{ inventory_hostname }} - {{ fe_policy_as_code_policies_audit_accountability_audit_logging_error }}
+          tags:
+            - always
+            - rescue
+
+        - name: "policy_as_code/policies/audit_accountability/audit_logging | Rescue | Re-raise the failure unless the caller opted to continue"
+          ansible.builtin.fail:
+            msg: >-
+              policy_as_code/policies/audit_accountability/audit_logging failed at '{{ fe_policy_as_code_policies_audit_accountability_audit_logging_failed_task }}': {{ fe_policy_as_code_policies_audit_accountability_audit_logging_error }}
+          when: not (fe_validation_continue_on_error | default(false) | bool)
+          tags:
+            - always
+            - rescue
+
+      always:
+
+        - name: "policy_as_code/policies/audit_accountability/audit_logging | Always | Compute the execution duration"
+          ansible.builtin.set_fact:
+            fe_policy_as_code_policies_audit_accountability_audit_logging_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+            fe_policy_as_code_policies_audit_accountability_audit_logging_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_policy_as_code_policies_audit_accountability_audit_logging_start_epoch | default(0) | int) }}"
+          tags:
+            - always
+
+        - name: "policy_as_code/policies/audit_accountability/audit_logging | Always | Publish the validation result with set_stats"
+          ansible.builtin.set_stats:
+            data:
+              fe_validation_results:
+                "policy_as_code/policies/audit_accountability/audit_logging":
+                  component: "policy_as_code/policies/audit_accountability/audit_logging"
+                  type: "playbook"
+                  platform: "policy_as_code"
+                  host: "{{ inventory_hostname }}"
+                  status: "{{ fe_policy_as_code_policies_audit_accountability_audit_logging_status | default('unknown') }}"
+                  preflight_passed: "{{ fe_policy_as_code_policies_audit_accountability_audit_logging_preflight_passed | default(false) | bool }}"
+                  postflight_passed: "{{ fe_policy_as_code_policies_audit_accountability_audit_logging_postflight_passed | default(false) | bool }}"
+                  started_at: "{{ fe_policy_as_code_policies_audit_accountability_audit_logging_started_at | default('') }}"
+                  ended_at: "{{ fe_policy_as_code_policies_audit_accountability_audit_logging_ended_at | default('') }}"
+                  duration_seconds: "{{ fe_policy_as_code_policies_audit_accountability_audit_logging_duration_seconds | default(0) | int }}"
+                  failed_task: "{{ fe_policy_as_code_policies_audit_accountability_audit_logging_failed_task | default('') }}"
+                  error: "{{ fe_policy_as_code_policies_audit_accountability_audit_logging_error | default('') }}"
+                  check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+              fe_validation_executions: 1
+              fe_validation_succeeded: "{{ 1 if fe_policy_as_code_policies_audit_accountability_audit_logging_status | default('') == 'succeeded' else 0 }}"
+              fe_validation_failed: "{{ 0 if fe_policy_as_code_policies_audit_accountability_audit_logging_status | default('') == 'succeeded' else 1 }}"
+              fe_validation_duration_seconds: "{{ fe_policy_as_code_policies_audit_accountability_audit_logging_duration_seconds | default(0) | int }}"
+              fe_validation_failed_components: >-
+                {{ [] if fe_policy_as_code_policies_audit_accountability_audit_logging_status | default('') == 'succeeded' else ['policy_as_code/policies/audit_accountability/audit_logging'] }}
+            aggregate: true
+            per_host: false
+          when:
+            - fe_policy_as_code_policies_audit_accountability_audit_logging_status | default('') == 'failed'
+            - not (fe_policy_as_code_policies_audit_accountability_audit_logging_stats_published | default(false) | bool)
+          tags:
+            - always
+
+        - name: "policy_as_code/policies/audit_accountability/audit_logging | Always | Mark the validation statistics as published"
+          ansible.builtin.set_fact:
+            fe_policy_as_code_policies_audit_accountability_audit_logging_stats_published: true
+          when:
+            - fe_policy_as_code_policies_audit_accountability_audit_logging_status | default('') == 'failed'
+          tags:
+            - always
 
   post_tasks:
     - name: Generate consolidated AU-2/AU-12 compliance summary
@@ -426,3 +659,118 @@
           - Security Events: PASS
           ========================================
       tags: [always]
+    - name: "policy_as_code/policies/audit_accountability/audit_logging | Postflight validation"
+      tags:
+        - always
+        - postflight
+        - validation
+      block:
+
+        - name: "policy_as_code/policies/audit_accountability/audit_logging | Postflight | Verify the guarded body ran after a passing preflight"
+          ansible.builtin.assert:
+            that:
+              - fe_policy_as_code_policies_audit_accountability_audit_logging_preflight_passed | bool
+              - fe_policy_as_code_policies_audit_accountability_audit_logging_status in ['running', 'succeeded']
+            fail_msg: >-
+              policy_as_code/policies/audit_accountability/audit_logging: postflight validation failed - preflight passed
+              ={{ fe_policy_as_code_policies_audit_accountability_audit_logging_preflight_passed | default(false) }},
+              status={{ fe_policy_as_code_policies_audit_accountability_audit_logging_status | default('unknown') }}.
+            success_msg: "policy_as_code/policies/audit_accountability/audit_logging: postflight validation passed."
+            quiet: true
+          tags:
+            - always
+            - postflight
+            - validation
+
+        - name: "policy_as_code/policies/audit_accountability/audit_logging | Postflight | Record the successful outcome"
+          ansible.builtin.set_fact:
+            fe_policy_as_code_policies_audit_accountability_audit_logging_postflight_passed: true
+            fe_policy_as_code_policies_audit_accountability_audit_logging_status: "succeeded"
+          tags:
+            - always
+            - postflight
+            - validation
+
+      rescue:
+
+        - name: "policy_as_code/policies/audit_accountability/audit_logging | Rescue | Capture the failing task and error detail"
+          ansible.builtin.set_fact:
+            fe_policy_as_code_policies_audit_accountability_audit_logging_status: "failed"
+            fe_policy_as_code_policies_audit_accountability_audit_logging_postflight_passed: false
+            fe_policy_as_code_policies_audit_accountability_audit_logging_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+            fe_policy_as_code_policies_audit_accountability_audit_logging_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+          tags:
+            - always
+            - rescue
+
+        - name: "policy_as_code/policies/audit_accountability/audit_logging | Rescue | Report the failure"
+          ansible.builtin.debug:
+            msg: >-
+              policy_as_code/policies/audit_accountability/audit_logging: FAILED at '{{ fe_policy_as_code_policies_audit_accountability_audit_logging_failed_task }}' on
+              {{ inventory_hostname }} - {{ fe_policy_as_code_policies_audit_accountability_audit_logging_error }}
+          tags:
+            - always
+            - rescue
+
+        - name: "policy_as_code/policies/audit_accountability/audit_logging | Rescue | Re-raise the failure unless the caller opted to continue"
+          ansible.builtin.fail:
+            msg: >-
+              policy_as_code/policies/audit_accountability/audit_logging failed at '{{ fe_policy_as_code_policies_audit_accountability_audit_logging_failed_task }}': {{ fe_policy_as_code_policies_audit_accountability_audit_logging_error }}
+          when: not (fe_validation_continue_on_error | default(false) | bool)
+          tags:
+            - always
+            - rescue
+
+      always:
+
+        - name: "policy_as_code/policies/audit_accountability/audit_logging | Always | Compute the execution duration"
+          ansible.builtin.set_fact:
+            fe_policy_as_code_policies_audit_accountability_audit_logging_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+            fe_policy_as_code_policies_audit_accountability_audit_logging_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_policy_as_code_policies_audit_accountability_audit_logging_start_epoch | default(0) | int) }}"
+          tags:
+            - always
+
+        - name: "policy_as_code/policies/audit_accountability/audit_logging | Always | Publish the validation result with set_stats"
+          ansible.builtin.set_stats:
+            data:
+              fe_validation_results:
+                "policy_as_code/policies/audit_accountability/audit_logging":
+                  component: "policy_as_code/policies/audit_accountability/audit_logging"
+                  type: "playbook"
+                  platform: "policy_as_code"
+                  host: "{{ inventory_hostname }}"
+                  status: "{{ fe_policy_as_code_policies_audit_accountability_audit_logging_status | default('unknown') }}"
+                  preflight_passed: "{{ fe_policy_as_code_policies_audit_accountability_audit_logging_preflight_passed | default(false) | bool }}"
+                  postflight_passed: "{{ fe_policy_as_code_policies_audit_accountability_audit_logging_postflight_passed | default(false) | bool }}"
+                  started_at: "{{ fe_policy_as_code_policies_audit_accountability_audit_logging_started_at | default('') }}"
+                  ended_at: "{{ fe_policy_as_code_policies_audit_accountability_audit_logging_ended_at | default('') }}"
+                  duration_seconds: "{{ fe_policy_as_code_policies_audit_accountability_audit_logging_duration_seconds | default(0) | int }}"
+                  failed_task: "{{ fe_policy_as_code_policies_audit_accountability_audit_logging_failed_task | default('') }}"
+                  error: "{{ fe_policy_as_code_policies_audit_accountability_audit_logging_error | default('') }}"
+                  check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+              fe_validation_executions: 1
+              fe_validation_succeeded: "{{ 1 if fe_policy_as_code_policies_audit_accountability_audit_logging_status | default('') == 'succeeded' else 0 }}"
+              fe_validation_failed: "{{ 0 if fe_policy_as_code_policies_audit_accountability_audit_logging_status | default('') == 'succeeded' else 1 }}"
+              fe_validation_duration_seconds: "{{ fe_policy_as_code_policies_audit_accountability_audit_logging_duration_seconds | default(0) | int }}"
+              fe_validation_failed_components: >-
+                {{ [] if fe_policy_as_code_policies_audit_accountability_audit_logging_status | default('') == 'succeeded' else ['policy_as_code/policies/audit_accountability/audit_logging'] }}
+            aggregate: true
+            per_host: false
+          when:
+            - not (fe_policy_as_code_policies_audit_accountability_audit_logging_stats_published | default(false) | bool)
+          tags:
+            - always
+
+        - name: "policy_as_code/policies/audit_accountability/audit_logging | Always | Mark the validation statistics as published"
+          ansible.builtin.set_fact:
+            fe_policy_as_code_policies_audit_accountability_audit_logging_stats_published: true
+          tags:
+            - always
+
+        - name: "policy_as_code/policies/audit_accountability/audit_logging | Always | Report the run summary"
+          ansible.builtin.debug:
+            msg: >-
+              policy_as_code/policies/audit_accountability/audit_logging: {{ fe_policy_as_code_policies_audit_accountability_audit_logging_status | default('unknown') }} in
+              {{ fe_policy_as_code_policies_audit_accountability_audit_logging_duration_seconds | default(0) }}s on {{ inventory_hostname }}.
+          tags:
+            - always

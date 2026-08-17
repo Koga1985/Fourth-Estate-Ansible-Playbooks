@@ -2,84 +2,267 @@
 # tasks/kernel.yml - Kernel Hardening
 # DoD STIG V-204511 through V-204525
 
-- name: Configure kernel security parameters (STIG V-204511 through V-204518)
-  ansible.posix.sysctl:
-    name: "{{ item.name }}"
-    value: "{{ item.value }}"
-    state: present
-    reload: true
-    sysctl_file: /etc/sysctl.d/99-rhel-hardening.conf
-  loop:
-    - { name: 'kernel.randomize_va_space', value: "{{ rhel_kernel_randomize_va_space }}" }
-    - { name: 'kernel.kptr_restrict', value: "{{ rhel_kernel_kptr_restrict }}" }
-    - { name: 'kernel.yama.ptrace_scope', value: "{{ rhel_kernel_yama_ptrace_scope }}" }
-    - { name: 'kernel.dmesg_restrict', value: "{{ rhel_kernel_dmesg_restrict }}" }
-    - { name: 'kernel.kexec_load_disabled', value: "{{ rhel_kernel_kexec_load_disabled }}" }
-    - { name: 'kernel.unprivileged_userns_clone', value: "{{ rhel_kernel_unprivileged_userns_clone }}" }
-    - { name: 'kernel.unprivileged_bpf_disabled', value: "{{ rhel_kernel_unprivileged_bpf_disabled }}" }
-  tags:
-    - sysctl
-    - kernel
+# ---------------------------------------------------------------------------
+# Fourth Estate preflight / postflight validation harness
+#
+# The task file body below is wrapped in an Ansible block/rescue/always structure:
+#
+#   block   preflight validation runs first, then the original task file body, then
+#           postflight validation. Any failure transfers control to rescue.
+#   rescue  records which task failed and why, then re-raises so a failure is
+#           never silently swallowed. Set fe_validation_continue_on_error=true
+#           to record the failure and keep going instead.
+#   always  computes the run duration and publishes the outcome through
+#           ansible.builtin.set_stats, so a wrapping playbook, AWX/AAP or CI can
+#           consume the result without scraping log output.
+#
+# Published stats (see docs/VALIDATION_AND_STATS.md):
+#   fe_validation_results['rhel/rhel-hardening/kernel']  per-component record
+#   fe_validation_executions / _succeeded / _failed / _duration_seconds
+#   fe_validation_failed_components
+#
+# Add component-specific preflight checks without editing this file by setting
+#   fe_rhel_rhel_hardening_kernel_required_vars: [var_one, var_two]
+# ---------------------------------------------------------------------------
 
-- name: Blacklist kernel modules (STIG V-204519)
-  ansible.builtin.lineinfile:
-    path: /etc/modprobe.d/blacklist-{{ item }}.conf
-    line: "install {{ item }} /bin/true"
-    create: true
-    owner: root
-    group: root
-    mode: '0644'
-  loop: "{{ rhel_kernel_modules_blacklist }}"
+- name: "rhel/rhel-hardening/kernel | Initialize validation state"
+  ansible.builtin.set_fact:
+    fe_rhel_rhel_hardening_kernel_start_epoch: "{{ now(fmt='%s') | int }}"
+    fe_rhel_rhel_hardening_kernel_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+    fe_rhel_rhel_hardening_kernel_status: "running"
+    fe_rhel_rhel_hardening_kernel_preflight_passed: false
+    fe_rhel_rhel_hardening_kernel_postflight_passed: false
+    fe_rhel_rhel_hardening_kernel_failed_task: ""
+    fe_rhel_rhel_hardening_kernel_error: ""
+    fe_rhel_rhel_hardening_kernel_stats_published: false
   tags:
-    - kernel_modules
+    - always
 
-- name: Set GRUB configuration permissions (STIG V-204521)
-  ansible.builtin.file:
-    path: "{{ item }}"
-    owner: root
-    group: root
-    mode: "{{ rhel_grub_config_permissions }}"
-  loop:
-    - /boot/grub2/grub.cfg
-    - /boot/efi/EFI/redhat/grub.cfg
-  failed_when: false
-  tags:
-    - permissions
-    - grub
+- name: "rhel/rhel-hardening/kernel | Guarded execution with preflight and postflight validation"
+  block:
 
-- name: Check if UEFI is enabled (STIG V-204523)
-  ansible.builtin.stat:
-    path: /sys/firmware/efi
-  register: uefi_check
-  when: rhel_require_uefi | bool
-  tags:
-    - validation
+    # ----------------------------- preflight --------------------
 
-- name: Verify UEFI mode
-  ansible.builtin.assert:
-    that:
-      - uefi_check.stat.exists
-    fail_msg: "UEFI mode is required but not detected"
-    success_msg: "System is running in UEFI mode"
-  when: rhel_require_uefi | bool
-  tags:
-    - validation
+    - name: "rhel/rhel-hardening/kernel | Preflight | Verify the control node meets the minimum ansible-core version"
+      ansible.builtin.assert:
+        that:
+          - ansible_version.full is version(fe_validation_min_ansible_version | default('2.12'), '>=')
+        fail_msg: >-
+          rhel/rhel-hardening/kernel: requires ansible-core
+          {{ fe_validation_min_ansible_version | default('2.12') }} or newer,
+          found {{ ansible_version.full }}.
+        success_msg: >-
+          rhel/rhel-hardening/kernel: ansible-core {{ ansible_version.full }} satisfies the minimum.
+        quiet: true
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: Check Secure Boot status (STIG V-204524)
-  ansible.builtin.command: mokutil --sb-state
-  register: secure_boot_status
-  changed_when: false
-  failed_when: false
-  when: rhel_secure_boot_enabled | bool
-  tags:
-    - validation
+    - name: "rhel/rhel-hardening/kernel | Preflight | Verify every declared required variable is defined"
+      ansible.builtin.assert:
+        that:
+          - vars[item] is defined
+        fail_msg: "rhel/rhel-hardening/kernel: required variable '{{ item }}' is not defined."
+        success_msg: "rhel/rhel-hardening/kernel: required variable '{{ item }}' is defined."
+        quiet: true
+      loop: "{{ fe_rhel_rhel_hardening_kernel_required_vars | default([]) }}"
+      loop_control:
+        label: "{{ item }}"
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: Display kernel security status
-  ansible.builtin.debug:
-    msg:
-      - "Kernel security parameters configured"
-      - "ASLR: {{ rhel_kernel_randomize_va_space }}"
-      - "Kernel pointer restriction: {{ rhel_kernel_kptr_restrict }}"
-      - "PTR ACE scope: {{ rhel_kernel_yama_ptrace_scope }}"
-  tags:
-    - validation
+    - name: "rhel/rhel-hardening/kernel | Preflight | Record that preflight validation passed"
+      ansible.builtin.set_fact:
+        fe_rhel_rhel_hardening_kernel_preflight_passed: true
+      tags:
+        - always
+        - preflight
+        - validation
+
+    # ----------------------------- execute ----------------------
+
+    - name: Configure kernel security parameters (STIG V-204511 through V-204518)
+      ansible.posix.sysctl:
+        name: "{{ item.name }}"
+        value: "{{ item.value }}"
+        state: present
+        reload: true
+        sysctl_file: /etc/sysctl.d/99-rhel-hardening.conf
+      loop:
+        - { name: 'kernel.randomize_va_space', value: "{{ rhel_kernel_randomize_va_space }}" }
+        - { name: 'kernel.kptr_restrict', value: "{{ rhel_kernel_kptr_restrict }}" }
+        - { name: 'kernel.yama.ptrace_scope', value: "{{ rhel_kernel_yama_ptrace_scope }}" }
+        - { name: 'kernel.dmesg_restrict', value: "{{ rhel_kernel_dmesg_restrict }}" }
+        - { name: 'kernel.kexec_load_disabled', value: "{{ rhel_kernel_kexec_load_disabled }}" }
+        - { name: 'kernel.unprivileged_userns_clone', value: "{{ rhel_kernel_unprivileged_userns_clone }}" }
+        - { name: 'kernel.unprivileged_bpf_disabled', value: "{{ rhel_kernel_unprivileged_bpf_disabled }}" }
+      tags:
+        - sysctl
+        - kernel
+
+    - name: Blacklist kernel modules (STIG V-204519)
+      ansible.builtin.lineinfile:
+        path: /etc/modprobe.d/blacklist-{{ item }}.conf
+        line: "install {{ item }} /bin/true"
+        create: true
+        owner: root
+        group: root
+        mode: '0644'
+      loop: "{{ rhel_kernel_modules_blacklist }}"
+      tags:
+        - kernel_modules
+
+    - name: Set GRUB configuration permissions (STIG V-204521)
+      ansible.builtin.file:
+        path: "{{ item }}"
+        owner: root
+        group: root
+        mode: "{{ rhel_grub_config_permissions }}"
+      loop:
+        - /boot/grub2/grub.cfg
+        - /boot/efi/EFI/redhat/grub.cfg
+      failed_when: false
+      tags:
+        - permissions
+        - grub
+
+    - name: Check if UEFI is enabled (STIG V-204523)
+      ansible.builtin.stat:
+        path: /sys/firmware/efi
+      register: uefi_check
+      when: rhel_require_uefi | bool
+      tags:
+        - validation
+
+    - name: Verify UEFI mode
+      ansible.builtin.assert:
+        that:
+          - uefi_check.stat.exists
+        fail_msg: "UEFI mode is required but not detected"
+        success_msg: "System is running in UEFI mode"
+      when: rhel_require_uefi | bool
+      tags:
+        - validation
+
+    - name: Check Secure Boot status (STIG V-204524)
+      ansible.builtin.command: mokutil --sb-state
+      register: secure_boot_status
+      changed_when: false
+      failed_when: false
+      when: rhel_secure_boot_enabled | bool
+      tags:
+        - validation
+
+    - name: Display kernel security status
+      ansible.builtin.debug:
+        msg:
+          - "Kernel security parameters configured"
+          - "ASLR: {{ rhel_kernel_randomize_va_space }}"
+          - "Kernel pointer restriction: {{ rhel_kernel_kptr_restrict }}"
+          - "PTR ACE scope: {{ rhel_kernel_yama_ptrace_scope }}"
+      tags:
+        - validation
+
+    # ----------------------------- postflight -------------------
+
+    - name: "rhel/rhel-hardening/kernel | Postflight | Verify the guarded body ran after a passing preflight"
+      ansible.builtin.assert:
+        that:
+          - fe_rhel_rhel_hardening_kernel_preflight_passed | bool
+          - fe_rhel_rhel_hardening_kernel_status in ['running', 'succeeded']
+        fail_msg: >-
+          rhel/rhel-hardening/kernel: postflight validation failed - preflight passed
+          ={{ fe_rhel_rhel_hardening_kernel_preflight_passed | default(false) }},
+          status={{ fe_rhel_rhel_hardening_kernel_status | default('unknown') }}.
+        success_msg: "rhel/rhel-hardening/kernel: postflight validation passed."
+        quiet: true
+      tags:
+        - always
+        - postflight
+        - validation
+
+    - name: "rhel/rhel-hardening/kernel | Postflight | Record the successful outcome"
+      ansible.builtin.set_fact:
+        fe_rhel_rhel_hardening_kernel_postflight_passed: true
+        fe_rhel_rhel_hardening_kernel_status: "succeeded"
+      tags:
+        - always
+        - postflight
+        - validation
+
+  rescue:
+
+    - name: "rhel/rhel-hardening/kernel | Rescue | Capture the failing task and error detail"
+      ansible.builtin.set_fact:
+        fe_rhel_rhel_hardening_kernel_status: "failed"
+        fe_rhel_rhel_hardening_kernel_postflight_passed: false
+        fe_rhel_rhel_hardening_kernel_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+        fe_rhel_rhel_hardening_kernel_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+      tags:
+        - always
+        - rescue
+
+    - name: "rhel/rhel-hardening/kernel | Rescue | Report the failure"
+      ansible.builtin.debug:
+        msg: >-
+          rhel/rhel-hardening/kernel: FAILED at '{{ fe_rhel_rhel_hardening_kernel_failed_task }}' on
+          {{ inventory_hostname }} - {{ fe_rhel_rhel_hardening_kernel_error }}
+      tags:
+        - always
+        - rescue
+
+    - name: "rhel/rhel-hardening/kernel | Rescue | Re-raise the failure unless the caller opted to continue"
+      ansible.builtin.fail:
+        msg: >-
+          rhel/rhel-hardening/kernel failed at '{{ fe_rhel_rhel_hardening_kernel_failed_task }}': {{ fe_rhel_rhel_hardening_kernel_error }}
+      when: not (fe_validation_continue_on_error | default(false) | bool)
+      tags:
+        - always
+        - rescue
+
+  always:
+
+    - name: "rhel/rhel-hardening/kernel | Always | Compute the execution duration"
+      ansible.builtin.set_fact:
+        fe_rhel_rhel_hardening_kernel_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+        fe_rhel_rhel_hardening_kernel_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_rhel_rhel_hardening_kernel_start_epoch | default(0) | int) }}"
+      tags:
+        - always
+
+    - name: "rhel/rhel-hardening/kernel | Always | Publish the validation result with set_stats"
+      ansible.builtin.set_stats:
+        data:
+          fe_validation_results:
+            "rhel/rhel-hardening/kernel":
+              component: "rhel/rhel-hardening/kernel"
+              type: "role-tasks"
+              platform: "rhel"
+              host: "{{ inventory_hostname }}"
+              status: "{{ fe_rhel_rhel_hardening_kernel_status | default('unknown') }}"
+              preflight_passed: "{{ fe_rhel_rhel_hardening_kernel_preflight_passed | default(false) | bool }}"
+              postflight_passed: "{{ fe_rhel_rhel_hardening_kernel_postflight_passed | default(false) | bool }}"
+              started_at: "{{ fe_rhel_rhel_hardening_kernel_started_at | default('') }}"
+              ended_at: "{{ fe_rhel_rhel_hardening_kernel_ended_at | default('') }}"
+              duration_seconds: "{{ fe_rhel_rhel_hardening_kernel_duration_seconds | default(0) | int }}"
+              failed_task: "{{ fe_rhel_rhel_hardening_kernel_failed_task | default('') }}"
+              error: "{{ fe_rhel_rhel_hardening_kernel_error | default('') }}"
+              check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+          fe_validation_executions: 1
+          fe_validation_succeeded: "{{ 1 if fe_rhel_rhel_hardening_kernel_status | default('') == 'succeeded' else 0 }}"
+          fe_validation_failed: "{{ 0 if fe_rhel_rhel_hardening_kernel_status | default('') == 'succeeded' else 1 }}"
+          fe_validation_duration_seconds: "{{ fe_rhel_rhel_hardening_kernel_duration_seconds | default(0) | int }}"
+          fe_validation_failed_components: >-
+            {{ [] if fe_rhel_rhel_hardening_kernel_status | default('') == 'succeeded' else ['rhel/rhel-hardening/kernel'] }}
+        aggregate: true
+        per_host: false
+      tags:
+        - always
+
+    - name: "rhel/rhel-hardening/kernel | Always | Mark the validation statistics as published"
+      ansible.builtin.set_fact:
+        fe_rhel_rhel_hardening_kernel_stats_published: true
+      tags:
+        - always

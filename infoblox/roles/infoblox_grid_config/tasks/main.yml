@@ -3,336 +3,519 @@
 # Infoblox Grid Configuration for Fourth Estate Agencies
 # Manages Grid Master/Member configuration, NTP, SNMP, certificates, and grid properties
 
-- name: Ensure Infoblox collection is available
-  ansible.builtin.assert:
-    that:
-      - infoblox_grid_master is defined
-      - infoblox_username is defined
-      - infoblox_password is defined
-    fail_msg: "Required Infoblox connection variables are not defined"
+# ---------------------------------------------------------------------------
+# Fourth Estate preflight / postflight validation harness
+#
+# The task file body below is wrapped in an Ansible block/rescue/always structure:
+#
+#   block   preflight validation runs first, then the original task file body, then
+#           postflight validation. Any failure transfers control to rescue.
+#   rescue  records which task failed and why, then re-raises so a failure is
+#           never silently swallowed. Set fe_validation_continue_on_error=true
+#           to record the failure and keep going instead.
+#   always  computes the run duration and publishes the outcome through
+#           ansible.builtin.set_stats, so a wrapping playbook, AWX/AAP or CI can
+#           consume the result without scraping log output.
+#
+# Published stats (see docs/VALIDATION_AND_STATS.md):
+#   fe_validation_results['infoblox/infoblox_grid_config']  per-component record
+#   fe_validation_executions / _succeeded / _failed / _duration_seconds
+#   fe_validation_failed_components
+#
+# Add component-specific preflight checks without editing this file by setting
+#   fe_infoblox_infoblox_grid_config_required_vars: [var_one, var_two]
+# ---------------------------------------------------------------------------
 
-- name: Configure Grid Master properties
-  infoblox.nios_modules.nios_grid:
-    name: "{{ infoblox_grid_name }}"
-    comment: "{{ infoblox_grid_comment }}"
-    state: present
-    provider:
-      host: "{{ infoblox_grid_master }}"
-      username: "{{ infoblox_username }}"
-      password: "{{ infoblox_password }}"
-      wapi_version: "{{ infoblox_wapi_version }}"
-      max_retries: "{{ infoblox_max_retries }}"
-      validate_certs: "{{ infoblox_validate_certs }}"
-  no_log: true
+- name: "infoblox/infoblox_grid_config | Initialize validation state"
+  ansible.builtin.set_fact:
+    fe_infoblox_infoblox_grid_config_start_epoch: "{{ now(fmt='%s') | int }}"
+    fe_infoblox_infoblox_grid_config_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+    fe_infoblox_infoblox_grid_config_status: "running"
+    fe_infoblox_infoblox_grid_config_preflight_passed: false
+    fe_infoblox_infoblox_grid_config_postflight_passed: false
+    fe_infoblox_infoblox_grid_config_failed_task: ""
+    fe_infoblox_infoblox_grid_config_error: ""
+    fe_infoblox_infoblox_grid_config_stats_published: false
   tags:
-    - infoblox
-    - grid
-    - config
+    - always
 
-- name: Configure NTP settings on Grid
-  infoblox.nios_modules.nios_grid_dns:
-    grid_dns_properties:
-      ntp_servers: "{{ infoblox_ntp_servers }}"
-      time_zone: "{{ infoblox_time_zone }}"
-    state: present
-    provider:
-      host: "{{ infoblox_grid_master }}"
-      username: "{{ infoblox_username }}"
-      password: "{{ infoblox_password }}"
-      wapi_version: "{{ infoblox_wapi_version }}"
-      validate_certs: "{{ infoblox_validate_certs }}"
-  no_log: true
-  when: infoblox_configure_ntp | bool
-  tags:
-    - infoblox
-    - grid
-    - ntp
+- name: "infoblox/infoblox_grid_config | Guarded execution with preflight and postflight validation"
+  block:
 
-- name: Configure SNMP settings
-  infoblox.nios_modules.nios_snmp:
-    snmp_community: "{{ infoblox_snmp_community }}"
-    snmp_contact: "{{ infoblox_snmp_contact }}"
-    snmp_location: "{{ infoblox_snmp_location }}"
-    snmp_version: "{{ infoblox_snmp_version }}"
-    snmp_engine_id: "{{ infoblox_snmp_engine_id | default(omit) }}"
-    enable_snmp: "{{ infoblox_enable_snmp }}"
-    state: present
-    provider:
-      host: "{{ infoblox_grid_master }}"
-      username: "{{ infoblox_username }}"
-      password: "{{ infoblox_password }}"
-      wapi_version: "{{ infoblox_wapi_version }}"
-      validate_certs: "{{ infoblox_validate_certs }}"
-  when: infoblox_enable_snmp | bool
-  no_log: true
-  tags:
-    - infoblox
-    - grid
-    - snmp
+    # ----------------------------- preflight --------------------
 
-- name: Configure SNMP trap destinations
-  infoblox.nios_modules.nios_snmp_trap:
-    trap_destination: "{{ item.destination }}"
-    trap_version: "{{ item.version | default('v2c') }}"
-    trap_community: "{{ item.community | default(infoblox_snmp_community) }}"
-    trap_port: "{{ item.port | default(162) }}"
-    state: "{{ item.state | default('present') }}"
-    provider:
-      host: "{{ infoblox_grid_master }}"
-      username: "{{ infoblox_username }}"
-      password: "{{ infoblox_password }}"
-      wapi_version: "{{ infoblox_wapi_version }}"
-      validate_certs: "{{ infoblox_validate_certs }}"
-  loop: "{{ infoblox_snmp_trap_destinations }}"
-  when:
-    - infoblox_enable_snmp | bool
-    - infoblox_snmp_trap_destinations is defined
-  no_log: true
-  tags:
-    - infoblox
-    - grid
-    - snmp
+    - name: "infoblox/infoblox_grid_config | Preflight | Verify the control node meets the minimum ansible-core version"
+      ansible.builtin.assert:
+        that:
+          - ansible_version.full is version(fe_validation_min_ansible_version | default('2.12'), '>=')
+        fail_msg: >-
+          infoblox/infoblox_grid_config: requires ansible-core
+          {{ fe_validation_min_ansible_version | default('2.12') }} or newer,
+          found {{ ansible_version.full }}.
+        success_msg: >-
+          infoblox/infoblox_grid_config: ansible-core {{ ansible_version.full }} satisfies the minimum.
+        quiet: true
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: Configure Grid members
-  infoblox.nios_modules.nios_member:
-    host_name: "{{ item.hostname }}"
-    vip_setting:
-      address: "{{ item.vip_address }}"
-      subnet_mask: "{{ item.subnet_mask }}"
-      gateway: "{{ item.gateway }}"
-    ipv6_setting: "{{ item.ipv6_setting | default(omit) }}"
-    comment: "{{ item.comment | default('Grid member for Fourth Estate') }}"
-    enable_ha: "{{ item.enable_ha | default(false) }}"
-    node_info: "{{ item.node_info | default(omit) }}"
-    platform: "{{ item.platform | default('VNIOS') }}"
-    state: "{{ item.state | default('present') }}"
-    provider:
-      host: "{{ infoblox_grid_master }}"
-      username: "{{ infoblox_username }}"
-      password: "{{ infoblox_password }}"
-      wapi_version: "{{ infoblox_wapi_version }}"
-      validate_certs: "{{ infoblox_validate_certs }}"
-  no_log: true
-  loop: "{{ infoblox_grid_members }}"
-  when: infoblox_grid_members is defined
-  tags:
-    - infoblox
-    - grid
-    - members
+    - name: "infoblox/infoblox_grid_config | Preflight | Verify every declared required variable is defined"
+      ansible.builtin.assert:
+        that:
+          - vars[item] is defined
+        fail_msg: "infoblox/infoblox_grid_config: required variable '{{ item }}' is not defined."
+        success_msg: "infoblox/infoblox_grid_config: required variable '{{ item }}' is defined."
+        quiet: true
+      loop: "{{ fe_infoblox_infoblox_grid_config_required_vars | default([]) }}"
+      loop_control:
+        label: "{{ item }}"
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: Configure DNS service distribution on Grid members
-  infoblox.nios_modules.nios_member_dns:
-    host_name: "{{ item.hostname }}"
-    enable_dns: "{{ item.enable_dns | default(true) }}"
-    minimal_response: "{{ item.minimal_response | default(false) }}"
-    recursive_query_list: "{{ item.recursive_query_list | default(omit) }}"
-    recursion: "{{ item.recursion | default(true) }}"
-    state: present
-    provider:
-      host: "{{ infoblox_grid_master }}"
-      username: "{{ infoblox_username }}"
-      password: "{{ infoblox_password }}"
-      wapi_version: "{{ infoblox_wapi_version }}"
-      validate_certs: "{{ infoblox_validate_certs }}"
-  no_log: true
-  loop: "{{ infoblox_grid_members }}"
-  when:
-    - infoblox_grid_members is defined
-    - item.enable_dns | default(true)
-  tags:
-    - infoblox
-    - grid
-    - dns
+    - name: "infoblox/infoblox_grid_config | Preflight | Record that preflight validation passed"
+      ansible.builtin.set_fact:
+        fe_infoblox_infoblox_grid_config_preflight_passed: true
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: Configure DHCP service distribution on Grid members
-  infoblox.nios_modules.nios_member_dhcp:
-    host_name: "{{ item.hostname }}"
-    enable_dhcp: "{{ item.enable_dhcp | default(true) }}"
-    enable_dhcp_thresholds: "{{ item.enable_dhcp_thresholds | default(true) }}"
-    state: present
-    provider:
-      host: "{{ infoblox_grid_master }}"
-      username: "{{ infoblox_username }}"
-      password: "{{ infoblox_password }}"
-      wapi_version: "{{ infoblox_wapi_version }}"
-      validate_certs: "{{ infoblox_validate_certs }}"
-  no_log: true
-  loop: "{{ infoblox_grid_members }}"
-  when:
-    - infoblox_grid_members is defined
-    - item.enable_dhcp | default(false)
-  tags:
-    - infoblox
-    - grid
-    - dhcp
+    # ----------------------------- execute ----------------------
 
-- name: Configure admin accounts
-  infoblox.nios_modules.nios_admin_user:
-    name: "{{ item.username }}"
-    password: "{{ item.password }}"
-    admin_groups: "{{ item.admin_groups | default(['super-users']) }}"
-    comment: "{{ item.comment | default('Fourth Estate admin user') }}"
-    disable: "{{ item.disable | default(false) }}"
-    email: "{{ item.email | default(omit) }}"
-    enable_2fa: "{{ item.enable_2fa | default(true) }}"
-    state: "{{ item.state | default('present') }}"
-    provider:
-      host: "{{ infoblox_grid_master }}"
-      username: "{{ infoblox_username }}"
-      password: "{{ infoblox_password }}"
-      wapi_version: "{{ infoblox_wapi_version }}"
-      validate_certs: "{{ infoblox_validate_certs }}"
-  loop: "{{ infoblox_admin_users }}"
-  when: infoblox_admin_users is defined
-  no_log: true
-  tags:
-    - infoblox
-    - grid
-    - users
+    - name: Ensure Infoblox collection is available
+      ansible.builtin.assert:
+        that:
+          - infoblox_grid_master is defined
+          - infoblox_username is defined
+          - infoblox_password is defined
+        fail_msg: "Required Infoblox connection variables are not defined"
 
-- name: Upload custom certificate
-  infoblox.nios_modules.nios_certificate:
-    certificate: "{{ lookup('file', infoblox_certificate_path) }}"
-    private_key: "{{ lookup('file', infoblox_private_key_path) }}"
-    certificate_usage: "{{ infoblox_certificate_usage }}"
-    state: present
-    provider:
-      host: "{{ infoblox_grid_master }}"
-      username: "{{ infoblox_username }}"
-      password: "{{ infoblox_password }}"
-      wapi_version: "{{ infoblox_wapi_version }}"
-      validate_certs: "{{ infoblox_validate_certs }}"
-  when:
-    - infoblox_upload_certificate | bool
-    - infoblox_certificate_path is defined
-    - infoblox_private_key_path is defined
-  no_log: true
-  tags:
-    - infoblox
-    - grid
-    - certificates
+    - name: Configure Grid Master properties
+      infoblox.nios_modules.nios_grid:
+        name: "{{ infoblox_grid_name }}"
+        comment: "{{ infoblox_grid_comment }}"
+        state: present
+        provider:
+          host: "{{ infoblox_grid_master }}"
+          username: "{{ infoblox_username }}"
+          password: "{{ infoblox_password }}"
+          wapi_version: "{{ infoblox_wapi_version }}"
+          max_retries: "{{ infoblox_max_retries }}"
+          validate_certs: "{{ infoblox_validate_certs }}"
+      no_log: true
+      tags:
+        - infoblox
+        - grid
+        - config
 
-- name: Configure syslog servers for audit logging
-  infoblox.nios_modules.nios_syslog_server:
-    address: "{{ item.address }}"
-    port: "{{ item.port | default(514) }}"
-    protocol: "{{ item.protocol | default('udp') }}"
-    facility: "{{ item.facility | default('local7') }}"
-    severity: "{{ item.severity | default('info') }}"
-    state: "{{ item.state | default('present') }}"
-    provider:
-      host: "{{ infoblox_grid_master }}"
-      username: "{{ infoblox_username }}"
-      password: "{{ infoblox_password }}"
-      wapi_version: "{{ infoblox_wapi_version }}"
-      validate_certs: "{{ infoblox_validate_certs }}"
-  no_log: true
-  loop: "{{ infoblox_syslog_servers }}"
-  when: infoblox_syslog_servers is defined
-  tags:
-    - infoblox
-    - grid
-    - syslog
-    - logging
+    - name: Configure NTP settings on Grid
+      infoblox.nios_modules.nios_grid_dns:
+        grid_dns_properties:
+          ntp_servers: "{{ infoblox_ntp_servers }}"
+          time_zone: "{{ infoblox_time_zone }}"
+        state: present
+        provider:
+          host: "{{ infoblox_grid_master }}"
+          username: "{{ infoblox_username }}"
+          password: "{{ infoblox_password }}"
+          wapi_version: "{{ infoblox_wapi_version }}"
+          validate_certs: "{{ infoblox_validate_certs }}"
+      no_log: true
+      when: infoblox_configure_ntp | bool
+      tags:
+        - infoblox
+        - grid
+        - ntp
 
-- name: Configure email notification settings
-  infoblox.nios_modules.nios_smtp:
-    smtp_server: "{{ infoblox_smtp_server }}"
-    smtp_port: "{{ infoblox_smtp_port }}"
-    smtp_auth_enable: "{{ infoblox_smtp_auth_enable }}"
-    smtp_username: "{{ infoblox_smtp_username | default(omit) }}"
-    smtp_password: "{{ infoblox_smtp_password | default(omit) }}"
-    smtp_from_address: "{{ infoblox_smtp_from_address }}"
-    state: present
-    provider:
-      host: "{{ infoblox_grid_master }}"
-      username: "{{ infoblox_username }}"
-      password: "{{ infoblox_password }}"
-      wapi_version: "{{ infoblox_wapi_version }}"
-      validate_certs: "{{ infoblox_validate_certs }}"
-  when: infoblox_configure_smtp | bool
-  no_log: true
-  tags:
-    - infoblox
-    - grid
-    - email
+    - name: Configure SNMP settings
+      infoblox.nios_modules.nios_snmp:
+        snmp_community: "{{ infoblox_snmp_community }}"
+        snmp_contact: "{{ infoblox_snmp_contact }}"
+        snmp_location: "{{ infoblox_snmp_location }}"
+        snmp_version: "{{ infoblox_snmp_version }}"
+        snmp_engine_id: "{{ infoblox_snmp_engine_id | default(omit) }}"
+        enable_snmp: "{{ infoblox_enable_snmp }}"
+        state: present
+        provider:
+          host: "{{ infoblox_grid_master }}"
+          username: "{{ infoblox_username }}"
+          password: "{{ infoblox_password }}"
+          wapi_version: "{{ infoblox_wapi_version }}"
+          validate_certs: "{{ infoblox_validate_certs }}"
+      when: infoblox_enable_snmp | bool
+      no_log: true
+      tags:
+        - infoblox
+        - grid
+        - snmp
 
-- name: Configure Grid properties for Fourth Estate
-  infoblox.nios_modules.nios_grid_properties:
-    enable_gui_api_for_lan_vip: true
-    enable_recycle_bin: true
-    enable_rir_swip: false
-    audit_log_format: "{{ infoblox_audit_log_format }}"
-    enable_member_redirect: true
-    log_user_context: true
-    state: present
-    provider:
-      host: "{{ infoblox_grid_master }}"
-      username: "{{ infoblox_username }}"
-      password: "{{ infoblox_password }}"
-      wapi_version: "{{ infoblox_wapi_version }}"
-      validate_certs: "{{ infoblox_validate_certs }}"
-  no_log: true
-  tags:
-    - infoblox
-    - grid
-    - properties
+    - name: Configure SNMP trap destinations
+      infoblox.nios_modules.nios_snmp_trap:
+        trap_destination: "{{ item.destination }}"
+        trap_version: "{{ item.version | default('v2c') }}"
+        trap_community: "{{ item.community | default(infoblox_snmp_community) }}"
+        trap_port: "{{ item.port | default(162) }}"
+        state: "{{ item.state | default('present') }}"
+        provider:
+          host: "{{ infoblox_grid_master }}"
+          username: "{{ infoblox_username }}"
+          password: "{{ infoblox_password }}"
+          wapi_version: "{{ infoblox_wapi_version }}"
+          validate_certs: "{{ infoblox_validate_certs }}"
+      loop: "{{ infoblox_snmp_trap_destinations }}"
+      when:
+        - infoblox_enable_snmp | bool
+        - infoblox_snmp_trap_destinations is defined
+      no_log: true
+      tags:
+        - infoblox
+        - grid
+        - snmp
 
-- name: Configure security settings
-  infoblox.nios_modules.nios_grid_security:
-    admin_lockout_threshold: "{{ infoblox_admin_lockout_threshold }}"
-    admin_lockout_duration: "{{ infoblox_admin_lockout_duration }}"
-    enable_password_policy: true
-    min_password_length: "{{ infoblox_min_password_length }}"
-    password_expiry_days: "{{ infoblox_password_expiry_days }}"
-    enable_tls: true
-    min_tls_version: "{{ infoblox_min_tls_version }}"
-    cipher_suites: "{{ infoblox_cipher_suites }}"
-    state: present
-    provider:
-      host: "{{ infoblox_grid_master }}"
-      username: "{{ infoblox_username }}"
-      password: "{{ infoblox_password }}"
-      wapi_version: "{{ infoblox_wapi_version }}"
-      validate_certs: "{{ infoblox_validate_certs }}"
-  no_log: true
-  tags:
-    - infoblox
-    - grid
-    - security
+    - name: Configure Grid members
+      infoblox.nios_modules.nios_member:
+        host_name: "{{ item.hostname }}"
+        vip_setting:
+          address: "{{ item.vip_address }}"
+          subnet_mask: "{{ item.subnet_mask }}"
+          gateway: "{{ item.gateway }}"
+        ipv6_setting: "{{ item.ipv6_setting | default(omit) }}"
+        comment: "{{ item.comment | default('Grid member for Fourth Estate') }}"
+        enable_ha: "{{ item.enable_ha | default(false) }}"
+        node_info: "{{ item.node_info | default(omit) }}"
+        platform: "{{ item.platform | default('VNIOS') }}"
+        state: "{{ item.state | default('present') }}"
+        provider:
+          host: "{{ infoblox_grid_master }}"
+          username: "{{ infoblox_username }}"
+          password: "{{ infoblox_password }}"
+          wapi_version: "{{ infoblox_wapi_version }}"
+          validate_certs: "{{ infoblox_validate_certs }}"
+      no_log: true
+      loop: "{{ infoblox_grid_members }}"
+      when: infoblox_grid_members is defined
+      tags:
+        - infoblox
+        - grid
+        - members
 
-- name: Configure backup settings
-  infoblox.nios_modules.nios_backup:
-    backup_server: "{{ infoblox_backup_server }}"
-    backup_protocol: "{{ infoblox_backup_protocol }}"
-    backup_path: "{{ infoblox_backup_path }}"
-    backup_username: "{{ infoblox_backup_username | default(omit) }}"
-    backup_password: "{{ infoblox_backup_password | default(omit) }}"
-    backup_schedule: "{{ infoblox_backup_schedule }}"
-    retention_days: "{{ infoblox_backup_retention_days }}"
-    state: present
-    provider:
-      host: "{{ infoblox_grid_master }}"
-      username: "{{ infoblox_username }}"
-      password: "{{ infoblox_password }}"
-      wapi_version: "{{ infoblox_wapi_version }}"
-      validate_certs: "{{ infoblox_validate_certs }}"
-  when: infoblox_configure_backup | bool
-  no_log: true
-  tags:
-    - infoblox
-    - grid
-    - backup
+    - name: Configure DNS service distribution on Grid members
+      infoblox.nios_modules.nios_member_dns:
+        host_name: "{{ item.hostname }}"
+        enable_dns: "{{ item.enable_dns | default(true) }}"
+        minimal_response: "{{ item.minimal_response | default(false) }}"
+        recursive_query_list: "{{ item.recursive_query_list | default(omit) }}"
+        recursion: "{{ item.recursion | default(true) }}"
+        state: present
+        provider:
+          host: "{{ infoblox_grid_master }}"
+          username: "{{ infoblox_username }}"
+          password: "{{ infoblox_password }}"
+          wapi_version: "{{ infoblox_wapi_version }}"
+          validate_certs: "{{ infoblox_validate_certs }}"
+      no_log: true
+      loop: "{{ infoblox_grid_members }}"
+      when:
+        - infoblox_grid_members is defined
+        - item.enable_dns | default(true)
+      tags:
+        - infoblox
+        - grid
+        - dns
 
-- name: Display Grid configuration summary
-  ansible.builtin.debug:
-    msg:
-      - "Grid Name: {{ infoblox_grid_name }}"
-      - "Grid Master: {{ infoblox_grid_master }}"
-      - "Members Configured: {{ infoblox_grid_members | length if infoblox_grid_members is defined else 0 }}"
-      - "NTP Configured: {{ infoblox_configure_ntp }}"
-      - "SNMP Enabled: {{ infoblox_enable_snmp }}"
-      - "Backup Configured: {{ infoblox_configure_backup }}"
-  tags:
-    - infoblox
-    - grid
+    - name: Configure DHCP service distribution on Grid members
+      infoblox.nios_modules.nios_member_dhcp:
+        host_name: "{{ item.hostname }}"
+        enable_dhcp: "{{ item.enable_dhcp | default(true) }}"
+        enable_dhcp_thresholds: "{{ item.enable_dhcp_thresholds | default(true) }}"
+        state: present
+        provider:
+          host: "{{ infoblox_grid_master }}"
+          username: "{{ infoblox_username }}"
+          password: "{{ infoblox_password }}"
+          wapi_version: "{{ infoblox_wapi_version }}"
+          validate_certs: "{{ infoblox_validate_certs }}"
+      no_log: true
+      loop: "{{ infoblox_grid_members }}"
+      when:
+        - infoblox_grid_members is defined
+        - item.enable_dhcp | default(false)
+      tags:
+        - infoblox
+        - grid
+        - dhcp
+
+    - name: Configure admin accounts
+      infoblox.nios_modules.nios_admin_user:
+        name: "{{ item.username }}"
+        password: "{{ item.password }}"
+        admin_groups: "{{ item.admin_groups | default(['super-users']) }}"
+        comment: "{{ item.comment | default('Fourth Estate admin user') }}"
+        disable: "{{ item.disable | default(false) }}"
+        email: "{{ item.email | default(omit) }}"
+        enable_2fa: "{{ item.enable_2fa | default(true) }}"
+        state: "{{ item.state | default('present') }}"
+        provider:
+          host: "{{ infoblox_grid_master }}"
+          username: "{{ infoblox_username }}"
+          password: "{{ infoblox_password }}"
+          wapi_version: "{{ infoblox_wapi_version }}"
+          validate_certs: "{{ infoblox_validate_certs }}"
+      loop: "{{ infoblox_admin_users }}"
+      when: infoblox_admin_users is defined
+      no_log: true
+      tags:
+        - infoblox
+        - grid
+        - users
+
+    - name: Upload custom certificate
+      infoblox.nios_modules.nios_certificate:
+        certificate: "{{ lookup('file', infoblox_certificate_path) }}"
+        private_key: "{{ lookup('file', infoblox_private_key_path) }}"
+        certificate_usage: "{{ infoblox_certificate_usage }}"
+        state: present
+        provider:
+          host: "{{ infoblox_grid_master }}"
+          username: "{{ infoblox_username }}"
+          password: "{{ infoblox_password }}"
+          wapi_version: "{{ infoblox_wapi_version }}"
+          validate_certs: "{{ infoblox_validate_certs }}"
+      when:
+        - infoblox_upload_certificate | bool
+        - infoblox_certificate_path is defined
+        - infoblox_private_key_path is defined
+      no_log: true
+      tags:
+        - infoblox
+        - grid
+        - certificates
+
+    - name: Configure syslog servers for audit logging
+      infoblox.nios_modules.nios_syslog_server:
+        address: "{{ item.address }}"
+        port: "{{ item.port | default(514) }}"
+        protocol: "{{ item.protocol | default('udp') }}"
+        facility: "{{ item.facility | default('local7') }}"
+        severity: "{{ item.severity | default('info') }}"
+        state: "{{ item.state | default('present') }}"
+        provider:
+          host: "{{ infoblox_grid_master }}"
+          username: "{{ infoblox_username }}"
+          password: "{{ infoblox_password }}"
+          wapi_version: "{{ infoblox_wapi_version }}"
+          validate_certs: "{{ infoblox_validate_certs }}"
+      no_log: true
+      loop: "{{ infoblox_syslog_servers }}"
+      when: infoblox_syslog_servers is defined
+      tags:
+        - infoblox
+        - grid
+        - syslog
+        - logging
+
+    - name: Configure email notification settings
+      infoblox.nios_modules.nios_smtp:
+        smtp_server: "{{ infoblox_smtp_server }}"
+        smtp_port: "{{ infoblox_smtp_port }}"
+        smtp_auth_enable: "{{ infoblox_smtp_auth_enable }}"
+        smtp_username: "{{ infoblox_smtp_username | default(omit) }}"
+        smtp_password: "{{ infoblox_smtp_password | default(omit) }}"
+        smtp_from_address: "{{ infoblox_smtp_from_address }}"
+        state: present
+        provider:
+          host: "{{ infoblox_grid_master }}"
+          username: "{{ infoblox_username }}"
+          password: "{{ infoblox_password }}"
+          wapi_version: "{{ infoblox_wapi_version }}"
+          validate_certs: "{{ infoblox_validate_certs }}"
+      when: infoblox_configure_smtp | bool
+      no_log: true
+      tags:
+        - infoblox
+        - grid
+        - email
+
+    - name: Configure Grid properties for Fourth Estate
+      infoblox.nios_modules.nios_grid_properties:
+        enable_gui_api_for_lan_vip: true
+        enable_recycle_bin: true
+        enable_rir_swip: false
+        audit_log_format: "{{ infoblox_audit_log_format }}"
+        enable_member_redirect: true
+        log_user_context: true
+        state: present
+        provider:
+          host: "{{ infoblox_grid_master }}"
+          username: "{{ infoblox_username }}"
+          password: "{{ infoblox_password }}"
+          wapi_version: "{{ infoblox_wapi_version }}"
+          validate_certs: "{{ infoblox_validate_certs }}"
+      no_log: true
+      tags:
+        - infoblox
+        - grid
+        - properties
+
+    - name: Configure security settings
+      infoblox.nios_modules.nios_grid_security:
+        admin_lockout_threshold: "{{ infoblox_admin_lockout_threshold }}"
+        admin_lockout_duration: "{{ infoblox_admin_lockout_duration }}"
+        enable_password_policy: true
+        min_password_length: "{{ infoblox_min_password_length }}"
+        password_expiry_days: "{{ infoblox_password_expiry_days }}"
+        enable_tls: true
+        min_tls_version: "{{ infoblox_min_tls_version }}"
+        cipher_suites: "{{ infoblox_cipher_suites }}"
+        state: present
+        provider:
+          host: "{{ infoblox_grid_master }}"
+          username: "{{ infoblox_username }}"
+          password: "{{ infoblox_password }}"
+          wapi_version: "{{ infoblox_wapi_version }}"
+          validate_certs: "{{ infoblox_validate_certs }}"
+      no_log: true
+      tags:
+        - infoblox
+        - grid
+        - security
+
+    - name: Configure backup settings
+      infoblox.nios_modules.nios_backup:
+        backup_server: "{{ infoblox_backup_server }}"
+        backup_protocol: "{{ infoblox_backup_protocol }}"
+        backup_path: "{{ infoblox_backup_path }}"
+        backup_username: "{{ infoblox_backup_username | default(omit) }}"
+        backup_password: "{{ infoblox_backup_password | default(omit) }}"
+        backup_schedule: "{{ infoblox_backup_schedule }}"
+        retention_days: "{{ infoblox_backup_retention_days }}"
+        state: present
+        provider:
+          host: "{{ infoblox_grid_master }}"
+          username: "{{ infoblox_username }}"
+          password: "{{ infoblox_password }}"
+          wapi_version: "{{ infoblox_wapi_version }}"
+          validate_certs: "{{ infoblox_validate_certs }}"
+      when: infoblox_configure_backup | bool
+      no_log: true
+      tags:
+        - infoblox
+        - grid
+        - backup
+
+    - name: Display Grid configuration summary
+      ansible.builtin.debug:
+        msg:
+          - "Grid Name: {{ infoblox_grid_name }}"
+          - "Grid Master: {{ infoblox_grid_master }}"
+          - "Members Configured: {{ infoblox_grid_members | length if infoblox_grid_members is defined else 0 }}"
+          - "NTP Configured: {{ infoblox_configure_ntp }}"
+          - "SNMP Enabled: {{ infoblox_enable_snmp }}"
+          - "Backup Configured: {{ infoblox_configure_backup }}"
+      tags:
+        - infoblox
+        - grid
+
+    # ----------------------------- postflight -------------------
+
+    - name: "infoblox/infoblox_grid_config | Postflight | Verify the guarded body ran after a passing preflight"
+      ansible.builtin.assert:
+        that:
+          - fe_infoblox_infoblox_grid_config_preflight_passed | bool
+          - fe_infoblox_infoblox_grid_config_status in ['running', 'succeeded']
+        fail_msg: >-
+          infoblox/infoblox_grid_config: postflight validation failed - preflight passed
+          ={{ fe_infoblox_infoblox_grid_config_preflight_passed | default(false) }},
+          status={{ fe_infoblox_infoblox_grid_config_status | default('unknown') }}.
+        success_msg: "infoblox/infoblox_grid_config: postflight validation passed."
+        quiet: true
+      tags:
+        - always
+        - postflight
+        - validation
+
+    - name: "infoblox/infoblox_grid_config | Postflight | Record the successful outcome"
+      ansible.builtin.set_fact:
+        fe_infoblox_infoblox_grid_config_postflight_passed: true
+        fe_infoblox_infoblox_grid_config_status: "succeeded"
+      tags:
+        - always
+        - postflight
+        - validation
+
+  rescue:
+
+    - name: "infoblox/infoblox_grid_config | Rescue | Capture the failing task and error detail"
+      ansible.builtin.set_fact:
+        fe_infoblox_infoblox_grid_config_status: "failed"
+        fe_infoblox_infoblox_grid_config_postflight_passed: false
+        fe_infoblox_infoblox_grid_config_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+        fe_infoblox_infoblox_grid_config_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+      tags:
+        - always
+        - rescue
+
+    - name: "infoblox/infoblox_grid_config | Rescue | Report the failure"
+      ansible.builtin.debug:
+        msg: >-
+          infoblox/infoblox_grid_config: FAILED at '{{ fe_infoblox_infoblox_grid_config_failed_task }}' on
+          {{ inventory_hostname }} - {{ fe_infoblox_infoblox_grid_config_error }}
+      tags:
+        - always
+        - rescue
+
+    - name: "infoblox/infoblox_grid_config | Rescue | Re-raise the failure unless the caller opted to continue"
+      ansible.builtin.fail:
+        msg: >-
+          infoblox/infoblox_grid_config failed at '{{ fe_infoblox_infoblox_grid_config_failed_task }}': {{ fe_infoblox_infoblox_grid_config_error }}
+      when: not (fe_validation_continue_on_error | default(false) | bool)
+      tags:
+        - always
+        - rescue
+
+  always:
+
+    - name: "infoblox/infoblox_grid_config | Always | Compute the execution duration"
+      ansible.builtin.set_fact:
+        fe_infoblox_infoblox_grid_config_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+        fe_infoblox_infoblox_grid_config_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_infoblox_infoblox_grid_config_start_epoch | default(0) | int) }}"
+      tags:
+        - always
+
+    - name: "infoblox/infoblox_grid_config | Always | Publish the validation result with set_stats"
+      ansible.builtin.set_stats:
+        data:
+          fe_validation_results:
+            "infoblox/infoblox_grid_config":
+              component: "infoblox/infoblox_grid_config"
+              type: "role"
+              platform: "infoblox"
+              host: "{{ inventory_hostname }}"
+              status: "{{ fe_infoblox_infoblox_grid_config_status | default('unknown') }}"
+              preflight_passed: "{{ fe_infoblox_infoblox_grid_config_preflight_passed | default(false) | bool }}"
+              postflight_passed: "{{ fe_infoblox_infoblox_grid_config_postflight_passed | default(false) | bool }}"
+              started_at: "{{ fe_infoblox_infoblox_grid_config_started_at | default('') }}"
+              ended_at: "{{ fe_infoblox_infoblox_grid_config_ended_at | default('') }}"
+              duration_seconds: "{{ fe_infoblox_infoblox_grid_config_duration_seconds | default(0) | int }}"
+              failed_task: "{{ fe_infoblox_infoblox_grid_config_failed_task | default('') }}"
+              error: "{{ fe_infoblox_infoblox_grid_config_error | default('') }}"
+              check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+          fe_validation_executions: 1
+          fe_validation_succeeded: "{{ 1 if fe_infoblox_infoblox_grid_config_status | default('') == 'succeeded' else 0 }}"
+          fe_validation_failed: "{{ 0 if fe_infoblox_infoblox_grid_config_status | default('') == 'succeeded' else 1 }}"
+          fe_validation_duration_seconds: "{{ fe_infoblox_infoblox_grid_config_duration_seconds | default(0) | int }}"
+          fe_validation_failed_components: >-
+            {{ [] if fe_infoblox_infoblox_grid_config_status | default('') == 'succeeded' else ['infoblox/infoblox_grid_config'] }}
+        aggregate: true
+        per_host: false
+      tags:
+        - always
+
+    - name: "infoblox/infoblox_grid_config | Always | Mark the validation statistics as published"
+      ansible.builtin.set_fact:
+        fe_infoblox_infoblox_grid_config_stats_published: true
+      tags:
+        - always

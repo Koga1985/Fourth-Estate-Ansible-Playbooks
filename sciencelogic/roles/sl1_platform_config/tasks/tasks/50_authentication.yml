@@ -1,93 +1,277 @@
 ---
-- name: Configure LDAP authentication
-  ansible.builtin.uri:
-    url: "{{ sl1.url }}/api/account/auth/ldap"
-    method: PUT
-    body:
-      enabled: "{{ sl1_authentication.ldap.enabled }}"
-      server: "{{ sl1_authentication.ldap.server }}"
-      port: "{{ sl1_authentication.ldap.port }}"
-      use_ssl: "{{ sl1_authentication.ldap.use_ssl }}"
-      base_dn: "{{ sl1_authentication.ldap.base_dn }}"
-      bind_dn: "{{ sl1_authentication.ldap.bind_dn }}"
-      bind_password: "{{ sl1_authentication.ldap.bind_password }}"
-      user_search_filter: "{{ sl1_authentication.ldap.user_search_filter }}"
-      group_search_filter: "{{ sl1_authentication.ldap.group_search_filter }}"
-      user_dn: "{{ sl1_authentication.ldap.user_dn }}"
-      group_dn: "{{ sl1_authentication.ldap.group_dn }}"
-      attributes: "{{ sl1_authentication.ldap.attributes }}"
-    body_format: json
-    headers:
-      Content-Type: "application/json"
-      X-EM7-API-Username: "{{ sl1.api_user }}"
-      X-EM7-API-Password: "{{ sl1.api_password }}"
-    validate_certs: "{{ sl1.verify_ssl }}"
-    status_code: [200, 201]
-  no_log: true
-  when:
-    - sl1_authentication.method == "ldap"
-    - sl1_authentication.ldap.enabled
-    - not dry_run
 
-- name: Configure LDAP group mapping
-  ansible.builtin.uri:
-    url: "{{ sl1.url }}/api/account/auth/ldap/groups"
-    method: POST
-    body:
-      ldap_group: "{{ item.ldap_group }}"
-      sl1_role: "{{ item.sl1_role }}"
-    body_format: json
-    headers:
-      Content-Type: "application/json"
-      X-EM7-API-Username: "{{ sl1.api_user }}"
-      X-EM7-API-Password: "{{ sl1.api_password }}"
-    validate_certs: "{{ sl1.verify_ssl }}"
-    status_code: [200, 201, 409]
-  loop: "{{ sl1_authentication.ldap.group_mapping }}"
-  when:
-    - sl1_authentication.method == "ldap"
-    - sl1_authentication.ldap.enabled
-    - not dry_run
+# ---------------------------------------------------------------------------
+# Fourth Estate preflight / postflight validation harness
+#
+# The task file body below is wrapped in an Ansible block/rescue/always structure:
+#
+#   block   preflight validation runs first, then the original task file body, then
+#           postflight validation. Any failure transfers control to rescue.
+#   rescue  records which task failed and why, then re-raises so a failure is
+#           never silently swallowed. Set fe_validation_continue_on_error=true
+#           to record the failure and keep going instead.
+#   always  computes the run duration and publishes the outcome through
+#           ansible.builtin.set_stats, so a wrapping playbook, AWX/AAP or CI can
+#           consume the result without scraping log output.
+#
+# Published stats (see docs/VALIDATION_AND_STATS.md):
+#   fe_validation_results['sciencelogic/sl1_platform_config/50_authentication']  per-component record
+#   fe_validation_executions / _succeeded / _failed / _duration_seconds
+#   fe_validation_failed_components
+#
+# Add component-specific preflight checks without editing this file by setting
+#   fe_sciencelogic_sl1_platform_config_50_authentication_required_vars: [var_one, var_two]
+# ---------------------------------------------------------------------------
 
-- name: Configure SAML authentication
-  ansible.builtin.uri:
-    url: "{{ sl1.url }}/api/account/auth/saml"
-    method: PUT
-    body:
-      enabled: "{{ sl1_authentication.saml.enabled }}"
-      idp_entity_id: "{{ sl1_authentication.saml.idp_entity_id }}"
-      idp_sso_url: "{{ sl1_authentication.saml.idp_sso_url }}"
-      idp_slo_url: "{{ sl1_authentication.saml.idp_slo_url }}"
-      sp_entity_id: "{{ sl1_authentication.saml.sp_entity_id }}"
-      sp_acs_url: "{{ sl1_authentication.saml.sp_acs_url }}"
-      attribute_mapping: "{{ sl1_authentication.saml.attribute_mapping }}"
-    body_format: json
-    headers:
-      Content-Type: "application/json"
-      X-EM7-API-Username: "{{ sl1.api_user }}"
-      X-EM7-API-Password: "{{ sl1.api_password }}"
-    validate_certs: "{{ sl1.verify_ssl }}"
-    status_code: [200, 201]
-  when:
-    - sl1_authentication.method == "saml"
-    - sl1_authentication.saml.enabled
-    - not dry_run
+- name: "sciencelogic/sl1_platform_config/50_authentication | Initialize validation state"
+  ansible.builtin.set_fact:
+    fe_sciencelogic_sl1_platform_config_50_authentication_start_epoch: "{{ now(fmt='%s') | int }}"
+    fe_sciencelogic_sl1_platform_config_50_authentication_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+    fe_sciencelogic_sl1_platform_config_50_authentication_status: "running"
+    fe_sciencelogic_sl1_platform_config_50_authentication_preflight_passed: false
+    fe_sciencelogic_sl1_platform_config_50_authentication_postflight_passed: false
+    fe_sciencelogic_sl1_platform_config_50_authentication_failed_task: ""
+    fe_sciencelogic_sl1_platform_config_50_authentication_error: ""
+    fe_sciencelogic_sl1_platform_config_50_authentication_stats_published: false
+  tags:
+    - always
 
-- name: Upload SAML IdP certificate
-  ansible.builtin.copy:
-    src: "{{ sl1_authentication.saml.idp_certificate }}"
-    dest: /opt/em7/conf/saml/idp.crt
-    owner: em7admin
-    group: em7admin
-    mode: '0644'
-  when:
-    - sl1_authentication.method == "saml"
-    - sl1_authentication.saml.enabled
-    - not dry_run
+- name: "sciencelogic/sl1_platform_config/50_authentication | Guarded execution with preflight and postflight validation"
+  block:
 
-- name: Authentication configuration summary
-  ansible.builtin.debug:
-    msg:
-      - "Authentication method: {{ sl1_authentication.method }}"
-      - "LDAP enabled: {{ sl1_authentication.ldap.enabled }}"
-      - "SAML enabled: {{ sl1_authentication.saml.enabled }}"
+    # ----------------------------- preflight --------------------
+
+    - name: "sciencelogic/sl1_platform_config/50_authentication | Preflight | Verify the control node meets the minimum ansible-core version"
+      ansible.builtin.assert:
+        that:
+          - ansible_version.full is version(fe_validation_min_ansible_version | default('2.12'), '>=')
+        fail_msg: >-
+          sciencelogic/sl1_platform_config/50_authentication: requires ansible-core
+          {{ fe_validation_min_ansible_version | default('2.12') }} or newer,
+          found {{ ansible_version.full }}.
+        success_msg: >-
+          sciencelogic/sl1_platform_config/50_authentication: ansible-core {{ ansible_version.full }} satisfies the minimum.
+        quiet: true
+      tags:
+        - always
+        - preflight
+        - validation
+
+    - name: "sciencelogic/sl1_platform_config/50_authentication | Preflight | Verify every declared required variable is defined"
+      ansible.builtin.assert:
+        that:
+          - vars[item] is defined
+        fail_msg: "sciencelogic/sl1_platform_config/50_authentication: required variable '{{ item }}' is not defined."
+        success_msg: "sciencelogic/sl1_platform_config/50_authentication: required variable '{{ item }}' is defined."
+        quiet: true
+      loop: "{{ fe_sciencelogic_sl1_platform_config_50_authentication_required_vars | default([]) }}"
+      loop_control:
+        label: "{{ item }}"
+      tags:
+        - always
+        - preflight
+        - validation
+
+    - name: "sciencelogic/sl1_platform_config/50_authentication | Preflight | Record that preflight validation passed"
+      ansible.builtin.set_fact:
+        fe_sciencelogic_sl1_platform_config_50_authentication_preflight_passed: true
+      tags:
+        - always
+        - preflight
+        - validation
+
+    # ----------------------------- execute ----------------------
+
+    - name: Configure LDAP authentication
+      ansible.builtin.uri:
+        url: "{{ sl1.url }}/api/account/auth/ldap"
+        method: PUT
+        body:
+          enabled: "{{ sl1_authentication.ldap.enabled }}"
+          server: "{{ sl1_authentication.ldap.server }}"
+          port: "{{ sl1_authentication.ldap.port }}"
+          use_ssl: "{{ sl1_authentication.ldap.use_ssl }}"
+          base_dn: "{{ sl1_authentication.ldap.base_dn }}"
+          bind_dn: "{{ sl1_authentication.ldap.bind_dn }}"
+          bind_password: "{{ sl1_authentication.ldap.bind_password }}"
+          user_search_filter: "{{ sl1_authentication.ldap.user_search_filter }}"
+          group_search_filter: "{{ sl1_authentication.ldap.group_search_filter }}"
+          user_dn: "{{ sl1_authentication.ldap.user_dn }}"
+          group_dn: "{{ sl1_authentication.ldap.group_dn }}"
+          attributes: "{{ sl1_authentication.ldap.attributes }}"
+        body_format: json
+        headers:
+          Content-Type: "application/json"
+          X-EM7-API-Username: "{{ sl1.api_user }}"
+          X-EM7-API-Password: "{{ sl1.api_password }}"
+        validate_certs: "{{ sl1.verify_ssl }}"
+        status_code: [200, 201]
+      no_log: true
+      when:
+        - sl1_authentication.method == "ldap"
+        - sl1_authentication.ldap.enabled
+        - not dry_run
+
+    - name: Configure LDAP group mapping
+      ansible.builtin.uri:
+        url: "{{ sl1.url }}/api/account/auth/ldap/groups"
+        method: POST
+        body:
+          ldap_group: "{{ item.ldap_group }}"
+          sl1_role: "{{ item.sl1_role }}"
+        body_format: json
+        headers:
+          Content-Type: "application/json"
+          X-EM7-API-Username: "{{ sl1.api_user }}"
+          X-EM7-API-Password: "{{ sl1.api_password }}"
+        validate_certs: "{{ sl1.verify_ssl }}"
+        status_code: [200, 201, 409]
+      loop: "{{ sl1_authentication.ldap.group_mapping }}"
+      when:
+        - sl1_authentication.method == "ldap"
+        - sl1_authentication.ldap.enabled
+        - not dry_run
+
+    - name: Configure SAML authentication
+      ansible.builtin.uri:
+        url: "{{ sl1.url }}/api/account/auth/saml"
+        method: PUT
+        body:
+          enabled: "{{ sl1_authentication.saml.enabled }}"
+          idp_entity_id: "{{ sl1_authentication.saml.idp_entity_id }}"
+          idp_sso_url: "{{ sl1_authentication.saml.idp_sso_url }}"
+          idp_slo_url: "{{ sl1_authentication.saml.idp_slo_url }}"
+          sp_entity_id: "{{ sl1_authentication.saml.sp_entity_id }}"
+          sp_acs_url: "{{ sl1_authentication.saml.sp_acs_url }}"
+          attribute_mapping: "{{ sl1_authentication.saml.attribute_mapping }}"
+        body_format: json
+        headers:
+          Content-Type: "application/json"
+          X-EM7-API-Username: "{{ sl1.api_user }}"
+          X-EM7-API-Password: "{{ sl1.api_password }}"
+        validate_certs: "{{ sl1.verify_ssl }}"
+        status_code: [200, 201]
+      when:
+        - sl1_authentication.method == "saml"
+        - sl1_authentication.saml.enabled
+        - not dry_run
+
+    - name: Upload SAML IdP certificate
+      ansible.builtin.copy:
+        src: "{{ sl1_authentication.saml.idp_certificate }}"
+        dest: /opt/em7/conf/saml/idp.crt
+        owner: em7admin
+        group: em7admin
+        mode: '0644'
+      when:
+        - sl1_authentication.method == "saml"
+        - sl1_authentication.saml.enabled
+        - not dry_run
+
+    - name: Authentication configuration summary
+      ansible.builtin.debug:
+        msg:
+          - "Authentication method: {{ sl1_authentication.method }}"
+          - "LDAP enabled: {{ sl1_authentication.ldap.enabled }}"
+          - "SAML enabled: {{ sl1_authentication.saml.enabled }}"
+
+    # ----------------------------- postflight -------------------
+
+    - name: "sciencelogic/sl1_platform_config/50_authentication | Postflight | Verify the guarded body ran after a passing preflight"
+      ansible.builtin.assert:
+        that:
+          - fe_sciencelogic_sl1_platform_config_50_authentication_preflight_passed | bool
+          - fe_sciencelogic_sl1_platform_config_50_authentication_status in ['running', 'succeeded']
+        fail_msg: >-
+          sciencelogic/sl1_platform_config/50_authentication: postflight validation failed - preflight passed
+          ={{ fe_sciencelogic_sl1_platform_config_50_authentication_preflight_passed | default(false) }},
+          status={{ fe_sciencelogic_sl1_platform_config_50_authentication_status | default('unknown') }}.
+        success_msg: "sciencelogic/sl1_platform_config/50_authentication: postflight validation passed."
+        quiet: true
+      tags:
+        - always
+        - postflight
+        - validation
+
+    - name: "sciencelogic/sl1_platform_config/50_authentication | Postflight | Record the successful outcome"
+      ansible.builtin.set_fact:
+        fe_sciencelogic_sl1_platform_config_50_authentication_postflight_passed: true
+        fe_sciencelogic_sl1_platform_config_50_authentication_status: "succeeded"
+      tags:
+        - always
+        - postflight
+        - validation
+
+  rescue:
+
+    - name: "sciencelogic/sl1_platform_config/50_authentication | Rescue | Capture the failing task and error detail"
+      ansible.builtin.set_fact:
+        fe_sciencelogic_sl1_platform_config_50_authentication_status: "failed"
+        fe_sciencelogic_sl1_platform_config_50_authentication_postflight_passed: false
+        fe_sciencelogic_sl1_platform_config_50_authentication_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+        fe_sciencelogic_sl1_platform_config_50_authentication_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+      tags:
+        - always
+        - rescue
+
+    - name: "sciencelogic/sl1_platform_config/50_authentication | Rescue | Report the failure"
+      ansible.builtin.debug:
+        msg: >-
+          sciencelogic/sl1_platform_config/50_authentication: FAILED at '{{ fe_sciencelogic_sl1_platform_config_50_authentication_failed_task }}' on
+          {{ inventory_hostname }} - {{ fe_sciencelogic_sl1_platform_config_50_authentication_error }}
+      tags:
+        - always
+        - rescue
+
+    - name: "sciencelogic/sl1_platform_config/50_authentication | Rescue | Re-raise the failure unless the caller opted to continue"
+      ansible.builtin.fail:
+        msg: >-
+          sciencelogic/sl1_platform_config/50_authentication failed at '{{ fe_sciencelogic_sl1_platform_config_50_authentication_failed_task }}': {{ fe_sciencelogic_sl1_platform_config_50_authentication_error }}
+      when: not (fe_validation_continue_on_error | default(false) | bool)
+      tags:
+        - always
+        - rescue
+
+  always:
+
+    - name: "sciencelogic/sl1_platform_config/50_authentication | Always | Compute the execution duration"
+      ansible.builtin.set_fact:
+        fe_sciencelogic_sl1_platform_config_50_authentication_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+        fe_sciencelogic_sl1_platform_config_50_authentication_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_sciencelogic_sl1_platform_config_50_authentication_start_epoch | default(0) | int) }}"
+      tags:
+        - always
+
+    - name: "sciencelogic/sl1_platform_config/50_authentication | Always | Publish the validation result with set_stats"
+      ansible.builtin.set_stats:
+        data:
+          fe_validation_results:
+            "sciencelogic/sl1_platform_config/50_authentication":
+              component: "sciencelogic/sl1_platform_config/50_authentication"
+              type: "role-tasks"
+              platform: "sciencelogic"
+              host: "{{ inventory_hostname }}"
+              status: "{{ fe_sciencelogic_sl1_platform_config_50_authentication_status | default('unknown') }}"
+              preflight_passed: "{{ fe_sciencelogic_sl1_platform_config_50_authentication_preflight_passed | default(false) | bool }}"
+              postflight_passed: "{{ fe_sciencelogic_sl1_platform_config_50_authentication_postflight_passed | default(false) | bool }}"
+              started_at: "{{ fe_sciencelogic_sl1_platform_config_50_authentication_started_at | default('') }}"
+              ended_at: "{{ fe_sciencelogic_sl1_platform_config_50_authentication_ended_at | default('') }}"
+              duration_seconds: "{{ fe_sciencelogic_sl1_platform_config_50_authentication_duration_seconds | default(0) | int }}"
+              failed_task: "{{ fe_sciencelogic_sl1_platform_config_50_authentication_failed_task | default('') }}"
+              error: "{{ fe_sciencelogic_sl1_platform_config_50_authentication_error | default('') }}"
+              check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+          fe_validation_executions: 1
+          fe_validation_succeeded: "{{ 1 if fe_sciencelogic_sl1_platform_config_50_authentication_status | default('') == 'succeeded' else 0 }}"
+          fe_validation_failed: "{{ 0 if fe_sciencelogic_sl1_platform_config_50_authentication_status | default('') == 'succeeded' else 1 }}"
+          fe_validation_duration_seconds: "{{ fe_sciencelogic_sl1_platform_config_50_authentication_duration_seconds | default(0) | int }}"
+          fe_validation_failed_components: >-
+            {{ [] if fe_sciencelogic_sl1_platform_config_50_authentication_status | default('') == 'succeeded' else ['sciencelogic/sl1_platform_config/50_authentication'] }}
+        aggregate: true
+        per_host: false
+      tags:
+        - always
+
+    - name: "sciencelogic/sl1_platform_config/50_authentication | Always | Mark the validation statistics as published"
+      ansible.builtin.set_fact:
+        fe_sciencelogic_sl1_platform_config_50_authentication_stats_published: true
+      tags:
+        - always

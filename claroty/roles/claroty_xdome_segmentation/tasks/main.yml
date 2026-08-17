@@ -1,60 +1,244 @@
 ---
-- file: { path: "{{ artifacts_dir }}", state: directory, mode: "0755" }
-- uri:
-    url: "{{ claroty.base_url }}/v1/communications/search"
-    method: POST
-    body_format: json
-    body: "{{ flow_filter }}"
-    headers: { Authorization: "Bearer {{ claroty.token }}", Content-Type: "application/json" }
-    return_content: true
-    status_code: 200
-    validate_certs: "{{ claroty.verify_ssl | default(true) }}"
-  register: comms
-- copy:
-    dest: "{{ artifacts_dir }}/xdome_flows.csv"
-    mode: "0644"
-    content: |
-      from_zone,to_zone,src_tag,dst_tag,app,service,src_ip,dst_ip,remark
-      {% for c in comms.json.items | default([]) %}
-      {{ c.src.zone | default('') }},{{ c.dst.zone | default('') }},
-      {{ c.src.tag | default('') }},{{ c.dst.tag | default('') }},
-      {{ c.application | default('any') }},{{ c.service | default('any') }},
-      {{ c.src.ip | default('') }},{{ c.dst.ip | default('') }},
-      Observed flow
-      {% endfor %}
-- set_fact:
-    _allowlist_rules: >-
-      {{
-        (comms.json.items | default([])) |
-        map('extract', {
-          'from_zone': 'src.zone', 'to_zone': 'dst.zone',
-          'source': 'src.tag', 'destination': 'dst.tag',
-          'application': 'application', 'service': 'service'
-        }) | list | unique
-      }}
-- copy:
-    dest: "{{ artifacts_dir }}/{{ ngfw_template_filename }}"
-    mode: "0644"
-    content: |
-      rules:
-      {% for r in _allowlist_rules %}
-        - name: "ALLOW {{ r.from_zone | default('any') }}→{{ r.to_zone | default('any') }} {{ r.application | default('any') }}"
-          from: ["{{ r.from_zone | default('any') }}"]
-          to: ["{{ r.to_zone | default('any') }}"]
-          source: ["{{ r.source | default('any') }}"]
-          destination: ["{{ r.destination | default('any') }}"]
-          application: ["{{ r.application | default('any') }}"]
-          service: ["{{ r.service | default('application-default') }}"]
-          action: "allow"
-      {% endfor %}
-  when: export_ngfw | bool
-- when: deployed_policy_file is not none
+
+# ---------------------------------------------------------------------------
+# Fourth Estate preflight / postflight validation harness
+#
+# The task file body below is wrapped in an Ansible block/rescue/always structure:
+#
+#   block   preflight validation runs first, then the original task file body, then
+#           postflight validation. Any failure transfers control to rescue.
+#   rescue  records which task failed and why, then re-raises so a failure is
+#           never silently swallowed. Set fe_validation_continue_on_error=true
+#           to record the failure and keep going instead.
+#   always  computes the run duration and publishes the outcome through
+#           ansible.builtin.set_stats, so a wrapping playbook, AWX/AAP or CI can
+#           consume the result without scraping log output.
+#
+# Published stats (see docs/VALIDATION_AND_STATS.md):
+#   fe_validation_results['claroty/claroty_xdome_segmentation']  per-component record
+#   fe_validation_executions / _succeeded / _failed / _duration_seconds
+#   fe_validation_failed_components
+#
+# Add component-specific preflight checks without editing this file by setting
+#   fe_claroty_claroty_xdome_segmentation_required_vars: [var_one, var_two]
+# ---------------------------------------------------------------------------
+
+- name: "claroty/claroty_xdome_segmentation | Initialize validation state"
+  ansible.builtin.set_fact:
+    fe_claroty_claroty_xdome_segmentation_start_epoch: "{{ now(fmt='%s') | int }}"
+    fe_claroty_claroty_xdome_segmentation_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+    fe_claroty_claroty_xdome_segmentation_status: "running"
+    fe_claroty_claroty_xdome_segmentation_preflight_passed: false
+    fe_claroty_claroty_xdome_segmentation_postflight_passed: false
+    fe_claroty_claroty_xdome_segmentation_failed_task: ""
+    fe_claroty_claroty_xdome_segmentation_error: ""
+    fe_claroty_claroty_xdome_segmentation_stats_published: false
+  tags:
+    - always
+
+- name: "claroty/claroty_xdome_segmentation | Guarded execution with preflight and postflight validation"
   block:
-    - slurp: { src: "{{ deployed_policy_file }}" }
-      register: _dep_raw
+
+    # ----------------------------- preflight --------------------
+
+    - name: "claroty/claroty_xdome_segmentation | Preflight | Verify the control node meets the minimum ansible-core version"
+      ansible.builtin.assert:
+        that:
+          - ansible_version.full is version(fe_validation_min_ansible_version | default('2.12'), '>=')
+        fail_msg: >-
+          claroty/claroty_xdome_segmentation: requires ansible-core
+          {{ fe_validation_min_ansible_version | default('2.12') }} or newer,
+          found {{ ansible_version.full }}.
+        success_msg: >-
+          claroty/claroty_xdome_segmentation: ansible-core {{ ansible_version.full }} satisfies the minimum.
+        quiet: true
+      tags:
+        - always
+        - preflight
+        - validation
+
+    - name: "claroty/claroty_xdome_segmentation | Preflight | Verify every declared required variable is defined"
+      ansible.builtin.assert:
+        that:
+          - vars[item] is defined
+        fail_msg: "claroty/claroty_xdome_segmentation: required variable '{{ item }}' is not defined."
+        success_msg: "claroty/claroty_xdome_segmentation: required variable '{{ item }}' is defined."
+        quiet: true
+      loop: "{{ fe_claroty_claroty_xdome_segmentation_required_vars | default([]) }}"
+      loop_control:
+        label: "{{ item }}"
+      tags:
+        - always
+        - preflight
+        - validation
+
+    - name: "claroty/claroty_xdome_segmentation | Preflight | Record that preflight validation passed"
+      ansible.builtin.set_fact:
+        fe_claroty_claroty_xdome_segmentation_preflight_passed: true
+      tags:
+        - always
+        - preflight
+        - validation
+
+    # ----------------------------- execute ----------------------
+
+    - file: { path: "{{ artifacts_dir }}", state: directory, mode: "0755" }
+    - uri:
+        url: "{{ claroty.base_url }}/v1/communications/search"
+        method: POST
+        body_format: json
+        body: "{{ flow_filter }}"
+        headers: { Authorization: "Bearer {{ claroty.token }}", Content-Type: "application/json" }
+        return_content: true
+        status_code: 200
+        validate_certs: "{{ claroty.verify_ssl | default(true) }}"
+      register: comms
     - copy:
-        dest: "{{ artifacts_dir }}/{{ drift_report_filename }}"
+        dest: "{{ artifacts_dir }}/xdome_flows.csv"
         mode: "0644"
         content: |
-          generated_rules,comparison_note
-          {{ _allowlist_rules | length }},"Provide NGFW export parser for exact diff"
+          from_zone,to_zone,src_tag,dst_tag,app,service,src_ip,dst_ip,remark
+          {% for c in comms.json.items | default([]) %}
+          {{ c.src.zone | default('') }},{{ c.dst.zone | default('') }},
+          {{ c.src.tag | default('') }},{{ c.dst.tag | default('') }},
+          {{ c.application | default('any') }},{{ c.service | default('any') }},
+          {{ c.src.ip | default('') }},{{ c.dst.ip | default('') }},
+          Observed flow
+          {% endfor %}
+    - set_fact:
+        _allowlist_rules: >-
+          {{
+            (comms.json.items | default([])) |
+            map('extract', {
+              'from_zone': 'src.zone', 'to_zone': 'dst.zone',
+              'source': 'src.tag', 'destination': 'dst.tag',
+              'application': 'application', 'service': 'service'
+            }) | list | unique
+          }}
+    - copy:
+        dest: "{{ artifacts_dir }}/{{ ngfw_template_filename }}"
+        mode: "0644"
+        content: |
+          rules:
+          {% for r in _allowlist_rules %}
+            - name: "ALLOW {{ r.from_zone | default('any') }}→{{ r.to_zone | default('any') }} {{ r.application | default('any') }}"
+              from: ["{{ r.from_zone | default('any') }}"]
+              to: ["{{ r.to_zone | default('any') }}"]
+              source: ["{{ r.source | default('any') }}"]
+              destination: ["{{ r.destination | default('any') }}"]
+              application: ["{{ r.application | default('any') }}"]
+              service: ["{{ r.service | default('application-default') }}"]
+              action: "allow"
+          {% endfor %}
+      when: export_ngfw | bool
+    - when: deployed_policy_file is not none
+      block:
+        - slurp: { src: "{{ deployed_policy_file }}" }
+          register: _dep_raw
+        - copy:
+            dest: "{{ artifacts_dir }}/{{ drift_report_filename }}"
+            mode: "0644"
+            content: |
+              generated_rules,comparison_note
+              {{ _allowlist_rules | length }},"Provide NGFW export parser for exact diff"
+
+    # ----------------------------- postflight -------------------
+
+    - name: "claroty/claroty_xdome_segmentation | Postflight | Verify the guarded body ran after a passing preflight"
+      ansible.builtin.assert:
+        that:
+          - fe_claroty_claroty_xdome_segmentation_preflight_passed | bool
+          - fe_claroty_claroty_xdome_segmentation_status in ['running', 'succeeded']
+        fail_msg: >-
+          claroty/claroty_xdome_segmentation: postflight validation failed - preflight passed
+          ={{ fe_claroty_claroty_xdome_segmentation_preflight_passed | default(false) }},
+          status={{ fe_claroty_claroty_xdome_segmentation_status | default('unknown') }}.
+        success_msg: "claroty/claroty_xdome_segmentation: postflight validation passed."
+        quiet: true
+      tags:
+        - always
+        - postflight
+        - validation
+
+    - name: "claroty/claroty_xdome_segmentation | Postflight | Record the successful outcome"
+      ansible.builtin.set_fact:
+        fe_claroty_claroty_xdome_segmentation_postflight_passed: true
+        fe_claroty_claroty_xdome_segmentation_status: "succeeded"
+      tags:
+        - always
+        - postflight
+        - validation
+
+  rescue:
+
+    - name: "claroty/claroty_xdome_segmentation | Rescue | Capture the failing task and error detail"
+      ansible.builtin.set_fact:
+        fe_claroty_claroty_xdome_segmentation_status: "failed"
+        fe_claroty_claroty_xdome_segmentation_postflight_passed: false
+        fe_claroty_claroty_xdome_segmentation_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+        fe_claroty_claroty_xdome_segmentation_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+      tags:
+        - always
+        - rescue
+
+    - name: "claroty/claroty_xdome_segmentation | Rescue | Report the failure"
+      ansible.builtin.debug:
+        msg: >-
+          claroty/claroty_xdome_segmentation: FAILED at '{{ fe_claroty_claroty_xdome_segmentation_failed_task }}' on
+          {{ inventory_hostname }} - {{ fe_claroty_claroty_xdome_segmentation_error }}
+      tags:
+        - always
+        - rescue
+
+    - name: "claroty/claroty_xdome_segmentation | Rescue | Re-raise the failure unless the caller opted to continue"
+      ansible.builtin.fail:
+        msg: >-
+          claroty/claroty_xdome_segmentation failed at '{{ fe_claroty_claroty_xdome_segmentation_failed_task }}': {{ fe_claroty_claroty_xdome_segmentation_error }}
+      when: not (fe_validation_continue_on_error | default(false) | bool)
+      tags:
+        - always
+        - rescue
+
+  always:
+
+    - name: "claroty/claroty_xdome_segmentation | Always | Compute the execution duration"
+      ansible.builtin.set_fact:
+        fe_claroty_claroty_xdome_segmentation_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+        fe_claroty_claroty_xdome_segmentation_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_claroty_claroty_xdome_segmentation_start_epoch | default(0) | int) }}"
+      tags:
+        - always
+
+    - name: "claroty/claroty_xdome_segmentation | Always | Publish the validation result with set_stats"
+      ansible.builtin.set_stats:
+        data:
+          fe_validation_results:
+            "claroty/claroty_xdome_segmentation":
+              component: "claroty/claroty_xdome_segmentation"
+              type: "role"
+              platform: "claroty"
+              host: "{{ inventory_hostname }}"
+              status: "{{ fe_claroty_claroty_xdome_segmentation_status | default('unknown') }}"
+              preflight_passed: "{{ fe_claroty_claroty_xdome_segmentation_preflight_passed | default(false) | bool }}"
+              postflight_passed: "{{ fe_claroty_claroty_xdome_segmentation_postflight_passed | default(false) | bool }}"
+              started_at: "{{ fe_claroty_claroty_xdome_segmentation_started_at | default('') }}"
+              ended_at: "{{ fe_claroty_claroty_xdome_segmentation_ended_at | default('') }}"
+              duration_seconds: "{{ fe_claroty_claroty_xdome_segmentation_duration_seconds | default(0) | int }}"
+              failed_task: "{{ fe_claroty_claroty_xdome_segmentation_failed_task | default('') }}"
+              error: "{{ fe_claroty_claroty_xdome_segmentation_error | default('') }}"
+              check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+          fe_validation_executions: 1
+          fe_validation_succeeded: "{{ 1 if fe_claroty_claroty_xdome_segmentation_status | default('') == 'succeeded' else 0 }}"
+          fe_validation_failed: "{{ 0 if fe_claroty_claroty_xdome_segmentation_status | default('') == 'succeeded' else 1 }}"
+          fe_validation_duration_seconds: "{{ fe_claroty_claroty_xdome_segmentation_duration_seconds | default(0) | int }}"
+          fe_validation_failed_components: >-
+            {{ [] if fe_claroty_claroty_xdome_segmentation_status | default('') == 'succeeded' else ['claroty/claroty_xdome_segmentation'] }}
+        aggregate: true
+        per_host: false
+      tags:
+        - always
+
+    - name: "claroty/claroty_xdome_segmentation | Always | Mark the validation statistics as published"
+      ansible.builtin.set_fact:
+        fe_claroty_claroty_xdome_segmentation_stats_published: true
+      tags:
+        - always

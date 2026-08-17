@@ -2,130 +2,313 @@
 # tasks/account-security.yml - Account Security Configuration
 # DoD STIG V-204419 through V-204430
 
-- name: Configure account lockout with faillock (STIG V-204419, V-204420)
-  ansible.builtin.lineinfile:
-    path: "{{ item.path }}"
-    insertafter: "{{ item.after }}"
-    line: "{{ item.line }}"
-    state: present
-  loop:
-    - path: /etc/pam.d/system-auth
-      after: '^auth\s+required\s+pam_env.so'
-      line: 'auth        required      pam_faillock.so preauth silent deny={{ rhel_failed_login_attempts }} unlock_time={{ rhel_account_lockout_duration }} fail_interval={{ rhel_failed_login_reset_interval }}'
-    - path: /etc/pam.d/system-auth
-      after: '^auth\s+sufficient\s+pam_unix.so'
-      line: 'auth        [default=die] pam_faillock.so authfail deny={{ rhel_failed_login_attempts }} unlock_time={{ rhel_account_lockout_duration }} fail_interval={{ rhel_failed_login_reset_interval }}'
-    - path: /etc/pam.d/password-auth
-      after: '^auth\s+required\s+pam_env.so'
-      line: 'auth        required      pam_faillock.so preauth silent deny={{ rhel_failed_login_attempts }} unlock_time={{ rhel_account_lockout_duration }} fail_interval={{ rhel_failed_login_reset_interval }}'
-    - path: /etc/pam.d/password-auth
-      after: '^auth\s+sufficient\s+pam_unix.so'
-      line: 'auth        [default=die] pam_faillock.so authfail deny={{ rhel_failed_login_attempts }} unlock_time={{ rhel_account_lockout_duration }} fail_interval={{ rhel_failed_login_reset_interval }}'
-  when: rhel_faillock_enabled | bool
-  tags:
-    - pam
-    - faillock
+# ---------------------------------------------------------------------------
+# Fourth Estate preflight / postflight validation harness
+#
+# The task file body below is wrapped in an Ansible block/rescue/always structure:
+#
+#   block   preflight validation runs first, then the original task file body, then
+#           postflight validation. Any failure transfers control to rescue.
+#   rescue  records which task failed and why, then re-raises so a failure is
+#           never silently swallowed. Set fe_validation_continue_on_error=true
+#           to record the failure and keep going instead.
+#   always  computes the run duration and publishes the outcome through
+#           ansible.builtin.set_stats, so a wrapping playbook, AWX/AAP or CI can
+#           consume the result without scraping log output.
+#
+# Published stats (see docs/VALIDATION_AND_STATS.md):
+#   fe_validation_results['rhel/rhel-hardening/account-security']  per-component record
+#   fe_validation_executions / _succeeded / _failed / _duration_seconds
+#   fe_validation_failed_components
+#
+# Add component-specific preflight checks without editing this file by setting
+#   fe_rhel_rhel_hardening_account_security_required_vars: [var_one, var_two]
+# ---------------------------------------------------------------------------
 
-- name: Configure login delay after failure (STIG V-204422)
-  ansible.builtin.lineinfile:
-    path: /etc/login.defs
-    regexp: '^FAIL_DELAY'
-    line: "FAIL_DELAY\t{{ rhel_login_fail_delay // 1000000 }}"
-    state: present
+- name: "rhel/rhel-hardening/account-security | Initialize validation state"
+  ansible.builtin.set_fact:
+    fe_rhel_rhel_hardening_account_security_start_epoch: "{{ now(fmt='%s') | int }}"
+    fe_rhel_rhel_hardening_account_security_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+    fe_rhel_rhel_hardening_account_security_status: "running"
+    fe_rhel_rhel_hardening_account_security_preflight_passed: false
+    fe_rhel_rhel_hardening_account_security_postflight_passed: false
+    fe_rhel_rhel_hardening_account_security_failed_task: ""
+    fe_rhel_rhel_hardening_account_security_error: ""
+    fe_rhel_rhel_hardening_account_security_stats_published: false
   tags:
-    - login_defs
+    - always
 
-- name: Configure root login restrictions (STIG V-204423, V-204424)
-  ansible.builtin.template:
-    src: securetty.j2
-    dest: /etc/securetty
-    owner: root
-    group: root
-    mode: '0600'
-  when: rhel_root_console_only | bool
-  tags:
-    - securetty
+- name: "rhel/rhel-hardening/account-security | Guarded execution with preflight and postflight validation"
+  block:
 
-- name: Find system accounts (UID < 1000)
-  ansible.builtin.shell: |
-    awk -F: '($3 < 1000 && $3 != 0) {print $1}' /etc/passwd
-  register: system_accounts
-  changed_when: false
-  tags:
-    - accounts
+    # ----------------------------- preflight --------------------
 
-- name: Lock system accounts (STIG V-204426)
-  ansible.builtin.user:
-    name: "{{ item }}"
-    shell: /sbin/nologin
-    password_lock: true
-  loop: "{{ system_accounts.stdout_lines }}"
-  when:
-    - rhel_lock_system_accounts | bool
-    - item not in ['root', 'sync', 'shutdown', 'halt']
-  tags:
-    - accounts
+    - name: "rhel/rhel-hardening/account-security | Preflight | Verify the control node meets the minimum ansible-core version"
+      ansible.builtin.assert:
+        that:
+          - ansible_version.full is version(fe_validation_min_ansible_version | default('2.12'), '>=')
+        fail_msg: >-
+          rhel/rhel-hardening/account-security: requires ansible-core
+          {{ fe_validation_min_ansible_version | default('2.12') }} or newer,
+          found {{ ansible_version.full }}.
+        success_msg: >-
+          rhel/rhel-hardening/account-security: ansible-core {{ ansible_version.full }} satisfies the minimum.
+        quiet: true
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: Find inactive user accounts
-  ansible.builtin.shell: |
-    lastlog -b {{ rhel_account_inactive_days }} | awk 'NR>1 && !/Never logged in/ {print $1}'
-  register: inactive_accounts
-  changed_when: false
-  failed_when: false
-  when: rhel_lock_inactive_accounts | bool
-  tags:
-    - accounts
+    - name: "rhel/rhel-hardening/account-security | Preflight | Verify every declared required variable is defined"
+      ansible.builtin.assert:
+        that:
+          - vars[item] is defined
+        fail_msg: "rhel/rhel-hardening/account-security: required variable '{{ item }}' is not defined."
+        success_msg: "rhel/rhel-hardening/account-security: required variable '{{ item }}' is defined."
+        quiet: true
+      loop: "{{ fe_rhel_rhel_hardening_account_security_required_vars | default([]) }}"
+      loop_control:
+        label: "{{ item }}"
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: Lock inactive accounts (STIG V-204425)
-  ansible.builtin.user:
-    name: "{{ item }}"
-    password_lock: true
-  loop: "{{ inactive_accounts.stdout_lines | default([]) }}"
-  when:
-    - rhel_lock_inactive_accounts | bool
-    - item not in ['root']
-    - inactive_accounts.stdout_lines is defined
-  tags:
-    - accounts
+    - name: "rhel/rhel-hardening/account-security | Preflight | Record that preflight validation passed"
+      ansible.builtin.set_fact:
+        fe_rhel_rhel_hardening_account_security_preflight_passed: true
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: Find accounts with UID 0 (STIG V-204427)
-  ansible.builtin.shell: |
-    awk -F: '($3 == 0 && $1 != "root") {print $1}' /etc/passwd
-  register: uid_zero_accounts
-  changed_when: false
-  failed_when: uid_zero_accounts.stdout_lines | length > 0 and rhel_enforce_single_root_uid | bool
-  tags:
-    - accounts
-    - validation
+    # ----------------------------- execute ----------------------
 
-- name: Set home directory permissions (STIG V-204428)
-  ansible.builtin.file:
-    path: "{{ item }}"
-    mode: "{{ rhel_home_dir_permissions }}"
-    state: directory
-  loop: "{{ ansible_facts.getent_passwd.values() | map(attribute=4) | list }}"
-  when:
-    - item != '/root'
-    - item not in ['/sbin/nologin', '/bin/false', '/usr/sbin/nologin', '/bin/sync']
-  failed_when: false
-  tags:
-    - permissions
-    - never
+    - name: Configure account lockout with faillock (STIG V-204419, V-204420)
+      ansible.builtin.lineinfile:
+        path: "{{ item.path }}"
+        insertafter: "{{ item.after }}"
+        line: "{{ item.line }}"
+        state: present
+      loop:
+        - path: /etc/pam.d/system-auth
+          after: '^auth\s+required\s+pam_env.so'
+          line: 'auth        required      pam_faillock.so preauth silent deny={{ rhel_failed_login_attempts }} unlock_time={{ rhel_account_lockout_duration }} fail_interval={{ rhel_failed_login_reset_interval }}'
+        - path: /etc/pam.d/system-auth
+          after: '^auth\s+sufficient\s+pam_unix.so'
+          line: 'auth        [default=die] pam_faillock.so authfail deny={{ rhel_failed_login_attempts }} unlock_time={{ rhel_account_lockout_duration }} fail_interval={{ rhel_failed_login_reset_interval }}'
+        - path: /etc/pam.d/password-auth
+          after: '^auth\s+required\s+pam_env.so'
+          line: 'auth        required      pam_faillock.so preauth silent deny={{ rhel_failed_login_attempts }} unlock_time={{ rhel_account_lockout_duration }} fail_interval={{ rhel_failed_login_reset_interval }}'
+        - path: /etc/pam.d/password-auth
+          after: '^auth\s+sufficient\s+pam_unix.so'
+          line: 'auth        [default=die] pam_faillock.so authfail deny={{ rhel_failed_login_attempts }} unlock_time={{ rhel_account_lockout_duration }} fail_interval={{ rhel_failed_login_reset_interval }}'
+      when: rhel_faillock_enabled | bool
+      tags:
+        - pam
+        - faillock
 
-- name: Find world-writable files in home directories (STIG V-204429, V-204430)
-  ansible.builtin.shell: |
-    find /home -type f -perm -002 -ls
-  register: world_writable_files
-  changed_when: false
-  failed_when: false
-  tags:
-    - validation
+    - name: Configure login delay after failure (STIG V-204422)
+      ansible.builtin.lineinfile:
+        path: /etc/login.defs
+        regexp: '^FAIL_DELAY'
+        line: "FAIL_DELAY\t{{ rhel_login_fail_delay // 1000000 }}"
+        state: present
+      tags:
+        - login_defs
 
-- name: Display world-writable files warning
-  ansible.builtin.debug:
-    msg:
-      - "WARNING: World-writable files found in home directories:"
-      - "{{ world_writable_files.stdout_lines }}"
-  when: world_writable_files.stdout_lines | length > 0
-  tags:
-    - validation
+    - name: Configure root login restrictions (STIG V-204423, V-204424)
+      ansible.builtin.template:
+        src: securetty.j2
+        dest: /etc/securetty
+        owner: root
+        group: root
+        mode: '0600'
+      when: rhel_root_console_only | bool
+      tags:
+        - securetty
+
+    - name: Find system accounts (UID < 1000)
+      ansible.builtin.shell: |
+        awk -F: '($3 < 1000 && $3 != 0) {print $1}' /etc/passwd
+      register: system_accounts
+      changed_when: false
+      tags:
+        - accounts
+
+    - name: Lock system accounts (STIG V-204426)
+      ansible.builtin.user:
+        name: "{{ item }}"
+        shell: /sbin/nologin
+        password_lock: true
+      loop: "{{ system_accounts.stdout_lines }}"
+      when:
+        - rhel_lock_system_accounts | bool
+        - item not in ['root', 'sync', 'shutdown', 'halt']
+      tags:
+        - accounts
+
+    - name: Find inactive user accounts
+      ansible.builtin.shell: |
+        lastlog -b {{ rhel_account_inactive_days }} | awk 'NR>1 && !/Never logged in/ {print $1}'
+      register: inactive_accounts
+      changed_when: false
+      failed_when: false
+      when: rhel_lock_inactive_accounts | bool
+      tags:
+        - accounts
+
+    - name: Lock inactive accounts (STIG V-204425)
+      ansible.builtin.user:
+        name: "{{ item }}"
+        password_lock: true
+      loop: "{{ inactive_accounts.stdout_lines | default([]) }}"
+      when:
+        - rhel_lock_inactive_accounts | bool
+        - item not in ['root']
+        - inactive_accounts.stdout_lines is defined
+      tags:
+        - accounts
+
+    - name: Find accounts with UID 0 (STIG V-204427)
+      ansible.builtin.shell: |
+        awk -F: '($3 == 0 && $1 != "root") {print $1}' /etc/passwd
+      register: uid_zero_accounts
+      changed_when: false
+      failed_when: uid_zero_accounts.stdout_lines | length > 0 and rhel_enforce_single_root_uid | bool
+      tags:
+        - accounts
+        - validation
+
+    - name: Set home directory permissions (STIG V-204428)
+      ansible.builtin.file:
+        path: "{{ item }}"
+        mode: "{{ rhel_home_dir_permissions }}"
+        state: directory
+      loop: "{{ ansible_facts.getent_passwd.values() | map(attribute=4) | list }}"
+      when:
+        - item != '/root'
+        - item not in ['/sbin/nologin', '/bin/false', '/usr/sbin/nologin', '/bin/sync']
+      failed_when: false
+      tags:
+        - permissions
+        - never
+
+    - name: Find world-writable files in home directories (STIG V-204429, V-204430)
+      ansible.builtin.shell: |
+        find /home -type f -perm -002 -ls
+      register: world_writable_files
+      changed_when: false
+      failed_when: false
+      tags:
+        - validation
+
+    - name: Display world-writable files warning
+      ansible.builtin.debug:
+        msg:
+          - "WARNING: World-writable files found in home directories:"
+          - "{{ world_writable_files.stdout_lines }}"
+      when: world_writable_files.stdout_lines | length > 0
+      tags:
+        - validation
+
+    # ----------------------------- postflight -------------------
+
+    - name: "rhel/rhel-hardening/account-security | Postflight | Verify the guarded body ran after a passing preflight"
+      ansible.builtin.assert:
+        that:
+          - fe_rhel_rhel_hardening_account_security_preflight_passed | bool
+          - fe_rhel_rhel_hardening_account_security_status in ['running', 'succeeded']
+        fail_msg: >-
+          rhel/rhel-hardening/account-security: postflight validation failed - preflight passed
+          ={{ fe_rhel_rhel_hardening_account_security_preflight_passed | default(false) }},
+          status={{ fe_rhel_rhel_hardening_account_security_status | default('unknown') }}.
+        success_msg: "rhel/rhel-hardening/account-security: postflight validation passed."
+        quiet: true
+      tags:
+        - always
+        - postflight
+        - validation
+
+    - name: "rhel/rhel-hardening/account-security | Postflight | Record the successful outcome"
+      ansible.builtin.set_fact:
+        fe_rhel_rhel_hardening_account_security_postflight_passed: true
+        fe_rhel_rhel_hardening_account_security_status: "succeeded"
+      tags:
+        - always
+        - postflight
+        - validation
+
+  rescue:
+
+    - name: "rhel/rhel-hardening/account-security | Rescue | Capture the failing task and error detail"
+      ansible.builtin.set_fact:
+        fe_rhel_rhel_hardening_account_security_status: "failed"
+        fe_rhel_rhel_hardening_account_security_postflight_passed: false
+        fe_rhel_rhel_hardening_account_security_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+        fe_rhel_rhel_hardening_account_security_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+      tags:
+        - always
+        - rescue
+
+    - name: "rhel/rhel-hardening/account-security | Rescue | Report the failure"
+      ansible.builtin.debug:
+        msg: >-
+          rhel/rhel-hardening/account-security: FAILED at '{{ fe_rhel_rhel_hardening_account_security_failed_task }}' on
+          {{ inventory_hostname }} - {{ fe_rhel_rhel_hardening_account_security_error }}
+      tags:
+        - always
+        - rescue
+
+    - name: "rhel/rhel-hardening/account-security | Rescue | Re-raise the failure unless the caller opted to continue"
+      ansible.builtin.fail:
+        msg: >-
+          rhel/rhel-hardening/account-security failed at '{{ fe_rhel_rhel_hardening_account_security_failed_task }}': {{ fe_rhel_rhel_hardening_account_security_error }}
+      when: not (fe_validation_continue_on_error | default(false) | bool)
+      tags:
+        - always
+        - rescue
+
+  always:
+
+    - name: "rhel/rhel-hardening/account-security | Always | Compute the execution duration"
+      ansible.builtin.set_fact:
+        fe_rhel_rhel_hardening_account_security_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+        fe_rhel_rhel_hardening_account_security_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_rhel_rhel_hardening_account_security_start_epoch | default(0) | int) }}"
+      tags:
+        - always
+
+    - name: "rhel/rhel-hardening/account-security | Always | Publish the validation result with set_stats"
+      ansible.builtin.set_stats:
+        data:
+          fe_validation_results:
+            "rhel/rhel-hardening/account-security":
+              component: "rhel/rhel-hardening/account-security"
+              type: "role-tasks"
+              platform: "rhel"
+              host: "{{ inventory_hostname }}"
+              status: "{{ fe_rhel_rhel_hardening_account_security_status | default('unknown') }}"
+              preflight_passed: "{{ fe_rhel_rhel_hardening_account_security_preflight_passed | default(false) | bool }}"
+              postflight_passed: "{{ fe_rhel_rhel_hardening_account_security_postflight_passed | default(false) | bool }}"
+              started_at: "{{ fe_rhel_rhel_hardening_account_security_started_at | default('') }}"
+              ended_at: "{{ fe_rhel_rhel_hardening_account_security_ended_at | default('') }}"
+              duration_seconds: "{{ fe_rhel_rhel_hardening_account_security_duration_seconds | default(0) | int }}"
+              failed_task: "{{ fe_rhel_rhel_hardening_account_security_failed_task | default('') }}"
+              error: "{{ fe_rhel_rhel_hardening_account_security_error | default('') }}"
+              check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+          fe_validation_executions: 1
+          fe_validation_succeeded: "{{ 1 if fe_rhel_rhel_hardening_account_security_status | default('') == 'succeeded' else 0 }}"
+          fe_validation_failed: "{{ 0 if fe_rhel_rhel_hardening_account_security_status | default('') == 'succeeded' else 1 }}"
+          fe_validation_duration_seconds: "{{ fe_rhel_rhel_hardening_account_security_duration_seconds | default(0) | int }}"
+          fe_validation_failed_components: >-
+            {{ [] if fe_rhel_rhel_hardening_account_security_status | default('') == 'succeeded' else ['rhel/rhel-hardening/account-security'] }}
+        aggregate: true
+        per_host: false
+      tags:
+        - always
+
+    - name: "rhel/rhel-hardening/account-security | Always | Mark the validation statistics as published"
+      ansible.builtin.set_fact:
+        fe_rhel_rhel_hardening_account_security_stats_published: true
+      tags:
+        - always

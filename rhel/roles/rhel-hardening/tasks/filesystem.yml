@@ -2,112 +2,295 @@
 # tasks/filesystem.yml - File System Hardening
 # DoD STIG V-204446 through V-204465
 
-- name: Check for separate partitions (STIG V-204446 through V-204450)
-  ansible.builtin.shell: |
-    df -h {{ item }} | tail -1 | awk '{print $6}'
-  register: partition_check
-  changed_when: false
-  failed_when: false
-  loop:
-    - /tmp
-    - /var
-    - /var/log
-    - /var/log/audit
-    - /home
-  when: rhel_check_separate_tmp | bool or rhel_check_separate_var | bool or rhel_check_separate_var_log | bool or rhel_check_separate_var_log_audit | bool or rhel_check_separate_home | bool
-  tags:
-    - validation
+# ---------------------------------------------------------------------------
+# Fourth Estate preflight / postflight validation harness
+#
+# The task file body below is wrapped in an Ansible block/rescue/always structure:
+#
+#   block   preflight validation runs first, then the original task file body, then
+#           postflight validation. Any failure transfers control to rescue.
+#   rescue  records which task failed and why, then re-raises so a failure is
+#           never silently swallowed. Set fe_validation_continue_on_error=true
+#           to record the failure and keep going instead.
+#   always  computes the run duration and publishes the outcome through
+#           ansible.builtin.set_stats, so a wrapping playbook, AWX/AAP or CI can
+#           consume the result without scraping log output.
+#
+# Published stats (see docs/VALIDATION_AND_STATS.md):
+#   fe_validation_results['rhel/rhel-hardening/filesystem']  per-component record
+#   fe_validation_executions / _succeeded / _failed / _duration_seconds
+#   fe_validation_failed_components
+#
+# Add component-specific preflight checks without editing this file by setting
+#   fe_rhel_rhel_hardening_filesystem_required_vars: [var_one, var_two]
+# ---------------------------------------------------------------------------
 
-- name: Set system file permissions (STIG V-204459)
-  ansible.builtin.file:
-    path: "{{ item.key }}"
-    mode: "{{ item.value }}"
-    owner: root
-    group: root
-  loop: "{{ rhel_system_files_permissions | dict2items }}"
+- name: "rhel/rhel-hardening/filesystem | Initialize validation state"
+  ansible.builtin.set_fact:
+    fe_rhel_rhel_hardening_filesystem_start_epoch: "{{ now(fmt='%s') | int }}"
+    fe_rhel_rhel_hardening_filesystem_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+    fe_rhel_rhel_hardening_filesystem_status: "running"
+    fe_rhel_rhel_hardening_filesystem_preflight_passed: false
+    fe_rhel_rhel_hardening_filesystem_postflight_passed: false
+    fe_rhel_rhel_hardening_filesystem_failed_task: ""
+    fe_rhel_rhel_hardening_filesystem_error: ""
+    fe_rhel_rhel_hardening_filesystem_stats_published: false
   tags:
-    - permissions
+    - always
 
-- name: Find world-writable files (STIG V-204456)
-  ansible.builtin.shell: |
-    find / -xdev -type f -perm -002 ! -path "/proc/*" ! -path "/sys/*" 2>/dev/null
-  register: world_writable_files
-  changed_when: false
-  failed_when: false
-  when: rhel_find_world_writable_files | bool
-  tags:
-    - validation
-    - never
+- name: "rhel/rhel-hardening/filesystem | Guarded execution with preflight and postflight validation"
+  block:
 
-- name: Find unowned files (STIG V-204457)
-  ansible.builtin.shell: |
-    find / -xdev -nouser ! -path "/proc/*" ! -path "/sys/*" 2>/dev/null
-  register: unowned_files
-  changed_when: false
-  failed_when: false
-  when: rhel_find_unowned_files | bool
-  tags:
-    - validation
-    - never
+    # ----------------------------- preflight --------------------
 
-- name: Find ungrouped files (STIG V-204458)
-  ansible.builtin.shell: |
-    find / -xdev -nogroup ! -path "/proc/*" ! -path "/sys/*" 2>/dev/null
-  register: ungrouped_files
-  changed_when: false
-  failed_when: false
-  when: rhel_find_ungrouped_files | bool
-  tags:
-    - validation
-    - never
+    - name: "rhel/rhel-hardening/filesystem | Preflight | Verify the control node meets the minimum ansible-core version"
+      ansible.builtin.assert:
+        that:
+          - ansible_version.full is version(fe_validation_min_ansible_version | default('2.12'), '>=')
+        fail_msg: >-
+          rhel/rhel-hardening/filesystem: requires ansible-core
+          {{ fe_validation_min_ansible_version | default('2.12') }} or newer,
+          found {{ ansible_version.full }}.
+        success_msg: >-
+          rhel/rhel-hardening/filesystem: ansible-core {{ ansible_version.full }} satisfies the minimum.
+        quiet: true
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: Find SUID/SGID files (STIG V-204460)
-  ansible.builtin.shell: |
-    find / -xdev \( -perm -4000 -o -perm -2000 \) -type f ! -path "/proc/*" ! -path "/sys/*" 2>/dev/null
-  register: suid_sgid_files
-  changed_when: false
-  failed_when: false
-  when: rhel_find_suid_sgid_files | bool
-  tags:
-    - validation
-    - never
+    - name: "rhel/rhel-hardening/filesystem | Preflight | Verify every declared required variable is defined"
+      ansible.builtin.assert:
+        that:
+          - vars[item] is defined
+        fail_msg: "rhel/rhel-hardening/filesystem: required variable '{{ item }}' is not defined."
+        success_msg: "rhel/rhel-hardening/filesystem: required variable '{{ item }}' is defined."
+        quiet: true
+      loop: "{{ fe_rhel_rhel_hardening_filesystem_required_vars | default([]) }}"
+      loop_control:
+        label: "{{ item }}"
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: Disable core dumps (STIG V-204461)
-  ansible.builtin.lineinfile:
-    path: /etc/security/limits.conf
-    line: '*     hard   core    0'
-    state: present
-  when: rhel_disable_core_dumps | bool
-  tags:
-    - coredumps
+    - name: "rhel/rhel-hardening/filesystem | Preflight | Record that preflight validation passed"
+      ansible.builtin.set_fact:
+        fe_rhel_rhel_hardening_filesystem_preflight_passed: true
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: Configure systemd-coredump (STIG V-204463)
-  ansible.builtin.lineinfile:
-    path: /etc/systemd/coredump.conf
-    regexp: "^#?Storage="
-    line: "Storage={{ rhel_systemd_coredump_storage }}"
-    state: present
-  when: rhel_disable_core_dumps | bool
-  notify: reload systemd
-  tags:
-    - coredumps
+    # ----------------------------- execute ----------------------
 
-- name: Disable kdump service (STIG V-204464)
-  ansible.builtin.systemd:
-    name: kdump
-    enabled: false
-    state: stopped
-  when: not rhel_kdump_enabled | bool
-  failed_when: false
-  tags:
-    - services
+    - name: Check for separate partitions (STIG V-204446 through V-204450)
+      ansible.builtin.shell: |
+        df -h {{ item }} | tail -1 | awk '{print $6}'
+      register: partition_check
+      changed_when: false
+      failed_when: false
+      loop:
+        - /tmp
+        - /var
+        - /var/log
+        - /var/log/audit
+        - /home
+      when: rhel_check_separate_tmp | bool or rhel_check_separate_var | bool or rhel_check_separate_var_log | bool or rhel_check_separate_var_log_audit | bool or rhel_check_separate_home | bool
+      tags:
+        - validation
 
-- name: Disable core dumps for SUID programs (STIG V-204465)
-  ansible.posix.sysctl:
-    name: fs.suid_dumpable
-    value: '0'
-    state: present
-    reload: true
-  when: rhel_disable_suid_core_dumps | bool
-  tags:
-    - sysctl
+    - name: Set system file permissions (STIG V-204459)
+      ansible.builtin.file:
+        path: "{{ item.key }}"
+        mode: "{{ item.value }}"
+        owner: root
+        group: root
+      loop: "{{ rhel_system_files_permissions | dict2items }}"
+      tags:
+        - permissions
+
+    - name: Find world-writable files (STIG V-204456)
+      ansible.builtin.shell: |
+        find / -xdev -type f -perm -002 ! -path "/proc/*" ! -path "/sys/*" 2>/dev/null
+      register: world_writable_files
+      changed_when: false
+      failed_when: false
+      when: rhel_find_world_writable_files | bool
+      tags:
+        - validation
+        - never
+
+    - name: Find unowned files (STIG V-204457)
+      ansible.builtin.shell: |
+        find / -xdev -nouser ! -path "/proc/*" ! -path "/sys/*" 2>/dev/null
+      register: unowned_files
+      changed_when: false
+      failed_when: false
+      when: rhel_find_unowned_files | bool
+      tags:
+        - validation
+        - never
+
+    - name: Find ungrouped files (STIG V-204458)
+      ansible.builtin.shell: |
+        find / -xdev -nogroup ! -path "/proc/*" ! -path "/sys/*" 2>/dev/null
+      register: ungrouped_files
+      changed_when: false
+      failed_when: false
+      when: rhel_find_ungrouped_files | bool
+      tags:
+        - validation
+        - never
+
+    - name: Find SUID/SGID files (STIG V-204460)
+      ansible.builtin.shell: |
+        find / -xdev \( -perm -4000 -o -perm -2000 \) -type f ! -path "/proc/*" ! -path "/sys/*" 2>/dev/null
+      register: suid_sgid_files
+      changed_when: false
+      failed_when: false
+      when: rhel_find_suid_sgid_files | bool
+      tags:
+        - validation
+        - never
+
+    - name: Disable core dumps (STIG V-204461)
+      ansible.builtin.lineinfile:
+        path: /etc/security/limits.conf
+        line: '*     hard   core    0'
+        state: present
+      when: rhel_disable_core_dumps | bool
+      tags:
+        - coredumps
+
+    - name: Configure systemd-coredump (STIG V-204463)
+      ansible.builtin.lineinfile:
+        path: /etc/systemd/coredump.conf
+        regexp: "^#?Storage="
+        line: "Storage={{ rhel_systemd_coredump_storage }}"
+        state: present
+      when: rhel_disable_core_dumps | bool
+      notify: reload systemd
+      tags:
+        - coredumps
+
+    - name: Disable kdump service (STIG V-204464)
+      ansible.builtin.systemd:
+        name: kdump
+        enabled: false
+        state: stopped
+      when: not rhel_kdump_enabled | bool
+      failed_when: false
+      tags:
+        - services
+
+    - name: Disable core dumps for SUID programs (STIG V-204465)
+      ansible.posix.sysctl:
+        name: fs.suid_dumpable
+        value: '0'
+        state: present
+        reload: true
+      when: rhel_disable_suid_core_dumps | bool
+      tags:
+        - sysctl
+
+    # ----------------------------- postflight -------------------
+
+    - name: "rhel/rhel-hardening/filesystem | Postflight | Verify the guarded body ran after a passing preflight"
+      ansible.builtin.assert:
+        that:
+          - fe_rhel_rhel_hardening_filesystem_preflight_passed | bool
+          - fe_rhel_rhel_hardening_filesystem_status in ['running', 'succeeded']
+        fail_msg: >-
+          rhel/rhel-hardening/filesystem: postflight validation failed - preflight passed
+          ={{ fe_rhel_rhel_hardening_filesystem_preflight_passed | default(false) }},
+          status={{ fe_rhel_rhel_hardening_filesystem_status | default('unknown') }}.
+        success_msg: "rhel/rhel-hardening/filesystem: postflight validation passed."
+        quiet: true
+      tags:
+        - always
+        - postflight
+        - validation
+
+    - name: "rhel/rhel-hardening/filesystem | Postflight | Record the successful outcome"
+      ansible.builtin.set_fact:
+        fe_rhel_rhel_hardening_filesystem_postflight_passed: true
+        fe_rhel_rhel_hardening_filesystem_status: "succeeded"
+      tags:
+        - always
+        - postflight
+        - validation
+
+  rescue:
+
+    - name: "rhel/rhel-hardening/filesystem | Rescue | Capture the failing task and error detail"
+      ansible.builtin.set_fact:
+        fe_rhel_rhel_hardening_filesystem_status: "failed"
+        fe_rhel_rhel_hardening_filesystem_postflight_passed: false
+        fe_rhel_rhel_hardening_filesystem_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+        fe_rhel_rhel_hardening_filesystem_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+      tags:
+        - always
+        - rescue
+
+    - name: "rhel/rhel-hardening/filesystem | Rescue | Report the failure"
+      ansible.builtin.debug:
+        msg: >-
+          rhel/rhel-hardening/filesystem: FAILED at '{{ fe_rhel_rhel_hardening_filesystem_failed_task }}' on
+          {{ inventory_hostname }} - {{ fe_rhel_rhel_hardening_filesystem_error }}
+      tags:
+        - always
+        - rescue
+
+    - name: "rhel/rhel-hardening/filesystem | Rescue | Re-raise the failure unless the caller opted to continue"
+      ansible.builtin.fail:
+        msg: >-
+          rhel/rhel-hardening/filesystem failed at '{{ fe_rhel_rhel_hardening_filesystem_failed_task }}': {{ fe_rhel_rhel_hardening_filesystem_error }}
+      when: not (fe_validation_continue_on_error | default(false) | bool)
+      tags:
+        - always
+        - rescue
+
+  always:
+
+    - name: "rhel/rhel-hardening/filesystem | Always | Compute the execution duration"
+      ansible.builtin.set_fact:
+        fe_rhel_rhel_hardening_filesystem_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+        fe_rhel_rhel_hardening_filesystem_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_rhel_rhel_hardening_filesystem_start_epoch | default(0) | int) }}"
+      tags:
+        - always
+
+    - name: "rhel/rhel-hardening/filesystem | Always | Publish the validation result with set_stats"
+      ansible.builtin.set_stats:
+        data:
+          fe_validation_results:
+            "rhel/rhel-hardening/filesystem":
+              component: "rhel/rhel-hardening/filesystem"
+              type: "role-tasks"
+              platform: "rhel"
+              host: "{{ inventory_hostname }}"
+              status: "{{ fe_rhel_rhel_hardening_filesystem_status | default('unknown') }}"
+              preflight_passed: "{{ fe_rhel_rhel_hardening_filesystem_preflight_passed | default(false) | bool }}"
+              postflight_passed: "{{ fe_rhel_rhel_hardening_filesystem_postflight_passed | default(false) | bool }}"
+              started_at: "{{ fe_rhel_rhel_hardening_filesystem_started_at | default('') }}"
+              ended_at: "{{ fe_rhel_rhel_hardening_filesystem_ended_at | default('') }}"
+              duration_seconds: "{{ fe_rhel_rhel_hardening_filesystem_duration_seconds | default(0) | int }}"
+              failed_task: "{{ fe_rhel_rhel_hardening_filesystem_failed_task | default('') }}"
+              error: "{{ fe_rhel_rhel_hardening_filesystem_error | default('') }}"
+              check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+          fe_validation_executions: 1
+          fe_validation_succeeded: "{{ 1 if fe_rhel_rhel_hardening_filesystem_status | default('') == 'succeeded' else 0 }}"
+          fe_validation_failed: "{{ 0 if fe_rhel_rhel_hardening_filesystem_status | default('') == 'succeeded' else 1 }}"
+          fe_validation_duration_seconds: "{{ fe_rhel_rhel_hardening_filesystem_duration_seconds | default(0) | int }}"
+          fe_validation_failed_components: >-
+            {{ [] if fe_rhel_rhel_hardening_filesystem_status | default('') == 'succeeded' else ['rhel/rhel-hardening/filesystem'] }}
+        aggregate: true
+        per_host: false
+      tags:
+        - always
+
+    - name: "rhel/rhel-hardening/filesystem | Always | Mark the validation statistics as published"
+      ansible.builtin.set_fact:
+        fe_rhel_rhel_hardening_filesystem_stats_published: true
+      tags:
+        - always

@@ -1,111 +1,294 @@
 ---
 # Asset Commissioning Workflow
 
-- name: Validate commissioning data
-  ansible.builtin.assert:
-    that:
-      - ot_asset_id is defined and ot_asset_id | length > 0
-      - ot_asset_commission_date is defined or ansible_date_time is defined
-    fail_msg: "Asset ID required for commissioning"
+# ---------------------------------------------------------------------------
+# Fourth Estate preflight / postflight validation harness
+#
+# The task file body below is wrapped in an Ansible block/rescue/always structure:
+#
+#   block   preflight validation runs first, then the original task file body, then
+#           postflight validation. Any failure transfers control to rescue.
+#   rescue  records which task failed and why, then re-raises so a failure is
+#           never silently swallowed. Set fe_validation_continue_on_error=true
+#           to record the failure and keep going instead.
+#   always  computes the run duration and publishes the outcome through
+#           ansible.builtin.set_stats, so a wrapping playbook, AWX/AAP or CI can
+#           consume the result without scraping log output.
+#
+# Published stats (see docs/VALIDATION_AND_STATS.md):
+#   fe_validation_results['operational_technology/ot_asset_lifecycle/includes/commission']  per-component record
+#   fe_validation_executions / _succeeded / _failed / _duration_seconds
+#   fe_validation_failed_components
+#
+# Add component-specific preflight checks without editing this file by setting
+#   fe_operational_technology_ot_asset_lifecycle_includes_commission_required_vars: [var_one, var_two]
+# ---------------------------------------------------------------------------
 
-- name: Set commission date if not provided
+- name: "operational_technology/ot_asset_lifecycle/includes/commission | Initialize validation state"
   ansible.builtin.set_fact:
-    ot_asset_commission_date: "{{ ansible_date_time.iso8601 }}"
-  when: ot_asset_commission_date is not defined or ot_asset_commission_date | length == 0
+    fe_operational_technology_ot_asset_lifecycle_includes_commission_start_epoch: "{{ now(fmt='%s') | int }}"
+    fe_operational_technology_ot_asset_lifecycle_includes_commission_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+    fe_operational_technology_ot_asset_lifecycle_includes_commission_status: "running"
+    fe_operational_technology_ot_asset_lifecycle_includes_commission_preflight_passed: false
+    fe_operational_technology_ot_asset_lifecycle_includes_commission_postflight_passed: false
+    fe_operational_technology_ot_asset_lifecycle_includes_commission_failed_task: ""
+    fe_operational_technology_ot_asset_lifecycle_includes_commission_error: ""
+    fe_operational_technology_ot_asset_lifecycle_includes_commission_stats_published: false
+  tags:
+    - always
 
-- name: Verify asset exists
-  ansible.builtin.uri:
-    url: "{{ ot_asset_api_url }}/assets/{{ ot_asset_id }}"
-    method: GET
-    headers:
-      Authorization: "Bearer {{ ot_asset_api_token }}"
-    validate_certs: "{{ ot_asset_verify_ssl }}"
-    status_code: [200]
-  register: asset_verify
-  when: ot_asset_api_token | length > 0
+- name: "operational_technology/ot_asset_lifecycle/includes/commission | Guarded execution with preflight and postflight validation"
+  block:
 
-- name: Pre-commissioning validation checks
-  ansible.builtin.assert:
-    that:
-      - ot_asset_purdue_level is defined and ot_asset_purdue_level | length > 0
-      - ot_asset_criticality is defined
-      - ot_asset_owner is defined and ot_asset_owner | length > 0
-    fail_msg: "Pre-commissioning validation failed - missing required data"
+    # ----------------------------- preflight --------------------
 
-- name: Configure baseline monitoring
-  ansible.builtin.uri:
-    url: "{{ ot_asset_api_url }}/monitoring/configure"
-    method: POST
-    headers:
-      Authorization: "Bearer {{ ot_asset_api_token }}"
-      Content-Type: "application/json"
-    body_format: json
-    body:
-      asset_id: "{{ ot_asset_id }}"
-      enabled: "{{ ot_asset_monitoring_enabled }}"
-      snmp_enabled: "{{ ot_asset_snmp_community | length > 0 }}"
-      syslog_enabled: "{{ ot_asset_syslog_enabled }}"
-      metrics_collection: "{{ ot_asset_metrics_collection }}"
-    validate_certs: "{{ ot_asset_verify_ssl }}"
-    status_code: [200, 201]
-  when:
-    - ot_asset_api_token | length > 0
-    - not ot_asset_dry_run
+    - name: "operational_technology/ot_asset_lifecycle/includes/commission | Preflight | Verify the control node meets the minimum ansible-core version"
+      ansible.builtin.assert:
+        that:
+          - ansible_version.full is version(fe_validation_min_ansible_version | default('2.12'), '>=')
+        fail_msg: >-
+          operational_technology/ot_asset_lifecycle/includes/commission: requires ansible-core
+          {{ fe_validation_min_ansible_version | default('2.12') }} or newer,
+          found {{ ansible_version.full }}.
+        success_msg: >-
+          operational_technology/ot_asset_lifecycle/includes/commission: ansible-core {{ ansible_version.full }} satisfies the minimum.
+        quiet: true
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: Enable configuration backup
-  ansible.builtin.uri:
-    url: "{{ ot_asset_api_url }}/backup/schedule"
-    method: POST
-    headers:
-      Authorization: "Bearer {{ ot_asset_api_token }}"
-      Content-Type: "application/json"
-    body_format: json
-    body:
-      asset_id: "{{ ot_asset_id }}"
-      enabled: "{{ ot_asset_config_backup_enabled }}"
-      schedule: "{{ ot_asset_config_backup_schedule }}"
-    validate_certs: "{{ ot_asset_verify_ssl }}"
-    status_code: [200, 201]
-  when:
-    - ot_asset_api_token | length > 0
-    - ot_asset_config_backup_enabled
-    - not ot_asset_dry_run
+    - name: "operational_technology/ot_asset_lifecycle/includes/commission | Preflight | Verify every declared required variable is defined"
+      ansible.builtin.assert:
+        that:
+          - vars[item] is defined
+        fail_msg: "operational_technology/ot_asset_lifecycle/includes/commission: required variable '{{ item }}' is not defined."
+        success_msg: "operational_technology/ot_asset_lifecycle/includes/commission: required variable '{{ item }}' is defined."
+        quiet: true
+      loop: "{{ fe_operational_technology_ot_asset_lifecycle_includes_commission_required_vars | default([]) }}"
+      loop_control:
+        label: "{{ item }}"
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: Update asset to commissioned state
-  ansible.builtin.uri:
-    url: "{{ ot_asset_api_url }}/assets/{{ ot_asset_id }}"
-    method: PATCH
-    headers:
-      Authorization: "Bearer {{ ot_asset_api_token }}"
-      Content-Type: "application/json"
-    body_format: json
-    body:
-      state: "commissioned"
-      commission_date: "{{ ot_asset_commission_date }}"
-      commissioned_by: "{{ ansible_user_id }}"
-    validate_certs: "{{ ot_asset_verify_ssl }}"
-    status_code: [200, 204]
-  when:
-    - ot_asset_api_token | length > 0
-    - not ot_asset_dry_run
+    - name: "operational_technology/ot_asset_lifecycle/includes/commission | Preflight | Record that preflight validation passed"
+      ansible.builtin.set_fact:
+        fe_operational_technology_ot_asset_lifecycle_includes_commission_preflight_passed: true
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: Create commissioning record
-  ansible.builtin.copy:
-    content: |
-      {
-        "asset_id": "{{ ot_asset_id }}",
-        "commission_date": "{{ ot_asset_commission_date }}",
-        "commissioned_by": "{{ ansible_user_id }}",
-        "monitoring_enabled": {{ ot_asset_monitoring_enabled | to_json }},
-        "backup_enabled": {{ ot_asset_config_backup_enabled | to_json }},
-        "status": "commissioned"
-      }
-    dest: "{{ ot_asset_artifacts_dir }}/commission_{{ ot_asset_id }}_{{ ansible_date_time.iso8601_basic_short }}.json"
-    mode: '0640'
+    # ----------------------------- execute ----------------------
 
-- name: Log commissioning event
-  ansible.builtin.lineinfile:
-    path: "{{ ot_asset_log_dir }}/commissions.log"
-    line: "{{ ansible_date_time.iso8601 }} | COMMISSION | {{ ot_asset_id }} | {{ ot_asset_commission_date }}"
-    create: yes
-    mode: '0640'
+    - name: Validate commissioning data
+      ansible.builtin.assert:
+        that:
+          - ot_asset_id is defined and ot_asset_id | length > 0
+          - ot_asset_commission_date is defined or ansible_date_time is defined
+        fail_msg: "Asset ID required for commissioning"
+
+    - name: Set commission date if not provided
+      ansible.builtin.set_fact:
+        ot_asset_commission_date: "{{ ansible_date_time.iso8601 }}"
+      when: ot_asset_commission_date is not defined or ot_asset_commission_date | length == 0
+
+    - name: Verify asset exists
+      ansible.builtin.uri:
+        url: "{{ ot_asset_api_url }}/assets/{{ ot_asset_id }}"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ ot_asset_api_token }}"
+        validate_certs: "{{ ot_asset_verify_ssl }}"
+        status_code: [200]
+      register: asset_verify
+      when: ot_asset_api_token | length > 0
+
+    - name: Pre-commissioning validation checks
+      ansible.builtin.assert:
+        that:
+          - ot_asset_purdue_level is defined and ot_asset_purdue_level | length > 0
+          - ot_asset_criticality is defined
+          - ot_asset_owner is defined and ot_asset_owner | length > 0
+        fail_msg: "Pre-commissioning validation failed - missing required data"
+
+    - name: Configure baseline monitoring
+      ansible.builtin.uri:
+        url: "{{ ot_asset_api_url }}/monitoring/configure"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ ot_asset_api_token }}"
+          Content-Type: "application/json"
+        body_format: json
+        body:
+          asset_id: "{{ ot_asset_id }}"
+          enabled: "{{ ot_asset_monitoring_enabled }}"
+          snmp_enabled: "{{ ot_asset_snmp_community | length > 0 }}"
+          syslog_enabled: "{{ ot_asset_syslog_enabled }}"
+          metrics_collection: "{{ ot_asset_metrics_collection }}"
+        validate_certs: "{{ ot_asset_verify_ssl }}"
+        status_code: [200, 201]
+      when:
+        - ot_asset_api_token | length > 0
+        - not ot_asset_dry_run
+
+    - name: Enable configuration backup
+      ansible.builtin.uri:
+        url: "{{ ot_asset_api_url }}/backup/schedule"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ ot_asset_api_token }}"
+          Content-Type: "application/json"
+        body_format: json
+        body:
+          asset_id: "{{ ot_asset_id }}"
+          enabled: "{{ ot_asset_config_backup_enabled }}"
+          schedule: "{{ ot_asset_config_backup_schedule }}"
+        validate_certs: "{{ ot_asset_verify_ssl }}"
+        status_code: [200, 201]
+      when:
+        - ot_asset_api_token | length > 0
+        - ot_asset_config_backup_enabled
+        - not ot_asset_dry_run
+
+    - name: Update asset to commissioned state
+      ansible.builtin.uri:
+        url: "{{ ot_asset_api_url }}/assets/{{ ot_asset_id }}"
+        method: PATCH
+        headers:
+          Authorization: "Bearer {{ ot_asset_api_token }}"
+          Content-Type: "application/json"
+        body_format: json
+        body:
+          state: "commissioned"
+          commission_date: "{{ ot_asset_commission_date }}"
+          commissioned_by: "{{ ansible_user_id }}"
+        validate_certs: "{{ ot_asset_verify_ssl }}"
+        status_code: [200, 204]
+      when:
+        - ot_asset_api_token | length > 0
+        - not ot_asset_dry_run
+
+    - name: Create commissioning record
+      ansible.builtin.copy:
+        content: |
+          {
+            "asset_id": "{{ ot_asset_id }}",
+            "commission_date": "{{ ot_asset_commission_date }}",
+            "commissioned_by": "{{ ansible_user_id }}",
+            "monitoring_enabled": {{ ot_asset_monitoring_enabled | to_json }},
+            "backup_enabled": {{ ot_asset_config_backup_enabled | to_json }},
+            "status": "commissioned"
+          }
+        dest: "{{ ot_asset_artifacts_dir }}/commission_{{ ot_asset_id }}_{{ ansible_date_time.iso8601_basic_short }}.json"
+        mode: '0640'
+
+    - name: Log commissioning event
+      ansible.builtin.lineinfile:
+        path: "{{ ot_asset_log_dir }}/commissions.log"
+        line: "{{ ansible_date_time.iso8601 }} | COMMISSION | {{ ot_asset_id }} | {{ ot_asset_commission_date }}"
+        create: yes
+        mode: '0640'
+
+    # ----------------------------- postflight -------------------
+
+    - name: "operational_technology/ot_asset_lifecycle/includes/commission | Postflight | Verify the guarded body ran after a passing preflight"
+      ansible.builtin.assert:
+        that:
+          - fe_operational_technology_ot_asset_lifecycle_includes_commission_preflight_passed | bool
+          - fe_operational_technology_ot_asset_lifecycle_includes_commission_status in ['running', 'succeeded']
+        fail_msg: >-
+          operational_technology/ot_asset_lifecycle/includes/commission: postflight validation failed - preflight passed
+          ={{ fe_operational_technology_ot_asset_lifecycle_includes_commission_preflight_passed | default(false) }},
+          status={{ fe_operational_technology_ot_asset_lifecycle_includes_commission_status | default('unknown') }}.
+        success_msg: "operational_technology/ot_asset_lifecycle/includes/commission: postflight validation passed."
+        quiet: true
+      tags:
+        - always
+        - postflight
+        - validation
+
+    - name: "operational_technology/ot_asset_lifecycle/includes/commission | Postflight | Record the successful outcome"
+      ansible.builtin.set_fact:
+        fe_operational_technology_ot_asset_lifecycle_includes_commission_postflight_passed: true
+        fe_operational_technology_ot_asset_lifecycle_includes_commission_status: "succeeded"
+      tags:
+        - always
+        - postflight
+        - validation
+
+  rescue:
+
+    - name: "operational_technology/ot_asset_lifecycle/includes/commission | Rescue | Capture the failing task and error detail"
+      ansible.builtin.set_fact:
+        fe_operational_technology_ot_asset_lifecycle_includes_commission_status: "failed"
+        fe_operational_technology_ot_asset_lifecycle_includes_commission_postflight_passed: false
+        fe_operational_technology_ot_asset_lifecycle_includes_commission_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+        fe_operational_technology_ot_asset_lifecycle_includes_commission_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+      tags:
+        - always
+        - rescue
+
+    - name: "operational_technology/ot_asset_lifecycle/includes/commission | Rescue | Report the failure"
+      ansible.builtin.debug:
+        msg: >-
+          operational_technology/ot_asset_lifecycle/includes/commission: FAILED at '{{ fe_operational_technology_ot_asset_lifecycle_includes_commission_failed_task }}' on
+          {{ inventory_hostname }} - {{ fe_operational_technology_ot_asset_lifecycle_includes_commission_error }}
+      tags:
+        - always
+        - rescue
+
+    - name: "operational_technology/ot_asset_lifecycle/includes/commission | Rescue | Re-raise the failure unless the caller opted to continue"
+      ansible.builtin.fail:
+        msg: >-
+          operational_technology/ot_asset_lifecycle/includes/commission failed at '{{ fe_operational_technology_ot_asset_lifecycle_includes_commission_failed_task }}': {{ fe_operational_technology_ot_asset_lifecycle_includes_commission_error }}
+      when: not (fe_validation_continue_on_error | default(false) | bool)
+      tags:
+        - always
+        - rescue
+
+  always:
+
+    - name: "operational_technology/ot_asset_lifecycle/includes/commission | Always | Compute the execution duration"
+      ansible.builtin.set_fact:
+        fe_operational_technology_ot_asset_lifecycle_includes_commission_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+        fe_operational_technology_ot_asset_lifecycle_includes_commission_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_operational_technology_ot_asset_lifecycle_includes_commission_start_epoch | default(0) | int) }}"
+      tags:
+        - always
+
+    - name: "operational_technology/ot_asset_lifecycle/includes/commission | Always | Publish the validation result with set_stats"
+      ansible.builtin.set_stats:
+        data:
+          fe_validation_results:
+            "operational_technology/ot_asset_lifecycle/includes/commission":
+              component: "operational_technology/ot_asset_lifecycle/includes/commission"
+              type: "role-tasks"
+              platform: "operational_technology"
+              host: "{{ inventory_hostname }}"
+              status: "{{ fe_operational_technology_ot_asset_lifecycle_includes_commission_status | default('unknown') }}"
+              preflight_passed: "{{ fe_operational_technology_ot_asset_lifecycle_includes_commission_preflight_passed | default(false) | bool }}"
+              postflight_passed: "{{ fe_operational_technology_ot_asset_lifecycle_includes_commission_postflight_passed | default(false) | bool }}"
+              started_at: "{{ fe_operational_technology_ot_asset_lifecycle_includes_commission_started_at | default('') }}"
+              ended_at: "{{ fe_operational_technology_ot_asset_lifecycle_includes_commission_ended_at | default('') }}"
+              duration_seconds: "{{ fe_operational_technology_ot_asset_lifecycle_includes_commission_duration_seconds | default(0) | int }}"
+              failed_task: "{{ fe_operational_technology_ot_asset_lifecycle_includes_commission_failed_task | default('') }}"
+              error: "{{ fe_operational_technology_ot_asset_lifecycle_includes_commission_error | default('') }}"
+              check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+          fe_validation_executions: 1
+          fe_validation_succeeded: "{{ 1 if fe_operational_technology_ot_asset_lifecycle_includes_commission_status | default('') == 'succeeded' else 0 }}"
+          fe_validation_failed: "{{ 0 if fe_operational_technology_ot_asset_lifecycle_includes_commission_status | default('') == 'succeeded' else 1 }}"
+          fe_validation_duration_seconds: "{{ fe_operational_technology_ot_asset_lifecycle_includes_commission_duration_seconds | default(0) | int }}"
+          fe_validation_failed_components: >-
+            {{ [] if fe_operational_technology_ot_asset_lifecycle_includes_commission_status | default('') == 'succeeded' else ['operational_technology/ot_asset_lifecycle/includes/commission'] }}
+        aggregate: true
+        per_host: false
+      tags:
+        - always
+
+    - name: "operational_technology/ot_asset_lifecycle/includes/commission | Always | Mark the validation statistics as published"
+      ansible.builtin.set_fact:
+        fe_operational_technology_ot_asset_lifecycle_includes_commission_stats_published: true
+      tags:
+        - always

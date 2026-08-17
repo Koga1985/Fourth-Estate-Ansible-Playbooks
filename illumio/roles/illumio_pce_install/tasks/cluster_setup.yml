@@ -1,113 +1,296 @@
 ---
 # PCE cluster setup for High Availability
 
-- name: Validate cluster configuration
-  assert:
-    that:
-      - illumio_pce_cluster_nodes | length >= 2
-      - illumio_pce_cluster_vip is defined
-    fail_msg: "Cluster mode requires at least 2 nodes and a VIP"
+# ---------------------------------------------------------------------------
+# Fourth Estate preflight / postflight validation harness
+#
+# The task file body below is wrapped in an Ansible block/rescue/always structure:
+#
+#   block   preflight validation runs first, then the original task file body, then
+#           postflight validation. Any failure transfers control to rescue.
+#   rescue  records which task failed and why, then re-raises so a failure is
+#           never silently swallowed. Set fe_validation_continue_on_error=true
+#           to record the failure and keep going instead.
+#   always  computes the run duration and publishes the outcome through
+#           ansible.builtin.set_stats, so a wrapping playbook, AWX/AAP or CI can
+#           consume the result without scraping log output.
+#
+# Published stats (see docs/VALIDATION_AND_STATS.md):
+#   fe_validation_results['illumio/illumio_pce_install/cluster_setup']  per-component record
+#   fe_validation_executions / _succeeded / _failed / _duration_seconds
+#   fe_validation_failed_components
+#
+# Add component-specific preflight checks without editing this file by setting
+#   fe_illumio_illumio_pce_install_cluster_setup_required_vars: [var_one, var_two]
+# ---------------------------------------------------------------------------
 
-- name: Install keepalived for VIP management
-  package:
-    name:
-      - keepalived
-      - psmisc
-    state: present
+- name: "illumio/illumio_pce_install/cluster_setup | Initialize validation state"
+  ansible.builtin.set_fact:
+    fe_illumio_illumio_pce_install_cluster_setup_start_epoch: "{{ now(fmt='%s') | int }}"
+    fe_illumio_illumio_pce_install_cluster_setup_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+    fe_illumio_illumio_pce_install_cluster_setup_status: "running"
+    fe_illumio_illumio_pce_install_cluster_setup_preflight_passed: false
+    fe_illumio_illumio_pce_install_cluster_setup_postflight_passed: false
+    fe_illumio_illumio_pce_install_cluster_setup_failed_task: ""
+    fe_illumio_illumio_pce_install_cluster_setup_error: ""
+    fe_illumio_illumio_pce_install_cluster_setup_stats_published: false
+  tags:
+    - always
 
-- name: Determine cluster node role
-  set_fact:
-    pce_cluster_role: "{{ 'master' if inventory_hostname == illumio_pce_cluster_nodes[0] else 'backup' }}"
-    pce_cluster_priority: "{{ 100 if inventory_hostname == illumio_pce_cluster_nodes[0] else 90 }}"
+- name: "illumio/illumio_pce_install/cluster_setup | Guarded execution with preflight and postflight validation"
+  block:
 
-- name: Configure keepalived for PCE cluster
-  template:
-    src: keepalived.conf.j2
-    dest: /etc/keepalived/keepalived.conf
-    mode: '0644'
-  notify: restart keepalived
+    # ----------------------------- preflight --------------------
 
-- name: Create keepalived check script
-  template:
-    src: check_pce_health.sh.j2
-    dest: /usr/local/bin/check_pce_health.sh
-    mode: '0755'
+    - name: "illumio/illumio_pce_install/cluster_setup | Preflight | Verify the control node meets the minimum ansible-core version"
+      ansible.builtin.assert:
+        that:
+          - ansible_version.full is version(fe_validation_min_ansible_version | default('2.12'), '>=')
+        fail_msg: >-
+          illumio/illumio_pce_install/cluster_setup: requires ansible-core
+          {{ fe_validation_min_ansible_version | default('2.12') }} or newer,
+          found {{ ansible_version.full }}.
+        success_msg: >-
+          illumio/illumio_pce_install/cluster_setup: ansible-core {{ ansible_version.full }} satisfies the minimum.
+        quiet: true
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: Enable and start keepalived
-  systemd:
-    name: keepalived
-    enabled: yes
-    state: started
+    - name: "illumio/illumio_pce_install/cluster_setup | Preflight | Verify every declared required variable is defined"
+      ansible.builtin.assert:
+        that:
+          - vars[item] is defined
+        fail_msg: "illumio/illumio_pce_install/cluster_setup: required variable '{{ item }}' is not defined."
+        success_msg: "illumio/illumio_pce_install/cluster_setup: required variable '{{ item }}' is defined."
+        quiet: true
+      loop: "{{ fe_illumio_illumio_pce_install_cluster_setup_required_vars | default([]) }}"
+      loop_control:
+        label: "{{ item }}"
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: Configure PCE cluster mode
-  lineinfile:
-    path: /etc/illumio-pce/runtime_env.yml
-    regexp: "^cluster_mode:"
-    line: "cluster_mode: true"
-    create: yes
-    owner: "{{ illumio_pce_user }}"
-    group: "{{ illumio_pce_group }}"
-    mode: '0600'
+    - name: "illumio/illumio_pce_install/cluster_setup | Preflight | Record that preflight validation passed"
+      ansible.builtin.set_fact:
+        fe_illumio_illumio_pce_install_cluster_setup_preflight_passed: true
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: Configure cluster node ID
-  lineinfile:
-    path: /etc/illumio-pce/runtime_env.yml
-    regexp: "^node_id:"
-    line: "node_id: {{ groups['illumio_pce_cluster'].index(inventory_hostname) + 1 }}"
-    create: yes
-    owner: "{{ illumio_pce_user }}"
-    group: "{{ illumio_pce_group }}"
-    mode: '0600'
+    # ----------------------------- execute ----------------------
 
-- name: Configure cluster peers
-  template:
-    src: cluster_peers.yml.j2
-    dest: /etc/illumio-pce/cluster_peers.yml
-    owner: "{{ illumio_pce_user }}"
-    group: "{{ illumio_pce_group }}"
-    mode: '0600'
+    - name: Validate cluster configuration
+      assert:
+        that:
+          - illumio_pce_cluster_nodes | length >= 2
+          - illumio_pce_cluster_vip is defined
+        fail_msg: "Cluster mode requires at least 2 nodes and a VIP"
 
-- name: Configure cluster communication ports in firewall
-  firewalld:
-    port: "{{ item }}"
-    permanent: yes
-    state: enabled
-    immediate: yes
-  loop:
-    - 2380/tcp  # etcd peer
-    - 2379/tcp  # etcd client
-    - 7946/tcp  # gossip protocol
-    - 7946/udp  # gossip protocol
-  when: ansible_facts.services['firewalld.service'] is defined
+    - name: Install keepalived for VIP management
+      package:
+        name:
+          - keepalived
+          - psmisc
+        state: present
 
-- name: Wait for cluster to form
-  uri:
-    url: "https://{{ illumio_pce_cluster_vip }}:{{ illumio_pce_port }}/api/v2/health"
-    method: GET
-    validate_certs: no
-    status_code: 200
-  register: cluster_health
-  until: cluster_health.status == 200
-  retries: 20
-  delay: 15
-  run_once: true
-  delegate_to: localhost
+    - name: Determine cluster node role
+      set_fact:
+        pce_cluster_role: "{{ 'master' if inventory_hostname == illumio_pce_cluster_nodes[0] else 'backup' }}"
+        pce_cluster_priority: "{{ 100 if inventory_hostname == illumio_pce_cluster_nodes[0] else 90 }}"
 
-- name: Verify cluster members
-  uri:
-    url: "https://{{ illumio_pce_cluster_vip }}:{{ illumio_pce_port }}/api/v2/health/cluster"
-    method: GET
-    validate_certs: no
-    user: "{{ illumio_pce_admin_user }}"
-    password: "{{ illumio_pce_admin_password }}"
-    force_basic_auth: yes
-    return_content: yes
-  no_log: true
-  register: cluster_members
-  run_once: true
-  delegate_to: localhost
+    - name: Configure keepalived for PCE cluster
+      template:
+        src: keepalived.conf.j2
+        dest: /etc/keepalived/keepalived.conf
+        mode: '0644'
+      notify: restart keepalived
 
-- name: Display cluster status
-  debug:
-    msg: "PCE cluster formed with {{ cluster_members.json.members | length }} members"
-  run_once: true
+    - name: Create keepalived check script
+      template:
+        src: check_pce_health.sh.j2
+        dest: /usr/local/bin/check_pce_health.sh
+        mode: '0755'
+
+    - name: Enable and start keepalived
+      systemd:
+        name: keepalived
+        enabled: yes
+        state: started
+
+    - name: Configure PCE cluster mode
+      lineinfile:
+        path: /etc/illumio-pce/runtime_env.yml
+        regexp: "^cluster_mode:"
+        line: "cluster_mode: true"
+        create: yes
+        owner: "{{ illumio_pce_user }}"
+        group: "{{ illumio_pce_group }}"
+        mode: '0600'
+
+    - name: Configure cluster node ID
+      lineinfile:
+        path: /etc/illumio-pce/runtime_env.yml
+        regexp: "^node_id:"
+        line: "node_id: {{ groups['illumio_pce_cluster'].index(inventory_hostname) + 1 }}"
+        create: yes
+        owner: "{{ illumio_pce_user }}"
+        group: "{{ illumio_pce_group }}"
+        mode: '0600'
+
+    - name: Configure cluster peers
+      template:
+        src: cluster_peers.yml.j2
+        dest: /etc/illumio-pce/cluster_peers.yml
+        owner: "{{ illumio_pce_user }}"
+        group: "{{ illumio_pce_group }}"
+        mode: '0600'
+
+    - name: Configure cluster communication ports in firewall
+      firewalld:
+        port: "{{ item }}"
+        permanent: yes
+        state: enabled
+        immediate: yes
+      loop:
+        - 2380/tcp  # etcd peer
+        - 2379/tcp  # etcd client
+        - 7946/tcp  # gossip protocol
+        - 7946/udp  # gossip protocol
+      when: ansible_facts.services['firewalld.service'] is defined
+
+    - name: Wait for cluster to form
+      uri:
+        url: "https://{{ illumio_pce_cluster_vip }}:{{ illumio_pce_port }}/api/v2/health"
+        method: GET
+        validate_certs: no
+        status_code: 200
+      register: cluster_health
+      until: cluster_health.status == 200
+      retries: 20
+      delay: 15
+      run_once: true
+      delegate_to: localhost
+
+    - name: Verify cluster members
+      uri:
+        url: "https://{{ illumio_pce_cluster_vip }}:{{ illumio_pce_port }}/api/v2/health/cluster"
+        method: GET
+        validate_certs: no
+        user: "{{ illumio_pce_admin_user }}"
+        password: "{{ illumio_pce_admin_password }}"
+        force_basic_auth: yes
+        return_content: yes
+      no_log: true
+      register: cluster_members
+      run_once: true
+      delegate_to: localhost
+
+    - name: Display cluster status
+      debug:
+        msg: "PCE cluster formed with {{ cluster_members.json.members | length }} members"
+      run_once: true
+
+    # ----------------------------- postflight -------------------
+
+    - name: "illumio/illumio_pce_install/cluster_setup | Postflight | Verify the guarded body ran after a passing preflight"
+      ansible.builtin.assert:
+        that:
+          - fe_illumio_illumio_pce_install_cluster_setup_preflight_passed | bool
+          - fe_illumio_illumio_pce_install_cluster_setup_status in ['running', 'succeeded']
+        fail_msg: >-
+          illumio/illumio_pce_install/cluster_setup: postflight validation failed - preflight passed
+          ={{ fe_illumio_illumio_pce_install_cluster_setup_preflight_passed | default(false) }},
+          status={{ fe_illumio_illumio_pce_install_cluster_setup_status | default('unknown') }}.
+        success_msg: "illumio/illumio_pce_install/cluster_setup: postflight validation passed."
+        quiet: true
+      tags:
+        - always
+        - postflight
+        - validation
+
+    - name: "illumio/illumio_pce_install/cluster_setup | Postflight | Record the successful outcome"
+      ansible.builtin.set_fact:
+        fe_illumio_illumio_pce_install_cluster_setup_postflight_passed: true
+        fe_illumio_illumio_pce_install_cluster_setup_status: "succeeded"
+      tags:
+        - always
+        - postflight
+        - validation
+
+  rescue:
+
+    - name: "illumio/illumio_pce_install/cluster_setup | Rescue | Capture the failing task and error detail"
+      ansible.builtin.set_fact:
+        fe_illumio_illumio_pce_install_cluster_setup_status: "failed"
+        fe_illumio_illumio_pce_install_cluster_setup_postflight_passed: false
+        fe_illumio_illumio_pce_install_cluster_setup_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+        fe_illumio_illumio_pce_install_cluster_setup_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+      tags:
+        - always
+        - rescue
+
+    - name: "illumio/illumio_pce_install/cluster_setup | Rescue | Report the failure"
+      ansible.builtin.debug:
+        msg: >-
+          illumio/illumio_pce_install/cluster_setup: FAILED at '{{ fe_illumio_illumio_pce_install_cluster_setup_failed_task }}' on
+          {{ inventory_hostname }} - {{ fe_illumio_illumio_pce_install_cluster_setup_error }}
+      tags:
+        - always
+        - rescue
+
+    - name: "illumio/illumio_pce_install/cluster_setup | Rescue | Re-raise the failure unless the caller opted to continue"
+      ansible.builtin.fail:
+        msg: >-
+          illumio/illumio_pce_install/cluster_setup failed at '{{ fe_illumio_illumio_pce_install_cluster_setup_failed_task }}': {{ fe_illumio_illumio_pce_install_cluster_setup_error }}
+      when: not (fe_validation_continue_on_error | default(false) | bool)
+      tags:
+        - always
+        - rescue
+
+  always:
+
+    - name: "illumio/illumio_pce_install/cluster_setup | Always | Compute the execution duration"
+      ansible.builtin.set_fact:
+        fe_illumio_illumio_pce_install_cluster_setup_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+        fe_illumio_illumio_pce_install_cluster_setup_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_illumio_illumio_pce_install_cluster_setup_start_epoch | default(0) | int) }}"
+      tags:
+        - always
+
+    - name: "illumio/illumio_pce_install/cluster_setup | Always | Publish the validation result with set_stats"
+      ansible.builtin.set_stats:
+        data:
+          fe_validation_results:
+            "illumio/illumio_pce_install/cluster_setup":
+              component: "illumio/illumio_pce_install/cluster_setup"
+              type: "role-tasks"
+              platform: "illumio"
+              host: "{{ inventory_hostname }}"
+              status: "{{ fe_illumio_illumio_pce_install_cluster_setup_status | default('unknown') }}"
+              preflight_passed: "{{ fe_illumio_illumio_pce_install_cluster_setup_preflight_passed | default(false) | bool }}"
+              postflight_passed: "{{ fe_illumio_illumio_pce_install_cluster_setup_postflight_passed | default(false) | bool }}"
+              started_at: "{{ fe_illumio_illumio_pce_install_cluster_setup_started_at | default('') }}"
+              ended_at: "{{ fe_illumio_illumio_pce_install_cluster_setup_ended_at | default('') }}"
+              duration_seconds: "{{ fe_illumio_illumio_pce_install_cluster_setup_duration_seconds | default(0) | int }}"
+              failed_task: "{{ fe_illumio_illumio_pce_install_cluster_setup_failed_task | default('') }}"
+              error: "{{ fe_illumio_illumio_pce_install_cluster_setup_error | default('') }}"
+              check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+          fe_validation_executions: 1
+          fe_validation_succeeded: "{{ 1 if fe_illumio_illumio_pce_install_cluster_setup_status | default('') == 'succeeded' else 0 }}"
+          fe_validation_failed: "{{ 0 if fe_illumio_illumio_pce_install_cluster_setup_status | default('') == 'succeeded' else 1 }}"
+          fe_validation_duration_seconds: "{{ fe_illumio_illumio_pce_install_cluster_setup_duration_seconds | default(0) | int }}"
+          fe_validation_failed_components: >-
+            {{ [] if fe_illumio_illumio_pce_install_cluster_setup_status | default('') == 'succeeded' else ['illumio/illumio_pce_install/cluster_setup'] }}
+        aggregate: true
+        per_host: false
+      tags:
+        - always
+
+    - name: "illumio/illumio_pce_install/cluster_setup | Always | Mark the validation statistics as published"
+      ansible.builtin.set_fact:
+        fe_illumio_illumio_pce_install_cluster_setup_stats_published: true
+      tags:
+        - always

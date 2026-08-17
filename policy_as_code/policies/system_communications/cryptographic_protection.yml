@@ -11,6 +11,23 @@
 # - Enable SSH v2 only
 # - FIPS 140-2 compliant algorithms
 
+# ---------------------------------------------------------------------------
+# Fourth Estate preflight / postflight validation harness
+#
+# Every play below carries a block/rescue/always validation wrapper:
+#
+#   pre_tasks   preflight validation. On failure it records the reason,
+#               publishes the outcome with set_stats and aborts the play
+#               before any role or task runs.
+#   tasks       the original task list, wrapped so a failure is captured
+#               (which task, which error) and then re-raised.
+#   post_tasks  postflight validation, then the run record is published with
+#               ansible.builtin.set_stats.
+#
+# Set fe_validation_continue_on_error=true to record failures and keep going.
+# See docs/VALIDATION_AND_STATS.md for the published stats schema.
+# ---------------------------------------------------------------------------
+
 - name: NIST SC-8/SC-13 - Cryptographic Protection Policy
   hosts: all
   gather_facts: true
@@ -59,6 +76,140 @@
     validate_paths: true
 
   pre_tasks:
+    - name: "policy_as_code/policies/system_communications/cryptographic_protection | Preflight validation"
+      tags:
+        - always
+        - preflight
+        - validation
+      block:
+
+        - name: "policy_as_code/policies/system_communications/cryptographic_protection | Initialize validation state"
+          ansible.builtin.set_fact:
+            fe_policy_as_code_policies_system_communications_cryptographic_protection_start_epoch: "{{ now(fmt='%s') | int }}"
+            fe_policy_as_code_policies_system_communications_cryptographic_protection_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+            fe_policy_as_code_policies_system_communications_cryptographic_protection_status: "running"
+            fe_policy_as_code_policies_system_communications_cryptographic_protection_preflight_passed: false
+            fe_policy_as_code_policies_system_communications_cryptographic_protection_postflight_passed: false
+            fe_policy_as_code_policies_system_communications_cryptographic_protection_failed_task: ""
+            fe_policy_as_code_policies_system_communications_cryptographic_protection_error: ""
+            fe_policy_as_code_policies_system_communications_cryptographic_protection_stats_published: false
+          tags:
+            - always
+
+        - name: "policy_as_code/policies/system_communications/cryptographic_protection | Preflight | Verify the control node meets the minimum ansible-core version"
+          ansible.builtin.assert:
+            that:
+              - ansible_version.full is version(fe_validation_min_ansible_version | default('2.12'), '>=')
+            fail_msg: >-
+              policy_as_code/policies/system_communications/cryptographic_protection: requires ansible-core
+              {{ fe_validation_min_ansible_version | default('2.12') }} or newer,
+              found {{ ansible_version.full }}.
+            success_msg: >-
+              policy_as_code/policies/system_communications/cryptographic_protection: ansible-core {{ ansible_version.full }} satisfies the minimum.
+            quiet: true
+          tags:
+            - always
+            - preflight
+            - validation
+
+        - name: "policy_as_code/policies/system_communications/cryptographic_protection | Preflight | Verify every declared required variable is defined"
+          ansible.builtin.assert:
+            that:
+              - vars[item] is defined
+            fail_msg: "policy_as_code/policies/system_communications/cryptographic_protection: required variable '{{ item }}' is not defined."
+            success_msg: "policy_as_code/policies/system_communications/cryptographic_protection: required variable '{{ item }}' is defined."
+            quiet: true
+          loop: "{{ fe_policy_as_code_policies_system_communications_cryptographic_protection_required_vars | default([]) }}"
+          loop_control:
+            label: "{{ item }}"
+          tags:
+            - always
+            - preflight
+            - validation
+
+        - name: "policy_as_code/policies/system_communications/cryptographic_protection | Preflight | Record that preflight validation passed"
+          ansible.builtin.set_fact:
+            fe_policy_as_code_policies_system_communications_cryptographic_protection_preflight_passed: true
+          tags:
+            - always
+            - preflight
+            - validation
+
+      rescue:
+
+        - name: "policy_as_code/policies/system_communications/cryptographic_protection | Rescue | Capture the failing task and error detail"
+          ansible.builtin.set_fact:
+            fe_policy_as_code_policies_system_communications_cryptographic_protection_status: "preflight_failed"
+            fe_policy_as_code_policies_system_communications_cryptographic_protection_postflight_passed: false
+            fe_policy_as_code_policies_system_communications_cryptographic_protection_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+            fe_policy_as_code_policies_system_communications_cryptographic_protection_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+          tags:
+            - always
+            - rescue
+
+        - name: "policy_as_code/policies/system_communications/cryptographic_protection | Rescue | Report the failure"
+          ansible.builtin.debug:
+            msg: >-
+              policy_as_code/policies/system_communications/cryptographic_protection: FAILED at '{{ fe_policy_as_code_policies_system_communications_cryptographic_protection_failed_task }}' on
+              {{ inventory_hostname }} - {{ fe_policy_as_code_policies_system_communications_cryptographic_protection_error }}
+          tags:
+            - always
+            - rescue
+
+        - name: "policy_as_code/policies/system_communications/cryptographic_protection | Always | Publish the validation result with set_stats"
+          ansible.builtin.set_stats:
+            data:
+              fe_validation_results:
+                "policy_as_code/policies/system_communications/cryptographic_protection":
+                  component: "policy_as_code/policies/system_communications/cryptographic_protection"
+                  type: "playbook"
+                  platform: "policy_as_code"
+                  host: "{{ inventory_hostname }}"
+                  status: "{{ fe_policy_as_code_policies_system_communications_cryptographic_protection_status | default('unknown') }}"
+                  preflight_passed: "{{ fe_policy_as_code_policies_system_communications_cryptographic_protection_preflight_passed | default(false) | bool }}"
+                  postflight_passed: "{{ fe_policy_as_code_policies_system_communications_cryptographic_protection_postflight_passed | default(false) | bool }}"
+                  started_at: "{{ fe_policy_as_code_policies_system_communications_cryptographic_protection_started_at | default('') }}"
+                  ended_at: "{{ fe_policy_as_code_policies_system_communications_cryptographic_protection_ended_at | default('') }}"
+                  duration_seconds: "{{ fe_policy_as_code_policies_system_communications_cryptographic_protection_duration_seconds | default(0) | int }}"
+                  failed_task: "{{ fe_policy_as_code_policies_system_communications_cryptographic_protection_failed_task | default('') }}"
+                  error: "{{ fe_policy_as_code_policies_system_communications_cryptographic_protection_error | default('') }}"
+                  check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+              fe_validation_executions: 1
+              fe_validation_succeeded: "{{ 1 if fe_policy_as_code_policies_system_communications_cryptographic_protection_status | default('') == 'succeeded' else 0 }}"
+              fe_validation_failed: "{{ 0 if fe_policy_as_code_policies_system_communications_cryptographic_protection_status | default('') == 'succeeded' else 1 }}"
+              fe_validation_duration_seconds: "{{ fe_policy_as_code_policies_system_communications_cryptographic_protection_duration_seconds | default(0) | int }}"
+              fe_validation_failed_components: >-
+                {{ [] if fe_policy_as_code_policies_system_communications_cryptographic_protection_status | default('') == 'succeeded' else ['policy_as_code/policies/system_communications/cryptographic_protection'] }}
+            aggregate: true
+            per_host: false
+          tags:
+            - always
+
+        - name: "policy_as_code/policies/system_communications/cryptographic_protection | Always | Mark the validation statistics as published"
+          ansible.builtin.set_fact:
+            fe_policy_as_code_policies_system_communications_cryptographic_protection_stats_published: true
+          tags:
+            - always
+
+        - name: "policy_as_code/policies/system_communications/cryptographic_protection | Rescue | Re-raise the failure unless the caller opted to continue"
+          ansible.builtin.fail:
+            msg: >-
+              policy_as_code/policies/system_communications/cryptographic_protection failed at '{{ fe_policy_as_code_policies_system_communications_cryptographic_protection_failed_task }}': {{ fe_policy_as_code_policies_system_communications_cryptographic_protection_error }}
+          when: not (fe_validation_continue_on_error | default(false) | bool)
+          tags:
+            - always
+            - rescue
+
+      always:
+
+        - name: "policy_as_code/policies/system_communications/cryptographic_protection | Always | Report the preflight outcome"
+          ansible.builtin.debug:
+            msg: >-
+              policy_as_code/policies/system_communications/cryptographic_protection: preflight
+              {{ 'passed' if fe_policy_as_code_policies_system_communications_cryptographic_protection_preflight_passed | default(false) | bool else 'FAILED' }}
+              on {{ inventory_hostname }}.
+          tags:
+            - always
     - name: Include compliance common library
       ansible.builtin.include_tasks: ../../library/compliance_common.yml
       tags: [always]
@@ -69,380 +220,462 @@
     # DoD STIG V-230277
     # ============================================
 
-    - name: SC-13 - Query current FIPS mode status
-      ansible.builtin.command:
-        cmd: show fips status
-      register: current_fips
-      changed_when: false
-      failed_when: false
-      check_mode: false
-      tags: [nist_sc_13, stig_cat1, crypto, query]
+    - name: "policy_as_code/policies/system_communications/cryptographic_protection | Guarded execution with rescue and always handling"
+      block:
 
-    - name: SC-13 - Enable FIPS 140-2 mode
-      ansible.builtin.command:
-        cmd: |
-          configure terminal
-          fips mode enable
-          end
-      when:
-        - apply_changes | bool
-        - sc_enable_fips | bool
-        - current_fips.stdout is not search("enabled")
-      register: set_fips
-      changed_when: set_fips.rc == 0
-      tags: [nist_sc_13, stig_cat1, crypto, apply]
+        - name: SC-13 - Query current FIPS mode status
+          ansible.builtin.command:
+            cmd: show fips status
+          register: current_fips
+          changed_when: false
+          failed_when: false
+          check_mode: false
+          tags: [nist_sc_13, stig_cat1, crypto, query]
 
-    - name: SC-13 - Verify FIPS mode is enabled
-      ansible.builtin.command:
-        cmd: show fips status
-      register: verify_fips
-      changed_when: false
-      failed_when: verify_fips.stdout is not search("enabled")
-      check_mode: false
-      tags: [nist_sc_13, stig_cat1, crypto, verify]
+        - name: SC-13 - Enable FIPS 140-2 mode
+          ansible.builtin.command:
+            cmd: |
+              configure terminal
+              fips mode enable
+              end
+          when:
+            - apply_changes | bool
+            - sc_enable_fips | bool
+            - current_fips.stdout is not search("enabled")
+          register: set_fips
+          changed_when: set_fips.rc == 0
+          tags: [nist_sc_13, stig_cat1, crypto, apply]
 
-    - name: SC-13 - Generate FIPS compliance artifact
-      ansible.builtin.include_tasks: ../../library/artifact_generator.yml
-      vars:
-        control_description: "Enable FIPS 140-2 cryptographic mode"
-        implementation_status: >-
-          {{ 'COMPLIANT' if (verify_fips.stdout is search("enabled")) else 'NON_COMPLIANT' }}
-        implementation_details:
-          finding: "V-230277"
-          requirement: "System must use FIPS 140-2 validated cryptographic modules"
-          current_setting: "{{ verify_fips.stdout | default('Not configured') }}"
-          expected_setting: "fips mode enable"
-          changed: "{{ set_fips.changed | default(false) }}"
-          notes: "FIPS mode requires system reload to take effect"
-        applied_settings:
-          fips_enabled: "{{ sc_enable_fips }}"
-          fips_standard: "FIPS 140-2"
-          validated_algorithms:
-            - "AES (128, 192, 256 bit)"
-            - "3DES"
-            - "RSA (2048, 3072, 4096 bit)"
-            - "ECDSA (P-256, P-384, P-521)"
-            - "SHA-2 (SHA-256, SHA-384, SHA-512)"
-        verification_method: "Automated - CLI verification"
-        verification_status: >-
-          {{ 'Verified' if (verify_fips.rc == 0) else 'Failed' }}
-      tags: [nist_sc_13, stig_cat1, artifact]
+        - name: SC-13 - Verify FIPS mode is enabled
+          ansible.builtin.command:
+            cmd: show fips status
+          register: verify_fips
+          changed_when: false
+          failed_when: verify_fips.stdout is not search("enabled")
+          check_mode: false
+          tags: [nist_sc_13, stig_cat1, crypto, verify]
 
-    # ============================================
-    # NIST SC-8 - SSH v2 Only (Disable v1)
-    # DoD STIG V-230276
-    # ============================================
+        - name: SC-13 - Generate FIPS compliance artifact
+          ansible.builtin.include_tasks: ../../library/artifact_generator.yml
+          vars:
+            control_description: "Enable FIPS 140-2 cryptographic mode"
+            implementation_status: >-
+              {{ 'COMPLIANT' if (verify_fips.stdout is search("enabled")) else 'NON_COMPLIANT' }}
+            implementation_details:
+              finding: "V-230277"
+              requirement: "System must use FIPS 140-2 validated cryptographic modules"
+              current_setting: "{{ verify_fips.stdout | default('Not configured') }}"
+              expected_setting: "fips mode enable"
+              changed: "{{ set_fips.changed | default(false) }}"
+              notes: "FIPS mode requires system reload to take effect"
+            applied_settings:
+              fips_enabled: "{{ sc_enable_fips }}"
+              fips_standard: "FIPS 140-2"
+              validated_algorithms:
+                - "AES (128, 192, 256 bit)"
+                - "3DES"
+                - "RSA (2048, 3072, 4096 bit)"
+                - "ECDSA (P-256, P-384, P-521)"
+                - "SHA-2 (SHA-256, SHA-384, SHA-512)"
+            verification_method: "Automated - CLI verification"
+            verification_status: >-
+              {{ 'Verified' if (verify_fips.rc == 0) else 'Failed' }}
+          tags: [nist_sc_13, stig_cat1, artifact]
 
-    - name: SC-8 - Query current SSH version
-      ansible.builtin.command:
-        cmd: show ip ssh | include "version"
-      register: current_ssh
-      changed_when: false
-      failed_when: false
-      check_mode: false
-      tags: [nist_sc_8, stig_cat1, crypto, query]
+        # ============================================
+        # NIST SC-8 - SSH v2 Only (Disable v1)
+        # DoD STIG V-230276
+        # ============================================
 
-    - name: SC-8 - Configure SSH version 2 only
-      ansible.builtin.command:
-        cmd: |
-          configure terminal
-          ip ssh version {{ sc_ssh_version }}
-          ip ssh rsa keypair-name SSH-KEYS
-          crypto key generate rsa modulus 2048 label SSH-KEYS
-          end
-      when:
-        - apply_changes | bool
-        - current_ssh.stdout is not search("version " + (sc_ssh_version | string))
-      register: set_ssh
-      changed_when: set_ssh.rc == 0
-      tags: [nist_sc_8, stig_cat1, crypto, apply]
+        - name: SC-8 - Query current SSH version
+          ansible.builtin.command:
+            cmd: show ip ssh | include "version"
+          register: current_ssh
+          changed_when: false
+          failed_when: false
+          check_mode: false
+          tags: [nist_sc_8, stig_cat1, crypto, query]
 
-    - name: SC-8 - Verify SSH version 2
-      ansible.builtin.command:
-        cmd: show ip ssh | include "version"
-      register: verify_ssh
-      changed_when: false
-      failed_when: verify_ssh.stdout is not search("version " + (sc_ssh_version | string))
-      check_mode: false
-      tags: [nist_sc_8, stig_cat1, crypto, verify]
+        - name: SC-8 - Configure SSH version 2 only
+          ansible.builtin.command:
+            cmd: |
+              configure terminal
+              ip ssh version {{ sc_ssh_version }}
+              ip ssh rsa keypair-name SSH-KEYS
+              crypto key generate rsa modulus 2048 label SSH-KEYS
+              end
+          when:
+            - apply_changes | bool
+            - current_ssh.stdout is not search("version " + (sc_ssh_version | string))
+          register: set_ssh
+          changed_when: set_ssh.rc == 0
+          tags: [nist_sc_8, stig_cat1, crypto, apply]
 
-    - name: SC-8 - Generate SSH version compliance artifact
-      ansible.builtin.include_tasks: ../../library/artifact_generator.yml
-      vars:
-        control_description: "Enable SSH version 2 only (disable v1)"
-        implementation_status: >-
-          {{ 'COMPLIANT' if (verify_ssh.stdout is search("version " + (sc_ssh_version | string))) else 'NON_COMPLIANT' }}
-        implementation_details:
-          finding: "V-230276"
-          requirement: "System must use SSH version 2 (v1 has known vulnerabilities)"
-          current_setting: "{{ verify_ssh.stdout | default('Not configured') }}"
-          expected_setting: "ip ssh version {{ sc_ssh_version }}"
-          changed: "{{ set_ssh.changed | default(false) }}"
-        applied_settings:
-          ssh_version: "{{ sc_ssh_version }}"
-          rsa_key_size: "2048"
-          key_exchange: "{{ sc_key_exchange_algorithms }}"
-          encryption: "{{ sc_encryption_algorithms }}"
-          mac: "{{ sc_mac_algorithms }}"
-        verification_method: "Automated - CLI verification"
-        verification_status: >-
-          {{ 'Verified' if (verify_ssh.rc == 0) else 'Failed' }}
-      tags: [nist_sc_8, stig_cat1, artifact]
+        - name: SC-8 - Verify SSH version 2
+          ansible.builtin.command:
+            cmd: show ip ssh | include "version"
+          register: verify_ssh
+          changed_when: false
+          failed_when: verify_ssh.stdout is not search("version " + (sc_ssh_version | string))
+          check_mode: false
+          tags: [nist_sc_8, stig_cat1, crypto, verify]
 
-    # ============================================
-    # NIST SC-8 - Disable Telnet
-    # DoD STIG V-230275
-    # ============================================
+        - name: SC-8 - Generate SSH version compliance artifact
+          ansible.builtin.include_tasks: ../../library/artifact_generator.yml
+          vars:
+            control_description: "Enable SSH version 2 only (disable v1)"
+            implementation_status: >-
+              {{ 'COMPLIANT' if (verify_ssh.stdout is search("version " + (sc_ssh_version | string))) else 'NON_COMPLIANT' }}
+            implementation_details:
+              finding: "V-230276"
+              requirement: "System must use SSH version 2 (v1 has known vulnerabilities)"
+              current_setting: "{{ verify_ssh.stdout | default('Not configured') }}"
+              expected_setting: "ip ssh version {{ sc_ssh_version }}"
+              changed: "{{ set_ssh.changed | default(false) }}"
+            applied_settings:
+              ssh_version: "{{ sc_ssh_version }}"
+              rsa_key_size: "2048"
+              key_exchange: "{{ sc_key_exchange_algorithms }}"
+              encryption: "{{ sc_encryption_algorithms }}"
+              mac: "{{ sc_mac_algorithms }}"
+            verification_method: "Automated - CLI verification"
+            verification_status: >-
+              {{ 'Verified' if (verify_ssh.rc == 0) else 'Failed' }}
+          tags: [nist_sc_8, stig_cat1, artifact]
 
-    - name: SC-8 - Query Telnet service status
-      ansible.builtin.command:
-        cmd: show running-config | include "transport input"
-      register: current_transport
-      changed_when: false
-      failed_when: false
-      check_mode: false
-      tags: [nist_sc_8, stig_cat1, crypto, query]
+        # ============================================
+        # NIST SC-8 - Disable Telnet
+        # DoD STIG V-230275
+        # ============================================
 
-    - name: SC-8 - Disable Telnet on VTY lines
-      ansible.builtin.command:
-        cmd: |
-          configure terminal
-          line vty 0 4
-          transport input ssh
-          transport output ssh
-          end
-      when:
-        - apply_changes | bool
-        - sc_disable_telnet | bool
-        - current_transport.stdout is search("telnet")
-      register: set_no_telnet
-      changed_when: set_no_telnet.rc == 0
-      tags: [nist_sc_8, stig_cat1, crypto, apply]
+        - name: SC-8 - Query Telnet service status
+          ansible.builtin.command:
+            cmd: show running-config | include "transport input"
+          register: current_transport
+          changed_when: false
+          failed_when: false
+          check_mode: false
+          tags: [nist_sc_8, stig_cat1, crypto, query]
 
-    - name: SC-8 - Verify Telnet is disabled
-      ansible.builtin.command:
-        cmd: show running-config | include "line vty" -A 5
-      register: verify_no_telnet
-      changed_when: false
-      failed_when: verify_no_telnet.stdout is search("telnet")
-      check_mode: false
-      tags: [nist_sc_8, stig_cat1, crypto, verify]
+        - name: SC-8 - Disable Telnet on VTY lines
+          ansible.builtin.command:
+            cmd: |
+              configure terminal
+              line vty 0 4
+              transport input ssh
+              transport output ssh
+              end
+          when:
+            - apply_changes | bool
+            - sc_disable_telnet | bool
+            - current_transport.stdout is search("telnet")
+          register: set_no_telnet
+          changed_when: set_no_telnet.rc == 0
+          tags: [nist_sc_8, stig_cat1, crypto, apply]
 
-    - name: SC-8 - Generate Telnet disable compliance artifact
-      ansible.builtin.include_tasks: ../../library/artifact_generator.yml
-      vars:
-        control_description: "Disable insecure Telnet protocol"
-        implementation_status: >-
-          {{ 'COMPLIANT' if (verify_no_telnet.stdout is not search("telnet")) else 'NON_COMPLIANT' }}
-        implementation_details:
-          finding: "V-230275"
-          requirement: "System must not use insecure Telnet protocol (unencrypted)"
-          current_setting: "{{ verify_no_telnet.stdout | default('Not configured') }}"
-          expected_setting: "transport input ssh (Telnet disabled)"
-          changed: "{{ set_no_telnet.changed | default(false) }}"
-          rationale: "Telnet transmits credentials and data in cleartext"
-        applied_settings:
-          telnet_disabled: "{{ sc_disable_telnet }}"
-          allowed_protocols: ["ssh"]
-        verification_method: "Automated - CLI verification"
-        verification_status: >-
-          {{ 'Verified' if (verify_no_telnet.rc == 0) else 'Failed' }}
-      tags: [nist_sc_8, stig_cat1, artifact]
+        - name: SC-8 - Verify Telnet is disabled
+          ansible.builtin.command:
+            cmd: show running-config | include "line vty" -A 5
+          register: verify_no_telnet
+          changed_when: false
+          failed_when: verify_no_telnet.stdout is search("telnet")
+          check_mode: false
+          tags: [nist_sc_8, stig_cat1, crypto, verify]
 
-    # ============================================
-    # NIST SC-8 - Disable HTTP (Enable HTTPS Only)
-    # DoD STIG V-230275
-    # ============================================
+        - name: SC-8 - Generate Telnet disable compliance artifact
+          ansible.builtin.include_tasks: ../../library/artifact_generator.yml
+          vars:
+            control_description: "Disable insecure Telnet protocol"
+            implementation_status: >-
+              {{ 'COMPLIANT' if (verify_no_telnet.stdout is not search("telnet")) else 'NON_COMPLIANT' }}
+            implementation_details:
+              finding: "V-230275"
+              requirement: "System must not use insecure Telnet protocol (unencrypted)"
+              current_setting: "{{ verify_no_telnet.stdout | default('Not configured') }}"
+              expected_setting: "transport input ssh (Telnet disabled)"
+              changed: "{{ set_no_telnet.changed | default(false) }}"
+              rationale: "Telnet transmits credentials and data in cleartext"
+            applied_settings:
+              telnet_disabled: "{{ sc_disable_telnet }}"
+              allowed_protocols: ["ssh"]
+            verification_method: "Automated - CLI verification"
+            verification_status: >-
+              {{ 'Verified' if (verify_no_telnet.rc == 0) else 'Failed' }}
+          tags: [nist_sc_8, stig_cat1, artifact]
 
-    - name: SC-8 - Query HTTP/HTTPS status
-      ansible.builtin.command:
-        cmd: show running-config | include "ip http"
-      register: current_http
-      changed_when: false
-      failed_when: false
-      check_mode: false
-      tags: [nist_sc_8, stig_cat1, crypto, query]
+        # ============================================
+        # NIST SC-8 - Disable HTTP (Enable HTTPS Only)
+        # DoD STIG V-230275
+        # ============================================
 
-    - name: SC-8 - Disable HTTP and enable HTTPS only
-      ansible.builtin.command:
-        cmd: |
-          configure terminal
-          no ip http server
-          ip http secure-server
-          ip http secure-port 443
-          ip http secure-ciphersuite aes-256-sha aes-128-sha
-          ip http tls-version TLSv1.2
-          end
-      when:
-        - apply_changes | bool
-        - sc_disable_http | bool
-        - current_http.stdout is search("ip http server") or current_http.stdout is not search("secure-server")
-      register: set_https
-      changed_when: set_https.rc == 0
-      tags: [nist_sc_8, stig_cat1, crypto, apply]
+        - name: SC-8 - Query HTTP/HTTPS status
+          ansible.builtin.command:
+            cmd: show running-config | include "ip http"
+          register: current_http
+          changed_when: false
+          failed_when: false
+          check_mode: false
+          tags: [nist_sc_8, stig_cat1, crypto, query]
 
-    - name: SC-8 - Verify HTTPS is enabled and HTTP is disabled
-      ansible.builtin.command:
-        cmd: show running-config | include "ip http"
-      register: verify_https
-      changed_when: false
-      failed_when: >-
-        verify_https.stdout is search("ip http server") or
-        verify_https.stdout is not search("secure-server")
-      check_mode: false
-      tags: [nist_sc_8, stig_cat1, crypto, verify]
+        - name: SC-8 - Disable HTTP and enable HTTPS only
+          ansible.builtin.command:
+            cmd: |
+              configure terminal
+              no ip http server
+              ip http secure-server
+              ip http secure-port 443
+              ip http secure-ciphersuite aes-256-sha aes-128-sha
+              ip http tls-version TLSv1.2
+              end
+          when:
+            - apply_changes | bool
+            - sc_disable_http | bool
+            - current_http.stdout is search("ip http server") or current_http.stdout is not search("secure-server")
+          register: set_https
+          changed_when: set_https.rc == 0
+          tags: [nist_sc_8, stig_cat1, crypto, apply]
 
-    - name: SC-8 - Generate HTTP/HTTPS compliance artifact
-      ansible.builtin.include_tasks: ../../library/artifact_generator.yml
-      vars:
-        control_description: "Disable HTTP and enable HTTPS only"
-        implementation_status: >-
-          {{ 'COMPLIANT' if (verify_https.stdout is not search("ip http server") and verify_https.stdout is search("secure-server")) else 'NON_COMPLIANT' }}
-        implementation_details:
-          finding: "V-230275"
-          requirement: "System must use encrypted HTTPS instead of cleartext HTTP"
-          current_setting: "{{ verify_https.stdout | default('Not configured') }}"
-          expected_setting: "no ip http server, ip http secure-server, TLSv1.2"
-          changed: "{{ set_https.changed | default(false) }}"
-        applied_settings:
-          http_disabled: "{{ sc_disable_http }}"
-          https_enabled: true
-          tls_version: "{{ sc_tls_min_version }}"
-          https_port: 443
-          cipher_suites: ["aes-256-sha", "aes-128-sha"]
-        verification_method: "Automated - CLI verification"
-        verification_status: >-
-          {{ 'Verified' if (verify_https.rc == 0) else 'Failed' }}
-      tags: [nist_sc_8, stig_cat1, artifact]
+        - name: SC-8 - Verify HTTPS is enabled and HTTP is disabled
+          ansible.builtin.command:
+            cmd: show running-config | include "ip http"
+          register: verify_https
+          changed_when: false
+          failed_when: >-
+            verify_https.stdout is search("ip http server") or
+            verify_https.stdout is not search("secure-server")
+          check_mode: false
+          tags: [nist_sc_8, stig_cat1, crypto, verify]
 
-    # ============================================
-    # NIST SC-8(1) - TLS 1.2 Minimum
-    # DoD STIG V-230273
-    # ============================================
+        - name: SC-8 - Generate HTTP/HTTPS compliance artifact
+          ansible.builtin.include_tasks: ../../library/artifact_generator.yml
+          vars:
+            control_description: "Disable HTTP and enable HTTPS only"
+            implementation_status: >-
+              {{ 'COMPLIANT' if (verify_https.stdout is not search("ip http server") and verify_https.stdout is search("secure-server")) else 'NON_COMPLIANT' }}
+            implementation_details:
+              finding: "V-230275"
+              requirement: "System must use encrypted HTTPS instead of cleartext HTTP"
+              current_setting: "{{ verify_https.stdout | default('Not configured') }}"
+              expected_setting: "no ip http server, ip http secure-server, TLSv1.2"
+              changed: "{{ set_https.changed | default(false) }}"
+            applied_settings:
+              http_disabled: "{{ sc_disable_http }}"
+              https_enabled: true
+              tls_version: "{{ sc_tls_min_version }}"
+              https_port: 443
+              cipher_suites: ["aes-256-sha", "aes-128-sha"]
+            verification_method: "Automated - CLI verification"
+            verification_status: >-
+              {{ 'Verified' if (verify_https.rc == 0) else 'Failed' }}
+          tags: [nist_sc_8, stig_cat1, artifact]
 
-    - name: SC-8(1) - Query current TLS version
-      ansible.builtin.command:
-        cmd: show running-config | include "tls-version"
-      register: current_tls
-      changed_when: false
-      failed_when: false
-      check_mode: false
-      tags: [nist_sc_8, stig_cat1, crypto, query]
+        # ============================================
+        # NIST SC-8(1) - TLS 1.2 Minimum
+        # DoD STIG V-230273
+        # ============================================
 
-    - name: SC-8(1) - Set TLS minimum version to 1.2
-      ansible.builtin.command:
-        cmd: |
-          configure terminal
-          ip http tls-version TLSv1.2
-          end
-      when:
-        - apply_changes | bool
-        - current_tls.stdout is not search("TLSv1.2")
-      register: set_tls
-      changed_when: set_tls.rc == 0
-      tags: [nist_sc_8, stig_cat1, crypto, apply]
+        - name: SC-8(1) - Query current TLS version
+          ansible.builtin.command:
+            cmd: show running-config | include "tls-version"
+          register: current_tls
+          changed_when: false
+          failed_when: false
+          check_mode: false
+          tags: [nist_sc_8, stig_cat1, crypto, query]
 
-    - name: SC-8(1) - Verify TLS 1.2 is configured
-      ansible.builtin.command:
-        cmd: show running-config | include "tls-version"
-      register: verify_tls
-      changed_when: false
-      failed_when: verify_tls.stdout is not search("TLSv1.2")
-      check_mode: false
-      tags: [nist_sc_8, stig_cat1, crypto, verify]
+        - name: SC-8(1) - Set TLS minimum version to 1.2
+          ansible.builtin.command:
+            cmd: |
+              configure terminal
+              ip http tls-version TLSv1.2
+              end
+          when:
+            - apply_changes | bool
+            - current_tls.stdout is not search("TLSv1.2")
+          register: set_tls
+          changed_when: set_tls.rc == 0
+          tags: [nist_sc_8, stig_cat1, crypto, apply]
 
-    - name: SC-8(1) - Generate TLS version compliance artifact
-      ansible.builtin.include_tasks: ../../library/artifact_generator.yml
-      vars:
-        control_description: "Enforce TLS 1.2 minimum (disable TLS 1.0/1.1)"
-        implementation_status: >-
-          {{ 'COMPLIANT' if (verify_tls.stdout is search("TLSv1.2")) else 'NON_COMPLIANT' }}
-        implementation_details:
-          finding: "V-230273"
-          requirement: "System must use TLS 1.2 or higher (1.0 and 1.1 have vulnerabilities)"
-          current_setting: "{{ verify_tls.stdout | default('Not configured') }}"
-          expected_setting: "ip http tls-version TLSv1.2"
-          changed: "{{ set_tls.changed | default(false) }}"
-          vulnerabilities_mitigated:
-            - "BEAST (TLS 1.0)"
-            - "CRIME (TLS 1.0/1.1)"
-            - "POODLE (SSLv3, TLS 1.0)"
-            - "Weak cipher suites"
-        applied_settings:
-          tls_min_version: "{{ sc_tls_min_version }}"
-          tls_12_enabled: true
-          tls_13_enabled: false
-          tls_11_disabled: true
-          tls_10_disabled: true
-          ssl_v3_disabled: true
-          ssl_v2_disabled: true
-        verification_method: "Automated - CLI verification"
-        verification_status: >-
-          {{ 'Verified' if (verify_tls.rc == 0) else 'Failed' }}
-      tags: [nist_sc_8, stig_cat1, artifact]
+        - name: SC-8(1) - Verify TLS 1.2 is configured
+          ansible.builtin.command:
+            cmd: show running-config | include "tls-version"
+          register: verify_tls
+          changed_when: false
+          failed_when: verify_tls.stdout is not search("TLSv1.2")
+          check_mode: false
+          tags: [nist_sc_8, stig_cat1, crypto, verify]
 
-    # ============================================
-    # NIST SC-13 - Strong Cipher Suites
-    # DoD STIG V-230274
-    # ============================================
+        - name: SC-8(1) - Generate TLS version compliance artifact
+          ansible.builtin.include_tasks: ../../library/artifact_generator.yml
+          vars:
+            control_description: "Enforce TLS 1.2 minimum (disable TLS 1.0/1.1)"
+            implementation_status: >-
+              {{ 'COMPLIANT' if (verify_tls.stdout is search("TLSv1.2")) else 'NON_COMPLIANT' }}
+            implementation_details:
+              finding: "V-230273"
+              requirement: "System must use TLS 1.2 or higher (1.0 and 1.1 have vulnerabilities)"
+              current_setting: "{{ verify_tls.stdout | default('Not configured') }}"
+              expected_setting: "ip http tls-version TLSv1.2"
+              changed: "{{ set_tls.changed | default(false) }}"
+              vulnerabilities_mitigated:
+                - "BEAST (TLS 1.0)"
+                - "CRIME (TLS 1.0/1.1)"
+                - "POODLE (SSLv3, TLS 1.0)"
+                - "Weak cipher suites"
+            applied_settings:
+              tls_min_version: "{{ sc_tls_min_version }}"
+              tls_12_enabled: true
+              tls_13_enabled: false
+              tls_11_disabled: true
+              tls_10_disabled: true
+              ssl_v3_disabled: true
+              ssl_v2_disabled: true
+            verification_method: "Automated - CLI verification"
+            verification_status: >-
+              {{ 'Verified' if (verify_tls.rc == 0) else 'Failed' }}
+          tags: [nist_sc_8, stig_cat1, artifact]
 
-    - name: SC-13 - Query current cipher suites
-      ansible.builtin.command:
-        cmd: show running-config | include "ciphersuite"
-      register: current_ciphers
-      changed_when: false
-      failed_when: false
-      check_mode: false
-      tags: [nist_sc_13, stig_cat1, crypto, query]
+        # ============================================
+        # NIST SC-13 - Strong Cipher Suites
+        # DoD STIG V-230274
+        # ============================================
 
-    - name: SC-13 - Configure strong cipher suites only
-      ansible.builtin.command:
-        cmd: |
-          configure terminal
-          ip http secure-ciphersuite aes-256-sha aes-128-sha
-          ip ssh cipher encryption aes256-ctr aes192-ctr aes128-ctr
-          ip ssh mac hmac-sha2-256 hmac-sha2-512
-          end
-      when:
-        - apply_changes | bool
-        - sc_strong_ciphers_only | bool
-      register: set_ciphers
-      changed_when: set_ciphers.rc == 0
-      tags: [nist_sc_13, stig_cat1, crypto, apply]
+        - name: SC-13 - Query current cipher suites
+          ansible.builtin.command:
+            cmd: show running-config | include "ciphersuite"
+          register: current_ciphers
+          changed_when: false
+          failed_when: false
+          check_mode: false
+          tags: [nist_sc_13, stig_cat1, crypto, query]
 
-    - name: SC-13 - Verify strong cipher suites
-      ansible.builtin.command:
-        cmd: show running-config | include "cipher"
-      register: verify_ciphers
-      changed_when: false
-      check_mode: false
-      tags: [nist_sc_13, stig_cat1, crypto, verify]
+        - name: SC-13 - Configure strong cipher suites only
+          ansible.builtin.command:
+            cmd: |
+              configure terminal
+              ip http secure-ciphersuite aes-256-sha aes-128-sha
+              ip ssh cipher encryption aes256-ctr aes192-ctr aes128-ctr
+              ip ssh mac hmac-sha2-256 hmac-sha2-512
+              end
+          when:
+            - apply_changes | bool
+            - sc_strong_ciphers_only | bool
+          register: set_ciphers
+          changed_when: set_ciphers.rc == 0
+          tags: [nist_sc_13, stig_cat1, crypto, apply]
 
-    - name: SC-13 - Generate cipher suite compliance artifact
-      ansible.builtin.include_tasks: ../../library/artifact_generator.yml
-      vars:
-        control_description: "Configure strong cipher suites (AES-256, SHA-256 minimum)"
-        implementation_status: "COMPLIANT"
-        implementation_details:
-          finding: "V-230274"
-          requirement: "System must use FIPS-approved cipher suites"
-          current_setting: "{{ verify_ciphers.stdout | default('Not configured') }}"
-          expected_setting: "Strong ciphers: AES-256, AES-192, AES-128, SHA-2 family"
-          changed: "{{ set_ciphers.changed | default(false) }}"
-          disabled_weak_ciphers:
-            - "DES"
-            - "3DES"
-            - "RC4"
-            - "MD5"
-            - "SHA1 (for signatures)"
-        applied_settings:
-          https_ciphers: ["aes-256-sha", "aes-128-sha"]
-          ssh_encryption: "{{ sc_encryption_algorithms }}"
-          ssh_mac: "{{ sc_mac_algorithms }}"
-          ssh_kex: "{{ sc_key_exchange_algorithms }}"
-        verification_method: "Configuration Review"
-        verification_status: "Verified"
-      tags: [nist_sc_13, stig_cat1, artifact]
+        - name: SC-13 - Verify strong cipher suites
+          ansible.builtin.command:
+            cmd: show running-config | include "cipher"
+          register: verify_ciphers
+          changed_when: false
+          check_mode: false
+          tags: [nist_sc_13, stig_cat1, crypto, verify]
+
+        - name: SC-13 - Generate cipher suite compliance artifact
+          ansible.builtin.include_tasks: ../../library/artifact_generator.yml
+          vars:
+            control_description: "Configure strong cipher suites (AES-256, SHA-256 minimum)"
+            implementation_status: "COMPLIANT"
+            implementation_details:
+              finding: "V-230274"
+              requirement: "System must use FIPS-approved cipher suites"
+              current_setting: "{{ verify_ciphers.stdout | default('Not configured') }}"
+              expected_setting: "Strong ciphers: AES-256, AES-192, AES-128, SHA-2 family"
+              changed: "{{ set_ciphers.changed | default(false) }}"
+              disabled_weak_ciphers:
+                - "DES"
+                - "3DES"
+                - "RC4"
+                - "MD5"
+                - "SHA1 (for signatures)"
+            applied_settings:
+              https_ciphers: ["aes-256-sha", "aes-128-sha"]
+              ssh_encryption: "{{ sc_encryption_algorithms }}"
+              ssh_mac: "{{ sc_mac_algorithms }}"
+              ssh_kex: "{{ sc_key_exchange_algorithms }}"
+            verification_method: "Configuration Review"
+            verification_status: "Verified"
+          tags: [nist_sc_13, stig_cat1, artifact]
+
+      rescue:
+
+        - name: "policy_as_code/policies/system_communications/cryptographic_protection | Rescue | Capture the failing task and error detail"
+          ansible.builtin.set_fact:
+            fe_policy_as_code_policies_system_communications_cryptographic_protection_status: "failed"
+            fe_policy_as_code_policies_system_communications_cryptographic_protection_postflight_passed: false
+            fe_policy_as_code_policies_system_communications_cryptographic_protection_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+            fe_policy_as_code_policies_system_communications_cryptographic_protection_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+          tags:
+            - always
+            - rescue
+
+        - name: "policy_as_code/policies/system_communications/cryptographic_protection | Rescue | Report the failure"
+          ansible.builtin.debug:
+            msg: >-
+              policy_as_code/policies/system_communications/cryptographic_protection: FAILED at '{{ fe_policy_as_code_policies_system_communications_cryptographic_protection_failed_task }}' on
+              {{ inventory_hostname }} - {{ fe_policy_as_code_policies_system_communications_cryptographic_protection_error }}
+          tags:
+            - always
+            - rescue
+
+        - name: "policy_as_code/policies/system_communications/cryptographic_protection | Rescue | Re-raise the failure unless the caller opted to continue"
+          ansible.builtin.fail:
+            msg: >-
+              policy_as_code/policies/system_communications/cryptographic_protection failed at '{{ fe_policy_as_code_policies_system_communications_cryptographic_protection_failed_task }}': {{ fe_policy_as_code_policies_system_communications_cryptographic_protection_error }}
+          when: not (fe_validation_continue_on_error | default(false) | bool)
+          tags:
+            - always
+            - rescue
+
+      always:
+
+        - name: "policy_as_code/policies/system_communications/cryptographic_protection | Always | Compute the execution duration"
+          ansible.builtin.set_fact:
+            fe_policy_as_code_policies_system_communications_cryptographic_protection_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+            fe_policy_as_code_policies_system_communications_cryptographic_protection_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_policy_as_code_policies_system_communications_cryptographic_protection_start_epoch | default(0) | int) }}"
+          tags:
+            - always
+
+        - name: "policy_as_code/policies/system_communications/cryptographic_protection | Always | Publish the validation result with set_stats"
+          ansible.builtin.set_stats:
+            data:
+              fe_validation_results:
+                "policy_as_code/policies/system_communications/cryptographic_protection":
+                  component: "policy_as_code/policies/system_communications/cryptographic_protection"
+                  type: "playbook"
+                  platform: "policy_as_code"
+                  host: "{{ inventory_hostname }}"
+                  status: "{{ fe_policy_as_code_policies_system_communications_cryptographic_protection_status | default('unknown') }}"
+                  preflight_passed: "{{ fe_policy_as_code_policies_system_communications_cryptographic_protection_preflight_passed | default(false) | bool }}"
+                  postflight_passed: "{{ fe_policy_as_code_policies_system_communications_cryptographic_protection_postflight_passed | default(false) | bool }}"
+                  started_at: "{{ fe_policy_as_code_policies_system_communications_cryptographic_protection_started_at | default('') }}"
+                  ended_at: "{{ fe_policy_as_code_policies_system_communications_cryptographic_protection_ended_at | default('') }}"
+                  duration_seconds: "{{ fe_policy_as_code_policies_system_communications_cryptographic_protection_duration_seconds | default(0) | int }}"
+                  failed_task: "{{ fe_policy_as_code_policies_system_communications_cryptographic_protection_failed_task | default('') }}"
+                  error: "{{ fe_policy_as_code_policies_system_communications_cryptographic_protection_error | default('') }}"
+                  check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+              fe_validation_executions: 1
+              fe_validation_succeeded: "{{ 1 if fe_policy_as_code_policies_system_communications_cryptographic_protection_status | default('') == 'succeeded' else 0 }}"
+              fe_validation_failed: "{{ 0 if fe_policy_as_code_policies_system_communications_cryptographic_protection_status | default('') == 'succeeded' else 1 }}"
+              fe_validation_duration_seconds: "{{ fe_policy_as_code_policies_system_communications_cryptographic_protection_duration_seconds | default(0) | int }}"
+              fe_validation_failed_components: >-
+                {{ [] if fe_policy_as_code_policies_system_communications_cryptographic_protection_status | default('') == 'succeeded' else ['policy_as_code/policies/system_communications/cryptographic_protection'] }}
+            aggregate: true
+            per_host: false
+          when:
+            - fe_policy_as_code_policies_system_communications_cryptographic_protection_status | default('') == 'failed'
+            - not (fe_policy_as_code_policies_system_communications_cryptographic_protection_stats_published | default(false) | bool)
+          tags:
+            - always
+
+        - name: "policy_as_code/policies/system_communications/cryptographic_protection | Always | Mark the validation statistics as published"
+          ansible.builtin.set_fact:
+            fe_policy_as_code_policies_system_communications_cryptographic_protection_stats_published: true
+          when:
+            - fe_policy_as_code_policies_system_communications_cryptographic_protection_status | default('') == 'failed'
+          tags:
+            - always
 
   post_tasks:
     - name: Generate consolidated SC-8/SC-13 compliance summary
@@ -512,3 +745,118 @@
           - Strong Ciphers: PASS
           ========================================
       tags: [always]
+    - name: "policy_as_code/policies/system_communications/cryptographic_protection | Postflight validation"
+      tags:
+        - always
+        - postflight
+        - validation
+      block:
+
+        - name: "policy_as_code/policies/system_communications/cryptographic_protection | Postflight | Verify the guarded body ran after a passing preflight"
+          ansible.builtin.assert:
+            that:
+              - fe_policy_as_code_policies_system_communications_cryptographic_protection_preflight_passed | bool
+              - fe_policy_as_code_policies_system_communications_cryptographic_protection_status in ['running', 'succeeded']
+            fail_msg: >-
+              policy_as_code/policies/system_communications/cryptographic_protection: postflight validation failed - preflight passed
+              ={{ fe_policy_as_code_policies_system_communications_cryptographic_protection_preflight_passed | default(false) }},
+              status={{ fe_policy_as_code_policies_system_communications_cryptographic_protection_status | default('unknown') }}.
+            success_msg: "policy_as_code/policies/system_communications/cryptographic_protection: postflight validation passed."
+            quiet: true
+          tags:
+            - always
+            - postflight
+            - validation
+
+        - name: "policy_as_code/policies/system_communications/cryptographic_protection | Postflight | Record the successful outcome"
+          ansible.builtin.set_fact:
+            fe_policy_as_code_policies_system_communications_cryptographic_protection_postflight_passed: true
+            fe_policy_as_code_policies_system_communications_cryptographic_protection_status: "succeeded"
+          tags:
+            - always
+            - postflight
+            - validation
+
+      rescue:
+
+        - name: "policy_as_code/policies/system_communications/cryptographic_protection | Rescue | Capture the failing task and error detail"
+          ansible.builtin.set_fact:
+            fe_policy_as_code_policies_system_communications_cryptographic_protection_status: "failed"
+            fe_policy_as_code_policies_system_communications_cryptographic_protection_postflight_passed: false
+            fe_policy_as_code_policies_system_communications_cryptographic_protection_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+            fe_policy_as_code_policies_system_communications_cryptographic_protection_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+          tags:
+            - always
+            - rescue
+
+        - name: "policy_as_code/policies/system_communications/cryptographic_protection | Rescue | Report the failure"
+          ansible.builtin.debug:
+            msg: >-
+              policy_as_code/policies/system_communications/cryptographic_protection: FAILED at '{{ fe_policy_as_code_policies_system_communications_cryptographic_protection_failed_task }}' on
+              {{ inventory_hostname }} - {{ fe_policy_as_code_policies_system_communications_cryptographic_protection_error }}
+          tags:
+            - always
+            - rescue
+
+        - name: "policy_as_code/policies/system_communications/cryptographic_protection | Rescue | Re-raise the failure unless the caller opted to continue"
+          ansible.builtin.fail:
+            msg: >-
+              policy_as_code/policies/system_communications/cryptographic_protection failed at '{{ fe_policy_as_code_policies_system_communications_cryptographic_protection_failed_task }}': {{ fe_policy_as_code_policies_system_communications_cryptographic_protection_error }}
+          when: not (fe_validation_continue_on_error | default(false) | bool)
+          tags:
+            - always
+            - rescue
+
+      always:
+
+        - name: "policy_as_code/policies/system_communications/cryptographic_protection | Always | Compute the execution duration"
+          ansible.builtin.set_fact:
+            fe_policy_as_code_policies_system_communications_cryptographic_protection_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+            fe_policy_as_code_policies_system_communications_cryptographic_protection_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_policy_as_code_policies_system_communications_cryptographic_protection_start_epoch | default(0) | int) }}"
+          tags:
+            - always
+
+        - name: "policy_as_code/policies/system_communications/cryptographic_protection | Always | Publish the validation result with set_stats"
+          ansible.builtin.set_stats:
+            data:
+              fe_validation_results:
+                "policy_as_code/policies/system_communications/cryptographic_protection":
+                  component: "policy_as_code/policies/system_communications/cryptographic_protection"
+                  type: "playbook"
+                  platform: "policy_as_code"
+                  host: "{{ inventory_hostname }}"
+                  status: "{{ fe_policy_as_code_policies_system_communications_cryptographic_protection_status | default('unknown') }}"
+                  preflight_passed: "{{ fe_policy_as_code_policies_system_communications_cryptographic_protection_preflight_passed | default(false) | bool }}"
+                  postflight_passed: "{{ fe_policy_as_code_policies_system_communications_cryptographic_protection_postflight_passed | default(false) | bool }}"
+                  started_at: "{{ fe_policy_as_code_policies_system_communications_cryptographic_protection_started_at | default('') }}"
+                  ended_at: "{{ fe_policy_as_code_policies_system_communications_cryptographic_protection_ended_at | default('') }}"
+                  duration_seconds: "{{ fe_policy_as_code_policies_system_communications_cryptographic_protection_duration_seconds | default(0) | int }}"
+                  failed_task: "{{ fe_policy_as_code_policies_system_communications_cryptographic_protection_failed_task | default('') }}"
+                  error: "{{ fe_policy_as_code_policies_system_communications_cryptographic_protection_error | default('') }}"
+                  check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+              fe_validation_executions: 1
+              fe_validation_succeeded: "{{ 1 if fe_policy_as_code_policies_system_communications_cryptographic_protection_status | default('') == 'succeeded' else 0 }}"
+              fe_validation_failed: "{{ 0 if fe_policy_as_code_policies_system_communications_cryptographic_protection_status | default('') == 'succeeded' else 1 }}"
+              fe_validation_duration_seconds: "{{ fe_policy_as_code_policies_system_communications_cryptographic_protection_duration_seconds | default(0) | int }}"
+              fe_validation_failed_components: >-
+                {{ [] if fe_policy_as_code_policies_system_communications_cryptographic_protection_status | default('') == 'succeeded' else ['policy_as_code/policies/system_communications/cryptographic_protection'] }}
+            aggregate: true
+            per_host: false
+          when:
+            - not (fe_policy_as_code_policies_system_communications_cryptographic_protection_stats_published | default(false) | bool)
+          tags:
+            - always
+
+        - name: "policy_as_code/policies/system_communications/cryptographic_protection | Always | Mark the validation statistics as published"
+          ansible.builtin.set_fact:
+            fe_policy_as_code_policies_system_communications_cryptographic_protection_stats_published: true
+          tags:
+            - always
+
+        - name: "policy_as_code/policies/system_communications/cryptographic_protection | Always | Report the run summary"
+          ansible.builtin.debug:
+            msg: >-
+              policy_as_code/policies/system_communications/cryptographic_protection: {{ fe_policy_as_code_policies_system_communications_cryptographic_protection_status | default('unknown') }} in
+              {{ fe_policy_as_code_policies_system_communications_cryptographic_protection_duration_seconds | default(0) }}s on {{ inventory_hostname }}.
+          tags:
+            - always

@@ -30,6 +30,23 @@
 # Last Updated: 2026-04-08
 # Maintained By: Fourth Estate Infrastructure Team
 
+# ---------------------------------------------------------------------------
+# Fourth Estate preflight / postflight validation harness
+#
+# Every play below carries a block/rescue/always validation wrapper:
+#
+#   pre_tasks   preflight validation. On failure it records the reason,
+#               publishes the outcome with set_stats and aborts the play
+#               before any role or task runs.
+#   tasks       the original task list, wrapped so a failure is captured
+#               (which task, which error) and then re-raised.
+#   post_tasks  postflight validation, then the run record is published with
+#               ansible.builtin.set_stats.
+#
+# Set fe_validation_continue_on_error=true to record failures and keep going.
+# See docs/VALIDATION_AND_STATS.md for the published stats schema.
+# ---------------------------------------------------------------------------
+
 - name: Cisco ACI Configuration
   hosts: localhost
   connection: local
@@ -48,47 +65,380 @@
     # =========================================
     # Phase 1: ACI Fabric Deployment
     # =========================================
-    - name: Phase 1 - ACI Fabric Deploy
-      ansible.builtin.include_role:
-        name: aci_fabric_deploy
-      when: deploy_aci_fabric | bool
-      tags: ['aci', 'fabric', 'phase1']
+    - name: "cisco/site#play1 | Guarded execution with rescue and always handling"
+      block:
 
-    # =========================================
-    # Phase 2: ACI Tenant Configuration
-    # =========================================
-    - name: Phase 2 - ACI Tenant Config
-      ansible.builtin.include_role:
-        name: aci_tenant_config
-      when: deploy_aci_tenant | bool
-      tags: ['aci', 'tenant', 'phase2']
+        - name: Phase 1 - ACI Fabric Deploy
+          ansible.builtin.include_role:
+            name: aci_fabric_deploy
+          when: deploy_aci_fabric | bool
+          tags: ['aci', 'fabric', 'phase1']
 
-    # =========================================
-    # Phase 3: ACI Network Configuration
-    # =========================================
-    - name: Phase 3 - ACI Network Config
-      ansible.builtin.include_role:
-        name: aci_network_config
-      when: deploy_aci_network | bool
-      tags: ['aci', 'networking', 'phase3']
+        # =========================================
+        # Phase 2: ACI Tenant Configuration
+        # =========================================
+        - name: Phase 2 - ACI Tenant Config
+          ansible.builtin.include_role:
+            name: aci_tenant_config
+          when: deploy_aci_tenant | bool
+          tags: ['aci', 'tenant', 'phase2']
 
-    # =========================================
-    # Phase 4: ACI Security Hardening
-    # =========================================
-    - name: Phase 4 - ACI Security Hardening
-      ansible.builtin.include_role:
-        name: aci_security_hardening
-      when: deploy_aci_security | bool
-      tags: ['aci', 'security', 'phase4']
+        # =========================================
+        # Phase 3: ACI Network Configuration
+        # =========================================
+        - name: Phase 3 - ACI Network Config
+          ansible.builtin.include_role:
+            name: aci_network_config
+          when: deploy_aci_network | bool
+          tags: ['aci', 'networking', 'phase3']
 
-    # =========================================
-    # Phase 5: ACI Monitoring
-    # =========================================
-    - name: Phase 5 - ACI Monitoring
-      ansible.builtin.include_role:
-        name: aci_monitoring
-      when: deploy_aci_monitoring | bool
-      tags: ['aci', 'monitoring', 'phase5']
+        # =========================================
+        # Phase 4: ACI Security Hardening
+        # =========================================
+        - name: Phase 4 - ACI Security Hardening
+          ansible.builtin.include_role:
+            name: aci_security_hardening
+          when: deploy_aci_security | bool
+          tags: ['aci', 'security', 'phase4']
+
+        # =========================================
+        # Phase 5: ACI Monitoring
+        # =========================================
+        - name: Phase 5 - ACI Monitoring
+          ansible.builtin.include_role:
+            name: aci_monitoring
+          when: deploy_aci_monitoring | bool
+          tags: ['aci', 'monitoring', 'phase5']
+
+      rescue:
+
+        - name: "cisco/site#play1 | Rescue | Capture the failing task and error detail"
+          ansible.builtin.set_fact:
+            fe_cisco_site_play1_status: "failed"
+            fe_cisco_site_play1_postflight_passed: false
+            fe_cisco_site_play1_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+            fe_cisco_site_play1_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+          tags:
+            - always
+            - rescue
+
+        - name: "cisco/site#play1 | Rescue | Report the failure"
+          ansible.builtin.debug:
+            msg: >-
+              cisco/site#play1: FAILED at '{{ fe_cisco_site_play1_failed_task }}' on
+              {{ inventory_hostname }} - {{ fe_cisco_site_play1_error }}
+          tags:
+            - always
+            - rescue
+
+        - name: "cisco/site#play1 | Rescue | Re-raise the failure unless the caller opted to continue"
+          ansible.builtin.fail:
+            msg: >-
+              cisco/site#play1 failed at '{{ fe_cisco_site_play1_failed_task }}': {{ fe_cisco_site_play1_error }}
+          when: not (fe_validation_continue_on_error | default(false) | bool)
+          tags:
+            - always
+            - rescue
+
+      always:
+
+        - name: "cisco/site#play1 | Always | Compute the execution duration"
+          ansible.builtin.set_fact:
+            fe_cisco_site_play1_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+            fe_cisco_site_play1_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_cisco_site_play1_start_epoch | default(0) | int) }}"
+          tags:
+            - always
+
+        - name: "cisco/site#play1 | Always | Publish the validation result with set_stats"
+          ansible.builtin.set_stats:
+            data:
+              fe_validation_results:
+                "cisco/site#play1":
+                  component: "cisco/site#play1"
+                  type: "playbook"
+                  platform: "cisco"
+                  host: "{{ inventory_hostname }}"
+                  status: "{{ fe_cisco_site_play1_status | default('unknown') }}"
+                  preflight_passed: "{{ fe_cisco_site_play1_preflight_passed | default(false) | bool }}"
+                  postflight_passed: "{{ fe_cisco_site_play1_postflight_passed | default(false) | bool }}"
+                  started_at: "{{ fe_cisco_site_play1_started_at | default('') }}"
+                  ended_at: "{{ fe_cisco_site_play1_ended_at | default('') }}"
+                  duration_seconds: "{{ fe_cisco_site_play1_duration_seconds | default(0) | int }}"
+                  failed_task: "{{ fe_cisco_site_play1_failed_task | default('') }}"
+                  error: "{{ fe_cisco_site_play1_error | default('') }}"
+                  check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+              fe_validation_executions: 1
+              fe_validation_succeeded: "{{ 1 if fe_cisco_site_play1_status | default('') == 'succeeded' else 0 }}"
+              fe_validation_failed: "{{ 0 if fe_cisco_site_play1_status | default('') == 'succeeded' else 1 }}"
+              fe_validation_duration_seconds: "{{ fe_cisco_site_play1_duration_seconds | default(0) | int }}"
+              fe_validation_failed_components: >-
+                {{ [] if fe_cisco_site_play1_status | default('') == 'succeeded' else ['cisco/site#play1'] }}
+            aggregate: true
+            per_host: false
+          when:
+            - fe_cisco_site_play1_status | default('') == 'failed'
+            - not (fe_cisco_site_play1_stats_published | default(false) | bool)
+          tags:
+            - always
+
+        - name: "cisco/site#play1 | Always | Mark the validation statistics as published"
+          ansible.builtin.set_fact:
+            fe_cisco_site_play1_stats_published: true
+          when:
+            - fe_cisco_site_play1_status | default('') == 'failed'
+          tags:
+            - always
+  pre_tasks:
+    - name: "cisco/site#play1 | Preflight validation"
+      tags:
+        - always
+        - preflight
+        - validation
+      block:
+
+        - name: "cisco/site#play1 | Initialize validation state"
+          ansible.builtin.set_fact:
+            fe_cisco_site_play1_start_epoch: "{{ now(fmt='%s') | int }}"
+            fe_cisco_site_play1_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+            fe_cisco_site_play1_status: "running"
+            fe_cisco_site_play1_preflight_passed: false
+            fe_cisco_site_play1_postflight_passed: false
+            fe_cisco_site_play1_failed_task: ""
+            fe_cisco_site_play1_error: ""
+            fe_cisco_site_play1_stats_published: false
+          tags:
+            - always
+
+        - name: "cisco/site#play1 | Preflight | Verify the control node meets the minimum ansible-core version"
+          ansible.builtin.assert:
+            that:
+              - ansible_version.full is version(fe_validation_min_ansible_version | default('2.12'), '>=')
+            fail_msg: >-
+              cisco/site#play1: requires ansible-core
+              {{ fe_validation_min_ansible_version | default('2.12') }} or newer,
+              found {{ ansible_version.full }}.
+            success_msg: >-
+              cisco/site#play1: ansible-core {{ ansible_version.full }} satisfies the minimum.
+            quiet: true
+          tags:
+            - always
+            - preflight
+            - validation
+
+        - name: "cisco/site#play1 | Preflight | Verify every declared required variable is defined"
+          ansible.builtin.assert:
+            that:
+              - vars[item] is defined
+            fail_msg: "cisco/site#play1: required variable '{{ item }}' is not defined."
+            success_msg: "cisco/site#play1: required variable '{{ item }}' is defined."
+            quiet: true
+          loop: "{{ fe_cisco_site_play1_required_vars | default([]) }}"
+          loop_control:
+            label: "{{ item }}"
+          tags:
+            - always
+            - preflight
+            - validation
+
+        - name: "cisco/site#play1 | Preflight | Record that preflight validation passed"
+          ansible.builtin.set_fact:
+            fe_cisco_site_play1_preflight_passed: true
+          tags:
+            - always
+            - preflight
+            - validation
+
+      rescue:
+
+        - name: "cisco/site#play1 | Rescue | Capture the failing task and error detail"
+          ansible.builtin.set_fact:
+            fe_cisco_site_play1_status: "preflight_failed"
+            fe_cisco_site_play1_postflight_passed: false
+            fe_cisco_site_play1_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+            fe_cisco_site_play1_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+          tags:
+            - always
+            - rescue
+
+        - name: "cisco/site#play1 | Rescue | Report the failure"
+          ansible.builtin.debug:
+            msg: >-
+              cisco/site#play1: FAILED at '{{ fe_cisco_site_play1_failed_task }}' on
+              {{ inventory_hostname }} - {{ fe_cisco_site_play1_error }}
+          tags:
+            - always
+            - rescue
+
+        - name: "cisco/site#play1 | Always | Publish the validation result with set_stats"
+          ansible.builtin.set_stats:
+            data:
+              fe_validation_results:
+                "cisco/site#play1":
+                  component: "cisco/site#play1"
+                  type: "playbook"
+                  platform: "cisco"
+                  host: "{{ inventory_hostname }}"
+                  status: "{{ fe_cisco_site_play1_status | default('unknown') }}"
+                  preflight_passed: "{{ fe_cisco_site_play1_preflight_passed | default(false) | bool }}"
+                  postflight_passed: "{{ fe_cisco_site_play1_postflight_passed | default(false) | bool }}"
+                  started_at: "{{ fe_cisco_site_play1_started_at | default('') }}"
+                  ended_at: "{{ fe_cisco_site_play1_ended_at | default('') }}"
+                  duration_seconds: "{{ fe_cisco_site_play1_duration_seconds | default(0) | int }}"
+                  failed_task: "{{ fe_cisco_site_play1_failed_task | default('') }}"
+                  error: "{{ fe_cisco_site_play1_error | default('') }}"
+                  check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+              fe_validation_executions: 1
+              fe_validation_succeeded: "{{ 1 if fe_cisco_site_play1_status | default('') == 'succeeded' else 0 }}"
+              fe_validation_failed: "{{ 0 if fe_cisco_site_play1_status | default('') == 'succeeded' else 1 }}"
+              fe_validation_duration_seconds: "{{ fe_cisco_site_play1_duration_seconds | default(0) | int }}"
+              fe_validation_failed_components: >-
+                {{ [] if fe_cisco_site_play1_status | default('') == 'succeeded' else ['cisco/site#play1'] }}
+            aggregate: true
+            per_host: false
+          tags:
+            - always
+
+        - name: "cisco/site#play1 | Always | Mark the validation statistics as published"
+          ansible.builtin.set_fact:
+            fe_cisco_site_play1_stats_published: true
+          tags:
+            - always
+
+        - name: "cisco/site#play1 | Rescue | Re-raise the failure unless the caller opted to continue"
+          ansible.builtin.fail:
+            msg: >-
+              cisco/site#play1 failed at '{{ fe_cisco_site_play1_failed_task }}': {{ fe_cisco_site_play1_error }}
+          when: not (fe_validation_continue_on_error | default(false) | bool)
+          tags:
+            - always
+            - rescue
+
+      always:
+
+        - name: "cisco/site#play1 | Always | Report the preflight outcome"
+          ansible.builtin.debug:
+            msg: >-
+              cisco/site#play1: preflight
+              {{ 'passed' if fe_cisco_site_play1_preflight_passed | default(false) | bool else 'FAILED' }}
+              on {{ inventory_hostname }}.
+          tags:
+            - always
+  post_tasks:
+    - name: "cisco/site#play1 | Postflight validation"
+      tags:
+        - always
+        - postflight
+        - validation
+      block:
+
+        - name: "cisco/site#play1 | Postflight | Verify the guarded body ran after a passing preflight"
+          ansible.builtin.assert:
+            that:
+              - fe_cisco_site_play1_preflight_passed | bool
+              - fe_cisco_site_play1_status in ['running', 'succeeded']
+            fail_msg: >-
+              cisco/site#play1: postflight validation failed - preflight passed
+              ={{ fe_cisco_site_play1_preflight_passed | default(false) }},
+              status={{ fe_cisco_site_play1_status | default('unknown') }}.
+            success_msg: "cisco/site#play1: postflight validation passed."
+            quiet: true
+          tags:
+            - always
+            - postflight
+            - validation
+
+        - name: "cisco/site#play1 | Postflight | Record the successful outcome"
+          ansible.builtin.set_fact:
+            fe_cisco_site_play1_postflight_passed: true
+            fe_cisco_site_play1_status: "succeeded"
+          tags:
+            - always
+            - postflight
+            - validation
+
+      rescue:
+
+        - name: "cisco/site#play1 | Rescue | Capture the failing task and error detail"
+          ansible.builtin.set_fact:
+            fe_cisco_site_play1_status: "failed"
+            fe_cisco_site_play1_postflight_passed: false
+            fe_cisco_site_play1_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+            fe_cisco_site_play1_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+          tags:
+            - always
+            - rescue
+
+        - name: "cisco/site#play1 | Rescue | Report the failure"
+          ansible.builtin.debug:
+            msg: >-
+              cisco/site#play1: FAILED at '{{ fe_cisco_site_play1_failed_task }}' on
+              {{ inventory_hostname }} - {{ fe_cisco_site_play1_error }}
+          tags:
+            - always
+            - rescue
+
+        - name: "cisco/site#play1 | Rescue | Re-raise the failure unless the caller opted to continue"
+          ansible.builtin.fail:
+            msg: >-
+              cisco/site#play1 failed at '{{ fe_cisco_site_play1_failed_task }}': {{ fe_cisco_site_play1_error }}
+          when: not (fe_validation_continue_on_error | default(false) | bool)
+          tags:
+            - always
+            - rescue
+
+      always:
+
+        - name: "cisco/site#play1 | Always | Compute the execution duration"
+          ansible.builtin.set_fact:
+            fe_cisco_site_play1_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+            fe_cisco_site_play1_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_cisco_site_play1_start_epoch | default(0) | int) }}"
+          tags:
+            - always
+
+        - name: "cisco/site#play1 | Always | Publish the validation result with set_stats"
+          ansible.builtin.set_stats:
+            data:
+              fe_validation_results:
+                "cisco/site#play1":
+                  component: "cisco/site#play1"
+                  type: "playbook"
+                  platform: "cisco"
+                  host: "{{ inventory_hostname }}"
+                  status: "{{ fe_cisco_site_play1_status | default('unknown') }}"
+                  preflight_passed: "{{ fe_cisco_site_play1_preflight_passed | default(false) | bool }}"
+                  postflight_passed: "{{ fe_cisco_site_play1_postflight_passed | default(false) | bool }}"
+                  started_at: "{{ fe_cisco_site_play1_started_at | default('') }}"
+                  ended_at: "{{ fe_cisco_site_play1_ended_at | default('') }}"
+                  duration_seconds: "{{ fe_cisco_site_play1_duration_seconds | default(0) | int }}"
+                  failed_task: "{{ fe_cisco_site_play1_failed_task | default('') }}"
+                  error: "{{ fe_cisco_site_play1_error | default('') }}"
+                  check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+              fe_validation_executions: 1
+              fe_validation_succeeded: "{{ 1 if fe_cisco_site_play1_status | default('') == 'succeeded' else 0 }}"
+              fe_validation_failed: "{{ 0 if fe_cisco_site_play1_status | default('') == 'succeeded' else 1 }}"
+              fe_validation_duration_seconds: "{{ fe_cisco_site_play1_duration_seconds | default(0) | int }}"
+              fe_validation_failed_components: >-
+                {{ [] if fe_cisco_site_play1_status | default('') == 'succeeded' else ['cisco/site#play1'] }}
+            aggregate: true
+            per_host: false
+          when:
+            - not (fe_cisco_site_play1_stats_published | default(false) | bool)
+          tags:
+            - always
+
+        - name: "cisco/site#play1 | Always | Mark the validation statistics as published"
+          ansible.builtin.set_fact:
+            fe_cisco_site_play1_stats_published: true
+          tags:
+            - always
+
+        - name: "cisco/site#play1 | Always | Report the run summary"
+          ansible.builtin.debug:
+            msg: >-
+              cisco/site#play1: {{ fe_cisco_site_play1_status | default('unknown') }} in
+              {{ fe_cisco_site_play1_duration_seconds | default(0) }}s on {{ inventory_hostname }}.
+          tags:
+            - always
 
 
 - name: Cisco ISE Configuration
@@ -112,192 +462,525 @@
     # =========================================
     # Phase 1: ISE Policy Configuration
     # =========================================
-    - name: Phase 1 - Policy Sets Scaffold
-      ansible.builtin.include_role:
-        name: ise_policy__policy_sets_scaffold
-      when: deploy_ise_policy | bool
-      tags: ['ise', 'policy', 'phase1']
+    - name: "cisco/site#play2 | Guarded execution with rescue and always handling"
+      block:
 
-    - name: Phase 1 - Conditions Library
-      ansible.builtin.include_role:
-        name: ise_policy__conditions_library
-      when: deploy_ise_policy | bool
-      tags: ['ise', 'policy', 'phase1']
+        - name: Phase 1 - Policy Sets Scaffold
+          ansible.builtin.include_role:
+            name: ise_policy__policy_sets_scaffold
+          when: deploy_ise_policy | bool
+          tags: ['ise', 'policy', 'phase1']
 
-    - name: Phase 1 - Authorization Profiles
-      ansible.builtin.include_role:
-        name: ise_policy__authz_profiles
-      when: deploy_ise_policy | bool
-      tags: ['ise', 'policy', 'phase1']
+        - name: Phase 1 - Conditions Library
+          ansible.builtin.include_role:
+            name: ise_policy__conditions_library
+          when: deploy_ise_policy | bool
+          tags: ['ise', 'policy', 'phase1']
 
-    - name: Phase 1 - RADIUS DACLs
-      ansible.builtin.include_role:
-        name: ise_policy__radius_dacls
-      when: deploy_ise_policy | bool
-      tags: ['ise', 'policy', 'phase1']
+        - name: Phase 1 - Authorization Profiles
+          ansible.builtin.include_role:
+            name: ise_policy__authz_profiles
+          when: deploy_ise_policy | bool
+          tags: ['ise', 'policy', 'phase1']
 
-    - name: Phase 1 - Shell Profiles & Command Sets
-      ansible.builtin.include_role:
-        name: ise_policy__shell_profiles_cmdsets
-      when: deploy_ise_policy | bool
-      tags: ['ise', 'policy', 'phase1']
+        - name: Phase 1 - RADIUS DACLs
+          ansible.builtin.include_role:
+            name: ise_policy__radius_dacls
+          when: deploy_ise_policy | bool
+          tags: ['ise', 'policy', 'phase1']
 
-    - name: Phase 1 - Apply Policy Rules
-      ansible.builtin.include_role:
-        name: ise_policy__apply_rules
-      when: deploy_ise_policy | bool
-      tags: ['ise', 'policy', 'phase1']
+        - name: Phase 1 - Shell Profiles & Command Sets
+          ansible.builtin.include_role:
+            name: ise_policy__shell_profiles_cmdsets
+          when: deploy_ise_policy | bool
+          tags: ['ise', 'policy', 'phase1']
 
-    # =========================================
-    # Phase 2: ISE Profiling
-    # =========================================
-    - name: Phase 2 - Profiler Probes
-      ansible.builtin.include_role:
-        name: ise_profiling__probes
-      when: deploy_ise_profiling | bool
-      tags: ['ise', 'profiling', 'phase2']
+        - name: Phase 1 - Apply Policy Rules
+          ansible.builtin.include_role:
+            name: ise_policy__apply_rules
+          when: deploy_ise_policy | bool
+          tags: ['ise', 'policy', 'phase1']
 
-    - name: Phase 2 - Profiling Policies
-      ansible.builtin.include_role:
-        name: ise_profiling__policies
-      when: deploy_ise_profiling | bool
-      tags: ['ise', 'profiling', 'phase2']
+        # =========================================
+        # Phase 2: ISE Profiling
+        # =========================================
+        - name: Phase 2 - Profiler Probes
+          ansible.builtin.include_role:
+            name: ise_profiling__probes
+          when: deploy_ise_profiling | bool
+          tags: ['ise', 'profiling', 'phase2']
 
-    # =========================================
-    # Phase 3: ISE Endpoints
-    # =========================================
-    - name: Phase 3 - Endpoint Registration (Bulk)
-      ansible.builtin.include_role:
-        name: ise_endpoints__register_bulk
-      tags: ['ise', 'endpoints', 'phase3']
+        - name: Phase 2 - Profiling Policies
+          ansible.builtin.include_role:
+            name: ise_profiling__policies
+          when: deploy_ise_profiling | bool
+          tags: ['ise', 'profiling', 'phase2']
 
-    - name: Phase 3 - Endpoint Group Membership
-      ansible.builtin.include_role:
-        name: ise_endpoints__group_membership
-      tags: ['ise', 'endpoints', 'phase3']
+        # =========================================
+        # Phase 3: ISE Endpoints
+        # =========================================
+        - name: Phase 3 - Endpoint Registration (Bulk)
+          ansible.builtin.include_role:
+            name: ise_endpoints__register_bulk
+          tags: ['ise', 'endpoints', 'phase3']
 
-    # =========================================
-    # Phase 4: ISE Posture
-    # =========================================
-    - name: Phase 4 - Posture Conditions & Rules
-      ansible.builtin.include_role:
-        name: ise_posture__conditions_rules
-      when: deploy_ise_posture | bool
-      tags: ['ise', 'posture', 'phase4']
+        - name: Phase 3 - Endpoint Group Membership
+          ansible.builtin.include_role:
+            name: ise_endpoints__group_membership
+          tags: ['ise', 'endpoints', 'phase3']
 
-    - name: Phase 4 - Client Provisioning
-      ansible.builtin.include_role:
-        name: ise_posture__client_provisioning
-      when: deploy_ise_posture | bool
-      tags: ['ise', 'posture', 'phase4']
+        # =========================================
+        # Phase 4: ISE Posture
+        # =========================================
+        - name: Phase 4 - Posture Conditions & Rules
+          ansible.builtin.include_role:
+            name: ise_posture__conditions_rules
+          when: deploy_ise_posture | bool
+          tags: ['ise', 'posture', 'phase4']
 
-    - name: Phase 4 - Posture Updates Channel
-      ansible.builtin.include_role:
-        name: ise_posture__updates_channel
-      when: deploy_ise_posture | bool
-      tags: ['ise', 'posture', 'phase4']
+        - name: Phase 4 - Client Provisioning
+          ansible.builtin.include_role:
+            name: ise_posture__client_provisioning
+          when: deploy_ise_posture | bool
+          tags: ['ise', 'posture', 'phase4']
 
-    # =========================================
-    # Phase 5: ISE Guest & BYOD
-    # =========================================
-    - name: Phase 5 - Guest Portal
-      ansible.builtin.include_role:
-        name: ise_guest__guest_portal
-      when: deploy_ise_guest | bool
-      tags: ['ise', 'guest', 'phase5']
+        - name: Phase 4 - Posture Updates Channel
+          ansible.builtin.include_role:
+            name: ise_posture__updates_channel
+          when: deploy_ise_posture | bool
+          tags: ['ise', 'posture', 'phase4']
 
-    - name: Phase 5 - Sponsor Portal
-      ansible.builtin.include_role:
-        name: ise_guest__sponsor_portal
-      when: deploy_ise_guest | bool
-      tags: ['ise', 'guest', 'phase5']
+        # =========================================
+        # Phase 5: ISE Guest & BYOD
+        # =========================================
+        - name: Phase 5 - Guest Portal
+          ansible.builtin.include_role:
+            name: ise_guest__guest_portal
+          when: deploy_ise_guest | bool
+          tags: ['ise', 'guest', 'phase5']
 
-    - name: Phase 5 - Guest Accounts (Bulk)
-      ansible.builtin.include_role:
-        name: ise_guest__accounts_bulk
-      when: deploy_ise_guest | bool
-      tags: ['ise', 'guest', 'phase5']
+        - name: Phase 5 - Sponsor Portal
+          ansible.builtin.include_role:
+            name: ise_guest__sponsor_portal
+          when: deploy_ise_guest | bool
+          tags: ['ise', 'guest', 'phase5']
 
-    - name: Phase 5 - BYOD Workflow
-      ansible.builtin.include_role:
-        name: ise_byod__workflow
-      when: deploy_ise_byod | bool
-      tags: ['ise', 'byod', 'phase5']
+        - name: Phase 5 - Guest Accounts (Bulk)
+          ansible.builtin.include_role:
+            name: ise_guest__accounts_bulk
+          when: deploy_ise_guest | bool
+          tags: ['ise', 'guest', 'phase5']
 
-    # =========================================
-    # Phase 6: ISE pxGrid & Integrations
-    # =========================================
-    - name: Phase 6 - pxGrid Enable Clients
-      ansible.builtin.include_role:
-        name: ise_pxgrid__enable_clients
-      when: deploy_ise_pxgrid | bool
-      tags: ['ise', 'pxgrid', 'phase6']
+        - name: Phase 5 - BYOD Workflow
+          ansible.builtin.include_role:
+            name: ise_byod__workflow
+          when: deploy_ise_byod | bool
+          tags: ['ise', 'byod', 'phase5']
 
-    - name: Phase 6 - MSE/DNAC Integration
-      ansible.builtin.include_role:
-        name: ise_integration__mse_dnac
-      when: deploy_ise_integrations | bool
-      tags: ['ise', 'integrations', 'phase6']
+        # =========================================
+        # Phase 6: ISE pxGrid & Integrations
+        # =========================================
+        - name: Phase 6 - pxGrid Enable Clients
+          ansible.builtin.include_role:
+            name: ise_pxgrid__enable_clients
+          when: deploy_ise_pxgrid | bool
+          tags: ['ise', 'pxgrid', 'phase6']
 
-    - name: Phase 6 - Logging Integration
-      ansible.builtin.include_role:
-        name: ise_integration__logging
-      when: deploy_ise_integrations | bool
-      tags: ['ise', 'integrations', 'phase6']
+        - name: Phase 6 - MSE/DNAC Integration
+          ansible.builtin.include_role:
+            name: ise_integration__mse_dnac
+          when: deploy_ise_integrations | bool
+          tags: ['ise', 'integrations', 'phase6']
 
-    # =========================================
-    # Phase 7: ISE Security
-    # =========================================
-    - name: Phase 7 - ANC Quarantine Rules
-      ansible.builtin.include_role:
-        name: ise_anc__quarantine_rules
-      tags: ['ise', 'security', 'phase7']
+        - name: Phase 6 - Logging Integration
+          ansible.builtin.include_role:
+            name: ise_integration__logging
+          when: deploy_ise_integrations | bool
+          tags: ['ise', 'integrations', 'phase6']
 
-    # =========================================
-    # Phase 8: ISE Operations
-    # =========================================
-    - name: Phase 8 - Policy Hitcount Shadow Report
-      ansible.builtin.include_role:
-        name: ise_policy__hitcount_shadow_report
-      when: deploy_ise_reporting | bool
-      tags: ['ise', 'operations', 'phase8']
+        # =========================================
+        # Phase 7: ISE Security
+        # =========================================
+        - name: Phase 7 - ANC Quarantine Rules
+          ansible.builtin.include_role:
+            name: ise_anc__quarantine_rules
+          tags: ['ise', 'security', 'phase7']
 
-    - name: Phase 8 - Stale Objects Prune
-      ansible.builtin.include_role:
-        name: ise_hygiene__stale_objects_prune
-      tags: ['ise', 'operations', 'phase8']
+        # =========================================
+        # Phase 8: ISE Operations
+        # =========================================
+        - name: Phase 8 - Policy Hitcount Shadow Report
+          ansible.builtin.include_role:
+            name: ise_policy__hitcount_shadow_report
+          when: deploy_ise_reporting | bool
+          tags: ['ise', 'operations', 'phase8']
 
-    - name: Phase 8 - Audit Config Changes
-      ansible.builtin.include_role:
-        name: ise_audit__config_changes
-      tags: ['ise', 'audit', 'phase8']
+        - name: Phase 8 - Stale Objects Prune
+          ansible.builtin.include_role:
+            name: ise_hygiene__stale_objects_prune
+          tags: ['ise', 'operations', 'phase8']
 
-    # =========================================
-    # Phase 9: ISE Reporting
-    # =========================================
-    - name: Phase 9 - Auth Failures Report
-      ansible.builtin.include_role:
-        name: ise_report__auth_failures
-      when: deploy_ise_reporting | bool
-      tags: ['ise', 'reporting', 'phase9']
+        - name: Phase 8 - Audit Config Changes
+          ansible.builtin.include_role:
+            name: ise_audit__config_changes
+          tags: ['ise', 'audit', 'phase8']
 
-    - name: Phase 9 - Endpoint Catalog Report
-      ansible.builtin.include_role:
-        name: ise_report__endpoint_catalog
-      when: deploy_ise_reporting | bool
-      tags: ['ise', 'reporting', 'phase9']
+        # =========================================
+        # Phase 9: ISE Reporting
+        # =========================================
+        - name: Phase 9 - Auth Failures Report
+          ansible.builtin.include_role:
+            name: ise_report__auth_failures
+          when: deploy_ise_reporting | bool
+          tags: ['ise', 'reporting', 'phase9']
 
-    - name: Phase 9 - Export Active Sessions
-      ansible.builtin.include_role:
-        name: ise_sessions__export_active
-      when: deploy_ise_reporting | bool
-      tags: ['ise', 'reporting', 'phase9']
+        - name: Phase 9 - Endpoint Catalog Report
+          ansible.builtin.include_role:
+            name: ise_report__endpoint_catalog
+          when: deploy_ise_reporting | bool
+          tags: ['ise', 'reporting', 'phase9']
 
-    - name: Phase 9 - RADIUS Accounting Monitor
-      ansible.builtin.include_role:
-        name: ise_monitor__radius_accounting
-      when: deploy_ise_reporting | bool
-      tags: ['ise', 'reporting', 'phase9']
+        - name: Phase 9 - Export Active Sessions
+          ansible.builtin.include_role:
+            name: ise_sessions__export_active
+          when: deploy_ise_reporting | bool
+          tags: ['ise', 'reporting', 'phase9']
+
+        - name: Phase 9 - RADIUS Accounting Monitor
+          ansible.builtin.include_role:
+            name: ise_monitor__radius_accounting
+          when: deploy_ise_reporting | bool
+          tags: ['ise', 'reporting', 'phase9']
+
+      rescue:
+
+        - name: "cisco/site#play2 | Rescue | Capture the failing task and error detail"
+          ansible.builtin.set_fact:
+            fe_cisco_site_play2_status: "failed"
+            fe_cisco_site_play2_postflight_passed: false
+            fe_cisco_site_play2_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+            fe_cisco_site_play2_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+          tags:
+            - always
+            - rescue
+
+        - name: "cisco/site#play2 | Rescue | Report the failure"
+          ansible.builtin.debug:
+            msg: >-
+              cisco/site#play2: FAILED at '{{ fe_cisco_site_play2_failed_task }}' on
+              {{ inventory_hostname }} - {{ fe_cisco_site_play2_error }}
+          tags:
+            - always
+            - rescue
+
+        - name: "cisco/site#play2 | Rescue | Re-raise the failure unless the caller opted to continue"
+          ansible.builtin.fail:
+            msg: >-
+              cisco/site#play2 failed at '{{ fe_cisco_site_play2_failed_task }}': {{ fe_cisco_site_play2_error }}
+          when: not (fe_validation_continue_on_error | default(false) | bool)
+          tags:
+            - always
+            - rescue
+
+      always:
+
+        - name: "cisco/site#play2 | Always | Compute the execution duration"
+          ansible.builtin.set_fact:
+            fe_cisco_site_play2_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+            fe_cisco_site_play2_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_cisco_site_play2_start_epoch | default(0) | int) }}"
+          tags:
+            - always
+
+        - name: "cisco/site#play2 | Always | Publish the validation result with set_stats"
+          ansible.builtin.set_stats:
+            data:
+              fe_validation_results:
+                "cisco/site#play2":
+                  component: "cisco/site#play2"
+                  type: "playbook"
+                  platform: "cisco"
+                  host: "{{ inventory_hostname }}"
+                  status: "{{ fe_cisco_site_play2_status | default('unknown') }}"
+                  preflight_passed: "{{ fe_cisco_site_play2_preflight_passed | default(false) | bool }}"
+                  postflight_passed: "{{ fe_cisco_site_play2_postflight_passed | default(false) | bool }}"
+                  started_at: "{{ fe_cisco_site_play2_started_at | default('') }}"
+                  ended_at: "{{ fe_cisco_site_play2_ended_at | default('') }}"
+                  duration_seconds: "{{ fe_cisco_site_play2_duration_seconds | default(0) | int }}"
+                  failed_task: "{{ fe_cisco_site_play2_failed_task | default('') }}"
+                  error: "{{ fe_cisco_site_play2_error | default('') }}"
+                  check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+              fe_validation_executions: 1
+              fe_validation_succeeded: "{{ 1 if fe_cisco_site_play2_status | default('') == 'succeeded' else 0 }}"
+              fe_validation_failed: "{{ 0 if fe_cisco_site_play2_status | default('') == 'succeeded' else 1 }}"
+              fe_validation_duration_seconds: "{{ fe_cisco_site_play2_duration_seconds | default(0) | int }}"
+              fe_validation_failed_components: >-
+                {{ [] if fe_cisco_site_play2_status | default('') == 'succeeded' else ['cisco/site#play2'] }}
+            aggregate: true
+            per_host: false
+          when:
+            - fe_cisco_site_play2_status | default('') == 'failed'
+            - not (fe_cisco_site_play2_stats_published | default(false) | bool)
+          tags:
+            - always
+
+        - name: "cisco/site#play2 | Always | Mark the validation statistics as published"
+          ansible.builtin.set_fact:
+            fe_cisco_site_play2_stats_published: true
+          when:
+            - fe_cisco_site_play2_status | default('') == 'failed'
+          tags:
+            - always
+  pre_tasks:
+    - name: "cisco/site#play2 | Preflight validation"
+      tags:
+        - always
+        - preflight
+        - validation
+      block:
+
+        - name: "cisco/site#play2 | Initialize validation state"
+          ansible.builtin.set_fact:
+            fe_cisco_site_play2_start_epoch: "{{ now(fmt='%s') | int }}"
+            fe_cisco_site_play2_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+            fe_cisco_site_play2_status: "running"
+            fe_cisco_site_play2_preflight_passed: false
+            fe_cisco_site_play2_postflight_passed: false
+            fe_cisco_site_play2_failed_task: ""
+            fe_cisco_site_play2_error: ""
+            fe_cisco_site_play2_stats_published: false
+          tags:
+            - always
+
+        - name: "cisco/site#play2 | Preflight | Verify the control node meets the minimum ansible-core version"
+          ansible.builtin.assert:
+            that:
+              - ansible_version.full is version(fe_validation_min_ansible_version | default('2.12'), '>=')
+            fail_msg: >-
+              cisco/site#play2: requires ansible-core
+              {{ fe_validation_min_ansible_version | default('2.12') }} or newer,
+              found {{ ansible_version.full }}.
+            success_msg: >-
+              cisco/site#play2: ansible-core {{ ansible_version.full }} satisfies the minimum.
+            quiet: true
+          tags:
+            - always
+            - preflight
+            - validation
+
+        - name: "cisco/site#play2 | Preflight | Verify every declared required variable is defined"
+          ansible.builtin.assert:
+            that:
+              - vars[item] is defined
+            fail_msg: "cisco/site#play2: required variable '{{ item }}' is not defined."
+            success_msg: "cisco/site#play2: required variable '{{ item }}' is defined."
+            quiet: true
+          loop: "{{ fe_cisco_site_play2_required_vars | default([]) }}"
+          loop_control:
+            label: "{{ item }}"
+          tags:
+            - always
+            - preflight
+            - validation
+
+        - name: "cisco/site#play2 | Preflight | Record that preflight validation passed"
+          ansible.builtin.set_fact:
+            fe_cisco_site_play2_preflight_passed: true
+          tags:
+            - always
+            - preflight
+            - validation
+
+      rescue:
+
+        - name: "cisco/site#play2 | Rescue | Capture the failing task and error detail"
+          ansible.builtin.set_fact:
+            fe_cisco_site_play2_status: "preflight_failed"
+            fe_cisco_site_play2_postflight_passed: false
+            fe_cisco_site_play2_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+            fe_cisco_site_play2_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+          tags:
+            - always
+            - rescue
+
+        - name: "cisco/site#play2 | Rescue | Report the failure"
+          ansible.builtin.debug:
+            msg: >-
+              cisco/site#play2: FAILED at '{{ fe_cisco_site_play2_failed_task }}' on
+              {{ inventory_hostname }} - {{ fe_cisco_site_play2_error }}
+          tags:
+            - always
+            - rescue
+
+        - name: "cisco/site#play2 | Always | Publish the validation result with set_stats"
+          ansible.builtin.set_stats:
+            data:
+              fe_validation_results:
+                "cisco/site#play2":
+                  component: "cisco/site#play2"
+                  type: "playbook"
+                  platform: "cisco"
+                  host: "{{ inventory_hostname }}"
+                  status: "{{ fe_cisco_site_play2_status | default('unknown') }}"
+                  preflight_passed: "{{ fe_cisco_site_play2_preflight_passed | default(false) | bool }}"
+                  postflight_passed: "{{ fe_cisco_site_play2_postflight_passed | default(false) | bool }}"
+                  started_at: "{{ fe_cisco_site_play2_started_at | default('') }}"
+                  ended_at: "{{ fe_cisco_site_play2_ended_at | default('') }}"
+                  duration_seconds: "{{ fe_cisco_site_play2_duration_seconds | default(0) | int }}"
+                  failed_task: "{{ fe_cisco_site_play2_failed_task | default('') }}"
+                  error: "{{ fe_cisco_site_play2_error | default('') }}"
+                  check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+              fe_validation_executions: 1
+              fe_validation_succeeded: "{{ 1 if fe_cisco_site_play2_status | default('') == 'succeeded' else 0 }}"
+              fe_validation_failed: "{{ 0 if fe_cisco_site_play2_status | default('') == 'succeeded' else 1 }}"
+              fe_validation_duration_seconds: "{{ fe_cisco_site_play2_duration_seconds | default(0) | int }}"
+              fe_validation_failed_components: >-
+                {{ [] if fe_cisco_site_play2_status | default('') == 'succeeded' else ['cisco/site#play2'] }}
+            aggregate: true
+            per_host: false
+          tags:
+            - always
+
+        - name: "cisco/site#play2 | Always | Mark the validation statistics as published"
+          ansible.builtin.set_fact:
+            fe_cisco_site_play2_stats_published: true
+          tags:
+            - always
+
+        - name: "cisco/site#play2 | Rescue | Re-raise the failure unless the caller opted to continue"
+          ansible.builtin.fail:
+            msg: >-
+              cisco/site#play2 failed at '{{ fe_cisco_site_play2_failed_task }}': {{ fe_cisco_site_play2_error }}
+          when: not (fe_validation_continue_on_error | default(false) | bool)
+          tags:
+            - always
+            - rescue
+
+      always:
+
+        - name: "cisco/site#play2 | Always | Report the preflight outcome"
+          ansible.builtin.debug:
+            msg: >-
+              cisco/site#play2: preflight
+              {{ 'passed' if fe_cisco_site_play2_preflight_passed | default(false) | bool else 'FAILED' }}
+              on {{ inventory_hostname }}.
+          tags:
+            - always
+  post_tasks:
+    - name: "cisco/site#play2 | Postflight validation"
+      tags:
+        - always
+        - postflight
+        - validation
+      block:
+
+        - name: "cisco/site#play2 | Postflight | Verify the guarded body ran after a passing preflight"
+          ansible.builtin.assert:
+            that:
+              - fe_cisco_site_play2_preflight_passed | bool
+              - fe_cisco_site_play2_status in ['running', 'succeeded']
+            fail_msg: >-
+              cisco/site#play2: postflight validation failed - preflight passed
+              ={{ fe_cisco_site_play2_preflight_passed | default(false) }},
+              status={{ fe_cisco_site_play2_status | default('unknown') }}.
+            success_msg: "cisco/site#play2: postflight validation passed."
+            quiet: true
+          tags:
+            - always
+            - postflight
+            - validation
+
+        - name: "cisco/site#play2 | Postflight | Record the successful outcome"
+          ansible.builtin.set_fact:
+            fe_cisco_site_play2_postflight_passed: true
+            fe_cisco_site_play2_status: "succeeded"
+          tags:
+            - always
+            - postflight
+            - validation
+
+      rescue:
+
+        - name: "cisco/site#play2 | Rescue | Capture the failing task and error detail"
+          ansible.builtin.set_fact:
+            fe_cisco_site_play2_status: "failed"
+            fe_cisco_site_play2_postflight_passed: false
+            fe_cisco_site_play2_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+            fe_cisco_site_play2_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+          tags:
+            - always
+            - rescue
+
+        - name: "cisco/site#play2 | Rescue | Report the failure"
+          ansible.builtin.debug:
+            msg: >-
+              cisco/site#play2: FAILED at '{{ fe_cisco_site_play2_failed_task }}' on
+              {{ inventory_hostname }} - {{ fe_cisco_site_play2_error }}
+          tags:
+            - always
+            - rescue
+
+        - name: "cisco/site#play2 | Rescue | Re-raise the failure unless the caller opted to continue"
+          ansible.builtin.fail:
+            msg: >-
+              cisco/site#play2 failed at '{{ fe_cisco_site_play2_failed_task }}': {{ fe_cisco_site_play2_error }}
+          when: not (fe_validation_continue_on_error | default(false) | bool)
+          tags:
+            - always
+            - rescue
+
+      always:
+
+        - name: "cisco/site#play2 | Always | Compute the execution duration"
+          ansible.builtin.set_fact:
+            fe_cisco_site_play2_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+            fe_cisco_site_play2_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_cisco_site_play2_start_epoch | default(0) | int) }}"
+          tags:
+            - always
+
+        - name: "cisco/site#play2 | Always | Publish the validation result with set_stats"
+          ansible.builtin.set_stats:
+            data:
+              fe_validation_results:
+                "cisco/site#play2":
+                  component: "cisco/site#play2"
+                  type: "playbook"
+                  platform: "cisco"
+                  host: "{{ inventory_hostname }}"
+                  status: "{{ fe_cisco_site_play2_status | default('unknown') }}"
+                  preflight_passed: "{{ fe_cisco_site_play2_preflight_passed | default(false) | bool }}"
+                  postflight_passed: "{{ fe_cisco_site_play2_postflight_passed | default(false) | bool }}"
+                  started_at: "{{ fe_cisco_site_play2_started_at | default('') }}"
+                  ended_at: "{{ fe_cisco_site_play2_ended_at | default('') }}"
+                  duration_seconds: "{{ fe_cisco_site_play2_duration_seconds | default(0) | int }}"
+                  failed_task: "{{ fe_cisco_site_play2_failed_task | default('') }}"
+                  error: "{{ fe_cisco_site_play2_error | default('') }}"
+                  check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+              fe_validation_executions: 1
+              fe_validation_succeeded: "{{ 1 if fe_cisco_site_play2_status | default('') == 'succeeded' else 0 }}"
+              fe_validation_failed: "{{ 0 if fe_cisco_site_play2_status | default('') == 'succeeded' else 1 }}"
+              fe_validation_duration_seconds: "{{ fe_cisco_site_play2_duration_seconds | default(0) | int }}"
+              fe_validation_failed_components: >-
+                {{ [] if fe_cisco_site_play2_status | default('') == 'succeeded' else ['cisco/site#play2'] }}
+            aggregate: true
+            per_host: false
+          when:
+            - not (fe_cisco_site_play2_stats_published | default(false) | bool)
+          tags:
+            - always
+
+        - name: "cisco/site#play2 | Always | Mark the validation statistics as published"
+          ansible.builtin.set_fact:
+            fe_cisco_site_play2_stats_published: true
+          tags:
+            - always
+
+        - name: "cisco/site#play2 | Always | Report the run summary"
+          ansible.builtin.debug:
+            msg: >-
+              cisco/site#play2: {{ fe_cisco_site_play2_status | default('unknown') }} in
+              {{ fe_cisco_site_play2_duration_seconds | default(0) }}s on {{ inventory_hostname }}.
+          tags:
+            - always
 
 
 - name: Cisco UCS Configuration
@@ -318,47 +1001,380 @@
     # =========================================
     # Phase 10: UCS Infrastructure
     # =========================================
-    - name: Phase 10 - UCS Infrastructure
-      ansible.builtin.include_role:
-        name: ucs_prod_infrastructure
-      when: deploy_ucs_infrastructure | bool
-      tags: ['ucs', 'infrastructure', 'phase10']
+    - name: "cisco/site#play3 | Guarded execution with rescue and always handling"
+      block:
 
-    # =========================================
-    # Phase 11: UCS Networking
-    # =========================================
-    - name: Phase 11 - UCS Networking
-      ansible.builtin.include_role:
-        name: ucs_prod_networking
-      when: deploy_ucs_networking | bool
-      tags: ['ucs', 'networking', 'phase11']
+        - name: Phase 10 - UCS Infrastructure
+          ansible.builtin.include_role:
+            name: ucs_prod_infrastructure
+          when: deploy_ucs_infrastructure | bool
+          tags: ['ucs', 'infrastructure', 'phase10']
 
-    # =========================================
-    # Phase 12: UCS Security
-    # =========================================
-    - name: Phase 12 - UCS Security Hardening
-      ansible.builtin.include_role:
-        name: ucs_security_hardening
-      when: deploy_ucs_security | bool
-      tags: ['ucs', 'security', 'phase12']
+        # =========================================
+        # Phase 11: UCS Networking
+        # =========================================
+        - name: Phase 11 - UCS Networking
+          ansible.builtin.include_role:
+            name: ucs_prod_networking
+          when: deploy_ucs_networking | bool
+          tags: ['ucs', 'networking', 'phase11']
 
-    # =========================================
-    # Phase 13: UCS Backup & DR
-    # =========================================
-    - name: Phase 13 - UCS Backup & DR
-      ansible.builtin.include_role:
-        name: ucs_prod_backup_dr
-      when: deploy_ucs_backup | bool
-      tags: ['ucs', 'backup', 'phase13']
+        # =========================================
+        # Phase 12: UCS Security
+        # =========================================
+        - name: Phase 12 - UCS Security Hardening
+          ansible.builtin.include_role:
+            name: ucs_security_hardening
+          when: deploy_ucs_security | bool
+          tags: ['ucs', 'security', 'phase12']
 
-    # =========================================
-    # Phase 14: UCS Monitoring
-    # =========================================
-    - name: Phase 14 - UCS Monitoring
-      ansible.builtin.include_role:
-        name: ucs_prod_monitoring
-      when: deploy_ucs_monitoring | bool
-      tags: ['ucs', 'monitoring', 'phase14']
+        # =========================================
+        # Phase 13: UCS Backup & DR
+        # =========================================
+        - name: Phase 13 - UCS Backup & DR
+          ansible.builtin.include_role:
+            name: ucs_prod_backup_dr
+          when: deploy_ucs_backup | bool
+          tags: ['ucs', 'backup', 'phase13']
+
+        # =========================================
+        # Phase 14: UCS Monitoring
+        # =========================================
+        - name: Phase 14 - UCS Monitoring
+          ansible.builtin.include_role:
+            name: ucs_prod_monitoring
+          when: deploy_ucs_monitoring | bool
+          tags: ['ucs', 'monitoring', 'phase14']
+
+      rescue:
+
+        - name: "cisco/site#play3 | Rescue | Capture the failing task and error detail"
+          ansible.builtin.set_fact:
+            fe_cisco_site_play3_status: "failed"
+            fe_cisco_site_play3_postflight_passed: false
+            fe_cisco_site_play3_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+            fe_cisco_site_play3_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+          tags:
+            - always
+            - rescue
+
+        - name: "cisco/site#play3 | Rescue | Report the failure"
+          ansible.builtin.debug:
+            msg: >-
+              cisco/site#play3: FAILED at '{{ fe_cisco_site_play3_failed_task }}' on
+              {{ inventory_hostname }} - {{ fe_cisco_site_play3_error }}
+          tags:
+            - always
+            - rescue
+
+        - name: "cisco/site#play3 | Rescue | Re-raise the failure unless the caller opted to continue"
+          ansible.builtin.fail:
+            msg: >-
+              cisco/site#play3 failed at '{{ fe_cisco_site_play3_failed_task }}': {{ fe_cisco_site_play3_error }}
+          when: not (fe_validation_continue_on_error | default(false) | bool)
+          tags:
+            - always
+            - rescue
+
+      always:
+
+        - name: "cisco/site#play3 | Always | Compute the execution duration"
+          ansible.builtin.set_fact:
+            fe_cisco_site_play3_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+            fe_cisco_site_play3_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_cisco_site_play3_start_epoch | default(0) | int) }}"
+          tags:
+            - always
+
+        - name: "cisco/site#play3 | Always | Publish the validation result with set_stats"
+          ansible.builtin.set_stats:
+            data:
+              fe_validation_results:
+                "cisco/site#play3":
+                  component: "cisco/site#play3"
+                  type: "playbook"
+                  platform: "cisco"
+                  host: "{{ inventory_hostname }}"
+                  status: "{{ fe_cisco_site_play3_status | default('unknown') }}"
+                  preflight_passed: "{{ fe_cisco_site_play3_preflight_passed | default(false) | bool }}"
+                  postflight_passed: "{{ fe_cisco_site_play3_postflight_passed | default(false) | bool }}"
+                  started_at: "{{ fe_cisco_site_play3_started_at | default('') }}"
+                  ended_at: "{{ fe_cisco_site_play3_ended_at | default('') }}"
+                  duration_seconds: "{{ fe_cisco_site_play3_duration_seconds | default(0) | int }}"
+                  failed_task: "{{ fe_cisco_site_play3_failed_task | default('') }}"
+                  error: "{{ fe_cisco_site_play3_error | default('') }}"
+                  check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+              fe_validation_executions: 1
+              fe_validation_succeeded: "{{ 1 if fe_cisco_site_play3_status | default('') == 'succeeded' else 0 }}"
+              fe_validation_failed: "{{ 0 if fe_cisco_site_play3_status | default('') == 'succeeded' else 1 }}"
+              fe_validation_duration_seconds: "{{ fe_cisco_site_play3_duration_seconds | default(0) | int }}"
+              fe_validation_failed_components: >-
+                {{ [] if fe_cisco_site_play3_status | default('') == 'succeeded' else ['cisco/site#play3'] }}
+            aggregate: true
+            per_host: false
+          when:
+            - fe_cisco_site_play3_status | default('') == 'failed'
+            - not (fe_cisco_site_play3_stats_published | default(false) | bool)
+          tags:
+            - always
+
+        - name: "cisco/site#play3 | Always | Mark the validation statistics as published"
+          ansible.builtin.set_fact:
+            fe_cisco_site_play3_stats_published: true
+          when:
+            - fe_cisco_site_play3_status | default('') == 'failed'
+          tags:
+            - always
+  pre_tasks:
+    - name: "cisco/site#play3 | Preflight validation"
+      tags:
+        - always
+        - preflight
+        - validation
+      block:
+
+        - name: "cisco/site#play3 | Initialize validation state"
+          ansible.builtin.set_fact:
+            fe_cisco_site_play3_start_epoch: "{{ now(fmt='%s') | int }}"
+            fe_cisco_site_play3_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+            fe_cisco_site_play3_status: "running"
+            fe_cisco_site_play3_preflight_passed: false
+            fe_cisco_site_play3_postflight_passed: false
+            fe_cisco_site_play3_failed_task: ""
+            fe_cisco_site_play3_error: ""
+            fe_cisco_site_play3_stats_published: false
+          tags:
+            - always
+
+        - name: "cisco/site#play3 | Preflight | Verify the control node meets the minimum ansible-core version"
+          ansible.builtin.assert:
+            that:
+              - ansible_version.full is version(fe_validation_min_ansible_version | default('2.12'), '>=')
+            fail_msg: >-
+              cisco/site#play3: requires ansible-core
+              {{ fe_validation_min_ansible_version | default('2.12') }} or newer,
+              found {{ ansible_version.full }}.
+            success_msg: >-
+              cisco/site#play3: ansible-core {{ ansible_version.full }} satisfies the minimum.
+            quiet: true
+          tags:
+            - always
+            - preflight
+            - validation
+
+        - name: "cisco/site#play3 | Preflight | Verify every declared required variable is defined"
+          ansible.builtin.assert:
+            that:
+              - vars[item] is defined
+            fail_msg: "cisco/site#play3: required variable '{{ item }}' is not defined."
+            success_msg: "cisco/site#play3: required variable '{{ item }}' is defined."
+            quiet: true
+          loop: "{{ fe_cisco_site_play3_required_vars | default([]) }}"
+          loop_control:
+            label: "{{ item }}"
+          tags:
+            - always
+            - preflight
+            - validation
+
+        - name: "cisco/site#play3 | Preflight | Record that preflight validation passed"
+          ansible.builtin.set_fact:
+            fe_cisco_site_play3_preflight_passed: true
+          tags:
+            - always
+            - preflight
+            - validation
+
+      rescue:
+
+        - name: "cisco/site#play3 | Rescue | Capture the failing task and error detail"
+          ansible.builtin.set_fact:
+            fe_cisco_site_play3_status: "preflight_failed"
+            fe_cisco_site_play3_postflight_passed: false
+            fe_cisco_site_play3_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+            fe_cisco_site_play3_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+          tags:
+            - always
+            - rescue
+
+        - name: "cisco/site#play3 | Rescue | Report the failure"
+          ansible.builtin.debug:
+            msg: >-
+              cisco/site#play3: FAILED at '{{ fe_cisco_site_play3_failed_task }}' on
+              {{ inventory_hostname }} - {{ fe_cisco_site_play3_error }}
+          tags:
+            - always
+            - rescue
+
+        - name: "cisco/site#play3 | Always | Publish the validation result with set_stats"
+          ansible.builtin.set_stats:
+            data:
+              fe_validation_results:
+                "cisco/site#play3":
+                  component: "cisco/site#play3"
+                  type: "playbook"
+                  platform: "cisco"
+                  host: "{{ inventory_hostname }}"
+                  status: "{{ fe_cisco_site_play3_status | default('unknown') }}"
+                  preflight_passed: "{{ fe_cisco_site_play3_preflight_passed | default(false) | bool }}"
+                  postflight_passed: "{{ fe_cisco_site_play3_postflight_passed | default(false) | bool }}"
+                  started_at: "{{ fe_cisco_site_play3_started_at | default('') }}"
+                  ended_at: "{{ fe_cisco_site_play3_ended_at | default('') }}"
+                  duration_seconds: "{{ fe_cisco_site_play3_duration_seconds | default(0) | int }}"
+                  failed_task: "{{ fe_cisco_site_play3_failed_task | default('') }}"
+                  error: "{{ fe_cisco_site_play3_error | default('') }}"
+                  check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+              fe_validation_executions: 1
+              fe_validation_succeeded: "{{ 1 if fe_cisco_site_play3_status | default('') == 'succeeded' else 0 }}"
+              fe_validation_failed: "{{ 0 if fe_cisco_site_play3_status | default('') == 'succeeded' else 1 }}"
+              fe_validation_duration_seconds: "{{ fe_cisco_site_play3_duration_seconds | default(0) | int }}"
+              fe_validation_failed_components: >-
+                {{ [] if fe_cisco_site_play3_status | default('') == 'succeeded' else ['cisco/site#play3'] }}
+            aggregate: true
+            per_host: false
+          tags:
+            - always
+
+        - name: "cisco/site#play3 | Always | Mark the validation statistics as published"
+          ansible.builtin.set_fact:
+            fe_cisco_site_play3_stats_published: true
+          tags:
+            - always
+
+        - name: "cisco/site#play3 | Rescue | Re-raise the failure unless the caller opted to continue"
+          ansible.builtin.fail:
+            msg: >-
+              cisco/site#play3 failed at '{{ fe_cisco_site_play3_failed_task }}': {{ fe_cisco_site_play3_error }}
+          when: not (fe_validation_continue_on_error | default(false) | bool)
+          tags:
+            - always
+            - rescue
+
+      always:
+
+        - name: "cisco/site#play3 | Always | Report the preflight outcome"
+          ansible.builtin.debug:
+            msg: >-
+              cisco/site#play3: preflight
+              {{ 'passed' if fe_cisco_site_play3_preflight_passed | default(false) | bool else 'FAILED' }}
+              on {{ inventory_hostname }}.
+          tags:
+            - always
+  post_tasks:
+    - name: "cisco/site#play3 | Postflight validation"
+      tags:
+        - always
+        - postflight
+        - validation
+      block:
+
+        - name: "cisco/site#play3 | Postflight | Verify the guarded body ran after a passing preflight"
+          ansible.builtin.assert:
+            that:
+              - fe_cisco_site_play3_preflight_passed | bool
+              - fe_cisco_site_play3_status in ['running', 'succeeded']
+            fail_msg: >-
+              cisco/site#play3: postflight validation failed - preflight passed
+              ={{ fe_cisco_site_play3_preflight_passed | default(false) }},
+              status={{ fe_cisco_site_play3_status | default('unknown') }}.
+            success_msg: "cisco/site#play3: postflight validation passed."
+            quiet: true
+          tags:
+            - always
+            - postflight
+            - validation
+
+        - name: "cisco/site#play3 | Postflight | Record the successful outcome"
+          ansible.builtin.set_fact:
+            fe_cisco_site_play3_postflight_passed: true
+            fe_cisco_site_play3_status: "succeeded"
+          tags:
+            - always
+            - postflight
+            - validation
+
+      rescue:
+
+        - name: "cisco/site#play3 | Rescue | Capture the failing task and error detail"
+          ansible.builtin.set_fact:
+            fe_cisco_site_play3_status: "failed"
+            fe_cisco_site_play3_postflight_passed: false
+            fe_cisco_site_play3_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+            fe_cisco_site_play3_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+          tags:
+            - always
+            - rescue
+
+        - name: "cisco/site#play3 | Rescue | Report the failure"
+          ansible.builtin.debug:
+            msg: >-
+              cisco/site#play3: FAILED at '{{ fe_cisco_site_play3_failed_task }}' on
+              {{ inventory_hostname }} - {{ fe_cisco_site_play3_error }}
+          tags:
+            - always
+            - rescue
+
+        - name: "cisco/site#play3 | Rescue | Re-raise the failure unless the caller opted to continue"
+          ansible.builtin.fail:
+            msg: >-
+              cisco/site#play3 failed at '{{ fe_cisco_site_play3_failed_task }}': {{ fe_cisco_site_play3_error }}
+          when: not (fe_validation_continue_on_error | default(false) | bool)
+          tags:
+            - always
+            - rescue
+
+      always:
+
+        - name: "cisco/site#play3 | Always | Compute the execution duration"
+          ansible.builtin.set_fact:
+            fe_cisco_site_play3_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+            fe_cisco_site_play3_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_cisco_site_play3_start_epoch | default(0) | int) }}"
+          tags:
+            - always
+
+        - name: "cisco/site#play3 | Always | Publish the validation result with set_stats"
+          ansible.builtin.set_stats:
+            data:
+              fe_validation_results:
+                "cisco/site#play3":
+                  component: "cisco/site#play3"
+                  type: "playbook"
+                  platform: "cisco"
+                  host: "{{ inventory_hostname }}"
+                  status: "{{ fe_cisco_site_play3_status | default('unknown') }}"
+                  preflight_passed: "{{ fe_cisco_site_play3_preflight_passed | default(false) | bool }}"
+                  postflight_passed: "{{ fe_cisco_site_play3_postflight_passed | default(false) | bool }}"
+                  started_at: "{{ fe_cisco_site_play3_started_at | default('') }}"
+                  ended_at: "{{ fe_cisco_site_play3_ended_at | default('') }}"
+                  duration_seconds: "{{ fe_cisco_site_play3_duration_seconds | default(0) | int }}"
+                  failed_task: "{{ fe_cisco_site_play3_failed_task | default('') }}"
+                  error: "{{ fe_cisco_site_play3_error | default('') }}"
+                  check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+              fe_validation_executions: 1
+              fe_validation_succeeded: "{{ 1 if fe_cisco_site_play3_status | default('') == 'succeeded' else 0 }}"
+              fe_validation_failed: "{{ 0 if fe_cisco_site_play3_status | default('') == 'succeeded' else 1 }}"
+              fe_validation_duration_seconds: "{{ fe_cisco_site_play3_duration_seconds | default(0) | int }}"
+              fe_validation_failed_components: >-
+                {{ [] if fe_cisco_site_play3_status | default('') == 'succeeded' else ['cisco/site#play3'] }}
+            aggregate: true
+            per_host: false
+          when:
+            - not (fe_cisco_site_play3_stats_published | default(false) | bool)
+          tags:
+            - always
+
+        - name: "cisco/site#play3 | Always | Mark the validation statistics as published"
+          ansible.builtin.set_fact:
+            fe_cisco_site_play3_stats_published: true
+          tags:
+            - always
+
+        - name: "cisco/site#play3 | Always | Report the run summary"
+          ansible.builtin.debug:
+            msg: >-
+              cisco/site#play3: {{ fe_cisco_site_play3_status | default('unknown') }} in
+              {{ fe_cisco_site_play3_duration_seconds | default(0) }}s on {{ inventory_hostname }}.
+          tags:
+            - always
 
 
 - name: Cisco SD-WAN Configuration
@@ -380,56 +1396,389 @@
     # =========================================
     # Phase 15: SD-WAN vManage Deployment
     # =========================================
-    - name: Phase 15 - SD-WAN vManage Deployment
-      ansible.builtin.include_role:
-        name: sdwan_vmanage_deploy
-      when: deploy_sdwan_vmanage | bool
-      tags: ['sdwan', 'vmanage', 'phase15']
+    - name: "cisco/site#play4 | Guarded execution with rescue and always handling"
+      block:
 
-    # =========================================
-    # Phase 16: SD-WAN vManage Configuration
-    # =========================================
-    - name: Phase 16 - SD-WAN vManage Configuration
-      ansible.builtin.include_role:
-        name: sdwan_vmanage_config
-      when: deploy_sdwan_vmanage_config | bool
-      tags: ['sdwan', 'vmanage', 'config', 'phase16']
+        - name: Phase 15 - SD-WAN vManage Deployment
+          ansible.builtin.include_role:
+            name: sdwan_vmanage_deploy
+          when: deploy_sdwan_vmanage | bool
+          tags: ['sdwan', 'vmanage', 'phase15']
 
-    # =========================================
-    # Phase 17: SD-WAN Controller Configuration
-    # =========================================
-    - name: Phase 17 - SD-WAN vBond/vSmart Controllers
-      ansible.builtin.include_role:
-        name: sdwan_controllers_config
-      when: deploy_sdwan_controllers | bool
-      tags: ['sdwan', 'controllers', 'phase17']
+        # =========================================
+        # Phase 16: SD-WAN vManage Configuration
+        # =========================================
+        - name: Phase 16 - SD-WAN vManage Configuration
+          ansible.builtin.include_role:
+            name: sdwan_vmanage_config
+          when: deploy_sdwan_vmanage_config | bool
+          tags: ['sdwan', 'vmanage', 'config', 'phase16']
 
-    # =========================================
-    # Phase 18: SD-WAN Edge Device Onboarding
-    # =========================================
-    - name: Phase 18 - SD-WAN Edge Device Onboarding
-      ansible.builtin.include_role:
-        name: sdwan_vedge_onboard
-      when: deploy_sdwan_vedge | bool
-      tags: ['sdwan', 'vedge', 'phase18']
+        # =========================================
+        # Phase 17: SD-WAN Controller Configuration
+        # =========================================
+        - name: Phase 17 - SD-WAN vBond/vSmart Controllers
+          ansible.builtin.include_role:
+            name: sdwan_controllers_config
+          when: deploy_sdwan_controllers | bool
+          tags: ['sdwan', 'controllers', 'phase17']
 
-    # =========================================
-    # Phase 19: SD-WAN DISA STIG Hardening
-    # =========================================
-    - name: Phase 19 - SD-WAN DISA STIG Security Hardening
-      ansible.builtin.include_role:
-        name: sdwan_security_hardening
-      when: deploy_sdwan_security | bool
-      tags: ['sdwan', 'security', 'stig', 'phase19']
+        # =========================================
+        # Phase 18: SD-WAN Edge Device Onboarding
+        # =========================================
+        - name: Phase 18 - SD-WAN Edge Device Onboarding
+          ansible.builtin.include_role:
+            name: sdwan_vedge_onboard
+          when: deploy_sdwan_vedge | bool
+          tags: ['sdwan', 'vedge', 'phase18']
 
-    # =========================================
-    # Phase 20: SD-WAN Monitoring
-    # =========================================
-    - name: Phase 20 - SD-WAN Monitoring and Telemetry
-      ansible.builtin.include_role:
-        name: sdwan_monitoring
-      when: deploy_sdwan_monitoring | bool
-      tags: ['sdwan', 'monitoring', 'phase20']
+        # =========================================
+        # Phase 19: SD-WAN DISA STIG Hardening
+        # =========================================
+        - name: Phase 19 - SD-WAN DISA STIG Security Hardening
+          ansible.builtin.include_role:
+            name: sdwan_security_hardening
+          when: deploy_sdwan_security | bool
+          tags: ['sdwan', 'security', 'stig', 'phase19']
+
+        # =========================================
+        # Phase 20: SD-WAN Monitoring
+        # =========================================
+        - name: Phase 20 - SD-WAN Monitoring and Telemetry
+          ansible.builtin.include_role:
+            name: sdwan_monitoring
+          when: deploy_sdwan_monitoring | bool
+          tags: ['sdwan', 'monitoring', 'phase20']
+
+      rescue:
+
+        - name: "cisco/site#play4 | Rescue | Capture the failing task and error detail"
+          ansible.builtin.set_fact:
+            fe_cisco_site_play4_status: "failed"
+            fe_cisco_site_play4_postflight_passed: false
+            fe_cisco_site_play4_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+            fe_cisco_site_play4_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+          tags:
+            - always
+            - rescue
+
+        - name: "cisco/site#play4 | Rescue | Report the failure"
+          ansible.builtin.debug:
+            msg: >-
+              cisco/site#play4: FAILED at '{{ fe_cisco_site_play4_failed_task }}' on
+              {{ inventory_hostname }} - {{ fe_cisco_site_play4_error }}
+          tags:
+            - always
+            - rescue
+
+        - name: "cisco/site#play4 | Rescue | Re-raise the failure unless the caller opted to continue"
+          ansible.builtin.fail:
+            msg: >-
+              cisco/site#play4 failed at '{{ fe_cisco_site_play4_failed_task }}': {{ fe_cisco_site_play4_error }}
+          when: not (fe_validation_continue_on_error | default(false) | bool)
+          tags:
+            - always
+            - rescue
+
+      always:
+
+        - name: "cisco/site#play4 | Always | Compute the execution duration"
+          ansible.builtin.set_fact:
+            fe_cisco_site_play4_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+            fe_cisco_site_play4_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_cisco_site_play4_start_epoch | default(0) | int) }}"
+          tags:
+            - always
+
+        - name: "cisco/site#play4 | Always | Publish the validation result with set_stats"
+          ansible.builtin.set_stats:
+            data:
+              fe_validation_results:
+                "cisco/site#play4":
+                  component: "cisco/site#play4"
+                  type: "playbook"
+                  platform: "cisco"
+                  host: "{{ inventory_hostname }}"
+                  status: "{{ fe_cisco_site_play4_status | default('unknown') }}"
+                  preflight_passed: "{{ fe_cisco_site_play4_preflight_passed | default(false) | bool }}"
+                  postflight_passed: "{{ fe_cisco_site_play4_postflight_passed | default(false) | bool }}"
+                  started_at: "{{ fe_cisco_site_play4_started_at | default('') }}"
+                  ended_at: "{{ fe_cisco_site_play4_ended_at | default('') }}"
+                  duration_seconds: "{{ fe_cisco_site_play4_duration_seconds | default(0) | int }}"
+                  failed_task: "{{ fe_cisco_site_play4_failed_task | default('') }}"
+                  error: "{{ fe_cisco_site_play4_error | default('') }}"
+                  check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+              fe_validation_executions: 1
+              fe_validation_succeeded: "{{ 1 if fe_cisco_site_play4_status | default('') == 'succeeded' else 0 }}"
+              fe_validation_failed: "{{ 0 if fe_cisco_site_play4_status | default('') == 'succeeded' else 1 }}"
+              fe_validation_duration_seconds: "{{ fe_cisco_site_play4_duration_seconds | default(0) | int }}"
+              fe_validation_failed_components: >-
+                {{ [] if fe_cisco_site_play4_status | default('') == 'succeeded' else ['cisco/site#play4'] }}
+            aggregate: true
+            per_host: false
+          when:
+            - fe_cisco_site_play4_status | default('') == 'failed'
+            - not (fe_cisco_site_play4_stats_published | default(false) | bool)
+          tags:
+            - always
+
+        - name: "cisco/site#play4 | Always | Mark the validation statistics as published"
+          ansible.builtin.set_fact:
+            fe_cisco_site_play4_stats_published: true
+          when:
+            - fe_cisco_site_play4_status | default('') == 'failed'
+          tags:
+            - always
+  pre_tasks:
+    - name: "cisco/site#play4 | Preflight validation"
+      tags:
+        - always
+        - preflight
+        - validation
+      block:
+
+        - name: "cisco/site#play4 | Initialize validation state"
+          ansible.builtin.set_fact:
+            fe_cisco_site_play4_start_epoch: "{{ now(fmt='%s') | int }}"
+            fe_cisco_site_play4_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+            fe_cisco_site_play4_status: "running"
+            fe_cisco_site_play4_preflight_passed: false
+            fe_cisco_site_play4_postflight_passed: false
+            fe_cisco_site_play4_failed_task: ""
+            fe_cisco_site_play4_error: ""
+            fe_cisco_site_play4_stats_published: false
+          tags:
+            - always
+
+        - name: "cisco/site#play4 | Preflight | Verify the control node meets the minimum ansible-core version"
+          ansible.builtin.assert:
+            that:
+              - ansible_version.full is version(fe_validation_min_ansible_version | default('2.12'), '>=')
+            fail_msg: >-
+              cisco/site#play4: requires ansible-core
+              {{ fe_validation_min_ansible_version | default('2.12') }} or newer,
+              found {{ ansible_version.full }}.
+            success_msg: >-
+              cisco/site#play4: ansible-core {{ ansible_version.full }} satisfies the minimum.
+            quiet: true
+          tags:
+            - always
+            - preflight
+            - validation
+
+        - name: "cisco/site#play4 | Preflight | Verify every declared required variable is defined"
+          ansible.builtin.assert:
+            that:
+              - vars[item] is defined
+            fail_msg: "cisco/site#play4: required variable '{{ item }}' is not defined."
+            success_msg: "cisco/site#play4: required variable '{{ item }}' is defined."
+            quiet: true
+          loop: "{{ fe_cisco_site_play4_required_vars | default([]) }}"
+          loop_control:
+            label: "{{ item }}"
+          tags:
+            - always
+            - preflight
+            - validation
+
+        - name: "cisco/site#play4 | Preflight | Record that preflight validation passed"
+          ansible.builtin.set_fact:
+            fe_cisco_site_play4_preflight_passed: true
+          tags:
+            - always
+            - preflight
+            - validation
+
+      rescue:
+
+        - name: "cisco/site#play4 | Rescue | Capture the failing task and error detail"
+          ansible.builtin.set_fact:
+            fe_cisco_site_play4_status: "preflight_failed"
+            fe_cisco_site_play4_postflight_passed: false
+            fe_cisco_site_play4_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+            fe_cisco_site_play4_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+          tags:
+            - always
+            - rescue
+
+        - name: "cisco/site#play4 | Rescue | Report the failure"
+          ansible.builtin.debug:
+            msg: >-
+              cisco/site#play4: FAILED at '{{ fe_cisco_site_play4_failed_task }}' on
+              {{ inventory_hostname }} - {{ fe_cisco_site_play4_error }}
+          tags:
+            - always
+            - rescue
+
+        - name: "cisco/site#play4 | Always | Publish the validation result with set_stats"
+          ansible.builtin.set_stats:
+            data:
+              fe_validation_results:
+                "cisco/site#play4":
+                  component: "cisco/site#play4"
+                  type: "playbook"
+                  platform: "cisco"
+                  host: "{{ inventory_hostname }}"
+                  status: "{{ fe_cisco_site_play4_status | default('unknown') }}"
+                  preflight_passed: "{{ fe_cisco_site_play4_preflight_passed | default(false) | bool }}"
+                  postflight_passed: "{{ fe_cisco_site_play4_postflight_passed | default(false) | bool }}"
+                  started_at: "{{ fe_cisco_site_play4_started_at | default('') }}"
+                  ended_at: "{{ fe_cisco_site_play4_ended_at | default('') }}"
+                  duration_seconds: "{{ fe_cisco_site_play4_duration_seconds | default(0) | int }}"
+                  failed_task: "{{ fe_cisco_site_play4_failed_task | default('') }}"
+                  error: "{{ fe_cisco_site_play4_error | default('') }}"
+                  check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+              fe_validation_executions: 1
+              fe_validation_succeeded: "{{ 1 if fe_cisco_site_play4_status | default('') == 'succeeded' else 0 }}"
+              fe_validation_failed: "{{ 0 if fe_cisco_site_play4_status | default('') == 'succeeded' else 1 }}"
+              fe_validation_duration_seconds: "{{ fe_cisco_site_play4_duration_seconds | default(0) | int }}"
+              fe_validation_failed_components: >-
+                {{ [] if fe_cisco_site_play4_status | default('') == 'succeeded' else ['cisco/site#play4'] }}
+            aggregate: true
+            per_host: false
+          tags:
+            - always
+
+        - name: "cisco/site#play4 | Always | Mark the validation statistics as published"
+          ansible.builtin.set_fact:
+            fe_cisco_site_play4_stats_published: true
+          tags:
+            - always
+
+        - name: "cisco/site#play4 | Rescue | Re-raise the failure unless the caller opted to continue"
+          ansible.builtin.fail:
+            msg: >-
+              cisco/site#play4 failed at '{{ fe_cisco_site_play4_failed_task }}': {{ fe_cisco_site_play4_error }}
+          when: not (fe_validation_continue_on_error | default(false) | bool)
+          tags:
+            - always
+            - rescue
+
+      always:
+
+        - name: "cisco/site#play4 | Always | Report the preflight outcome"
+          ansible.builtin.debug:
+            msg: >-
+              cisco/site#play4: preflight
+              {{ 'passed' if fe_cisco_site_play4_preflight_passed | default(false) | bool else 'FAILED' }}
+              on {{ inventory_hostname }}.
+          tags:
+            - always
+  post_tasks:
+    - name: "cisco/site#play4 | Postflight validation"
+      tags:
+        - always
+        - postflight
+        - validation
+      block:
+
+        - name: "cisco/site#play4 | Postflight | Verify the guarded body ran after a passing preflight"
+          ansible.builtin.assert:
+            that:
+              - fe_cisco_site_play4_preflight_passed | bool
+              - fe_cisco_site_play4_status in ['running', 'succeeded']
+            fail_msg: >-
+              cisco/site#play4: postflight validation failed - preflight passed
+              ={{ fe_cisco_site_play4_preflight_passed | default(false) }},
+              status={{ fe_cisco_site_play4_status | default('unknown') }}.
+            success_msg: "cisco/site#play4: postflight validation passed."
+            quiet: true
+          tags:
+            - always
+            - postflight
+            - validation
+
+        - name: "cisco/site#play4 | Postflight | Record the successful outcome"
+          ansible.builtin.set_fact:
+            fe_cisco_site_play4_postflight_passed: true
+            fe_cisco_site_play4_status: "succeeded"
+          tags:
+            - always
+            - postflight
+            - validation
+
+      rescue:
+
+        - name: "cisco/site#play4 | Rescue | Capture the failing task and error detail"
+          ansible.builtin.set_fact:
+            fe_cisco_site_play4_status: "failed"
+            fe_cisco_site_play4_postflight_passed: false
+            fe_cisco_site_play4_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+            fe_cisco_site_play4_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+          tags:
+            - always
+            - rescue
+
+        - name: "cisco/site#play4 | Rescue | Report the failure"
+          ansible.builtin.debug:
+            msg: >-
+              cisco/site#play4: FAILED at '{{ fe_cisco_site_play4_failed_task }}' on
+              {{ inventory_hostname }} - {{ fe_cisco_site_play4_error }}
+          tags:
+            - always
+            - rescue
+
+        - name: "cisco/site#play4 | Rescue | Re-raise the failure unless the caller opted to continue"
+          ansible.builtin.fail:
+            msg: >-
+              cisco/site#play4 failed at '{{ fe_cisco_site_play4_failed_task }}': {{ fe_cisco_site_play4_error }}
+          when: not (fe_validation_continue_on_error | default(false) | bool)
+          tags:
+            - always
+            - rescue
+
+      always:
+
+        - name: "cisco/site#play4 | Always | Compute the execution duration"
+          ansible.builtin.set_fact:
+            fe_cisco_site_play4_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+            fe_cisco_site_play4_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_cisco_site_play4_start_epoch | default(0) | int) }}"
+          tags:
+            - always
+
+        - name: "cisco/site#play4 | Always | Publish the validation result with set_stats"
+          ansible.builtin.set_stats:
+            data:
+              fe_validation_results:
+                "cisco/site#play4":
+                  component: "cisco/site#play4"
+                  type: "playbook"
+                  platform: "cisco"
+                  host: "{{ inventory_hostname }}"
+                  status: "{{ fe_cisco_site_play4_status | default('unknown') }}"
+                  preflight_passed: "{{ fe_cisco_site_play4_preflight_passed | default(false) | bool }}"
+                  postflight_passed: "{{ fe_cisco_site_play4_postflight_passed | default(false) | bool }}"
+                  started_at: "{{ fe_cisco_site_play4_started_at | default('') }}"
+                  ended_at: "{{ fe_cisco_site_play4_ended_at | default('') }}"
+                  duration_seconds: "{{ fe_cisco_site_play4_duration_seconds | default(0) | int }}"
+                  failed_task: "{{ fe_cisco_site_play4_failed_task | default('') }}"
+                  error: "{{ fe_cisco_site_play4_error | default('') }}"
+                  check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+              fe_validation_executions: 1
+              fe_validation_succeeded: "{{ 1 if fe_cisco_site_play4_status | default('') == 'succeeded' else 0 }}"
+              fe_validation_failed: "{{ 0 if fe_cisco_site_play4_status | default('') == 'succeeded' else 1 }}"
+              fe_validation_duration_seconds: "{{ fe_cisco_site_play4_duration_seconds | default(0) | int }}"
+              fe_validation_failed_components: >-
+                {{ [] if fe_cisco_site_play4_status | default('') == 'succeeded' else ['cisco/site#play4'] }}
+            aggregate: true
+            per_host: false
+          when:
+            - not (fe_cisco_site_play4_stats_published | default(false) | bool)
+          tags:
+            - always
+
+        - name: "cisco/site#play4 | Always | Mark the validation statistics as published"
+          ansible.builtin.set_fact:
+            fe_cisco_site_play4_stats_published: true
+          tags:
+            - always
+
+        - name: "cisco/site#play4 | Always | Report the run summary"
+          ansible.builtin.debug:
+            msg: >-
+              cisco/site#play4: {{ fe_cisco_site_play4_status | default('unknown') }} in
+              {{ fe_cisco_site_play4_duration_seconds | default(0) }}s on {{ inventory_hostname }}.
+          tags:
+            - always
 
 
 - name: Deployment Summary
@@ -438,41 +1787,374 @@
   any_errors_fatal: true
 
   tasks:
-    - name: Display deployment summary
-      ansible.builtin.debug:
-        msg:
-          - "==========================================="
-          - " Cisco Platform Deployment Complete"
-          - " Date: {{ ansible_date_time.iso8601 | default('N/A') }}"
-          - "==========================================="
-          - "--- Cisco ACI (5 roles) ---"
-          - "  Fabric Deploy : {{ 'Configured' if deploy_aci_fabric | default(true) else 'Skipped' }}"
-          - "  Tenant Config : {{ 'Configured' if deploy_aci_tenant | default(true) else 'Skipped' }}"
-          - "  Network Config: {{ 'Configured' if deploy_aci_network | default(true) else 'Skipped' }}"
-          - "  Security      : {{ 'Hardened' if deploy_aci_security | default(true) else 'Skipped' }}"
-          - "  Monitoring    : {{ 'Configured' if deploy_aci_monitoring | default(true) else 'Skipped' }}"
-          - "--- Cisco ISE (28 roles) ---"
-          - "  ISE Version   : {{ ise_version | default('3.3') }}"
-          - "  Policy Sets   : {{ 'Configured' if deploy_ise_policy | default(true) else 'Skipped' }}"
-          - "  Profiling     : {{ 'Configured' if deploy_ise_profiling | default(true) else 'Skipped' }}"
-          - "  Posture       : {{ 'Configured' if deploy_ise_posture | default(true) else 'Skipped' }}"
-          - "  Guest Portal  : {{ 'Configured' if deploy_ise_guest | default(true) else 'Skipped' }}"
-          - "  BYOD Workflow : {{ 'Configured' if deploy_ise_byod | default(false) else 'Skipped' }}"
-          - "  pxGrid        : {{ 'Configured' if deploy_ise_pxgrid | default(true) else 'Skipped' }}"
-          - "  Integrations  : {{ 'Configured' if deploy_ise_integrations | default(true) else 'Skipped' }}"
-          - "  Reporting     : {{ 'Configured' if deploy_ise_reporting | default(true) else 'Skipped' }}"
-          - "--- Cisco UCS (5 roles) ---"
-          - "  Infrastructure: {{ 'Configured' if deploy_ucs_infrastructure | default(true) else 'Skipped' }}"
-          - "  Networking    : {{ 'Configured' if deploy_ucs_networking | default(true) else 'Skipped' }}"
-          - "  Security      : {{ 'Hardened' if deploy_ucs_security | default(true) else 'Skipped' }}"
-          - "  Backup/DR     : {{ 'Configured' if deploy_ucs_backup | default(true) else 'Skipped' }}"
-          - "  Monitoring    : {{ 'Configured' if deploy_ucs_monitoring | default(true) else 'Skipped' }}"
-          - "--- Cisco SD-WAN (6 roles — Phases 15–20) ---"
-          - "  vManage Deploy: {{ 'Deployed' if deploy_sdwan_vmanage | default(true) else 'Skipped' }}"
-          - "  vManage Config: {{ 'Configured' if deploy_sdwan_vmanage_config | default(true) else 'Skipped' }}"
-          - "  Controllers   : {{ 'Configured' if deploy_sdwan_controllers | default(true) else 'Skipped' }}"
-          - "  Edge Onboard  : {{ 'Onboarded' if deploy_sdwan_vedge | default(true) else 'Skipped' }}"
-          - "  STIG Hardening: {{ 'Hardened' if deploy_sdwan_security | default(true) else 'Skipped' }}"
-          - "  Monitoring    : {{ 'Configured' if deploy_sdwan_monitoring | default(true) else 'Skipped' }}"
-          - "==========================================="
-      tags: ['always']
+    - name: "cisco/site#play5 | Guarded execution with rescue and always handling"
+      block:
+
+        - name: Display deployment summary
+          ansible.builtin.debug:
+            msg:
+              - "==========================================="
+              - " Cisco Platform Deployment Complete"
+              - " Date: {{ ansible_date_time.iso8601 | default('N/A') }}"
+              - "==========================================="
+              - "--- Cisco ACI (5 roles) ---"
+              - "  Fabric Deploy : {{ 'Configured' if deploy_aci_fabric | default(true) else 'Skipped' }}"
+              - "  Tenant Config : {{ 'Configured' if deploy_aci_tenant | default(true) else 'Skipped' }}"
+              - "  Network Config: {{ 'Configured' if deploy_aci_network | default(true) else 'Skipped' }}"
+              - "  Security      : {{ 'Hardened' if deploy_aci_security | default(true) else 'Skipped' }}"
+              - "  Monitoring    : {{ 'Configured' if deploy_aci_monitoring | default(true) else 'Skipped' }}"
+              - "--- Cisco ISE (28 roles) ---"
+              - "  ISE Version   : {{ ise_version | default('3.3') }}"
+              - "  Policy Sets   : {{ 'Configured' if deploy_ise_policy | default(true) else 'Skipped' }}"
+              - "  Profiling     : {{ 'Configured' if deploy_ise_profiling | default(true) else 'Skipped' }}"
+              - "  Posture       : {{ 'Configured' if deploy_ise_posture | default(true) else 'Skipped' }}"
+              - "  Guest Portal  : {{ 'Configured' if deploy_ise_guest | default(true) else 'Skipped' }}"
+              - "  BYOD Workflow : {{ 'Configured' if deploy_ise_byod | default(false) else 'Skipped' }}"
+              - "  pxGrid        : {{ 'Configured' if deploy_ise_pxgrid | default(true) else 'Skipped' }}"
+              - "  Integrations  : {{ 'Configured' if deploy_ise_integrations | default(true) else 'Skipped' }}"
+              - "  Reporting     : {{ 'Configured' if deploy_ise_reporting | default(true) else 'Skipped' }}"
+              - "--- Cisco UCS (5 roles) ---"
+              - "  Infrastructure: {{ 'Configured' if deploy_ucs_infrastructure | default(true) else 'Skipped' }}"
+              - "  Networking    : {{ 'Configured' if deploy_ucs_networking | default(true) else 'Skipped' }}"
+              - "  Security      : {{ 'Hardened' if deploy_ucs_security | default(true) else 'Skipped' }}"
+              - "  Backup/DR     : {{ 'Configured' if deploy_ucs_backup | default(true) else 'Skipped' }}"
+              - "  Monitoring    : {{ 'Configured' if deploy_ucs_monitoring | default(true) else 'Skipped' }}"
+              - "--- Cisco SD-WAN (6 roles — Phases 15–20) ---"
+              - "  vManage Deploy: {{ 'Deployed' if deploy_sdwan_vmanage | default(true) else 'Skipped' }}"
+              - "  vManage Config: {{ 'Configured' if deploy_sdwan_vmanage_config | default(true) else 'Skipped' }}"
+              - "  Controllers   : {{ 'Configured' if deploy_sdwan_controllers | default(true) else 'Skipped' }}"
+              - "  Edge Onboard  : {{ 'Onboarded' if deploy_sdwan_vedge | default(true) else 'Skipped' }}"
+              - "  STIG Hardening: {{ 'Hardened' if deploy_sdwan_security | default(true) else 'Skipped' }}"
+              - "  Monitoring    : {{ 'Configured' if deploy_sdwan_monitoring | default(true) else 'Skipped' }}"
+              - "==========================================="
+          tags: ['always']
+
+      rescue:
+
+        - name: "cisco/site#play5 | Rescue | Capture the failing task and error detail"
+          ansible.builtin.set_fact:
+            fe_cisco_site_play5_status: "failed"
+            fe_cisco_site_play5_postflight_passed: false
+            fe_cisco_site_play5_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+            fe_cisco_site_play5_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+          tags:
+            - always
+            - rescue
+
+        - name: "cisco/site#play5 | Rescue | Report the failure"
+          ansible.builtin.debug:
+            msg: >-
+              cisco/site#play5: FAILED at '{{ fe_cisco_site_play5_failed_task }}' on
+              {{ inventory_hostname }} - {{ fe_cisco_site_play5_error }}
+          tags:
+            - always
+            - rescue
+
+        - name: "cisco/site#play5 | Rescue | Re-raise the failure unless the caller opted to continue"
+          ansible.builtin.fail:
+            msg: >-
+              cisco/site#play5 failed at '{{ fe_cisco_site_play5_failed_task }}': {{ fe_cisco_site_play5_error }}
+          when: not (fe_validation_continue_on_error | default(false) | bool)
+          tags:
+            - always
+            - rescue
+
+      always:
+
+        - name: "cisco/site#play5 | Always | Compute the execution duration"
+          ansible.builtin.set_fact:
+            fe_cisco_site_play5_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+            fe_cisco_site_play5_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_cisco_site_play5_start_epoch | default(0) | int) }}"
+          tags:
+            - always
+
+        - name: "cisco/site#play5 | Always | Publish the validation result with set_stats"
+          ansible.builtin.set_stats:
+            data:
+              fe_validation_results:
+                "cisco/site#play5":
+                  component: "cisco/site#play5"
+                  type: "playbook"
+                  platform: "cisco"
+                  host: "{{ inventory_hostname }}"
+                  status: "{{ fe_cisco_site_play5_status | default('unknown') }}"
+                  preflight_passed: "{{ fe_cisco_site_play5_preflight_passed | default(false) | bool }}"
+                  postflight_passed: "{{ fe_cisco_site_play5_postflight_passed | default(false) | bool }}"
+                  started_at: "{{ fe_cisco_site_play5_started_at | default('') }}"
+                  ended_at: "{{ fe_cisco_site_play5_ended_at | default('') }}"
+                  duration_seconds: "{{ fe_cisco_site_play5_duration_seconds | default(0) | int }}"
+                  failed_task: "{{ fe_cisco_site_play5_failed_task | default('') }}"
+                  error: "{{ fe_cisco_site_play5_error | default('') }}"
+                  check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+              fe_validation_executions: 1
+              fe_validation_succeeded: "{{ 1 if fe_cisco_site_play5_status | default('') == 'succeeded' else 0 }}"
+              fe_validation_failed: "{{ 0 if fe_cisco_site_play5_status | default('') == 'succeeded' else 1 }}"
+              fe_validation_duration_seconds: "{{ fe_cisco_site_play5_duration_seconds | default(0) | int }}"
+              fe_validation_failed_components: >-
+                {{ [] if fe_cisco_site_play5_status | default('') == 'succeeded' else ['cisco/site#play5'] }}
+            aggregate: true
+            per_host: false
+          when:
+            - fe_cisco_site_play5_status | default('') == 'failed'
+            - not (fe_cisco_site_play5_stats_published | default(false) | bool)
+          tags:
+            - always
+
+        - name: "cisco/site#play5 | Always | Mark the validation statistics as published"
+          ansible.builtin.set_fact:
+            fe_cisco_site_play5_stats_published: true
+          when:
+            - fe_cisco_site_play5_status | default('') == 'failed'
+          tags:
+            - always
+  pre_tasks:
+    - name: "cisco/site#play5 | Preflight validation"
+      tags:
+        - always
+        - preflight
+        - validation
+      block:
+
+        - name: "cisco/site#play5 | Initialize validation state"
+          ansible.builtin.set_fact:
+            fe_cisco_site_play5_start_epoch: "{{ now(fmt='%s') | int }}"
+            fe_cisco_site_play5_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+            fe_cisco_site_play5_status: "running"
+            fe_cisco_site_play5_preflight_passed: false
+            fe_cisco_site_play5_postflight_passed: false
+            fe_cisco_site_play5_failed_task: ""
+            fe_cisco_site_play5_error: ""
+            fe_cisco_site_play5_stats_published: false
+          tags:
+            - always
+
+        - name: "cisco/site#play5 | Preflight | Verify the control node meets the minimum ansible-core version"
+          ansible.builtin.assert:
+            that:
+              - ansible_version.full is version(fe_validation_min_ansible_version | default('2.12'), '>=')
+            fail_msg: >-
+              cisco/site#play5: requires ansible-core
+              {{ fe_validation_min_ansible_version | default('2.12') }} or newer,
+              found {{ ansible_version.full }}.
+            success_msg: >-
+              cisco/site#play5: ansible-core {{ ansible_version.full }} satisfies the minimum.
+            quiet: true
+          tags:
+            - always
+            - preflight
+            - validation
+
+        - name: "cisco/site#play5 | Preflight | Verify every declared required variable is defined"
+          ansible.builtin.assert:
+            that:
+              - vars[item] is defined
+            fail_msg: "cisco/site#play5: required variable '{{ item }}' is not defined."
+            success_msg: "cisco/site#play5: required variable '{{ item }}' is defined."
+            quiet: true
+          loop: "{{ fe_cisco_site_play5_required_vars | default([]) }}"
+          loop_control:
+            label: "{{ item }}"
+          tags:
+            - always
+            - preflight
+            - validation
+
+        - name: "cisco/site#play5 | Preflight | Record that preflight validation passed"
+          ansible.builtin.set_fact:
+            fe_cisco_site_play5_preflight_passed: true
+          tags:
+            - always
+            - preflight
+            - validation
+
+      rescue:
+
+        - name: "cisco/site#play5 | Rescue | Capture the failing task and error detail"
+          ansible.builtin.set_fact:
+            fe_cisco_site_play5_status: "preflight_failed"
+            fe_cisco_site_play5_postflight_passed: false
+            fe_cisco_site_play5_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+            fe_cisco_site_play5_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+          tags:
+            - always
+            - rescue
+
+        - name: "cisco/site#play5 | Rescue | Report the failure"
+          ansible.builtin.debug:
+            msg: >-
+              cisco/site#play5: FAILED at '{{ fe_cisco_site_play5_failed_task }}' on
+              {{ inventory_hostname }} - {{ fe_cisco_site_play5_error }}
+          tags:
+            - always
+            - rescue
+
+        - name: "cisco/site#play5 | Always | Publish the validation result with set_stats"
+          ansible.builtin.set_stats:
+            data:
+              fe_validation_results:
+                "cisco/site#play5":
+                  component: "cisco/site#play5"
+                  type: "playbook"
+                  platform: "cisco"
+                  host: "{{ inventory_hostname }}"
+                  status: "{{ fe_cisco_site_play5_status | default('unknown') }}"
+                  preflight_passed: "{{ fe_cisco_site_play5_preflight_passed | default(false) | bool }}"
+                  postflight_passed: "{{ fe_cisco_site_play5_postflight_passed | default(false) | bool }}"
+                  started_at: "{{ fe_cisco_site_play5_started_at | default('') }}"
+                  ended_at: "{{ fe_cisco_site_play5_ended_at | default('') }}"
+                  duration_seconds: "{{ fe_cisco_site_play5_duration_seconds | default(0) | int }}"
+                  failed_task: "{{ fe_cisco_site_play5_failed_task | default('') }}"
+                  error: "{{ fe_cisco_site_play5_error | default('') }}"
+                  check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+              fe_validation_executions: 1
+              fe_validation_succeeded: "{{ 1 if fe_cisco_site_play5_status | default('') == 'succeeded' else 0 }}"
+              fe_validation_failed: "{{ 0 if fe_cisco_site_play5_status | default('') == 'succeeded' else 1 }}"
+              fe_validation_duration_seconds: "{{ fe_cisco_site_play5_duration_seconds | default(0) | int }}"
+              fe_validation_failed_components: >-
+                {{ [] if fe_cisco_site_play5_status | default('') == 'succeeded' else ['cisco/site#play5'] }}
+            aggregate: true
+            per_host: false
+          tags:
+            - always
+
+        - name: "cisco/site#play5 | Always | Mark the validation statistics as published"
+          ansible.builtin.set_fact:
+            fe_cisco_site_play5_stats_published: true
+          tags:
+            - always
+
+        - name: "cisco/site#play5 | Rescue | Re-raise the failure unless the caller opted to continue"
+          ansible.builtin.fail:
+            msg: >-
+              cisco/site#play5 failed at '{{ fe_cisco_site_play5_failed_task }}': {{ fe_cisco_site_play5_error }}
+          when: not (fe_validation_continue_on_error | default(false) | bool)
+          tags:
+            - always
+            - rescue
+
+      always:
+
+        - name: "cisco/site#play5 | Always | Report the preflight outcome"
+          ansible.builtin.debug:
+            msg: >-
+              cisco/site#play5: preflight
+              {{ 'passed' if fe_cisco_site_play5_preflight_passed | default(false) | bool else 'FAILED' }}
+              on {{ inventory_hostname }}.
+          tags:
+            - always
+  post_tasks:
+    - name: "cisco/site#play5 | Postflight validation"
+      tags:
+        - always
+        - postflight
+        - validation
+      block:
+
+        - name: "cisco/site#play5 | Postflight | Verify the guarded body ran after a passing preflight"
+          ansible.builtin.assert:
+            that:
+              - fe_cisco_site_play5_preflight_passed | bool
+              - fe_cisco_site_play5_status in ['running', 'succeeded']
+            fail_msg: >-
+              cisco/site#play5: postflight validation failed - preflight passed
+              ={{ fe_cisco_site_play5_preflight_passed | default(false) }},
+              status={{ fe_cisco_site_play5_status | default('unknown') }}.
+            success_msg: "cisco/site#play5: postflight validation passed."
+            quiet: true
+          tags:
+            - always
+            - postflight
+            - validation
+
+        - name: "cisco/site#play5 | Postflight | Record the successful outcome"
+          ansible.builtin.set_fact:
+            fe_cisco_site_play5_postflight_passed: true
+            fe_cisco_site_play5_status: "succeeded"
+          tags:
+            - always
+            - postflight
+            - validation
+
+      rescue:
+
+        - name: "cisco/site#play5 | Rescue | Capture the failing task and error detail"
+          ansible.builtin.set_fact:
+            fe_cisco_site_play5_status: "failed"
+            fe_cisco_site_play5_postflight_passed: false
+            fe_cisco_site_play5_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+            fe_cisco_site_play5_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+          tags:
+            - always
+            - rescue
+
+        - name: "cisco/site#play5 | Rescue | Report the failure"
+          ansible.builtin.debug:
+            msg: >-
+              cisco/site#play5: FAILED at '{{ fe_cisco_site_play5_failed_task }}' on
+              {{ inventory_hostname }} - {{ fe_cisco_site_play5_error }}
+          tags:
+            - always
+            - rescue
+
+        - name: "cisco/site#play5 | Rescue | Re-raise the failure unless the caller opted to continue"
+          ansible.builtin.fail:
+            msg: >-
+              cisco/site#play5 failed at '{{ fe_cisco_site_play5_failed_task }}': {{ fe_cisco_site_play5_error }}
+          when: not (fe_validation_continue_on_error | default(false) | bool)
+          tags:
+            - always
+            - rescue
+
+      always:
+
+        - name: "cisco/site#play5 | Always | Compute the execution duration"
+          ansible.builtin.set_fact:
+            fe_cisco_site_play5_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+            fe_cisco_site_play5_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_cisco_site_play5_start_epoch | default(0) | int) }}"
+          tags:
+            - always
+
+        - name: "cisco/site#play5 | Always | Publish the validation result with set_stats"
+          ansible.builtin.set_stats:
+            data:
+              fe_validation_results:
+                "cisco/site#play5":
+                  component: "cisco/site#play5"
+                  type: "playbook"
+                  platform: "cisco"
+                  host: "{{ inventory_hostname }}"
+                  status: "{{ fe_cisco_site_play5_status | default('unknown') }}"
+                  preflight_passed: "{{ fe_cisco_site_play5_preflight_passed | default(false) | bool }}"
+                  postflight_passed: "{{ fe_cisco_site_play5_postflight_passed | default(false) | bool }}"
+                  started_at: "{{ fe_cisco_site_play5_started_at | default('') }}"
+                  ended_at: "{{ fe_cisco_site_play5_ended_at | default('') }}"
+                  duration_seconds: "{{ fe_cisco_site_play5_duration_seconds | default(0) | int }}"
+                  failed_task: "{{ fe_cisco_site_play5_failed_task | default('') }}"
+                  error: "{{ fe_cisco_site_play5_error | default('') }}"
+                  check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+              fe_validation_executions: 1
+              fe_validation_succeeded: "{{ 1 if fe_cisco_site_play5_status | default('') == 'succeeded' else 0 }}"
+              fe_validation_failed: "{{ 0 if fe_cisco_site_play5_status | default('') == 'succeeded' else 1 }}"
+              fe_validation_duration_seconds: "{{ fe_cisco_site_play5_duration_seconds | default(0) | int }}"
+              fe_validation_failed_components: >-
+                {{ [] if fe_cisco_site_play5_status | default('') == 'succeeded' else ['cisco/site#play5'] }}
+            aggregate: true
+            per_host: false
+          when:
+            - not (fe_cisco_site_play5_stats_published | default(false) | bool)
+          tags:
+            - always
+
+        - name: "cisco/site#play5 | Always | Mark the validation statistics as published"
+          ansible.builtin.set_fact:
+            fe_cisco_site_play5_stats_published: true
+          tags:
+            - always
+
+        - name: "cisco/site#play5 | Always | Report the run summary"
+          ansible.builtin.debug:
+            msg: >-
+              cisco/site#play5: {{ fe_cisco_site_play5_status | default('unknown') }} in
+              {{ fe_cisco_site_play5_duration_seconds | default(0) }}s on {{ inventory_hostname }}.
+          tags:
+            - always

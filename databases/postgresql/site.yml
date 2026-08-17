@@ -14,6 +14,23 @@
 #   - backup: Backup configuration
 #   - pgpool: pgPool load balancing
 
+# ---------------------------------------------------------------------------
+# Fourth Estate preflight / postflight validation harness
+#
+# Every play below carries a block/rescue/always validation wrapper:
+#
+#   pre_tasks   preflight validation. On failure it records the reason,
+#               publishes the outcome with set_stats and aborts the play
+#               before any role or task runs.
+#   tasks       the original task list, wrapped so a failure is captured
+#               (which task, which error) and then re-raised.
+#   post_tasks  postflight validation, then the run record is published with
+#               ansible.builtin.set_stats.
+#
+# Set fe_validation_continue_on_error=true to record failures and keep going.
+# See docs/VALIDATION_AND_STATS.md for the published stats schema.
+# ---------------------------------------------------------------------------
+
 - name: PostgreSQL Primary Server Setup
   hosts: postgresql_primary
   become: true
@@ -28,37 +45,370 @@
     deploy_audit: true
 
   tasks:
-    - name: Phase 1 - Install PostgreSQL
-      ansible.builtin.include_role:
-        name: postgresql_install
-      when: deploy_install | bool
-      tags: ['install', 'phase1']
+    - name: "databases/postgresql/site#play1 | Guarded execution with rescue and always handling"
+      block:
 
-    - name: Phase 2 - Configure PostgreSQL
-      ansible.builtin.include_role:
-        name: postgresql_config
-      when: deploy_config | bool
-      tags: ['config', 'phase2']
+        - name: Phase 1 - Install PostgreSQL
+          ansible.builtin.include_role:
+            name: postgresql_install
+          when: deploy_install | bool
+          tags: ['install', 'phase1']
 
-    - name: Phase 3 - Security Hardening
-      ansible.builtin.include_role:
-        name: postgresql_security
-      when: deploy_security | bool
-      tags: ['security', 'phase3']
+        - name: Phase 2 - Configure PostgreSQL
+          ansible.builtin.include_role:
+            name: postgresql_config
+          when: deploy_config | bool
+          tags: ['config', 'phase2']
 
-    - name: Phase 4 - Configure Replication (Primary)
-      ansible.builtin.include_role:
-        name: postgresql_replication
-      vars:
-        replication_role: primary
-      when: deploy_replication | bool
-      tags: ['replication', 'phase4']
+        - name: Phase 3 - Security Hardening
+          ansible.builtin.include_role:
+            name: postgresql_security
+          when: deploy_security | bool
+          tags: ['security', 'phase3']
 
-    - name: Phase 5 - Configure Audit Logging
-      ansible.builtin.include_role:
-        name: postgresql_audit
-      when: deploy_audit | bool
-      tags: ['audit', 'phase5']
+        - name: Phase 4 - Configure Replication (Primary)
+          ansible.builtin.include_role:
+            name: postgresql_replication
+          vars:
+            replication_role: primary
+          when: deploy_replication | bool
+          tags: ['replication', 'phase4']
+
+        - name: Phase 5 - Configure Audit Logging
+          ansible.builtin.include_role:
+            name: postgresql_audit
+          when: deploy_audit | bool
+          tags: ['audit', 'phase5']
+
+      rescue:
+
+        - name: "databases/postgresql/site#play1 | Rescue | Capture the failing task and error detail"
+          ansible.builtin.set_fact:
+            fe_databases_postgresql_site_play1_status: "failed"
+            fe_databases_postgresql_site_play1_postflight_passed: false
+            fe_databases_postgresql_site_play1_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+            fe_databases_postgresql_site_play1_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+          tags:
+            - always
+            - rescue
+
+        - name: "databases/postgresql/site#play1 | Rescue | Report the failure"
+          ansible.builtin.debug:
+            msg: >-
+              databases/postgresql/site#play1: FAILED at '{{ fe_databases_postgresql_site_play1_failed_task }}' on
+              {{ inventory_hostname }} - {{ fe_databases_postgresql_site_play1_error }}
+          tags:
+            - always
+            - rescue
+
+        - name: "databases/postgresql/site#play1 | Rescue | Re-raise the failure unless the caller opted to continue"
+          ansible.builtin.fail:
+            msg: >-
+              databases/postgresql/site#play1 failed at '{{ fe_databases_postgresql_site_play1_failed_task }}': {{ fe_databases_postgresql_site_play1_error }}
+          when: not (fe_validation_continue_on_error | default(false) | bool)
+          tags:
+            - always
+            - rescue
+
+      always:
+
+        - name: "databases/postgresql/site#play1 | Always | Compute the execution duration"
+          ansible.builtin.set_fact:
+            fe_databases_postgresql_site_play1_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+            fe_databases_postgresql_site_play1_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_databases_postgresql_site_play1_start_epoch | default(0) | int) }}"
+          tags:
+            - always
+
+        - name: "databases/postgresql/site#play1 | Always | Publish the validation result with set_stats"
+          ansible.builtin.set_stats:
+            data:
+              fe_validation_results:
+                "databases/postgresql/site#play1":
+                  component: "databases/postgresql/site#play1"
+                  type: "playbook"
+                  platform: "databases"
+                  host: "{{ inventory_hostname }}"
+                  status: "{{ fe_databases_postgresql_site_play1_status | default('unknown') }}"
+                  preflight_passed: "{{ fe_databases_postgresql_site_play1_preflight_passed | default(false) | bool }}"
+                  postflight_passed: "{{ fe_databases_postgresql_site_play1_postflight_passed | default(false) | bool }}"
+                  started_at: "{{ fe_databases_postgresql_site_play1_started_at | default('') }}"
+                  ended_at: "{{ fe_databases_postgresql_site_play1_ended_at | default('') }}"
+                  duration_seconds: "{{ fe_databases_postgresql_site_play1_duration_seconds | default(0) | int }}"
+                  failed_task: "{{ fe_databases_postgresql_site_play1_failed_task | default('') }}"
+                  error: "{{ fe_databases_postgresql_site_play1_error | default('') }}"
+                  check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+              fe_validation_executions: 1
+              fe_validation_succeeded: "{{ 1 if fe_databases_postgresql_site_play1_status | default('') == 'succeeded' else 0 }}"
+              fe_validation_failed: "{{ 0 if fe_databases_postgresql_site_play1_status | default('') == 'succeeded' else 1 }}"
+              fe_validation_duration_seconds: "{{ fe_databases_postgresql_site_play1_duration_seconds | default(0) | int }}"
+              fe_validation_failed_components: >-
+                {{ [] if fe_databases_postgresql_site_play1_status | default('') == 'succeeded' else ['databases/postgresql/site#play1'] }}
+            aggregate: true
+            per_host: false
+          when:
+            - fe_databases_postgresql_site_play1_status | default('') == 'failed'
+            - not (fe_databases_postgresql_site_play1_stats_published | default(false) | bool)
+          tags:
+            - always
+
+        - name: "databases/postgresql/site#play1 | Always | Mark the validation statistics as published"
+          ansible.builtin.set_fact:
+            fe_databases_postgresql_site_play1_stats_published: true
+          when:
+            - fe_databases_postgresql_site_play1_status | default('') == 'failed'
+          tags:
+            - always
+  pre_tasks:
+    - name: "databases/postgresql/site#play1 | Preflight validation"
+      tags:
+        - always
+        - preflight
+        - validation
+      block:
+
+        - name: "databases/postgresql/site#play1 | Initialize validation state"
+          ansible.builtin.set_fact:
+            fe_databases_postgresql_site_play1_start_epoch: "{{ now(fmt='%s') | int }}"
+            fe_databases_postgresql_site_play1_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+            fe_databases_postgresql_site_play1_status: "running"
+            fe_databases_postgresql_site_play1_preflight_passed: false
+            fe_databases_postgresql_site_play1_postflight_passed: false
+            fe_databases_postgresql_site_play1_failed_task: ""
+            fe_databases_postgresql_site_play1_error: ""
+            fe_databases_postgresql_site_play1_stats_published: false
+          tags:
+            - always
+
+        - name: "databases/postgresql/site#play1 | Preflight | Verify the control node meets the minimum ansible-core version"
+          ansible.builtin.assert:
+            that:
+              - ansible_version.full is version(fe_validation_min_ansible_version | default('2.12'), '>=')
+            fail_msg: >-
+              databases/postgresql/site#play1: requires ansible-core
+              {{ fe_validation_min_ansible_version | default('2.12') }} or newer,
+              found {{ ansible_version.full }}.
+            success_msg: >-
+              databases/postgresql/site#play1: ansible-core {{ ansible_version.full }} satisfies the minimum.
+            quiet: true
+          tags:
+            - always
+            - preflight
+            - validation
+
+        - name: "databases/postgresql/site#play1 | Preflight | Verify every declared required variable is defined"
+          ansible.builtin.assert:
+            that:
+              - vars[item] is defined
+            fail_msg: "databases/postgresql/site#play1: required variable '{{ item }}' is not defined."
+            success_msg: "databases/postgresql/site#play1: required variable '{{ item }}' is defined."
+            quiet: true
+          loop: "{{ fe_databases_postgresql_site_play1_required_vars | default([]) }}"
+          loop_control:
+            label: "{{ item }}"
+          tags:
+            - always
+            - preflight
+            - validation
+
+        - name: "databases/postgresql/site#play1 | Preflight | Record that preflight validation passed"
+          ansible.builtin.set_fact:
+            fe_databases_postgresql_site_play1_preflight_passed: true
+          tags:
+            - always
+            - preflight
+            - validation
+
+      rescue:
+
+        - name: "databases/postgresql/site#play1 | Rescue | Capture the failing task and error detail"
+          ansible.builtin.set_fact:
+            fe_databases_postgresql_site_play1_status: "preflight_failed"
+            fe_databases_postgresql_site_play1_postflight_passed: false
+            fe_databases_postgresql_site_play1_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+            fe_databases_postgresql_site_play1_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+          tags:
+            - always
+            - rescue
+
+        - name: "databases/postgresql/site#play1 | Rescue | Report the failure"
+          ansible.builtin.debug:
+            msg: >-
+              databases/postgresql/site#play1: FAILED at '{{ fe_databases_postgresql_site_play1_failed_task }}' on
+              {{ inventory_hostname }} - {{ fe_databases_postgresql_site_play1_error }}
+          tags:
+            - always
+            - rescue
+
+        - name: "databases/postgresql/site#play1 | Always | Publish the validation result with set_stats"
+          ansible.builtin.set_stats:
+            data:
+              fe_validation_results:
+                "databases/postgresql/site#play1":
+                  component: "databases/postgresql/site#play1"
+                  type: "playbook"
+                  platform: "databases"
+                  host: "{{ inventory_hostname }}"
+                  status: "{{ fe_databases_postgresql_site_play1_status | default('unknown') }}"
+                  preflight_passed: "{{ fe_databases_postgresql_site_play1_preflight_passed | default(false) | bool }}"
+                  postflight_passed: "{{ fe_databases_postgresql_site_play1_postflight_passed | default(false) | bool }}"
+                  started_at: "{{ fe_databases_postgresql_site_play1_started_at | default('') }}"
+                  ended_at: "{{ fe_databases_postgresql_site_play1_ended_at | default('') }}"
+                  duration_seconds: "{{ fe_databases_postgresql_site_play1_duration_seconds | default(0) | int }}"
+                  failed_task: "{{ fe_databases_postgresql_site_play1_failed_task | default('') }}"
+                  error: "{{ fe_databases_postgresql_site_play1_error | default('') }}"
+                  check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+              fe_validation_executions: 1
+              fe_validation_succeeded: "{{ 1 if fe_databases_postgresql_site_play1_status | default('') == 'succeeded' else 0 }}"
+              fe_validation_failed: "{{ 0 if fe_databases_postgresql_site_play1_status | default('') == 'succeeded' else 1 }}"
+              fe_validation_duration_seconds: "{{ fe_databases_postgresql_site_play1_duration_seconds | default(0) | int }}"
+              fe_validation_failed_components: >-
+                {{ [] if fe_databases_postgresql_site_play1_status | default('') == 'succeeded' else ['databases/postgresql/site#play1'] }}
+            aggregate: true
+            per_host: false
+          tags:
+            - always
+
+        - name: "databases/postgresql/site#play1 | Always | Mark the validation statistics as published"
+          ansible.builtin.set_fact:
+            fe_databases_postgresql_site_play1_stats_published: true
+          tags:
+            - always
+
+        - name: "databases/postgresql/site#play1 | Rescue | Re-raise the failure unless the caller opted to continue"
+          ansible.builtin.fail:
+            msg: >-
+              databases/postgresql/site#play1 failed at '{{ fe_databases_postgresql_site_play1_failed_task }}': {{ fe_databases_postgresql_site_play1_error }}
+          when: not (fe_validation_continue_on_error | default(false) | bool)
+          tags:
+            - always
+            - rescue
+
+      always:
+
+        - name: "databases/postgresql/site#play1 | Always | Report the preflight outcome"
+          ansible.builtin.debug:
+            msg: >-
+              databases/postgresql/site#play1: preflight
+              {{ 'passed' if fe_databases_postgresql_site_play1_preflight_passed | default(false) | bool else 'FAILED' }}
+              on {{ inventory_hostname }}.
+          tags:
+            - always
+  post_tasks:
+    - name: "databases/postgresql/site#play1 | Postflight validation"
+      tags:
+        - always
+        - postflight
+        - validation
+      block:
+
+        - name: "databases/postgresql/site#play1 | Postflight | Verify the guarded body ran after a passing preflight"
+          ansible.builtin.assert:
+            that:
+              - fe_databases_postgresql_site_play1_preflight_passed | bool
+              - fe_databases_postgresql_site_play1_status in ['running', 'succeeded']
+            fail_msg: >-
+              databases/postgresql/site#play1: postflight validation failed - preflight passed
+              ={{ fe_databases_postgresql_site_play1_preflight_passed | default(false) }},
+              status={{ fe_databases_postgresql_site_play1_status | default('unknown') }}.
+            success_msg: "databases/postgresql/site#play1: postflight validation passed."
+            quiet: true
+          tags:
+            - always
+            - postflight
+            - validation
+
+        - name: "databases/postgresql/site#play1 | Postflight | Record the successful outcome"
+          ansible.builtin.set_fact:
+            fe_databases_postgresql_site_play1_postflight_passed: true
+            fe_databases_postgresql_site_play1_status: "succeeded"
+          tags:
+            - always
+            - postflight
+            - validation
+
+      rescue:
+
+        - name: "databases/postgresql/site#play1 | Rescue | Capture the failing task and error detail"
+          ansible.builtin.set_fact:
+            fe_databases_postgresql_site_play1_status: "failed"
+            fe_databases_postgresql_site_play1_postflight_passed: false
+            fe_databases_postgresql_site_play1_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+            fe_databases_postgresql_site_play1_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+          tags:
+            - always
+            - rescue
+
+        - name: "databases/postgresql/site#play1 | Rescue | Report the failure"
+          ansible.builtin.debug:
+            msg: >-
+              databases/postgresql/site#play1: FAILED at '{{ fe_databases_postgresql_site_play1_failed_task }}' on
+              {{ inventory_hostname }} - {{ fe_databases_postgresql_site_play1_error }}
+          tags:
+            - always
+            - rescue
+
+        - name: "databases/postgresql/site#play1 | Rescue | Re-raise the failure unless the caller opted to continue"
+          ansible.builtin.fail:
+            msg: >-
+              databases/postgresql/site#play1 failed at '{{ fe_databases_postgresql_site_play1_failed_task }}': {{ fe_databases_postgresql_site_play1_error }}
+          when: not (fe_validation_continue_on_error | default(false) | bool)
+          tags:
+            - always
+            - rescue
+
+      always:
+
+        - name: "databases/postgresql/site#play1 | Always | Compute the execution duration"
+          ansible.builtin.set_fact:
+            fe_databases_postgresql_site_play1_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+            fe_databases_postgresql_site_play1_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_databases_postgresql_site_play1_start_epoch | default(0) | int) }}"
+          tags:
+            - always
+
+        - name: "databases/postgresql/site#play1 | Always | Publish the validation result with set_stats"
+          ansible.builtin.set_stats:
+            data:
+              fe_validation_results:
+                "databases/postgresql/site#play1":
+                  component: "databases/postgresql/site#play1"
+                  type: "playbook"
+                  platform: "databases"
+                  host: "{{ inventory_hostname }}"
+                  status: "{{ fe_databases_postgresql_site_play1_status | default('unknown') }}"
+                  preflight_passed: "{{ fe_databases_postgresql_site_play1_preflight_passed | default(false) | bool }}"
+                  postflight_passed: "{{ fe_databases_postgresql_site_play1_postflight_passed | default(false) | bool }}"
+                  started_at: "{{ fe_databases_postgresql_site_play1_started_at | default('') }}"
+                  ended_at: "{{ fe_databases_postgresql_site_play1_ended_at | default('') }}"
+                  duration_seconds: "{{ fe_databases_postgresql_site_play1_duration_seconds | default(0) | int }}"
+                  failed_task: "{{ fe_databases_postgresql_site_play1_failed_task | default('') }}"
+                  error: "{{ fe_databases_postgresql_site_play1_error | default('') }}"
+                  check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+              fe_validation_executions: 1
+              fe_validation_succeeded: "{{ 1 if fe_databases_postgresql_site_play1_status | default('') == 'succeeded' else 0 }}"
+              fe_validation_failed: "{{ 0 if fe_databases_postgresql_site_play1_status | default('') == 'succeeded' else 1 }}"
+              fe_validation_duration_seconds: "{{ fe_databases_postgresql_site_play1_duration_seconds | default(0) | int }}"
+              fe_validation_failed_components: >-
+                {{ [] if fe_databases_postgresql_site_play1_status | default('') == 'succeeded' else ['databases/postgresql/site#play1'] }}
+            aggregate: true
+            per_host: false
+          when:
+            - not (fe_databases_postgresql_site_play1_stats_published | default(false) | bool)
+          tags:
+            - always
+
+        - name: "databases/postgresql/site#play1 | Always | Mark the validation statistics as published"
+          ansible.builtin.set_fact:
+            fe_databases_postgresql_site_play1_stats_published: true
+          tags:
+            - always
+
+        - name: "databases/postgresql/site#play1 | Always | Report the run summary"
+          ansible.builtin.debug:
+            msg: >-
+              databases/postgresql/site#play1: {{ fe_databases_postgresql_site_play1_status | default('unknown') }} in
+              {{ fe_databases_postgresql_site_play1_duration_seconds | default(0) }}s on {{ inventory_hostname }}.
+          tags:
+            - always
 
 
 - name: PostgreSQL Replica Server Setup
@@ -75,31 +425,364 @@
     deploy_replication: true
 
   tasks:
-    - name: Phase 1 - Install PostgreSQL
-      ansible.builtin.include_role:
-        name: postgresql_install
-      when: deploy_install | bool
-      tags: ['install', 'phase1']
+    - name: "databases/postgresql/site#play2 | Guarded execution with rescue and always handling"
+      block:
 
-    - name: Phase 2 - Configure PostgreSQL
-      ansible.builtin.include_role:
-        name: postgresql_config
-      when: deploy_config | bool
-      tags: ['config', 'phase2']
+        - name: Phase 1 - Install PostgreSQL
+          ansible.builtin.include_role:
+            name: postgresql_install
+          when: deploy_install | bool
+          tags: ['install', 'phase1']
 
-    - name: Phase 3 - Security Hardening
-      ansible.builtin.include_role:
-        name: postgresql_security
-      when: deploy_security | bool
-      tags: ['security', 'phase3']
+        - name: Phase 2 - Configure PostgreSQL
+          ansible.builtin.include_role:
+            name: postgresql_config
+          when: deploy_config | bool
+          tags: ['config', 'phase2']
 
-    - name: Phase 4 - Configure Replication (Replica)
-      ansible.builtin.include_role:
-        name: postgresql_replication
-      vars:
-        replication_role: replica
-      when: deploy_replication | bool
-      tags: ['replication', 'phase4']
+        - name: Phase 3 - Security Hardening
+          ansible.builtin.include_role:
+            name: postgresql_security
+          when: deploy_security | bool
+          tags: ['security', 'phase3']
+
+        - name: Phase 4 - Configure Replication (Replica)
+          ansible.builtin.include_role:
+            name: postgresql_replication
+          vars:
+            replication_role: replica
+          when: deploy_replication | bool
+          tags: ['replication', 'phase4']
+
+      rescue:
+
+        - name: "databases/postgresql/site#play2 | Rescue | Capture the failing task and error detail"
+          ansible.builtin.set_fact:
+            fe_databases_postgresql_site_play2_status: "failed"
+            fe_databases_postgresql_site_play2_postflight_passed: false
+            fe_databases_postgresql_site_play2_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+            fe_databases_postgresql_site_play2_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+          tags:
+            - always
+            - rescue
+
+        - name: "databases/postgresql/site#play2 | Rescue | Report the failure"
+          ansible.builtin.debug:
+            msg: >-
+              databases/postgresql/site#play2: FAILED at '{{ fe_databases_postgresql_site_play2_failed_task }}' on
+              {{ inventory_hostname }} - {{ fe_databases_postgresql_site_play2_error }}
+          tags:
+            - always
+            - rescue
+
+        - name: "databases/postgresql/site#play2 | Rescue | Re-raise the failure unless the caller opted to continue"
+          ansible.builtin.fail:
+            msg: >-
+              databases/postgresql/site#play2 failed at '{{ fe_databases_postgresql_site_play2_failed_task }}': {{ fe_databases_postgresql_site_play2_error }}
+          when: not (fe_validation_continue_on_error | default(false) | bool)
+          tags:
+            - always
+            - rescue
+
+      always:
+
+        - name: "databases/postgresql/site#play2 | Always | Compute the execution duration"
+          ansible.builtin.set_fact:
+            fe_databases_postgresql_site_play2_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+            fe_databases_postgresql_site_play2_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_databases_postgresql_site_play2_start_epoch | default(0) | int) }}"
+          tags:
+            - always
+
+        - name: "databases/postgresql/site#play2 | Always | Publish the validation result with set_stats"
+          ansible.builtin.set_stats:
+            data:
+              fe_validation_results:
+                "databases/postgresql/site#play2":
+                  component: "databases/postgresql/site#play2"
+                  type: "playbook"
+                  platform: "databases"
+                  host: "{{ inventory_hostname }}"
+                  status: "{{ fe_databases_postgresql_site_play2_status | default('unknown') }}"
+                  preflight_passed: "{{ fe_databases_postgresql_site_play2_preflight_passed | default(false) | bool }}"
+                  postflight_passed: "{{ fe_databases_postgresql_site_play2_postflight_passed | default(false) | bool }}"
+                  started_at: "{{ fe_databases_postgresql_site_play2_started_at | default('') }}"
+                  ended_at: "{{ fe_databases_postgresql_site_play2_ended_at | default('') }}"
+                  duration_seconds: "{{ fe_databases_postgresql_site_play2_duration_seconds | default(0) | int }}"
+                  failed_task: "{{ fe_databases_postgresql_site_play2_failed_task | default('') }}"
+                  error: "{{ fe_databases_postgresql_site_play2_error | default('') }}"
+                  check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+              fe_validation_executions: 1
+              fe_validation_succeeded: "{{ 1 if fe_databases_postgresql_site_play2_status | default('') == 'succeeded' else 0 }}"
+              fe_validation_failed: "{{ 0 if fe_databases_postgresql_site_play2_status | default('') == 'succeeded' else 1 }}"
+              fe_validation_duration_seconds: "{{ fe_databases_postgresql_site_play2_duration_seconds | default(0) | int }}"
+              fe_validation_failed_components: >-
+                {{ [] if fe_databases_postgresql_site_play2_status | default('') == 'succeeded' else ['databases/postgresql/site#play2'] }}
+            aggregate: true
+            per_host: false
+          when:
+            - fe_databases_postgresql_site_play2_status | default('') == 'failed'
+            - not (fe_databases_postgresql_site_play2_stats_published | default(false) | bool)
+          tags:
+            - always
+
+        - name: "databases/postgresql/site#play2 | Always | Mark the validation statistics as published"
+          ansible.builtin.set_fact:
+            fe_databases_postgresql_site_play2_stats_published: true
+          when:
+            - fe_databases_postgresql_site_play2_status | default('') == 'failed'
+          tags:
+            - always
+  pre_tasks:
+    - name: "databases/postgresql/site#play2 | Preflight validation"
+      tags:
+        - always
+        - preflight
+        - validation
+      block:
+
+        - name: "databases/postgresql/site#play2 | Initialize validation state"
+          ansible.builtin.set_fact:
+            fe_databases_postgresql_site_play2_start_epoch: "{{ now(fmt='%s') | int }}"
+            fe_databases_postgresql_site_play2_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+            fe_databases_postgresql_site_play2_status: "running"
+            fe_databases_postgresql_site_play2_preflight_passed: false
+            fe_databases_postgresql_site_play2_postflight_passed: false
+            fe_databases_postgresql_site_play2_failed_task: ""
+            fe_databases_postgresql_site_play2_error: ""
+            fe_databases_postgresql_site_play2_stats_published: false
+          tags:
+            - always
+
+        - name: "databases/postgresql/site#play2 | Preflight | Verify the control node meets the minimum ansible-core version"
+          ansible.builtin.assert:
+            that:
+              - ansible_version.full is version(fe_validation_min_ansible_version | default('2.12'), '>=')
+            fail_msg: >-
+              databases/postgresql/site#play2: requires ansible-core
+              {{ fe_validation_min_ansible_version | default('2.12') }} or newer,
+              found {{ ansible_version.full }}.
+            success_msg: >-
+              databases/postgresql/site#play2: ansible-core {{ ansible_version.full }} satisfies the minimum.
+            quiet: true
+          tags:
+            - always
+            - preflight
+            - validation
+
+        - name: "databases/postgresql/site#play2 | Preflight | Verify every declared required variable is defined"
+          ansible.builtin.assert:
+            that:
+              - vars[item] is defined
+            fail_msg: "databases/postgresql/site#play2: required variable '{{ item }}' is not defined."
+            success_msg: "databases/postgresql/site#play2: required variable '{{ item }}' is defined."
+            quiet: true
+          loop: "{{ fe_databases_postgresql_site_play2_required_vars | default([]) }}"
+          loop_control:
+            label: "{{ item }}"
+          tags:
+            - always
+            - preflight
+            - validation
+
+        - name: "databases/postgresql/site#play2 | Preflight | Record that preflight validation passed"
+          ansible.builtin.set_fact:
+            fe_databases_postgresql_site_play2_preflight_passed: true
+          tags:
+            - always
+            - preflight
+            - validation
+
+      rescue:
+
+        - name: "databases/postgresql/site#play2 | Rescue | Capture the failing task and error detail"
+          ansible.builtin.set_fact:
+            fe_databases_postgresql_site_play2_status: "preflight_failed"
+            fe_databases_postgresql_site_play2_postflight_passed: false
+            fe_databases_postgresql_site_play2_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+            fe_databases_postgresql_site_play2_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+          tags:
+            - always
+            - rescue
+
+        - name: "databases/postgresql/site#play2 | Rescue | Report the failure"
+          ansible.builtin.debug:
+            msg: >-
+              databases/postgresql/site#play2: FAILED at '{{ fe_databases_postgresql_site_play2_failed_task }}' on
+              {{ inventory_hostname }} - {{ fe_databases_postgresql_site_play2_error }}
+          tags:
+            - always
+            - rescue
+
+        - name: "databases/postgresql/site#play2 | Always | Publish the validation result with set_stats"
+          ansible.builtin.set_stats:
+            data:
+              fe_validation_results:
+                "databases/postgresql/site#play2":
+                  component: "databases/postgresql/site#play2"
+                  type: "playbook"
+                  platform: "databases"
+                  host: "{{ inventory_hostname }}"
+                  status: "{{ fe_databases_postgresql_site_play2_status | default('unknown') }}"
+                  preflight_passed: "{{ fe_databases_postgresql_site_play2_preflight_passed | default(false) | bool }}"
+                  postflight_passed: "{{ fe_databases_postgresql_site_play2_postflight_passed | default(false) | bool }}"
+                  started_at: "{{ fe_databases_postgresql_site_play2_started_at | default('') }}"
+                  ended_at: "{{ fe_databases_postgresql_site_play2_ended_at | default('') }}"
+                  duration_seconds: "{{ fe_databases_postgresql_site_play2_duration_seconds | default(0) | int }}"
+                  failed_task: "{{ fe_databases_postgresql_site_play2_failed_task | default('') }}"
+                  error: "{{ fe_databases_postgresql_site_play2_error | default('') }}"
+                  check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+              fe_validation_executions: 1
+              fe_validation_succeeded: "{{ 1 if fe_databases_postgresql_site_play2_status | default('') == 'succeeded' else 0 }}"
+              fe_validation_failed: "{{ 0 if fe_databases_postgresql_site_play2_status | default('') == 'succeeded' else 1 }}"
+              fe_validation_duration_seconds: "{{ fe_databases_postgresql_site_play2_duration_seconds | default(0) | int }}"
+              fe_validation_failed_components: >-
+                {{ [] if fe_databases_postgresql_site_play2_status | default('') == 'succeeded' else ['databases/postgresql/site#play2'] }}
+            aggregate: true
+            per_host: false
+          tags:
+            - always
+
+        - name: "databases/postgresql/site#play2 | Always | Mark the validation statistics as published"
+          ansible.builtin.set_fact:
+            fe_databases_postgresql_site_play2_stats_published: true
+          tags:
+            - always
+
+        - name: "databases/postgresql/site#play2 | Rescue | Re-raise the failure unless the caller opted to continue"
+          ansible.builtin.fail:
+            msg: >-
+              databases/postgresql/site#play2 failed at '{{ fe_databases_postgresql_site_play2_failed_task }}': {{ fe_databases_postgresql_site_play2_error }}
+          when: not (fe_validation_continue_on_error | default(false) | bool)
+          tags:
+            - always
+            - rescue
+
+      always:
+
+        - name: "databases/postgresql/site#play2 | Always | Report the preflight outcome"
+          ansible.builtin.debug:
+            msg: >-
+              databases/postgresql/site#play2: preflight
+              {{ 'passed' if fe_databases_postgresql_site_play2_preflight_passed | default(false) | bool else 'FAILED' }}
+              on {{ inventory_hostname }}.
+          tags:
+            - always
+  post_tasks:
+    - name: "databases/postgresql/site#play2 | Postflight validation"
+      tags:
+        - always
+        - postflight
+        - validation
+      block:
+
+        - name: "databases/postgresql/site#play2 | Postflight | Verify the guarded body ran after a passing preflight"
+          ansible.builtin.assert:
+            that:
+              - fe_databases_postgresql_site_play2_preflight_passed | bool
+              - fe_databases_postgresql_site_play2_status in ['running', 'succeeded']
+            fail_msg: >-
+              databases/postgresql/site#play2: postflight validation failed - preflight passed
+              ={{ fe_databases_postgresql_site_play2_preflight_passed | default(false) }},
+              status={{ fe_databases_postgresql_site_play2_status | default('unknown') }}.
+            success_msg: "databases/postgresql/site#play2: postflight validation passed."
+            quiet: true
+          tags:
+            - always
+            - postflight
+            - validation
+
+        - name: "databases/postgresql/site#play2 | Postflight | Record the successful outcome"
+          ansible.builtin.set_fact:
+            fe_databases_postgresql_site_play2_postflight_passed: true
+            fe_databases_postgresql_site_play2_status: "succeeded"
+          tags:
+            - always
+            - postflight
+            - validation
+
+      rescue:
+
+        - name: "databases/postgresql/site#play2 | Rescue | Capture the failing task and error detail"
+          ansible.builtin.set_fact:
+            fe_databases_postgresql_site_play2_status: "failed"
+            fe_databases_postgresql_site_play2_postflight_passed: false
+            fe_databases_postgresql_site_play2_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+            fe_databases_postgresql_site_play2_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+          tags:
+            - always
+            - rescue
+
+        - name: "databases/postgresql/site#play2 | Rescue | Report the failure"
+          ansible.builtin.debug:
+            msg: >-
+              databases/postgresql/site#play2: FAILED at '{{ fe_databases_postgresql_site_play2_failed_task }}' on
+              {{ inventory_hostname }} - {{ fe_databases_postgresql_site_play2_error }}
+          tags:
+            - always
+            - rescue
+
+        - name: "databases/postgresql/site#play2 | Rescue | Re-raise the failure unless the caller opted to continue"
+          ansible.builtin.fail:
+            msg: >-
+              databases/postgresql/site#play2 failed at '{{ fe_databases_postgresql_site_play2_failed_task }}': {{ fe_databases_postgresql_site_play2_error }}
+          when: not (fe_validation_continue_on_error | default(false) | bool)
+          tags:
+            - always
+            - rescue
+
+      always:
+
+        - name: "databases/postgresql/site#play2 | Always | Compute the execution duration"
+          ansible.builtin.set_fact:
+            fe_databases_postgresql_site_play2_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+            fe_databases_postgresql_site_play2_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_databases_postgresql_site_play2_start_epoch | default(0) | int) }}"
+          tags:
+            - always
+
+        - name: "databases/postgresql/site#play2 | Always | Publish the validation result with set_stats"
+          ansible.builtin.set_stats:
+            data:
+              fe_validation_results:
+                "databases/postgresql/site#play2":
+                  component: "databases/postgresql/site#play2"
+                  type: "playbook"
+                  platform: "databases"
+                  host: "{{ inventory_hostname }}"
+                  status: "{{ fe_databases_postgresql_site_play2_status | default('unknown') }}"
+                  preflight_passed: "{{ fe_databases_postgresql_site_play2_preflight_passed | default(false) | bool }}"
+                  postflight_passed: "{{ fe_databases_postgresql_site_play2_postflight_passed | default(false) | bool }}"
+                  started_at: "{{ fe_databases_postgresql_site_play2_started_at | default('') }}"
+                  ended_at: "{{ fe_databases_postgresql_site_play2_ended_at | default('') }}"
+                  duration_seconds: "{{ fe_databases_postgresql_site_play2_duration_seconds | default(0) | int }}"
+                  failed_task: "{{ fe_databases_postgresql_site_play2_failed_task | default('') }}"
+                  error: "{{ fe_databases_postgresql_site_play2_error | default('') }}"
+                  check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+              fe_validation_executions: 1
+              fe_validation_succeeded: "{{ 1 if fe_databases_postgresql_site_play2_status | default('') == 'succeeded' else 0 }}"
+              fe_validation_failed: "{{ 0 if fe_databases_postgresql_site_play2_status | default('') == 'succeeded' else 1 }}"
+              fe_validation_duration_seconds: "{{ fe_databases_postgresql_site_play2_duration_seconds | default(0) | int }}"
+              fe_validation_failed_components: >-
+                {{ [] if fe_databases_postgresql_site_play2_status | default('') == 'succeeded' else ['databases/postgresql/site#play2'] }}
+            aggregate: true
+            per_host: false
+          when:
+            - not (fe_databases_postgresql_site_play2_stats_published | default(false) | bool)
+          tags:
+            - always
+
+        - name: "databases/postgresql/site#play2 | Always | Mark the validation statistics as published"
+          ansible.builtin.set_fact:
+            fe_databases_postgresql_site_play2_stats_published: true
+          tags:
+            - always
+
+        - name: "databases/postgresql/site#play2 | Always | Report the run summary"
+          ansible.builtin.debug:
+            msg: >-
+              databases/postgresql/site#play2: {{ fe_databases_postgresql_site_play2_status | default('unknown') }} in
+              {{ fe_databases_postgresql_site_play2_duration_seconds | default(0) }}s on {{ inventory_hostname }}.
+          tags:
+            - always
 
 
 - name: Barman Backup Server Setup
@@ -112,11 +795,344 @@
     deploy_barman: true
 
   tasks:
-    - name: Phase 1 - Configure Barman Backup
-      ansible.builtin.include_role:
-        name: postgresql_barman
-      when: deploy_barman | bool
-      tags: ['backup', 'barman']
+    - name: "databases/postgresql/site#play3 | Guarded execution with rescue and always handling"
+      block:
+
+        - name: Phase 1 - Configure Barman Backup
+          ansible.builtin.include_role:
+            name: postgresql_barman
+          when: deploy_barman | bool
+          tags: ['backup', 'barman']
+
+      rescue:
+
+        - name: "databases/postgresql/site#play3 | Rescue | Capture the failing task and error detail"
+          ansible.builtin.set_fact:
+            fe_databases_postgresql_site_play3_status: "failed"
+            fe_databases_postgresql_site_play3_postflight_passed: false
+            fe_databases_postgresql_site_play3_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+            fe_databases_postgresql_site_play3_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+          tags:
+            - always
+            - rescue
+
+        - name: "databases/postgresql/site#play3 | Rescue | Report the failure"
+          ansible.builtin.debug:
+            msg: >-
+              databases/postgresql/site#play3: FAILED at '{{ fe_databases_postgresql_site_play3_failed_task }}' on
+              {{ inventory_hostname }} - {{ fe_databases_postgresql_site_play3_error }}
+          tags:
+            - always
+            - rescue
+
+        - name: "databases/postgresql/site#play3 | Rescue | Re-raise the failure unless the caller opted to continue"
+          ansible.builtin.fail:
+            msg: >-
+              databases/postgresql/site#play3 failed at '{{ fe_databases_postgresql_site_play3_failed_task }}': {{ fe_databases_postgresql_site_play3_error }}
+          when: not (fe_validation_continue_on_error | default(false) | bool)
+          tags:
+            - always
+            - rescue
+
+      always:
+
+        - name: "databases/postgresql/site#play3 | Always | Compute the execution duration"
+          ansible.builtin.set_fact:
+            fe_databases_postgresql_site_play3_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+            fe_databases_postgresql_site_play3_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_databases_postgresql_site_play3_start_epoch | default(0) | int) }}"
+          tags:
+            - always
+
+        - name: "databases/postgresql/site#play3 | Always | Publish the validation result with set_stats"
+          ansible.builtin.set_stats:
+            data:
+              fe_validation_results:
+                "databases/postgresql/site#play3":
+                  component: "databases/postgresql/site#play3"
+                  type: "playbook"
+                  platform: "databases"
+                  host: "{{ inventory_hostname }}"
+                  status: "{{ fe_databases_postgresql_site_play3_status | default('unknown') }}"
+                  preflight_passed: "{{ fe_databases_postgresql_site_play3_preflight_passed | default(false) | bool }}"
+                  postflight_passed: "{{ fe_databases_postgresql_site_play3_postflight_passed | default(false) | bool }}"
+                  started_at: "{{ fe_databases_postgresql_site_play3_started_at | default('') }}"
+                  ended_at: "{{ fe_databases_postgresql_site_play3_ended_at | default('') }}"
+                  duration_seconds: "{{ fe_databases_postgresql_site_play3_duration_seconds | default(0) | int }}"
+                  failed_task: "{{ fe_databases_postgresql_site_play3_failed_task | default('') }}"
+                  error: "{{ fe_databases_postgresql_site_play3_error | default('') }}"
+                  check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+              fe_validation_executions: 1
+              fe_validation_succeeded: "{{ 1 if fe_databases_postgresql_site_play3_status | default('') == 'succeeded' else 0 }}"
+              fe_validation_failed: "{{ 0 if fe_databases_postgresql_site_play3_status | default('') == 'succeeded' else 1 }}"
+              fe_validation_duration_seconds: "{{ fe_databases_postgresql_site_play3_duration_seconds | default(0) | int }}"
+              fe_validation_failed_components: >-
+                {{ [] if fe_databases_postgresql_site_play3_status | default('') == 'succeeded' else ['databases/postgresql/site#play3'] }}
+            aggregate: true
+            per_host: false
+          when:
+            - fe_databases_postgresql_site_play3_status | default('') == 'failed'
+            - not (fe_databases_postgresql_site_play3_stats_published | default(false) | bool)
+          tags:
+            - always
+
+        - name: "databases/postgresql/site#play3 | Always | Mark the validation statistics as published"
+          ansible.builtin.set_fact:
+            fe_databases_postgresql_site_play3_stats_published: true
+          when:
+            - fe_databases_postgresql_site_play3_status | default('') == 'failed'
+          tags:
+            - always
+  pre_tasks:
+    - name: "databases/postgresql/site#play3 | Preflight validation"
+      tags:
+        - always
+        - preflight
+        - validation
+      block:
+
+        - name: "databases/postgresql/site#play3 | Initialize validation state"
+          ansible.builtin.set_fact:
+            fe_databases_postgresql_site_play3_start_epoch: "{{ now(fmt='%s') | int }}"
+            fe_databases_postgresql_site_play3_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+            fe_databases_postgresql_site_play3_status: "running"
+            fe_databases_postgresql_site_play3_preflight_passed: false
+            fe_databases_postgresql_site_play3_postflight_passed: false
+            fe_databases_postgresql_site_play3_failed_task: ""
+            fe_databases_postgresql_site_play3_error: ""
+            fe_databases_postgresql_site_play3_stats_published: false
+          tags:
+            - always
+
+        - name: "databases/postgresql/site#play3 | Preflight | Verify the control node meets the minimum ansible-core version"
+          ansible.builtin.assert:
+            that:
+              - ansible_version.full is version(fe_validation_min_ansible_version | default('2.12'), '>=')
+            fail_msg: >-
+              databases/postgresql/site#play3: requires ansible-core
+              {{ fe_validation_min_ansible_version | default('2.12') }} or newer,
+              found {{ ansible_version.full }}.
+            success_msg: >-
+              databases/postgresql/site#play3: ansible-core {{ ansible_version.full }} satisfies the minimum.
+            quiet: true
+          tags:
+            - always
+            - preflight
+            - validation
+
+        - name: "databases/postgresql/site#play3 | Preflight | Verify every declared required variable is defined"
+          ansible.builtin.assert:
+            that:
+              - vars[item] is defined
+            fail_msg: "databases/postgresql/site#play3: required variable '{{ item }}' is not defined."
+            success_msg: "databases/postgresql/site#play3: required variable '{{ item }}' is defined."
+            quiet: true
+          loop: "{{ fe_databases_postgresql_site_play3_required_vars | default([]) }}"
+          loop_control:
+            label: "{{ item }}"
+          tags:
+            - always
+            - preflight
+            - validation
+
+        - name: "databases/postgresql/site#play3 | Preflight | Record that preflight validation passed"
+          ansible.builtin.set_fact:
+            fe_databases_postgresql_site_play3_preflight_passed: true
+          tags:
+            - always
+            - preflight
+            - validation
+
+      rescue:
+
+        - name: "databases/postgresql/site#play3 | Rescue | Capture the failing task and error detail"
+          ansible.builtin.set_fact:
+            fe_databases_postgresql_site_play3_status: "preflight_failed"
+            fe_databases_postgresql_site_play3_postflight_passed: false
+            fe_databases_postgresql_site_play3_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+            fe_databases_postgresql_site_play3_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+          tags:
+            - always
+            - rescue
+
+        - name: "databases/postgresql/site#play3 | Rescue | Report the failure"
+          ansible.builtin.debug:
+            msg: >-
+              databases/postgresql/site#play3: FAILED at '{{ fe_databases_postgresql_site_play3_failed_task }}' on
+              {{ inventory_hostname }} - {{ fe_databases_postgresql_site_play3_error }}
+          tags:
+            - always
+            - rescue
+
+        - name: "databases/postgresql/site#play3 | Always | Publish the validation result with set_stats"
+          ansible.builtin.set_stats:
+            data:
+              fe_validation_results:
+                "databases/postgresql/site#play3":
+                  component: "databases/postgresql/site#play3"
+                  type: "playbook"
+                  platform: "databases"
+                  host: "{{ inventory_hostname }}"
+                  status: "{{ fe_databases_postgresql_site_play3_status | default('unknown') }}"
+                  preflight_passed: "{{ fe_databases_postgresql_site_play3_preflight_passed | default(false) | bool }}"
+                  postflight_passed: "{{ fe_databases_postgresql_site_play3_postflight_passed | default(false) | bool }}"
+                  started_at: "{{ fe_databases_postgresql_site_play3_started_at | default('') }}"
+                  ended_at: "{{ fe_databases_postgresql_site_play3_ended_at | default('') }}"
+                  duration_seconds: "{{ fe_databases_postgresql_site_play3_duration_seconds | default(0) | int }}"
+                  failed_task: "{{ fe_databases_postgresql_site_play3_failed_task | default('') }}"
+                  error: "{{ fe_databases_postgresql_site_play3_error | default('') }}"
+                  check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+              fe_validation_executions: 1
+              fe_validation_succeeded: "{{ 1 if fe_databases_postgresql_site_play3_status | default('') == 'succeeded' else 0 }}"
+              fe_validation_failed: "{{ 0 if fe_databases_postgresql_site_play3_status | default('') == 'succeeded' else 1 }}"
+              fe_validation_duration_seconds: "{{ fe_databases_postgresql_site_play3_duration_seconds | default(0) | int }}"
+              fe_validation_failed_components: >-
+                {{ [] if fe_databases_postgresql_site_play3_status | default('') == 'succeeded' else ['databases/postgresql/site#play3'] }}
+            aggregate: true
+            per_host: false
+          tags:
+            - always
+
+        - name: "databases/postgresql/site#play3 | Always | Mark the validation statistics as published"
+          ansible.builtin.set_fact:
+            fe_databases_postgresql_site_play3_stats_published: true
+          tags:
+            - always
+
+        - name: "databases/postgresql/site#play3 | Rescue | Re-raise the failure unless the caller opted to continue"
+          ansible.builtin.fail:
+            msg: >-
+              databases/postgresql/site#play3 failed at '{{ fe_databases_postgresql_site_play3_failed_task }}': {{ fe_databases_postgresql_site_play3_error }}
+          when: not (fe_validation_continue_on_error | default(false) | bool)
+          tags:
+            - always
+            - rescue
+
+      always:
+
+        - name: "databases/postgresql/site#play3 | Always | Report the preflight outcome"
+          ansible.builtin.debug:
+            msg: >-
+              databases/postgresql/site#play3: preflight
+              {{ 'passed' if fe_databases_postgresql_site_play3_preflight_passed | default(false) | bool else 'FAILED' }}
+              on {{ inventory_hostname }}.
+          tags:
+            - always
+  post_tasks:
+    - name: "databases/postgresql/site#play3 | Postflight validation"
+      tags:
+        - always
+        - postflight
+        - validation
+      block:
+
+        - name: "databases/postgresql/site#play3 | Postflight | Verify the guarded body ran after a passing preflight"
+          ansible.builtin.assert:
+            that:
+              - fe_databases_postgresql_site_play3_preflight_passed | bool
+              - fe_databases_postgresql_site_play3_status in ['running', 'succeeded']
+            fail_msg: >-
+              databases/postgresql/site#play3: postflight validation failed - preflight passed
+              ={{ fe_databases_postgresql_site_play3_preflight_passed | default(false) }},
+              status={{ fe_databases_postgresql_site_play3_status | default('unknown') }}.
+            success_msg: "databases/postgresql/site#play3: postflight validation passed."
+            quiet: true
+          tags:
+            - always
+            - postflight
+            - validation
+
+        - name: "databases/postgresql/site#play3 | Postflight | Record the successful outcome"
+          ansible.builtin.set_fact:
+            fe_databases_postgresql_site_play3_postflight_passed: true
+            fe_databases_postgresql_site_play3_status: "succeeded"
+          tags:
+            - always
+            - postflight
+            - validation
+
+      rescue:
+
+        - name: "databases/postgresql/site#play3 | Rescue | Capture the failing task and error detail"
+          ansible.builtin.set_fact:
+            fe_databases_postgresql_site_play3_status: "failed"
+            fe_databases_postgresql_site_play3_postflight_passed: false
+            fe_databases_postgresql_site_play3_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+            fe_databases_postgresql_site_play3_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+          tags:
+            - always
+            - rescue
+
+        - name: "databases/postgresql/site#play3 | Rescue | Report the failure"
+          ansible.builtin.debug:
+            msg: >-
+              databases/postgresql/site#play3: FAILED at '{{ fe_databases_postgresql_site_play3_failed_task }}' on
+              {{ inventory_hostname }} - {{ fe_databases_postgresql_site_play3_error }}
+          tags:
+            - always
+            - rescue
+
+        - name: "databases/postgresql/site#play3 | Rescue | Re-raise the failure unless the caller opted to continue"
+          ansible.builtin.fail:
+            msg: >-
+              databases/postgresql/site#play3 failed at '{{ fe_databases_postgresql_site_play3_failed_task }}': {{ fe_databases_postgresql_site_play3_error }}
+          when: not (fe_validation_continue_on_error | default(false) | bool)
+          tags:
+            - always
+            - rescue
+
+      always:
+
+        - name: "databases/postgresql/site#play3 | Always | Compute the execution duration"
+          ansible.builtin.set_fact:
+            fe_databases_postgresql_site_play3_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+            fe_databases_postgresql_site_play3_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_databases_postgresql_site_play3_start_epoch | default(0) | int) }}"
+          tags:
+            - always
+
+        - name: "databases/postgresql/site#play3 | Always | Publish the validation result with set_stats"
+          ansible.builtin.set_stats:
+            data:
+              fe_validation_results:
+                "databases/postgresql/site#play3":
+                  component: "databases/postgresql/site#play3"
+                  type: "playbook"
+                  platform: "databases"
+                  host: "{{ inventory_hostname }}"
+                  status: "{{ fe_databases_postgresql_site_play3_status | default('unknown') }}"
+                  preflight_passed: "{{ fe_databases_postgresql_site_play3_preflight_passed | default(false) | bool }}"
+                  postflight_passed: "{{ fe_databases_postgresql_site_play3_postflight_passed | default(false) | bool }}"
+                  started_at: "{{ fe_databases_postgresql_site_play3_started_at | default('') }}"
+                  ended_at: "{{ fe_databases_postgresql_site_play3_ended_at | default('') }}"
+                  duration_seconds: "{{ fe_databases_postgresql_site_play3_duration_seconds | default(0) | int }}"
+                  failed_task: "{{ fe_databases_postgresql_site_play3_failed_task | default('') }}"
+                  error: "{{ fe_databases_postgresql_site_play3_error | default('') }}"
+                  check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+              fe_validation_executions: 1
+              fe_validation_succeeded: "{{ 1 if fe_databases_postgresql_site_play3_status | default('') == 'succeeded' else 0 }}"
+              fe_validation_failed: "{{ 0 if fe_databases_postgresql_site_play3_status | default('') == 'succeeded' else 1 }}"
+              fe_validation_duration_seconds: "{{ fe_databases_postgresql_site_play3_duration_seconds | default(0) | int }}"
+              fe_validation_failed_components: >-
+                {{ [] if fe_databases_postgresql_site_play3_status | default('') == 'succeeded' else ['databases/postgresql/site#play3'] }}
+            aggregate: true
+            per_host: false
+          when:
+            - not (fe_databases_postgresql_site_play3_stats_published | default(false) | bool)
+          tags:
+            - always
+
+        - name: "databases/postgresql/site#play3 | Always | Mark the validation statistics as published"
+          ansible.builtin.set_fact:
+            fe_databases_postgresql_site_play3_stats_published: true
+          tags:
+            - always
+
+        - name: "databases/postgresql/site#play3 | Always | Report the run summary"
+          ansible.builtin.debug:
+            msg: >-
+              databases/postgresql/site#play3: {{ fe_databases_postgresql_site_play3_status | default('unknown') }} in
+              {{ fe_databases_postgresql_site_play3_duration_seconds | default(0) }}s on {{ inventory_hostname }}.
+          tags:
+            - always
 
 
 - name: pgPool Load Balancer Setup
@@ -129,11 +1145,344 @@
     deploy_pgpool: true
 
   tasks:
-    - name: Phase 1 - Configure pgPool
-      ansible.builtin.include_role:
-        name: postgresql_pgpool
-      when: deploy_pgpool | bool
-      tags: ['pgpool', 'loadbalancer']
+    - name: "databases/postgresql/site#play4 | Guarded execution with rescue and always handling"
+      block:
+
+        - name: Phase 1 - Configure pgPool
+          ansible.builtin.include_role:
+            name: postgresql_pgpool
+          when: deploy_pgpool | bool
+          tags: ['pgpool', 'loadbalancer']
+
+      rescue:
+
+        - name: "databases/postgresql/site#play4 | Rescue | Capture the failing task and error detail"
+          ansible.builtin.set_fact:
+            fe_databases_postgresql_site_play4_status: "failed"
+            fe_databases_postgresql_site_play4_postflight_passed: false
+            fe_databases_postgresql_site_play4_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+            fe_databases_postgresql_site_play4_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+          tags:
+            - always
+            - rescue
+
+        - name: "databases/postgresql/site#play4 | Rescue | Report the failure"
+          ansible.builtin.debug:
+            msg: >-
+              databases/postgresql/site#play4: FAILED at '{{ fe_databases_postgresql_site_play4_failed_task }}' on
+              {{ inventory_hostname }} - {{ fe_databases_postgresql_site_play4_error }}
+          tags:
+            - always
+            - rescue
+
+        - name: "databases/postgresql/site#play4 | Rescue | Re-raise the failure unless the caller opted to continue"
+          ansible.builtin.fail:
+            msg: >-
+              databases/postgresql/site#play4 failed at '{{ fe_databases_postgresql_site_play4_failed_task }}': {{ fe_databases_postgresql_site_play4_error }}
+          when: not (fe_validation_continue_on_error | default(false) | bool)
+          tags:
+            - always
+            - rescue
+
+      always:
+
+        - name: "databases/postgresql/site#play4 | Always | Compute the execution duration"
+          ansible.builtin.set_fact:
+            fe_databases_postgresql_site_play4_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+            fe_databases_postgresql_site_play4_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_databases_postgresql_site_play4_start_epoch | default(0) | int) }}"
+          tags:
+            - always
+
+        - name: "databases/postgresql/site#play4 | Always | Publish the validation result with set_stats"
+          ansible.builtin.set_stats:
+            data:
+              fe_validation_results:
+                "databases/postgresql/site#play4":
+                  component: "databases/postgresql/site#play4"
+                  type: "playbook"
+                  platform: "databases"
+                  host: "{{ inventory_hostname }}"
+                  status: "{{ fe_databases_postgresql_site_play4_status | default('unknown') }}"
+                  preflight_passed: "{{ fe_databases_postgresql_site_play4_preflight_passed | default(false) | bool }}"
+                  postflight_passed: "{{ fe_databases_postgresql_site_play4_postflight_passed | default(false) | bool }}"
+                  started_at: "{{ fe_databases_postgresql_site_play4_started_at | default('') }}"
+                  ended_at: "{{ fe_databases_postgresql_site_play4_ended_at | default('') }}"
+                  duration_seconds: "{{ fe_databases_postgresql_site_play4_duration_seconds | default(0) | int }}"
+                  failed_task: "{{ fe_databases_postgresql_site_play4_failed_task | default('') }}"
+                  error: "{{ fe_databases_postgresql_site_play4_error | default('') }}"
+                  check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+              fe_validation_executions: 1
+              fe_validation_succeeded: "{{ 1 if fe_databases_postgresql_site_play4_status | default('') == 'succeeded' else 0 }}"
+              fe_validation_failed: "{{ 0 if fe_databases_postgresql_site_play4_status | default('') == 'succeeded' else 1 }}"
+              fe_validation_duration_seconds: "{{ fe_databases_postgresql_site_play4_duration_seconds | default(0) | int }}"
+              fe_validation_failed_components: >-
+                {{ [] if fe_databases_postgresql_site_play4_status | default('') == 'succeeded' else ['databases/postgresql/site#play4'] }}
+            aggregate: true
+            per_host: false
+          when:
+            - fe_databases_postgresql_site_play4_status | default('') == 'failed'
+            - not (fe_databases_postgresql_site_play4_stats_published | default(false) | bool)
+          tags:
+            - always
+
+        - name: "databases/postgresql/site#play4 | Always | Mark the validation statistics as published"
+          ansible.builtin.set_fact:
+            fe_databases_postgresql_site_play4_stats_published: true
+          when:
+            - fe_databases_postgresql_site_play4_status | default('') == 'failed'
+          tags:
+            - always
+  pre_tasks:
+    - name: "databases/postgresql/site#play4 | Preflight validation"
+      tags:
+        - always
+        - preflight
+        - validation
+      block:
+
+        - name: "databases/postgresql/site#play4 | Initialize validation state"
+          ansible.builtin.set_fact:
+            fe_databases_postgresql_site_play4_start_epoch: "{{ now(fmt='%s') | int }}"
+            fe_databases_postgresql_site_play4_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+            fe_databases_postgresql_site_play4_status: "running"
+            fe_databases_postgresql_site_play4_preflight_passed: false
+            fe_databases_postgresql_site_play4_postflight_passed: false
+            fe_databases_postgresql_site_play4_failed_task: ""
+            fe_databases_postgresql_site_play4_error: ""
+            fe_databases_postgresql_site_play4_stats_published: false
+          tags:
+            - always
+
+        - name: "databases/postgresql/site#play4 | Preflight | Verify the control node meets the minimum ansible-core version"
+          ansible.builtin.assert:
+            that:
+              - ansible_version.full is version(fe_validation_min_ansible_version | default('2.12'), '>=')
+            fail_msg: >-
+              databases/postgresql/site#play4: requires ansible-core
+              {{ fe_validation_min_ansible_version | default('2.12') }} or newer,
+              found {{ ansible_version.full }}.
+            success_msg: >-
+              databases/postgresql/site#play4: ansible-core {{ ansible_version.full }} satisfies the minimum.
+            quiet: true
+          tags:
+            - always
+            - preflight
+            - validation
+
+        - name: "databases/postgresql/site#play4 | Preflight | Verify every declared required variable is defined"
+          ansible.builtin.assert:
+            that:
+              - vars[item] is defined
+            fail_msg: "databases/postgresql/site#play4: required variable '{{ item }}' is not defined."
+            success_msg: "databases/postgresql/site#play4: required variable '{{ item }}' is defined."
+            quiet: true
+          loop: "{{ fe_databases_postgresql_site_play4_required_vars | default([]) }}"
+          loop_control:
+            label: "{{ item }}"
+          tags:
+            - always
+            - preflight
+            - validation
+
+        - name: "databases/postgresql/site#play4 | Preflight | Record that preflight validation passed"
+          ansible.builtin.set_fact:
+            fe_databases_postgresql_site_play4_preflight_passed: true
+          tags:
+            - always
+            - preflight
+            - validation
+
+      rescue:
+
+        - name: "databases/postgresql/site#play4 | Rescue | Capture the failing task and error detail"
+          ansible.builtin.set_fact:
+            fe_databases_postgresql_site_play4_status: "preflight_failed"
+            fe_databases_postgresql_site_play4_postflight_passed: false
+            fe_databases_postgresql_site_play4_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+            fe_databases_postgresql_site_play4_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+          tags:
+            - always
+            - rescue
+
+        - name: "databases/postgresql/site#play4 | Rescue | Report the failure"
+          ansible.builtin.debug:
+            msg: >-
+              databases/postgresql/site#play4: FAILED at '{{ fe_databases_postgresql_site_play4_failed_task }}' on
+              {{ inventory_hostname }} - {{ fe_databases_postgresql_site_play4_error }}
+          tags:
+            - always
+            - rescue
+
+        - name: "databases/postgresql/site#play4 | Always | Publish the validation result with set_stats"
+          ansible.builtin.set_stats:
+            data:
+              fe_validation_results:
+                "databases/postgresql/site#play4":
+                  component: "databases/postgresql/site#play4"
+                  type: "playbook"
+                  platform: "databases"
+                  host: "{{ inventory_hostname }}"
+                  status: "{{ fe_databases_postgresql_site_play4_status | default('unknown') }}"
+                  preflight_passed: "{{ fe_databases_postgresql_site_play4_preflight_passed | default(false) | bool }}"
+                  postflight_passed: "{{ fe_databases_postgresql_site_play4_postflight_passed | default(false) | bool }}"
+                  started_at: "{{ fe_databases_postgresql_site_play4_started_at | default('') }}"
+                  ended_at: "{{ fe_databases_postgresql_site_play4_ended_at | default('') }}"
+                  duration_seconds: "{{ fe_databases_postgresql_site_play4_duration_seconds | default(0) | int }}"
+                  failed_task: "{{ fe_databases_postgresql_site_play4_failed_task | default('') }}"
+                  error: "{{ fe_databases_postgresql_site_play4_error | default('') }}"
+                  check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+              fe_validation_executions: 1
+              fe_validation_succeeded: "{{ 1 if fe_databases_postgresql_site_play4_status | default('') == 'succeeded' else 0 }}"
+              fe_validation_failed: "{{ 0 if fe_databases_postgresql_site_play4_status | default('') == 'succeeded' else 1 }}"
+              fe_validation_duration_seconds: "{{ fe_databases_postgresql_site_play4_duration_seconds | default(0) | int }}"
+              fe_validation_failed_components: >-
+                {{ [] if fe_databases_postgresql_site_play4_status | default('') == 'succeeded' else ['databases/postgresql/site#play4'] }}
+            aggregate: true
+            per_host: false
+          tags:
+            - always
+
+        - name: "databases/postgresql/site#play4 | Always | Mark the validation statistics as published"
+          ansible.builtin.set_fact:
+            fe_databases_postgresql_site_play4_stats_published: true
+          tags:
+            - always
+
+        - name: "databases/postgresql/site#play4 | Rescue | Re-raise the failure unless the caller opted to continue"
+          ansible.builtin.fail:
+            msg: >-
+              databases/postgresql/site#play4 failed at '{{ fe_databases_postgresql_site_play4_failed_task }}': {{ fe_databases_postgresql_site_play4_error }}
+          when: not (fe_validation_continue_on_error | default(false) | bool)
+          tags:
+            - always
+            - rescue
+
+      always:
+
+        - name: "databases/postgresql/site#play4 | Always | Report the preflight outcome"
+          ansible.builtin.debug:
+            msg: >-
+              databases/postgresql/site#play4: preflight
+              {{ 'passed' if fe_databases_postgresql_site_play4_preflight_passed | default(false) | bool else 'FAILED' }}
+              on {{ inventory_hostname }}.
+          tags:
+            - always
+  post_tasks:
+    - name: "databases/postgresql/site#play4 | Postflight validation"
+      tags:
+        - always
+        - postflight
+        - validation
+      block:
+
+        - name: "databases/postgresql/site#play4 | Postflight | Verify the guarded body ran after a passing preflight"
+          ansible.builtin.assert:
+            that:
+              - fe_databases_postgresql_site_play4_preflight_passed | bool
+              - fe_databases_postgresql_site_play4_status in ['running', 'succeeded']
+            fail_msg: >-
+              databases/postgresql/site#play4: postflight validation failed - preflight passed
+              ={{ fe_databases_postgresql_site_play4_preflight_passed | default(false) }},
+              status={{ fe_databases_postgresql_site_play4_status | default('unknown') }}.
+            success_msg: "databases/postgresql/site#play4: postflight validation passed."
+            quiet: true
+          tags:
+            - always
+            - postflight
+            - validation
+
+        - name: "databases/postgresql/site#play4 | Postflight | Record the successful outcome"
+          ansible.builtin.set_fact:
+            fe_databases_postgresql_site_play4_postflight_passed: true
+            fe_databases_postgresql_site_play4_status: "succeeded"
+          tags:
+            - always
+            - postflight
+            - validation
+
+      rescue:
+
+        - name: "databases/postgresql/site#play4 | Rescue | Capture the failing task and error detail"
+          ansible.builtin.set_fact:
+            fe_databases_postgresql_site_play4_status: "failed"
+            fe_databases_postgresql_site_play4_postflight_passed: false
+            fe_databases_postgresql_site_play4_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+            fe_databases_postgresql_site_play4_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+          tags:
+            - always
+            - rescue
+
+        - name: "databases/postgresql/site#play4 | Rescue | Report the failure"
+          ansible.builtin.debug:
+            msg: >-
+              databases/postgresql/site#play4: FAILED at '{{ fe_databases_postgresql_site_play4_failed_task }}' on
+              {{ inventory_hostname }} - {{ fe_databases_postgresql_site_play4_error }}
+          tags:
+            - always
+            - rescue
+
+        - name: "databases/postgresql/site#play4 | Rescue | Re-raise the failure unless the caller opted to continue"
+          ansible.builtin.fail:
+            msg: >-
+              databases/postgresql/site#play4 failed at '{{ fe_databases_postgresql_site_play4_failed_task }}': {{ fe_databases_postgresql_site_play4_error }}
+          when: not (fe_validation_continue_on_error | default(false) | bool)
+          tags:
+            - always
+            - rescue
+
+      always:
+
+        - name: "databases/postgresql/site#play4 | Always | Compute the execution duration"
+          ansible.builtin.set_fact:
+            fe_databases_postgresql_site_play4_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+            fe_databases_postgresql_site_play4_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_databases_postgresql_site_play4_start_epoch | default(0) | int) }}"
+          tags:
+            - always
+
+        - name: "databases/postgresql/site#play4 | Always | Publish the validation result with set_stats"
+          ansible.builtin.set_stats:
+            data:
+              fe_validation_results:
+                "databases/postgresql/site#play4":
+                  component: "databases/postgresql/site#play4"
+                  type: "playbook"
+                  platform: "databases"
+                  host: "{{ inventory_hostname }}"
+                  status: "{{ fe_databases_postgresql_site_play4_status | default('unknown') }}"
+                  preflight_passed: "{{ fe_databases_postgresql_site_play4_preflight_passed | default(false) | bool }}"
+                  postflight_passed: "{{ fe_databases_postgresql_site_play4_postflight_passed | default(false) | bool }}"
+                  started_at: "{{ fe_databases_postgresql_site_play4_started_at | default('') }}"
+                  ended_at: "{{ fe_databases_postgresql_site_play4_ended_at | default('') }}"
+                  duration_seconds: "{{ fe_databases_postgresql_site_play4_duration_seconds | default(0) | int }}"
+                  failed_task: "{{ fe_databases_postgresql_site_play4_failed_task | default('') }}"
+                  error: "{{ fe_databases_postgresql_site_play4_error | default('') }}"
+                  check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+              fe_validation_executions: 1
+              fe_validation_succeeded: "{{ 1 if fe_databases_postgresql_site_play4_status | default('') == 'succeeded' else 0 }}"
+              fe_validation_failed: "{{ 0 if fe_databases_postgresql_site_play4_status | default('') == 'succeeded' else 1 }}"
+              fe_validation_duration_seconds: "{{ fe_databases_postgresql_site_play4_duration_seconds | default(0) | int }}"
+              fe_validation_failed_components: >-
+                {{ [] if fe_databases_postgresql_site_play4_status | default('') == 'succeeded' else ['databases/postgresql/site#play4'] }}
+            aggregate: true
+            per_host: false
+          when:
+            - not (fe_databases_postgresql_site_play4_stats_published | default(false) | bool)
+          tags:
+            - always
+
+        - name: "databases/postgresql/site#play4 | Always | Mark the validation statistics as published"
+          ansible.builtin.set_fact:
+            fe_databases_postgresql_site_play4_stats_published: true
+          tags:
+            - always
+
+        - name: "databases/postgresql/site#play4 | Always | Report the run summary"
+          ansible.builtin.debug:
+            msg: >-
+              databases/postgresql/site#play4: {{ fe_databases_postgresql_site_play4_status | default('unknown') }} in
+              {{ fe_databases_postgresql_site_play4_duration_seconds | default(0) }}s on {{ inventory_hostname }}.
+          tags:
+            - always
 
 
 - name: Deployment Summary
@@ -142,15 +1491,348 @@
   any_errors_fatal: true
 
   tasks:
-    - name: Display deployment summary
-      ansible.builtin.debug:
-        msg:
-          - "=== PostgreSQL Deployment Complete ==="
-          - "Version: {{ postgresql_version | default('15') }}"
-          - "Primary: {{ groups['postgresql_primary'] | default([]) | join(', ') }}"
-          - "Replicas: {{ groups['postgresql_replicas'] | default([]) | join(', ') }}"
-          - "Backup Server: {{ groups['postgresql_backup'] | default([]) | join(', ') }}"
-          - "pgPool Nodes: {{ groups['postgresql_pgpool'] | default([]) | join(', ') }}"
-          - "SSL Enabled: {{ postgresql_ssl_enabled | default(true) }}"
-          - "Replication: Streaming"
-      tags: ['always']
+    - name: "databases/postgresql/site#play5 | Guarded execution with rescue and always handling"
+      block:
+
+        - name: Display deployment summary
+          ansible.builtin.debug:
+            msg:
+              - "=== PostgreSQL Deployment Complete ==="
+              - "Version: {{ postgresql_version | default('15') }}"
+              - "Primary: {{ groups['postgresql_primary'] | default([]) | join(', ') }}"
+              - "Replicas: {{ groups['postgresql_replicas'] | default([]) | join(', ') }}"
+              - "Backup Server: {{ groups['postgresql_backup'] | default([]) | join(', ') }}"
+              - "pgPool Nodes: {{ groups['postgresql_pgpool'] | default([]) | join(', ') }}"
+              - "SSL Enabled: {{ postgresql_ssl_enabled | default(true) }}"
+              - "Replication: Streaming"
+          tags: ['always']
+
+      rescue:
+
+        - name: "databases/postgresql/site#play5 | Rescue | Capture the failing task and error detail"
+          ansible.builtin.set_fact:
+            fe_databases_postgresql_site_play5_status: "failed"
+            fe_databases_postgresql_site_play5_postflight_passed: false
+            fe_databases_postgresql_site_play5_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+            fe_databases_postgresql_site_play5_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+          tags:
+            - always
+            - rescue
+
+        - name: "databases/postgresql/site#play5 | Rescue | Report the failure"
+          ansible.builtin.debug:
+            msg: >-
+              databases/postgresql/site#play5: FAILED at '{{ fe_databases_postgresql_site_play5_failed_task }}' on
+              {{ inventory_hostname }} - {{ fe_databases_postgresql_site_play5_error }}
+          tags:
+            - always
+            - rescue
+
+        - name: "databases/postgresql/site#play5 | Rescue | Re-raise the failure unless the caller opted to continue"
+          ansible.builtin.fail:
+            msg: >-
+              databases/postgresql/site#play5 failed at '{{ fe_databases_postgresql_site_play5_failed_task }}': {{ fe_databases_postgresql_site_play5_error }}
+          when: not (fe_validation_continue_on_error | default(false) | bool)
+          tags:
+            - always
+            - rescue
+
+      always:
+
+        - name: "databases/postgresql/site#play5 | Always | Compute the execution duration"
+          ansible.builtin.set_fact:
+            fe_databases_postgresql_site_play5_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+            fe_databases_postgresql_site_play5_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_databases_postgresql_site_play5_start_epoch | default(0) | int) }}"
+          tags:
+            - always
+
+        - name: "databases/postgresql/site#play5 | Always | Publish the validation result with set_stats"
+          ansible.builtin.set_stats:
+            data:
+              fe_validation_results:
+                "databases/postgresql/site#play5":
+                  component: "databases/postgresql/site#play5"
+                  type: "playbook"
+                  platform: "databases"
+                  host: "{{ inventory_hostname }}"
+                  status: "{{ fe_databases_postgresql_site_play5_status | default('unknown') }}"
+                  preflight_passed: "{{ fe_databases_postgresql_site_play5_preflight_passed | default(false) | bool }}"
+                  postflight_passed: "{{ fe_databases_postgresql_site_play5_postflight_passed | default(false) | bool }}"
+                  started_at: "{{ fe_databases_postgresql_site_play5_started_at | default('') }}"
+                  ended_at: "{{ fe_databases_postgresql_site_play5_ended_at | default('') }}"
+                  duration_seconds: "{{ fe_databases_postgresql_site_play5_duration_seconds | default(0) | int }}"
+                  failed_task: "{{ fe_databases_postgresql_site_play5_failed_task | default('') }}"
+                  error: "{{ fe_databases_postgresql_site_play5_error | default('') }}"
+                  check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+              fe_validation_executions: 1
+              fe_validation_succeeded: "{{ 1 if fe_databases_postgresql_site_play5_status | default('') == 'succeeded' else 0 }}"
+              fe_validation_failed: "{{ 0 if fe_databases_postgresql_site_play5_status | default('') == 'succeeded' else 1 }}"
+              fe_validation_duration_seconds: "{{ fe_databases_postgresql_site_play5_duration_seconds | default(0) | int }}"
+              fe_validation_failed_components: >-
+                {{ [] if fe_databases_postgresql_site_play5_status | default('') == 'succeeded' else ['databases/postgresql/site#play5'] }}
+            aggregate: true
+            per_host: false
+          when:
+            - fe_databases_postgresql_site_play5_status | default('') == 'failed'
+            - not (fe_databases_postgresql_site_play5_stats_published | default(false) | bool)
+          tags:
+            - always
+
+        - name: "databases/postgresql/site#play5 | Always | Mark the validation statistics as published"
+          ansible.builtin.set_fact:
+            fe_databases_postgresql_site_play5_stats_published: true
+          when:
+            - fe_databases_postgresql_site_play5_status | default('') == 'failed'
+          tags:
+            - always
+  pre_tasks:
+    - name: "databases/postgresql/site#play5 | Preflight validation"
+      tags:
+        - always
+        - preflight
+        - validation
+      block:
+
+        - name: "databases/postgresql/site#play5 | Initialize validation state"
+          ansible.builtin.set_fact:
+            fe_databases_postgresql_site_play5_start_epoch: "{{ now(fmt='%s') | int }}"
+            fe_databases_postgresql_site_play5_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+            fe_databases_postgresql_site_play5_status: "running"
+            fe_databases_postgresql_site_play5_preflight_passed: false
+            fe_databases_postgresql_site_play5_postflight_passed: false
+            fe_databases_postgresql_site_play5_failed_task: ""
+            fe_databases_postgresql_site_play5_error: ""
+            fe_databases_postgresql_site_play5_stats_published: false
+          tags:
+            - always
+
+        - name: "databases/postgresql/site#play5 | Preflight | Verify the control node meets the minimum ansible-core version"
+          ansible.builtin.assert:
+            that:
+              - ansible_version.full is version(fe_validation_min_ansible_version | default('2.12'), '>=')
+            fail_msg: >-
+              databases/postgresql/site#play5: requires ansible-core
+              {{ fe_validation_min_ansible_version | default('2.12') }} or newer,
+              found {{ ansible_version.full }}.
+            success_msg: >-
+              databases/postgresql/site#play5: ansible-core {{ ansible_version.full }} satisfies the minimum.
+            quiet: true
+          tags:
+            - always
+            - preflight
+            - validation
+
+        - name: "databases/postgresql/site#play5 | Preflight | Verify every declared required variable is defined"
+          ansible.builtin.assert:
+            that:
+              - vars[item] is defined
+            fail_msg: "databases/postgresql/site#play5: required variable '{{ item }}' is not defined."
+            success_msg: "databases/postgresql/site#play5: required variable '{{ item }}' is defined."
+            quiet: true
+          loop: "{{ fe_databases_postgresql_site_play5_required_vars | default([]) }}"
+          loop_control:
+            label: "{{ item }}"
+          tags:
+            - always
+            - preflight
+            - validation
+
+        - name: "databases/postgresql/site#play5 | Preflight | Record that preflight validation passed"
+          ansible.builtin.set_fact:
+            fe_databases_postgresql_site_play5_preflight_passed: true
+          tags:
+            - always
+            - preflight
+            - validation
+
+      rescue:
+
+        - name: "databases/postgresql/site#play5 | Rescue | Capture the failing task and error detail"
+          ansible.builtin.set_fact:
+            fe_databases_postgresql_site_play5_status: "preflight_failed"
+            fe_databases_postgresql_site_play5_postflight_passed: false
+            fe_databases_postgresql_site_play5_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+            fe_databases_postgresql_site_play5_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+          tags:
+            - always
+            - rescue
+
+        - name: "databases/postgresql/site#play5 | Rescue | Report the failure"
+          ansible.builtin.debug:
+            msg: >-
+              databases/postgresql/site#play5: FAILED at '{{ fe_databases_postgresql_site_play5_failed_task }}' on
+              {{ inventory_hostname }} - {{ fe_databases_postgresql_site_play5_error }}
+          tags:
+            - always
+            - rescue
+
+        - name: "databases/postgresql/site#play5 | Always | Publish the validation result with set_stats"
+          ansible.builtin.set_stats:
+            data:
+              fe_validation_results:
+                "databases/postgresql/site#play5":
+                  component: "databases/postgresql/site#play5"
+                  type: "playbook"
+                  platform: "databases"
+                  host: "{{ inventory_hostname }}"
+                  status: "{{ fe_databases_postgresql_site_play5_status | default('unknown') }}"
+                  preflight_passed: "{{ fe_databases_postgresql_site_play5_preflight_passed | default(false) | bool }}"
+                  postflight_passed: "{{ fe_databases_postgresql_site_play5_postflight_passed | default(false) | bool }}"
+                  started_at: "{{ fe_databases_postgresql_site_play5_started_at | default('') }}"
+                  ended_at: "{{ fe_databases_postgresql_site_play5_ended_at | default('') }}"
+                  duration_seconds: "{{ fe_databases_postgresql_site_play5_duration_seconds | default(0) | int }}"
+                  failed_task: "{{ fe_databases_postgresql_site_play5_failed_task | default('') }}"
+                  error: "{{ fe_databases_postgresql_site_play5_error | default('') }}"
+                  check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+              fe_validation_executions: 1
+              fe_validation_succeeded: "{{ 1 if fe_databases_postgresql_site_play5_status | default('') == 'succeeded' else 0 }}"
+              fe_validation_failed: "{{ 0 if fe_databases_postgresql_site_play5_status | default('') == 'succeeded' else 1 }}"
+              fe_validation_duration_seconds: "{{ fe_databases_postgresql_site_play5_duration_seconds | default(0) | int }}"
+              fe_validation_failed_components: >-
+                {{ [] if fe_databases_postgresql_site_play5_status | default('') == 'succeeded' else ['databases/postgresql/site#play5'] }}
+            aggregate: true
+            per_host: false
+          tags:
+            - always
+
+        - name: "databases/postgresql/site#play5 | Always | Mark the validation statistics as published"
+          ansible.builtin.set_fact:
+            fe_databases_postgresql_site_play5_stats_published: true
+          tags:
+            - always
+
+        - name: "databases/postgresql/site#play5 | Rescue | Re-raise the failure unless the caller opted to continue"
+          ansible.builtin.fail:
+            msg: >-
+              databases/postgresql/site#play5 failed at '{{ fe_databases_postgresql_site_play5_failed_task }}': {{ fe_databases_postgresql_site_play5_error }}
+          when: not (fe_validation_continue_on_error | default(false) | bool)
+          tags:
+            - always
+            - rescue
+
+      always:
+
+        - name: "databases/postgresql/site#play5 | Always | Report the preflight outcome"
+          ansible.builtin.debug:
+            msg: >-
+              databases/postgresql/site#play5: preflight
+              {{ 'passed' if fe_databases_postgresql_site_play5_preflight_passed | default(false) | bool else 'FAILED' }}
+              on {{ inventory_hostname }}.
+          tags:
+            - always
+  post_tasks:
+    - name: "databases/postgresql/site#play5 | Postflight validation"
+      tags:
+        - always
+        - postflight
+        - validation
+      block:
+
+        - name: "databases/postgresql/site#play5 | Postflight | Verify the guarded body ran after a passing preflight"
+          ansible.builtin.assert:
+            that:
+              - fe_databases_postgresql_site_play5_preflight_passed | bool
+              - fe_databases_postgresql_site_play5_status in ['running', 'succeeded']
+            fail_msg: >-
+              databases/postgresql/site#play5: postflight validation failed - preflight passed
+              ={{ fe_databases_postgresql_site_play5_preflight_passed | default(false) }},
+              status={{ fe_databases_postgresql_site_play5_status | default('unknown') }}.
+            success_msg: "databases/postgresql/site#play5: postflight validation passed."
+            quiet: true
+          tags:
+            - always
+            - postflight
+            - validation
+
+        - name: "databases/postgresql/site#play5 | Postflight | Record the successful outcome"
+          ansible.builtin.set_fact:
+            fe_databases_postgresql_site_play5_postflight_passed: true
+            fe_databases_postgresql_site_play5_status: "succeeded"
+          tags:
+            - always
+            - postflight
+            - validation
+
+      rescue:
+
+        - name: "databases/postgresql/site#play5 | Rescue | Capture the failing task and error detail"
+          ansible.builtin.set_fact:
+            fe_databases_postgresql_site_play5_status: "failed"
+            fe_databases_postgresql_site_play5_postflight_passed: false
+            fe_databases_postgresql_site_play5_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+            fe_databases_postgresql_site_play5_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+          tags:
+            - always
+            - rescue
+
+        - name: "databases/postgresql/site#play5 | Rescue | Report the failure"
+          ansible.builtin.debug:
+            msg: >-
+              databases/postgresql/site#play5: FAILED at '{{ fe_databases_postgresql_site_play5_failed_task }}' on
+              {{ inventory_hostname }} - {{ fe_databases_postgresql_site_play5_error }}
+          tags:
+            - always
+            - rescue
+
+        - name: "databases/postgresql/site#play5 | Rescue | Re-raise the failure unless the caller opted to continue"
+          ansible.builtin.fail:
+            msg: >-
+              databases/postgresql/site#play5 failed at '{{ fe_databases_postgresql_site_play5_failed_task }}': {{ fe_databases_postgresql_site_play5_error }}
+          when: not (fe_validation_continue_on_error | default(false) | bool)
+          tags:
+            - always
+            - rescue
+
+      always:
+
+        - name: "databases/postgresql/site#play5 | Always | Compute the execution duration"
+          ansible.builtin.set_fact:
+            fe_databases_postgresql_site_play5_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+            fe_databases_postgresql_site_play5_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_databases_postgresql_site_play5_start_epoch | default(0) | int) }}"
+          tags:
+            - always
+
+        - name: "databases/postgresql/site#play5 | Always | Publish the validation result with set_stats"
+          ansible.builtin.set_stats:
+            data:
+              fe_validation_results:
+                "databases/postgresql/site#play5":
+                  component: "databases/postgresql/site#play5"
+                  type: "playbook"
+                  platform: "databases"
+                  host: "{{ inventory_hostname }}"
+                  status: "{{ fe_databases_postgresql_site_play5_status | default('unknown') }}"
+                  preflight_passed: "{{ fe_databases_postgresql_site_play5_preflight_passed | default(false) | bool }}"
+                  postflight_passed: "{{ fe_databases_postgresql_site_play5_postflight_passed | default(false) | bool }}"
+                  started_at: "{{ fe_databases_postgresql_site_play5_started_at | default('') }}"
+                  ended_at: "{{ fe_databases_postgresql_site_play5_ended_at | default('') }}"
+                  duration_seconds: "{{ fe_databases_postgresql_site_play5_duration_seconds | default(0) | int }}"
+                  failed_task: "{{ fe_databases_postgresql_site_play5_failed_task | default('') }}"
+                  error: "{{ fe_databases_postgresql_site_play5_error | default('') }}"
+                  check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+              fe_validation_executions: 1
+              fe_validation_succeeded: "{{ 1 if fe_databases_postgresql_site_play5_status | default('') == 'succeeded' else 0 }}"
+              fe_validation_failed: "{{ 0 if fe_databases_postgresql_site_play5_status | default('') == 'succeeded' else 1 }}"
+              fe_validation_duration_seconds: "{{ fe_databases_postgresql_site_play5_duration_seconds | default(0) | int }}"
+              fe_validation_failed_components: >-
+                {{ [] if fe_databases_postgresql_site_play5_status | default('') == 'succeeded' else ['databases/postgresql/site#play5'] }}
+            aggregate: true
+            per_host: false
+          when:
+            - not (fe_databases_postgresql_site_play5_stats_published | default(false) | bool)
+          tags:
+            - always
+
+        - name: "databases/postgresql/site#play5 | Always | Mark the validation statistics as published"
+          ansible.builtin.set_fact:
+            fe_databases_postgresql_site_play5_stats_published: true
+          tags:
+            - always
+
+        - name: "databases/postgresql/site#play5 | Always | Report the run summary"
+          ansible.builtin.debug:
+            msg: >-
+              databases/postgresql/site#play5: {{ fe_databases_postgresql_site_play5_status | default('unknown') }} in
+              {{ fe_databases_postgresql_site_play5_duration_seconds | default(0) }}s on {{ inventory_hostname }}.
+          tags:
+            - always

@@ -1,95 +1,278 @@
 ---
 # Assign criticality ratings to OT assets for risk prioritization
 
-- name: Retrieve assets for criticality assessment
-  ansible.builtin.uri:
-    url: "{{ dragos_base_url }}/api/assets?limit={{ page_size }}"
-    method: GET
-    headers:
-      Authorization: "Bearer {{ dragos_token }}"
-    return_content: true
-    status_code: 200
-    validate_certs: "{{ dragos_verify_ssl }}"
-  register: assets_for_criticality
+# ---------------------------------------------------------------------------
+# Fourth Estate preflight / postflight validation harness
+#
+# The task file body below is wrapped in an Ansible block/rescue/always structure:
+#
+#   block   preflight validation runs first, then the original task file body, then
+#           postflight validation. Any failure transfers control to rescue.
+#   rescue  records which task failed and why, then re-raises so a failure is
+#           never silently swallowed. Set fe_validation_continue_on_error=true
+#           to record the failure and keep going instead.
+#   always  computes the run duration and publishes the outcome through
+#           ansible.builtin.set_stats, so a wrapping playbook, AWX/AAP or CI can
+#           consume the result without scraping log output.
+#
+# Published stats (see docs/VALIDATION_AND_STATS.md):
+#   fe_validation_results['dragos/dragos_inventory_model/assets_criticality']  per-component record
+#   fe_validation_executions / _succeeded / _failed / _duration_seconds
+#   fe_validation_failed_components
+#
+# Add component-specific preflight checks without editing this file by setting
+#   fe_dragos_dragos_inventory_model_assets_criticality_required_vars: [var_one, var_two]
+# ---------------------------------------------------------------------------
 
-- name: Calculate criticality scores
+- name: "dragos/dragos_inventory_model/assets_criticality | Initialize validation state"
   ansible.builtin.set_fact:
-    asset_criticality_scores: |
-      {% set scores = [] %}
-      {% for asset in (assets_for_criticality.json.items | default(assets_for_criticality.json.data | default([]))) %}
-        {% set score = 0 %}
-        {% if asset.asset_type in ['PLC', 'Safety System'] %}{% set score = score + 40 %}{% endif %}
-        {% if asset.asset_type in ['HMI', 'SCADA Server'] %}{% set score = score + 30 %}{% endif %}
-        {% if asset.asset_type in ['Historian', 'Engineering Station'] %}{% set score = score + 20 %}{% endif %}
-        {% if asset.process_critical | default(false) %}{% set score = score + 30 %}{% endif %}
-        {% if asset.safety_critical | default(false) %}{% set score = score + 50 %}{% endif %}
-        {% if asset.availability_requirement == 'high' %}{% set score = score + 20 %}{% endif %}
-        {% if asset.publicly_accessible | default(false) %}{% set score = score + 15 %}{% endif %}
-        {% set _ = scores.append({'id': asset.id, 'name': asset.name | default(asset.ip_address), 'score': score, 'rating': ('critical' if score >= 80 else ('high' if score >= 60 else ('medium' if score >= 40 else 'low')))}) %}
-      {% endfor %}
-      {{ scores }}
+    fe_dragos_dragos_inventory_model_assets_criticality_start_epoch: "{{ now(fmt='%s') | int }}"
+    fe_dragos_dragos_inventory_model_assets_criticality_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+    fe_dragos_dragos_inventory_model_assets_criticality_status: "running"
+    fe_dragos_dragos_inventory_model_assets_criticality_preflight_passed: false
+    fe_dragos_dragos_inventory_model_assets_criticality_postflight_passed: false
+    fe_dragos_dragos_inventory_model_assets_criticality_failed_task: ""
+    fe_dragos_dragos_inventory_model_assets_criticality_error: ""
+    fe_dragos_dragos_inventory_model_assets_criticality_stats_published: false
+  tags:
+    - always
 
-- name: Apply criticality ratings to assets
-  ansible.builtin.uri:
-    url: "{{ dragos_base_url }}/api/assets/{{ item.id }}/criticality"
-    method: PUT
-    headers:
-      Authorization: "Bearer {{ dragos_token }}"
-      Content-Type: "application/json"
-    body_format: json
-    body:
-      criticality_score: "{{ item.score }}"
-      criticality_rating: "{{ item.rating }}"
-      assessment_date: "{{ ansible_date_time.iso8601 }}"
-      assessment_method: "automated"
-      business_impact:
-        safety: "{{ item.safety_impact | default('medium') }}"
-        production: "{{ item.production_impact | default('medium') }}"
-        financial: "{{ item.financial_impact | default('medium') }}"
-        reputation: "{{ item.reputation_impact | default('medium') }}"
-        regulatory: "{{ item.regulatory_impact | default('medium') }}"
-    status_code: [200, 201]
-    validate_certs: "{{ dragos_verify_ssl }}"
-  loop: "{{ asset_criticality_scores }}"
-  loop_control:
-    label: "{{ item.name }} - Rating: {{ item.rating }} ({{ item.score }})"
-  when: not dry_run
-  register: criticality_assignments
+- name: "dragos/dragos_inventory_model/assets_criticality | Guarded execution with preflight and postflight validation"
+  block:
 
-- name: Identify critical assets
-  ansible.builtin.set_fact:
-    critical_assets: "{{ asset_criticality_scores | selectattr('rating', 'equalto', 'critical') | list }}"
-    high_criticality_assets: "{{ asset_criticality_scores | selectattr('rating', 'equalto', 'high') | list }}"
+    # ----------------------------- preflight --------------------
 
-- name: Apply enhanced monitoring for critical assets
-  ansible.builtin.uri:
-    url: "{{ dragos_base_url }}/api/assets/{{ item.id }}/monitoring"
-    method: PUT
-    headers:
-      Authorization: "Bearer {{ dragos_token }}"
-      Content-Type: "application/json"
-    body_format: json
-    body:
-      enhanced_monitoring: true
-      alert_priority: "critical"
-      logging_level: "verbose"
-      anomaly_detection: true
-    status_code: [200, 201]
-    validate_certs: "{{ dragos_verify_ssl }}"
-  loop: "{{ critical_assets }}"
-  loop_control:
-    label: "{{ item.name }} - Enhanced Monitoring"
-  when: not dry_run and enable_enhanced_monitoring
-  register: enhanced_monitoring
+    - name: "dragos/dragos_inventory_model/assets_criticality | Preflight | Verify the control node meets the minimum ansible-core version"
+      ansible.builtin.assert:
+        that:
+          - ansible_version.full is version(fe_validation_min_ansible_version | default('2.12'), '>=')
+        fail_msg: >-
+          dragos/dragos_inventory_model/assets_criticality: requires ansible-core
+          {{ fe_validation_min_ansible_version | default('2.12') }} or newer,
+          found {{ ansible_version.full }}.
+        success_msg: >-
+          dragos/dragos_inventory_model/assets_criticality: ansible-core {{ ansible_version.full }} satisfies the minimum.
+        quiet: true
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: Generate criticality assessment report
-  ansible.builtin.template:
-    src: asset_criticality_report.j2
-    dest: "{{ artifacts_dir }}/asset_criticality_{{ ansible_date_time.iso8601_basic_short }}.html"
-    mode: "0644"
+    - name: "dragos/dragos_inventory_model/assets_criticality | Preflight | Verify every declared required variable is defined"
+      ansible.builtin.assert:
+        that:
+          - vars[item] is defined
+        fail_msg: "dragos/dragos_inventory_model/assets_criticality: required variable '{{ item }}' is not defined."
+        success_msg: "dragos/dragos_inventory_model/assets_criticality: required variable '{{ item }}' is defined."
+        quiet: true
+      loop: "{{ fe_dragos_dragos_inventory_model_assets_criticality_required_vars | default([]) }}"
+      loop_control:
+        label: "{{ item }}"
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: Save criticality ratings
-  ansible.builtin.copy:
-    dest: "{{ artifacts_dir }}/asset_criticality_{{ ansible_date_time.iso8601_basic_short }}.json"
-    content: "{{ {'scores': asset_criticality_scores, 'critical_assets': critical_assets, 'high_assets': high_criticality_assets} | to_nice_json }}"
-    mode: "0644"
+    - name: "dragos/dragos_inventory_model/assets_criticality | Preflight | Record that preflight validation passed"
+      ansible.builtin.set_fact:
+        fe_dragos_dragos_inventory_model_assets_criticality_preflight_passed: true
+      tags:
+        - always
+        - preflight
+        - validation
+
+    # ----------------------------- execute ----------------------
+
+    - name: Retrieve assets for criticality assessment
+      ansible.builtin.uri:
+        url: "{{ dragos_base_url }}/api/assets?limit={{ page_size }}"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ dragos_token }}"
+        return_content: true
+        status_code: 200
+        validate_certs: "{{ dragos_verify_ssl }}"
+      register: assets_for_criticality
+
+    - name: Calculate criticality scores
+      ansible.builtin.set_fact:
+        asset_criticality_scores: |
+          {% set scores = [] %}
+          {% for asset in (assets_for_criticality.json.items | default(assets_for_criticality.json.data | default([]))) %}
+            {% set score = 0 %}
+            {% if asset.asset_type in ['PLC', 'Safety System'] %}{% set score = score + 40 %}{% endif %}
+            {% if asset.asset_type in ['HMI', 'SCADA Server'] %}{% set score = score + 30 %}{% endif %}
+            {% if asset.asset_type in ['Historian', 'Engineering Station'] %}{% set score = score + 20 %}{% endif %}
+            {% if asset.process_critical | default(false) %}{% set score = score + 30 %}{% endif %}
+            {% if asset.safety_critical | default(false) %}{% set score = score + 50 %}{% endif %}
+            {% if asset.availability_requirement == 'high' %}{% set score = score + 20 %}{% endif %}
+            {% if asset.publicly_accessible | default(false) %}{% set score = score + 15 %}{% endif %}
+            {% set _ = scores.append({'id': asset.id, 'name': asset.name | default(asset.ip_address), 'score': score, 'rating': ('critical' if score >= 80 else ('high' if score >= 60 else ('medium' if score >= 40 else 'low')))}) %}
+          {% endfor %}
+          {{ scores }}
+
+    - name: Apply criticality ratings to assets
+      ansible.builtin.uri:
+        url: "{{ dragos_base_url }}/api/assets/{{ item.id }}/criticality"
+        method: PUT
+        headers:
+          Authorization: "Bearer {{ dragos_token }}"
+          Content-Type: "application/json"
+        body_format: json
+        body:
+          criticality_score: "{{ item.score }}"
+          criticality_rating: "{{ item.rating }}"
+          assessment_date: "{{ ansible_date_time.iso8601 }}"
+          assessment_method: "automated"
+          business_impact:
+            safety: "{{ item.safety_impact | default('medium') }}"
+            production: "{{ item.production_impact | default('medium') }}"
+            financial: "{{ item.financial_impact | default('medium') }}"
+            reputation: "{{ item.reputation_impact | default('medium') }}"
+            regulatory: "{{ item.regulatory_impact | default('medium') }}"
+        status_code: [200, 201]
+        validate_certs: "{{ dragos_verify_ssl }}"
+      loop: "{{ asset_criticality_scores }}"
+      loop_control:
+        label: "{{ item.name }} - Rating: {{ item.rating }} ({{ item.score }})"
+      when: not dry_run
+      register: criticality_assignments
+
+    - name: Identify critical assets
+      ansible.builtin.set_fact:
+        critical_assets: "{{ asset_criticality_scores | selectattr('rating', 'equalto', 'critical') | list }}"
+        high_criticality_assets: "{{ asset_criticality_scores | selectattr('rating', 'equalto', 'high') | list }}"
+
+    - name: Apply enhanced monitoring for critical assets
+      ansible.builtin.uri:
+        url: "{{ dragos_base_url }}/api/assets/{{ item.id }}/monitoring"
+        method: PUT
+        headers:
+          Authorization: "Bearer {{ dragos_token }}"
+          Content-Type: "application/json"
+        body_format: json
+        body:
+          enhanced_monitoring: true
+          alert_priority: "critical"
+          logging_level: "verbose"
+          anomaly_detection: true
+        status_code: [200, 201]
+        validate_certs: "{{ dragos_verify_ssl }}"
+      loop: "{{ critical_assets }}"
+      loop_control:
+        label: "{{ item.name }} - Enhanced Monitoring"
+      when: not dry_run and enable_enhanced_monitoring
+      register: enhanced_monitoring
+
+    - name: Generate criticality assessment report
+      ansible.builtin.template:
+        src: asset_criticality_report.j2
+        dest: "{{ artifacts_dir }}/asset_criticality_{{ ansible_date_time.iso8601_basic_short }}.html"
+        mode: "0644"
+
+    - name: Save criticality ratings
+      ansible.builtin.copy:
+        dest: "{{ artifacts_dir }}/asset_criticality_{{ ansible_date_time.iso8601_basic_short }}.json"
+        content: "{{ {'scores': asset_criticality_scores, 'critical_assets': critical_assets, 'high_assets': high_criticality_assets} | to_nice_json }}"
+        mode: "0644"
+
+    # ----------------------------- postflight -------------------
+
+    - name: "dragos/dragos_inventory_model/assets_criticality | Postflight | Verify the guarded body ran after a passing preflight"
+      ansible.builtin.assert:
+        that:
+          - fe_dragos_dragos_inventory_model_assets_criticality_preflight_passed | bool
+          - fe_dragos_dragos_inventory_model_assets_criticality_status in ['running', 'succeeded']
+        fail_msg: >-
+          dragos/dragos_inventory_model/assets_criticality: postflight validation failed - preflight passed
+          ={{ fe_dragos_dragos_inventory_model_assets_criticality_preflight_passed | default(false) }},
+          status={{ fe_dragos_dragos_inventory_model_assets_criticality_status | default('unknown') }}.
+        success_msg: "dragos/dragos_inventory_model/assets_criticality: postflight validation passed."
+        quiet: true
+      tags:
+        - always
+        - postflight
+        - validation
+
+    - name: "dragos/dragos_inventory_model/assets_criticality | Postflight | Record the successful outcome"
+      ansible.builtin.set_fact:
+        fe_dragos_dragos_inventory_model_assets_criticality_postflight_passed: true
+        fe_dragos_dragos_inventory_model_assets_criticality_status: "succeeded"
+      tags:
+        - always
+        - postflight
+        - validation
+
+  rescue:
+
+    - name: "dragos/dragos_inventory_model/assets_criticality | Rescue | Capture the failing task and error detail"
+      ansible.builtin.set_fact:
+        fe_dragos_dragos_inventory_model_assets_criticality_status: "failed"
+        fe_dragos_dragos_inventory_model_assets_criticality_postflight_passed: false
+        fe_dragos_dragos_inventory_model_assets_criticality_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+        fe_dragos_dragos_inventory_model_assets_criticality_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+      tags:
+        - always
+        - rescue
+
+    - name: "dragos/dragos_inventory_model/assets_criticality | Rescue | Report the failure"
+      ansible.builtin.debug:
+        msg: >-
+          dragos/dragos_inventory_model/assets_criticality: FAILED at '{{ fe_dragos_dragos_inventory_model_assets_criticality_failed_task }}' on
+          {{ inventory_hostname }} - {{ fe_dragos_dragos_inventory_model_assets_criticality_error }}
+      tags:
+        - always
+        - rescue
+
+    - name: "dragos/dragos_inventory_model/assets_criticality | Rescue | Re-raise the failure unless the caller opted to continue"
+      ansible.builtin.fail:
+        msg: >-
+          dragos/dragos_inventory_model/assets_criticality failed at '{{ fe_dragos_dragos_inventory_model_assets_criticality_failed_task }}': {{ fe_dragos_dragos_inventory_model_assets_criticality_error }}
+      when: not (fe_validation_continue_on_error | default(false) | bool)
+      tags:
+        - always
+        - rescue
+
+  always:
+
+    - name: "dragos/dragos_inventory_model/assets_criticality | Always | Compute the execution duration"
+      ansible.builtin.set_fact:
+        fe_dragos_dragos_inventory_model_assets_criticality_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+        fe_dragos_dragos_inventory_model_assets_criticality_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_dragos_dragos_inventory_model_assets_criticality_start_epoch | default(0) | int) }}"
+      tags:
+        - always
+
+    - name: "dragos/dragos_inventory_model/assets_criticality | Always | Publish the validation result with set_stats"
+      ansible.builtin.set_stats:
+        data:
+          fe_validation_results:
+            "dragos/dragos_inventory_model/assets_criticality":
+              component: "dragos/dragos_inventory_model/assets_criticality"
+              type: "role-tasks"
+              platform: "dragos"
+              host: "{{ inventory_hostname }}"
+              status: "{{ fe_dragos_dragos_inventory_model_assets_criticality_status | default('unknown') }}"
+              preflight_passed: "{{ fe_dragos_dragos_inventory_model_assets_criticality_preflight_passed | default(false) | bool }}"
+              postflight_passed: "{{ fe_dragos_dragos_inventory_model_assets_criticality_postflight_passed | default(false) | bool }}"
+              started_at: "{{ fe_dragos_dragos_inventory_model_assets_criticality_started_at | default('') }}"
+              ended_at: "{{ fe_dragos_dragos_inventory_model_assets_criticality_ended_at | default('') }}"
+              duration_seconds: "{{ fe_dragos_dragos_inventory_model_assets_criticality_duration_seconds | default(0) | int }}"
+              failed_task: "{{ fe_dragos_dragos_inventory_model_assets_criticality_failed_task | default('') }}"
+              error: "{{ fe_dragos_dragos_inventory_model_assets_criticality_error | default('') }}"
+              check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+          fe_validation_executions: 1
+          fe_validation_succeeded: "{{ 1 if fe_dragos_dragos_inventory_model_assets_criticality_status | default('') == 'succeeded' else 0 }}"
+          fe_validation_failed: "{{ 0 if fe_dragos_dragos_inventory_model_assets_criticality_status | default('') == 'succeeded' else 1 }}"
+          fe_validation_duration_seconds: "{{ fe_dragos_dragos_inventory_model_assets_criticality_duration_seconds | default(0) | int }}"
+          fe_validation_failed_components: >-
+            {{ [] if fe_dragos_dragos_inventory_model_assets_criticality_status | default('') == 'succeeded' else ['dragos/dragos_inventory_model/assets_criticality'] }}
+        aggregate: true
+        per_host: false
+      tags:
+        - always
+
+    - name: "dragos/dragos_inventory_model/assets_criticality | Always | Mark the validation statistics as published"
+      ansible.builtin.set_fact:
+        fe_dragos_dragos_inventory_model_assets_criticality_stats_published: true
+      tags:
+        - always

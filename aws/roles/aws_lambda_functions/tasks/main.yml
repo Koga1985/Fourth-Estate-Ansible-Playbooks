@@ -1,52 +1,235 @@
 ---
 # tasks file for aws_lambda_functions
 
-- name: Create Lambda functions
-  community.aws.lambda:
-    name: "{{ item.name }}"
-    runtime: "{{ item.runtime }}"
-    handler: "{{ item.handler }}"
-    role: "{{ item.role }}"
-    zip_file: "{{ item.zip_file | default(omit) }}"
-    s3_bucket: "{{ item.s3_bucket | default(omit) }}"
-    s3_key: "{{ item.s3_key | default(omit) }}"
-    description: "{{ item.description | default('Lambda function managed by Ansible') }}"
-    timeout: "{{ item.timeout | default(30) }}"
-    memory_size: "{{ item.memory_size | default(128) }}"
-    environment_variables: "{{ item.environment | default({}) }}"
-    vpc_subnet_ids: "{{ item.vpc_subnets | default([]) }}"
-    vpc_security_group_ids: "{{ item.vpc_security_groups | default([]) }}"
-    tags: "{{ item.tags | default(lambda_tags) | combine({'Name': item.name, 'ManagedBy': 'Ansible'}) }}"
-    kms_key_arn: "{{ item.kms_key_arn | default(kms_key_arn) }}"
-    tracing_mode: "{{ item.tracing_mode | default('Active') }}"
-    reserved_concurrent_executions: "{{ item.reserved_concurrent_executions | default(omit) }}"
-    layers: "{{ item.layers | default([]) }}"
-    state: "{{ item.state | default(lambda_state) }}"
-  loop: "{{ lambda_functions }}"
-  when: lambda_functions is defined
-  register: lambda_result
+# ---------------------------------------------------------------------------
+# Fourth Estate preflight / postflight validation harness
+#
+# The task file body below is wrapped in an Ansible block/rescue/always structure:
+#
+#   block   preflight validation runs first, then the original task file body, then
+#           postflight validation. Any failure transfers control to rescue.
+#   rescue  records which task failed and why, then re-raises so a failure is
+#           never silently swallowed. Set fe_validation_continue_on_error=true
+#           to record the failure and keep going instead.
+#   always  computes the run duration and publishes the outcome through
+#           ansible.builtin.set_stats, so a wrapping playbook, AWX/AAP or CI can
+#           consume the result without scraping log output.
+#
+# Published stats (see docs/VALIDATION_AND_STATS.md):
+#   fe_validation_results['aws/aws_lambda_functions']  per-component record
+#   fe_validation_executions / _succeeded / _failed / _duration_seconds
+#   fe_validation_failed_components
+#
+# Add component-specific preflight checks without editing this file by setting
+#   fe_aws_aws_lambda_functions_required_vars: [var_one, var_two]
+# ---------------------------------------------------------------------------
 
-- name: Configure Lambda function URLs
-  community.aws.lambda_function_url:
-    function_name: "{{ item.item.name }}"
-    auth_type: "{{ item.item.url_auth_type | default('AWS_IAM') }}"
-    cors: "{{ item.item.cors | default(omit) }}"
-  loop: "{{ lambda_result.results }}"
-  when:
-    - lambda_result is defined
-    - item.item.enable_function_url | default(false) | bool
+- name: "aws/aws_lambda_functions | Initialize validation state"
+  ansible.builtin.set_fact:
+    fe_aws_aws_lambda_functions_start_epoch: "{{ now(fmt='%s') | int }}"
+    fe_aws_aws_lambda_functions_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+    fe_aws_aws_lambda_functions_status: "running"
+    fe_aws_aws_lambda_functions_preflight_passed: false
+    fe_aws_aws_lambda_functions_postflight_passed: false
+    fe_aws_aws_lambda_functions_failed_task: ""
+    fe_aws_aws_lambda_functions_error: ""
+    fe_aws_aws_lambda_functions_stats_published: false
+  tags:
+    - always
 
-- name: Enable Lambda insights for monitoring
-  community.aws.lambda:
-    name: "{{ item.item.name }}"
-    layers: "{{ item.item.layers | default([]) + [lambda_insights_layer_arn] }}"
-    state: present
-  loop: "{{ lambda_result.results }}"
-  when:
-    - lambda_result is defined
-    - lambda_enable_insights | bool
+- name: "aws/aws_lambda_functions | Guarded execution with preflight and postflight validation"
+  block:
 
-- name: Display Lambda summary
-  ansible.builtin.debug:
-    msg:
-      - "Lambda Functions Created: {{ lambda_result.results | selectattr('changed', 'equalto', true) | list | length if lambda_result is defined else 0 }}"
+    # ----------------------------- preflight --------------------
+
+    - name: "aws/aws_lambda_functions | Preflight | Verify the control node meets the minimum ansible-core version"
+      ansible.builtin.assert:
+        that:
+          - ansible_version.full is version(fe_validation_min_ansible_version | default('2.12'), '>=')
+        fail_msg: >-
+          aws/aws_lambda_functions: requires ansible-core
+          {{ fe_validation_min_ansible_version | default('2.12') }} or newer,
+          found {{ ansible_version.full }}.
+        success_msg: >-
+          aws/aws_lambda_functions: ansible-core {{ ansible_version.full }} satisfies the minimum.
+        quiet: true
+      tags:
+        - always
+        - preflight
+        - validation
+
+    - name: "aws/aws_lambda_functions | Preflight | Verify every declared required variable is defined"
+      ansible.builtin.assert:
+        that:
+          - vars[item] is defined
+        fail_msg: "aws/aws_lambda_functions: required variable '{{ item }}' is not defined."
+        success_msg: "aws/aws_lambda_functions: required variable '{{ item }}' is defined."
+        quiet: true
+      loop: "{{ fe_aws_aws_lambda_functions_required_vars | default([]) }}"
+      loop_control:
+        label: "{{ item }}"
+      tags:
+        - always
+        - preflight
+        - validation
+
+    - name: "aws/aws_lambda_functions | Preflight | Record that preflight validation passed"
+      ansible.builtin.set_fact:
+        fe_aws_aws_lambda_functions_preflight_passed: true
+      tags:
+        - always
+        - preflight
+        - validation
+
+    # ----------------------------- execute ----------------------
+
+    - name: Create Lambda functions
+      community.aws.lambda:
+        name: "{{ item.name }}"
+        runtime: "{{ item.runtime }}"
+        handler: "{{ item.handler }}"
+        role: "{{ item.role }}"
+        zip_file: "{{ item.zip_file | default(omit) }}"
+        s3_bucket: "{{ item.s3_bucket | default(omit) }}"
+        s3_key: "{{ item.s3_key | default(omit) }}"
+        description: "{{ item.description | default('Lambda function managed by Ansible') }}"
+        timeout: "{{ item.timeout | default(30) }}"
+        memory_size: "{{ item.memory_size | default(128) }}"
+        environment_variables: "{{ item.environment | default({}) }}"
+        vpc_subnet_ids: "{{ item.vpc_subnets | default([]) }}"
+        vpc_security_group_ids: "{{ item.vpc_security_groups | default([]) }}"
+        tags: "{{ item.tags | default(lambda_tags) | combine({'Name': item.name, 'ManagedBy': 'Ansible'}) }}"
+        kms_key_arn: "{{ item.kms_key_arn | default(kms_key_arn) }}"
+        tracing_mode: "{{ item.tracing_mode | default('Active') }}"
+        reserved_concurrent_executions: "{{ item.reserved_concurrent_executions | default(omit) }}"
+        layers: "{{ item.layers | default([]) }}"
+        state: "{{ item.state | default(lambda_state) }}"
+      loop: "{{ lambda_functions }}"
+      when: lambda_functions is defined
+      register: lambda_result
+
+    - name: Configure Lambda function URLs
+      community.aws.lambda_function_url:
+        function_name: "{{ item.item.name }}"
+        auth_type: "{{ item.item.url_auth_type | default('AWS_IAM') }}"
+        cors: "{{ item.item.cors | default(omit) }}"
+      loop: "{{ lambda_result.results }}"
+      when:
+        - lambda_result is defined
+        - item.item.enable_function_url | default(false) | bool
+
+    - name: Enable Lambda insights for monitoring
+      community.aws.lambda:
+        name: "{{ item.item.name }}"
+        layers: "{{ item.item.layers | default([]) + [lambda_insights_layer_arn] }}"
+        state: present
+      loop: "{{ lambda_result.results }}"
+      when:
+        - lambda_result is defined
+        - lambda_enable_insights | bool
+
+    - name: Display Lambda summary
+      ansible.builtin.debug:
+        msg:
+          - "Lambda Functions Created: {{ lambda_result.results | selectattr('changed', 'equalto', true) | list | length if lambda_result is defined else 0 }}"
+
+    # ----------------------------- postflight -------------------
+
+    - name: "aws/aws_lambda_functions | Postflight | Verify the guarded body ran after a passing preflight"
+      ansible.builtin.assert:
+        that:
+          - fe_aws_aws_lambda_functions_preflight_passed | bool
+          - fe_aws_aws_lambda_functions_status in ['running', 'succeeded']
+        fail_msg: >-
+          aws/aws_lambda_functions: postflight validation failed - preflight passed
+          ={{ fe_aws_aws_lambda_functions_preflight_passed | default(false) }},
+          status={{ fe_aws_aws_lambda_functions_status | default('unknown') }}.
+        success_msg: "aws/aws_lambda_functions: postflight validation passed."
+        quiet: true
+      tags:
+        - always
+        - postflight
+        - validation
+
+    - name: "aws/aws_lambda_functions | Postflight | Record the successful outcome"
+      ansible.builtin.set_fact:
+        fe_aws_aws_lambda_functions_postflight_passed: true
+        fe_aws_aws_lambda_functions_status: "succeeded"
+      tags:
+        - always
+        - postflight
+        - validation
+
+  rescue:
+
+    - name: "aws/aws_lambda_functions | Rescue | Capture the failing task and error detail"
+      ansible.builtin.set_fact:
+        fe_aws_aws_lambda_functions_status: "failed"
+        fe_aws_aws_lambda_functions_postflight_passed: false
+        fe_aws_aws_lambda_functions_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+        fe_aws_aws_lambda_functions_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+      tags:
+        - always
+        - rescue
+
+    - name: "aws/aws_lambda_functions | Rescue | Report the failure"
+      ansible.builtin.debug:
+        msg: >-
+          aws/aws_lambda_functions: FAILED at '{{ fe_aws_aws_lambda_functions_failed_task }}' on
+          {{ inventory_hostname }} - {{ fe_aws_aws_lambda_functions_error }}
+      tags:
+        - always
+        - rescue
+
+    - name: "aws/aws_lambda_functions | Rescue | Re-raise the failure unless the caller opted to continue"
+      ansible.builtin.fail:
+        msg: >-
+          aws/aws_lambda_functions failed at '{{ fe_aws_aws_lambda_functions_failed_task }}': {{ fe_aws_aws_lambda_functions_error }}
+      when: not (fe_validation_continue_on_error | default(false) | bool)
+      tags:
+        - always
+        - rescue
+
+  always:
+
+    - name: "aws/aws_lambda_functions | Always | Compute the execution duration"
+      ansible.builtin.set_fact:
+        fe_aws_aws_lambda_functions_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+        fe_aws_aws_lambda_functions_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_aws_aws_lambda_functions_start_epoch | default(0) | int) }}"
+      tags:
+        - always
+
+    - name: "aws/aws_lambda_functions | Always | Publish the validation result with set_stats"
+      ansible.builtin.set_stats:
+        data:
+          fe_validation_results:
+            "aws/aws_lambda_functions":
+              component: "aws/aws_lambda_functions"
+              type: "role"
+              platform: "aws"
+              host: "{{ inventory_hostname }}"
+              status: "{{ fe_aws_aws_lambda_functions_status | default('unknown') }}"
+              preflight_passed: "{{ fe_aws_aws_lambda_functions_preflight_passed | default(false) | bool }}"
+              postflight_passed: "{{ fe_aws_aws_lambda_functions_postflight_passed | default(false) | bool }}"
+              started_at: "{{ fe_aws_aws_lambda_functions_started_at | default('') }}"
+              ended_at: "{{ fe_aws_aws_lambda_functions_ended_at | default('') }}"
+              duration_seconds: "{{ fe_aws_aws_lambda_functions_duration_seconds | default(0) | int }}"
+              failed_task: "{{ fe_aws_aws_lambda_functions_failed_task | default('') }}"
+              error: "{{ fe_aws_aws_lambda_functions_error | default('') }}"
+              check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+          fe_validation_executions: 1
+          fe_validation_succeeded: "{{ 1 if fe_aws_aws_lambda_functions_status | default('') == 'succeeded' else 0 }}"
+          fe_validation_failed: "{{ 0 if fe_aws_aws_lambda_functions_status | default('') == 'succeeded' else 1 }}"
+          fe_validation_duration_seconds: "{{ fe_aws_aws_lambda_functions_duration_seconds | default(0) | int }}"
+          fe_validation_failed_components: >-
+            {{ [] if fe_aws_aws_lambda_functions_status | default('') == 'succeeded' else ['aws/aws_lambda_functions'] }}
+        aggregate: true
+        per_host: false
+      tags:
+        - always
+
+    - name: "aws/aws_lambda_functions | Always | Mark the validation statistics as published"
+      ansible.builtin.set_fact:
+        fe_aws_aws_lambda_functions_stats_published: true
+      tags:
+        - always

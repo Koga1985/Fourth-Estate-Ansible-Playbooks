@@ -1,67 +1,251 @@
 ---
-- name: Create database server installation configuration
-  ansible.builtin.template:
-    src: install_config_db.j2
-    dest: "{{ artifacts_dir }}/sl1_db_install_config.conf"
-    mode: '0600'
-  when: not dry_run
 
-- name: Run SL1 Database Server installer
-  ansible.builtin.shell: |
-    {{ sl1_package_path }} --unattended \
-      --config {{ artifacts_dir }}/sl1_db_install_config.conf \
-      --accept-eula \
-      --install-type database \
-      --hostname {{ sl1_db_server.hostname }} \
-      --ip-address {{ sl1_db_server.ip_address }} \
-      --db-root-password {{ sl1_db_server.root_password }} \
-      --innodb-buffer-pool-size {{ sl1_system.mysql_innodb_buffer_pool_size }} \
-      --log-file {{ artifacts_dir }}/sl1_db_install.log
-  args:
-    creates: /opt/em7/mysql
-  register: sl1_db_install_result
-  when: not dry_run
+# ---------------------------------------------------------------------------
+# Fourth Estate preflight / postflight validation harness
+#
+# The task file body below is wrapped in an Ansible block/rescue/always structure:
+#
+#   block   preflight validation runs first, then the original task file body, then
+#           postflight validation. Any failure transfers control to rescue.
+#   rescue  records which task failed and why, then re-raises so a failure is
+#           never silently swallowed. Set fe_validation_continue_on_error=true
+#           to record the failure and keep going instead.
+#   always  computes the run duration and publishes the outcome through
+#           ansible.builtin.set_stats, so a wrapping playbook, AWX/AAP or CI can
+#           consume the result without scraping log output.
+#
+# Published stats (see docs/VALIDATION_AND_STATS.md):
+#   fe_validation_results['sciencelogic/sl1_platform_install/40_database_server']  per-component record
+#   fe_validation_executions / _succeeded / _failed / _duration_seconds
+#   fe_validation_failed_components
+#
+# Add component-specific preflight checks without editing this file by setting
+#   fe_sciencelogic_sl1_platform_install_40_database_server_required_vars: [var_one, var_two]
+# ---------------------------------------------------------------------------
 
-- name: Configure MySQL for SL1
-  ansible.builtin.template:
-    src: my.cnf.j2
-    dest: /etc/my.cnf
-    owner: mysql
-    group: mysql
-    mode: '0644'
-  when: not dry_run
-  notify: Restart MySQL
+- name: "sciencelogic/sl1_platform_install/40_database_server | Initialize validation state"
+  ansible.builtin.set_fact:
+    fe_sciencelogic_sl1_platform_install_40_database_server_start_epoch: "{{ now(fmt='%s') | int }}"
+    fe_sciencelogic_sl1_platform_install_40_database_server_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+    fe_sciencelogic_sl1_platform_install_40_database_server_status: "running"
+    fe_sciencelogic_sl1_platform_install_40_database_server_preflight_passed: false
+    fe_sciencelogic_sl1_platform_install_40_database_server_postflight_passed: false
+    fe_sciencelogic_sl1_platform_install_40_database_server_failed_task: ""
+    fe_sciencelogic_sl1_platform_install_40_database_server_error: ""
+    fe_sciencelogic_sl1_platform_install_40_database_server_stats_published: false
+  tags:
+    - always
 
-- name: Start MySQL service
-  ansible.builtin.service:
-    name: mysql
-    state: started
-    enabled: true
-  when: not dry_run
+- name: "sciencelogic/sl1_platform_install/40_database_server | Guarded execution with preflight and postflight validation"
+  block:
 
-- name: Wait for MySQL to be ready
-  ansible.builtin.wait_for:
-    port: 3306
-    host: "{{ sl1_db_server.ip_address }}"
-    timeout: 300
-  when: not dry_run
+    # ----------------------------- preflight --------------------
 
-- name: Create SL1 databases
-  community.mysql.mysql_db:
-    name: "{{ item }}"
-    state: present
-    login_unix_socket: /var/lib/mysql/mysql.sock
-    login_user: root
-    login_password: "{{ sl1_db_server.root_password }}"
-  loop:
-    - em7
-    - em7_logs
-    - em7_time_series
-  when: not dry_run
+    - name: "sciencelogic/sl1_platform_install/40_database_server | Preflight | Verify the control node meets the minimum ansible-core version"
+      ansible.builtin.assert:
+        that:
+          - ansible_version.full is version(fe_validation_min_ansible_version | default('2.12'), '>=')
+        fail_msg: >-
+          sciencelogic/sl1_platform_install/40_database_server: requires ansible-core
+          {{ fe_validation_min_ansible_version | default('2.12') }} or newer,
+          found {{ ansible_version.full }}.
+        success_msg: >-
+          sciencelogic/sl1_platform_install/40_database_server: ansible-core {{ ansible_version.full }} satisfies the minimum.
+        quiet: true
+      tags:
+        - always
+        - preflight
+        - validation
 
-- name: Database server installation summary
-  ansible.builtin.debug:
-    msg:
-      - "SL1 Database Server installation completed"
-      - "Database Host: {{ sl1_db_server.hostname }}"
-      - "MySQL Port: 3306"
+    - name: "sciencelogic/sl1_platform_install/40_database_server | Preflight | Verify every declared required variable is defined"
+      ansible.builtin.assert:
+        that:
+          - vars[item] is defined
+        fail_msg: "sciencelogic/sl1_platform_install/40_database_server: required variable '{{ item }}' is not defined."
+        success_msg: "sciencelogic/sl1_platform_install/40_database_server: required variable '{{ item }}' is defined."
+        quiet: true
+      loop: "{{ fe_sciencelogic_sl1_platform_install_40_database_server_required_vars | default([]) }}"
+      loop_control:
+        label: "{{ item }}"
+      tags:
+        - always
+        - preflight
+        - validation
+
+    - name: "sciencelogic/sl1_platform_install/40_database_server | Preflight | Record that preflight validation passed"
+      ansible.builtin.set_fact:
+        fe_sciencelogic_sl1_platform_install_40_database_server_preflight_passed: true
+      tags:
+        - always
+        - preflight
+        - validation
+
+    # ----------------------------- execute ----------------------
+
+    - name: Create database server installation configuration
+      ansible.builtin.template:
+        src: install_config_db.j2
+        dest: "{{ artifacts_dir }}/sl1_db_install_config.conf"
+        mode: '0600'
+      when: not dry_run
+
+    - name: Run SL1 Database Server installer
+      ansible.builtin.shell: |
+        {{ sl1_package_path }} --unattended \
+          --config {{ artifacts_dir }}/sl1_db_install_config.conf \
+          --accept-eula \
+          --install-type database \
+          --hostname {{ sl1_db_server.hostname }} \
+          --ip-address {{ sl1_db_server.ip_address }} \
+          --db-root-password {{ sl1_db_server.root_password }} \
+          --innodb-buffer-pool-size {{ sl1_system.mysql_innodb_buffer_pool_size }} \
+          --log-file {{ artifacts_dir }}/sl1_db_install.log
+      args:
+        creates: /opt/em7/mysql
+      register: sl1_db_install_result
+      when: not dry_run
+
+    - name: Configure MySQL for SL1
+      ansible.builtin.template:
+        src: my.cnf.j2
+        dest: /etc/my.cnf
+        owner: mysql
+        group: mysql
+        mode: '0644'
+      when: not dry_run
+      notify: Restart MySQL
+
+    - name: Start MySQL service
+      ansible.builtin.service:
+        name: mysql
+        state: started
+        enabled: true
+      when: not dry_run
+
+    - name: Wait for MySQL to be ready
+      ansible.builtin.wait_for:
+        port: 3306
+        host: "{{ sl1_db_server.ip_address }}"
+        timeout: 300
+      when: not dry_run
+
+    - name: Create SL1 databases
+      community.mysql.mysql_db:
+        name: "{{ item }}"
+        state: present
+        login_unix_socket: /var/lib/mysql/mysql.sock
+        login_user: root
+        login_password: "{{ sl1_db_server.root_password }}"
+      loop:
+        - em7
+        - em7_logs
+        - em7_time_series
+      when: not dry_run
+
+    - name: Database server installation summary
+      ansible.builtin.debug:
+        msg:
+          - "SL1 Database Server installation completed"
+          - "Database Host: {{ sl1_db_server.hostname }}"
+          - "MySQL Port: 3306"
+
+    # ----------------------------- postflight -------------------
+
+    - name: "sciencelogic/sl1_platform_install/40_database_server | Postflight | Verify the guarded body ran after a passing preflight"
+      ansible.builtin.assert:
+        that:
+          - fe_sciencelogic_sl1_platform_install_40_database_server_preflight_passed | bool
+          - fe_sciencelogic_sl1_platform_install_40_database_server_status in ['running', 'succeeded']
+        fail_msg: >-
+          sciencelogic/sl1_platform_install/40_database_server: postflight validation failed - preflight passed
+          ={{ fe_sciencelogic_sl1_platform_install_40_database_server_preflight_passed | default(false) }},
+          status={{ fe_sciencelogic_sl1_platform_install_40_database_server_status | default('unknown') }}.
+        success_msg: "sciencelogic/sl1_platform_install/40_database_server: postflight validation passed."
+        quiet: true
+      tags:
+        - always
+        - postflight
+        - validation
+
+    - name: "sciencelogic/sl1_platform_install/40_database_server | Postflight | Record the successful outcome"
+      ansible.builtin.set_fact:
+        fe_sciencelogic_sl1_platform_install_40_database_server_postflight_passed: true
+        fe_sciencelogic_sl1_platform_install_40_database_server_status: "succeeded"
+      tags:
+        - always
+        - postflight
+        - validation
+
+  rescue:
+
+    - name: "sciencelogic/sl1_platform_install/40_database_server | Rescue | Capture the failing task and error detail"
+      ansible.builtin.set_fact:
+        fe_sciencelogic_sl1_platform_install_40_database_server_status: "failed"
+        fe_sciencelogic_sl1_platform_install_40_database_server_postflight_passed: false
+        fe_sciencelogic_sl1_platform_install_40_database_server_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+        fe_sciencelogic_sl1_platform_install_40_database_server_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+      tags:
+        - always
+        - rescue
+
+    - name: "sciencelogic/sl1_platform_install/40_database_server | Rescue | Report the failure"
+      ansible.builtin.debug:
+        msg: >-
+          sciencelogic/sl1_platform_install/40_database_server: FAILED at '{{ fe_sciencelogic_sl1_platform_install_40_database_server_failed_task }}' on
+          {{ inventory_hostname }} - {{ fe_sciencelogic_sl1_platform_install_40_database_server_error }}
+      tags:
+        - always
+        - rescue
+
+    - name: "sciencelogic/sl1_platform_install/40_database_server | Rescue | Re-raise the failure unless the caller opted to continue"
+      ansible.builtin.fail:
+        msg: >-
+          sciencelogic/sl1_platform_install/40_database_server failed at '{{ fe_sciencelogic_sl1_platform_install_40_database_server_failed_task }}': {{ fe_sciencelogic_sl1_platform_install_40_database_server_error }}
+      when: not (fe_validation_continue_on_error | default(false) | bool)
+      tags:
+        - always
+        - rescue
+
+  always:
+
+    - name: "sciencelogic/sl1_platform_install/40_database_server | Always | Compute the execution duration"
+      ansible.builtin.set_fact:
+        fe_sciencelogic_sl1_platform_install_40_database_server_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+        fe_sciencelogic_sl1_platform_install_40_database_server_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_sciencelogic_sl1_platform_install_40_database_server_start_epoch | default(0) | int) }}"
+      tags:
+        - always
+
+    - name: "sciencelogic/sl1_platform_install/40_database_server | Always | Publish the validation result with set_stats"
+      ansible.builtin.set_stats:
+        data:
+          fe_validation_results:
+            "sciencelogic/sl1_platform_install/40_database_server":
+              component: "sciencelogic/sl1_platform_install/40_database_server"
+              type: "role-tasks"
+              platform: "sciencelogic"
+              host: "{{ inventory_hostname }}"
+              status: "{{ fe_sciencelogic_sl1_platform_install_40_database_server_status | default('unknown') }}"
+              preflight_passed: "{{ fe_sciencelogic_sl1_platform_install_40_database_server_preflight_passed | default(false) | bool }}"
+              postflight_passed: "{{ fe_sciencelogic_sl1_platform_install_40_database_server_postflight_passed | default(false) | bool }}"
+              started_at: "{{ fe_sciencelogic_sl1_platform_install_40_database_server_started_at | default('') }}"
+              ended_at: "{{ fe_sciencelogic_sl1_platform_install_40_database_server_ended_at | default('') }}"
+              duration_seconds: "{{ fe_sciencelogic_sl1_platform_install_40_database_server_duration_seconds | default(0) | int }}"
+              failed_task: "{{ fe_sciencelogic_sl1_platform_install_40_database_server_failed_task | default('') }}"
+              error: "{{ fe_sciencelogic_sl1_platform_install_40_database_server_error | default('') }}"
+              check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+          fe_validation_executions: 1
+          fe_validation_succeeded: "{{ 1 if fe_sciencelogic_sl1_platform_install_40_database_server_status | default('') == 'succeeded' else 0 }}"
+          fe_validation_failed: "{{ 0 if fe_sciencelogic_sl1_platform_install_40_database_server_status | default('') == 'succeeded' else 1 }}"
+          fe_validation_duration_seconds: "{{ fe_sciencelogic_sl1_platform_install_40_database_server_duration_seconds | default(0) | int }}"
+          fe_validation_failed_components: >-
+            {{ [] if fe_sciencelogic_sl1_platform_install_40_database_server_status | default('') == 'succeeded' else ['sciencelogic/sl1_platform_install/40_database_server'] }}
+        aggregate: true
+        per_host: false
+      tags:
+        - always
+
+    - name: "sciencelogic/sl1_platform_install/40_database_server | Always | Mark the validation statistics as published"
+      ansible.builtin.set_fact:
+        fe_sciencelogic_sl1_platform_install_40_database_server_stats_published: true
+      tags:
+        - always

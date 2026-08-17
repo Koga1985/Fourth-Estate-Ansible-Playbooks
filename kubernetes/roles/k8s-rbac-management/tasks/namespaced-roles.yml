@@ -1,28 +1,211 @@
 ---
 # Namespaced Role Creation
 
-- name: Create namespaced roles
-  kubernetes.core.k8s:
-    state: present
-    definition:
-      apiVersion: rbac.authorization.k8s.io/v1
-      kind: Role
-      metadata:
-        name: "{{ item.name }}"
-        namespace: "{{ item.namespace }}"
-        labels:
-          managed-by: ansible
-          role-type: namespaced
-      rules: "{{ item.rules }}"
-  loop: "{{ k8s_namespaced_roles }}"
+# ---------------------------------------------------------------------------
+# Fourth Estate preflight / postflight validation harness
+#
+# The task file body below is wrapped in an Ansible block/rescue/always structure:
+#
+#   block   preflight validation runs first, then the original task file body, then
+#           postflight validation. Any failure transfers control to rescue.
+#   rescue  records which task failed and why, then re-raises so a failure is
+#           never silently swallowed. Set fe_validation_continue_on_error=true
+#           to record the failure and keep going instead.
+#   always  computes the run duration and publishes the outcome through
+#           ansible.builtin.set_stats, so a wrapping playbook, AWX/AAP or CI can
+#           consume the result without scraping log output.
+#
+# Published stats (see docs/VALIDATION_AND_STATS.md):
+#   fe_validation_results['kubernetes/k8s-rbac-management/namespaced-roles']  per-component record
+#   fe_validation_executions / _succeeded / _failed / _duration_seconds
+#   fe_validation_failed_components
+#
+# Add component-specific preflight checks without editing this file by setting
+#   fe_kubernetes_k8s_rbac_management_namespaced_roles_required_vars: [var_one, var_two]
+# ---------------------------------------------------------------------------
 
-- name: Verify namespaced roles created
-  ansible.builtin.command: >
-    kubectl get roles -n {{ item.namespace }} {{ item.name }}
-  loop: "{{ k8s_namespaced_roles }}"
-  register: roles_verify
-  changed_when: false
+- name: "kubernetes/k8s-rbac-management/namespaced-roles | Initialize validation state"
+  ansible.builtin.set_fact:
+    fe_kubernetes_k8s_rbac_management_namespaced_roles_start_epoch: "{{ now(fmt='%s') | int }}"
+    fe_kubernetes_k8s_rbac_management_namespaced_roles_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+    fe_kubernetes_k8s_rbac_management_namespaced_roles_status: "running"
+    fe_kubernetes_k8s_rbac_management_namespaced_roles_preflight_passed: false
+    fe_kubernetes_k8s_rbac_management_namespaced_roles_postflight_passed: false
+    fe_kubernetes_k8s_rbac_management_namespaced_roles_failed_task: ""
+    fe_kubernetes_k8s_rbac_management_namespaced_roles_error: ""
+    fe_kubernetes_k8s_rbac_management_namespaced_roles_stats_published: false
+  tags:
+    - always
 
-- name: Display created roles
-  ansible.builtin.debug:
-    msg: "Created {{ k8s_namespaced_roles | length }} namespaced roles"
+- name: "kubernetes/k8s-rbac-management/namespaced-roles | Guarded execution with preflight and postflight validation"
+  block:
+
+    # ----------------------------- preflight --------------------
+
+    - name: "kubernetes/k8s-rbac-management/namespaced-roles | Preflight | Verify the control node meets the minimum ansible-core version"
+      ansible.builtin.assert:
+        that:
+          - ansible_version.full is version(fe_validation_min_ansible_version | default('2.12'), '>=')
+        fail_msg: >-
+          kubernetes/k8s-rbac-management/namespaced-roles: requires ansible-core
+          {{ fe_validation_min_ansible_version | default('2.12') }} or newer,
+          found {{ ansible_version.full }}.
+        success_msg: >-
+          kubernetes/k8s-rbac-management/namespaced-roles: ansible-core {{ ansible_version.full }} satisfies the minimum.
+        quiet: true
+      tags:
+        - always
+        - preflight
+        - validation
+
+    - name: "kubernetes/k8s-rbac-management/namespaced-roles | Preflight | Verify every declared required variable is defined"
+      ansible.builtin.assert:
+        that:
+          - vars[item] is defined
+        fail_msg: "kubernetes/k8s-rbac-management/namespaced-roles: required variable '{{ item }}' is not defined."
+        success_msg: "kubernetes/k8s-rbac-management/namespaced-roles: required variable '{{ item }}' is defined."
+        quiet: true
+      loop: "{{ fe_kubernetes_k8s_rbac_management_namespaced_roles_required_vars | default([]) }}"
+      loop_control:
+        label: "{{ item }}"
+      tags:
+        - always
+        - preflight
+        - validation
+
+    - name: "kubernetes/k8s-rbac-management/namespaced-roles | Preflight | Record that preflight validation passed"
+      ansible.builtin.set_fact:
+        fe_kubernetes_k8s_rbac_management_namespaced_roles_preflight_passed: true
+      tags:
+        - always
+        - preflight
+        - validation
+
+    # ----------------------------- execute ----------------------
+
+    - name: Create namespaced roles
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: rbac.authorization.k8s.io/v1
+          kind: Role
+          metadata:
+            name: "{{ item.name }}"
+            namespace: "{{ item.namespace }}"
+            labels:
+              managed-by: ansible
+              role-type: namespaced
+          rules: "{{ item.rules }}"
+      loop: "{{ k8s_namespaced_roles }}"
+
+    - name: Verify namespaced roles created
+      ansible.builtin.command: >
+        kubectl get roles -n {{ item.namespace }} {{ item.name }}
+      loop: "{{ k8s_namespaced_roles }}"
+      register: roles_verify
+      changed_when: false
+
+    - name: Display created roles
+      ansible.builtin.debug:
+        msg: "Created {{ k8s_namespaced_roles | length }} namespaced roles"
+
+    # ----------------------------- postflight -------------------
+
+    - name: "kubernetes/k8s-rbac-management/namespaced-roles | Postflight | Verify the guarded body ran after a passing preflight"
+      ansible.builtin.assert:
+        that:
+          - fe_kubernetes_k8s_rbac_management_namespaced_roles_preflight_passed | bool
+          - fe_kubernetes_k8s_rbac_management_namespaced_roles_status in ['running', 'succeeded']
+        fail_msg: >-
+          kubernetes/k8s-rbac-management/namespaced-roles: postflight validation failed - preflight passed
+          ={{ fe_kubernetes_k8s_rbac_management_namespaced_roles_preflight_passed | default(false) }},
+          status={{ fe_kubernetes_k8s_rbac_management_namespaced_roles_status | default('unknown') }}.
+        success_msg: "kubernetes/k8s-rbac-management/namespaced-roles: postflight validation passed."
+        quiet: true
+      tags:
+        - always
+        - postflight
+        - validation
+
+    - name: "kubernetes/k8s-rbac-management/namespaced-roles | Postflight | Record the successful outcome"
+      ansible.builtin.set_fact:
+        fe_kubernetes_k8s_rbac_management_namespaced_roles_postflight_passed: true
+        fe_kubernetes_k8s_rbac_management_namespaced_roles_status: "succeeded"
+      tags:
+        - always
+        - postflight
+        - validation
+
+  rescue:
+
+    - name: "kubernetes/k8s-rbac-management/namespaced-roles | Rescue | Capture the failing task and error detail"
+      ansible.builtin.set_fact:
+        fe_kubernetes_k8s_rbac_management_namespaced_roles_status: "failed"
+        fe_kubernetes_k8s_rbac_management_namespaced_roles_postflight_passed: false
+        fe_kubernetes_k8s_rbac_management_namespaced_roles_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+        fe_kubernetes_k8s_rbac_management_namespaced_roles_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+      tags:
+        - always
+        - rescue
+
+    - name: "kubernetes/k8s-rbac-management/namespaced-roles | Rescue | Report the failure"
+      ansible.builtin.debug:
+        msg: >-
+          kubernetes/k8s-rbac-management/namespaced-roles: FAILED at '{{ fe_kubernetes_k8s_rbac_management_namespaced_roles_failed_task }}' on
+          {{ inventory_hostname }} - {{ fe_kubernetes_k8s_rbac_management_namespaced_roles_error }}
+      tags:
+        - always
+        - rescue
+
+    - name: "kubernetes/k8s-rbac-management/namespaced-roles | Rescue | Re-raise the failure unless the caller opted to continue"
+      ansible.builtin.fail:
+        msg: >-
+          kubernetes/k8s-rbac-management/namespaced-roles failed at '{{ fe_kubernetes_k8s_rbac_management_namespaced_roles_failed_task }}': {{ fe_kubernetes_k8s_rbac_management_namespaced_roles_error }}
+      when: not (fe_validation_continue_on_error | default(false) | bool)
+      tags:
+        - always
+        - rescue
+
+  always:
+
+    - name: "kubernetes/k8s-rbac-management/namespaced-roles | Always | Compute the execution duration"
+      ansible.builtin.set_fact:
+        fe_kubernetes_k8s_rbac_management_namespaced_roles_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+        fe_kubernetes_k8s_rbac_management_namespaced_roles_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_kubernetes_k8s_rbac_management_namespaced_roles_start_epoch | default(0) | int) }}"
+      tags:
+        - always
+
+    - name: "kubernetes/k8s-rbac-management/namespaced-roles | Always | Publish the validation result with set_stats"
+      ansible.builtin.set_stats:
+        data:
+          fe_validation_results:
+            "kubernetes/k8s-rbac-management/namespaced-roles":
+              component: "kubernetes/k8s-rbac-management/namespaced-roles"
+              type: "role-tasks"
+              platform: "kubernetes"
+              host: "{{ inventory_hostname }}"
+              status: "{{ fe_kubernetes_k8s_rbac_management_namespaced_roles_status | default('unknown') }}"
+              preflight_passed: "{{ fe_kubernetes_k8s_rbac_management_namespaced_roles_preflight_passed | default(false) | bool }}"
+              postflight_passed: "{{ fe_kubernetes_k8s_rbac_management_namespaced_roles_postflight_passed | default(false) | bool }}"
+              started_at: "{{ fe_kubernetes_k8s_rbac_management_namespaced_roles_started_at | default('') }}"
+              ended_at: "{{ fe_kubernetes_k8s_rbac_management_namespaced_roles_ended_at | default('') }}"
+              duration_seconds: "{{ fe_kubernetes_k8s_rbac_management_namespaced_roles_duration_seconds | default(0) | int }}"
+              failed_task: "{{ fe_kubernetes_k8s_rbac_management_namespaced_roles_failed_task | default('') }}"
+              error: "{{ fe_kubernetes_k8s_rbac_management_namespaced_roles_error | default('') }}"
+              check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+          fe_validation_executions: 1
+          fe_validation_succeeded: "{{ 1 if fe_kubernetes_k8s_rbac_management_namespaced_roles_status | default('') == 'succeeded' else 0 }}"
+          fe_validation_failed: "{{ 0 if fe_kubernetes_k8s_rbac_management_namespaced_roles_status | default('') == 'succeeded' else 1 }}"
+          fe_validation_duration_seconds: "{{ fe_kubernetes_k8s_rbac_management_namespaced_roles_duration_seconds | default(0) | int }}"
+          fe_validation_failed_components: >-
+            {{ [] if fe_kubernetes_k8s_rbac_management_namespaced_roles_status | default('') == 'succeeded' else ['kubernetes/k8s-rbac-management/namespaced-roles'] }}
+        aggregate: true
+        per_host: false
+      tags:
+        - always
+
+    - name: "kubernetes/k8s-rbac-management/namespaced-roles | Always | Mark the validation statistics as published"
+      ansible.builtin.set_fact:
+        fe_kubernetes_k8s_rbac_management_namespaced_roles_stats_published: true
+      tags:
+        - always
