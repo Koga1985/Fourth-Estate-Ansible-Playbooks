@@ -9,20 +9,10 @@ Comprehensive Windows Server automation covering STIG hardening, Active Director
 ## 📋 Role Categories
 
 ### Security & Compliance (3 roles)
-- **win_stig_hardening** - DoD STIG compliance automation for Windows Server
-- **win_firewall** - Windows Firewall advanced configuration
-- **win_updates** - Windows Update and patch management
 
 ### Active Directory (3 roles)
-- **win_active_directory** - AD DS installation, domain/forest configuration
-- **win_group_policy** - GPO creation, linking, and enforcement
-- **win_user_management** - User/group lifecycle automation
 
 ### Infrastructure Services (4 roles)
-- **win_dhcp_dns** - DHCP and DNS server configuration
-- **win_wsus** - Windows Server Update Services deployment
-- **win_backup** - Windows Server Backup automation
-- **win_iis** - IIS web server and application pool management
 
 ## 🚀 Quick Start (Drop-In Deployment)
 

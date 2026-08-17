@@ -46,13 +46,8 @@ Comprehensive Veeam automation covering backup server installation, repository m
 - **veeam_repositories** - Backup repository creation and management
 
 ### Backup Operations (2 roles)
-- **veeam_backup_jobs** - Backup job creation, scheduling, and management
-- **veeam_restore_operations** - Automated restore workflows and testing
 
 ### Advanced Features (3 roles)
-- **veeam_replication** - Replication job configuration for DR
-- **veeam_cloud_tier** - Cloud archive tier (AWS, Azure, S3-compatible) setup
-- **veeam_surebackup** - Automated backup verification and testing
 
 ## Prerequisites
 

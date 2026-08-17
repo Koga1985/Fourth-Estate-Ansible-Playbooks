@@ -5,18 +5,10 @@ This directory contains **8 Ansible roles** for automating **Ansible Tower** (no
 ## 📋 Roles
 
 ### Installation & Configuration (2 roles)
-- **ansible_tower_install** - Tower/AAP installation and setup
-- **ansible_tower_config** - Global configuration and settings
 
 ### Resource Management (4 roles)
-- **ansible_tower_organizations** - Organization management
-- **ansible_tower_projects** - Project (Git/SCM) configuration
-- **ansible_tower_inventories** - Inventory and host management
-- **ansible_tower_job_templates** - Job template creation
 
 ### Automation & Security (2 roles)
-- **ansible_tower_workflows** - Workflow template automation
-- **ansible_tower_rbac** - Role-Based Access Control
 
 ## 🚀 Quick Start
 

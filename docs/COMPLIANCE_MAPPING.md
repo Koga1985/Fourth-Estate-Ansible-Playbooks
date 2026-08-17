@@ -65,12 +65,9 @@ applicable **DISA Security Technical Implementation Guide (STIG)** findings and
 | Control | Title | Implementing Roles / Task Files | Platform |
 |---------|-------|--------------------------------|----------|
 | AC-2 | Account Management | `ansible/roles/ans_access_sso_directory` | AAP |
-| AC-2 | Account Management | `ansible_tower/roles/ansible_tower_organizations`, `ansible_tower_rbac` | Ansible Tower |
-| AC-2 | Account Management | `windows/roles/win_active_directory`, `win_user_management` | Windows Server |
 | AC-2 | Account Management | `vmware/tasks/add_vsphere_users.yml`, `enforce_vsphere_rbac.yml` | VMware |
 | AC-2 | Account Management | `ansible/playbooks/ans_ctrl__orgs_teams.yml`, `ans_ctrl__rbac_baseline.yml` | AAP |
 | AC-3 | Access Enforcement | `ansible/playbooks/ans_ctrl__rbac_baseline.yml` | AAP |
-| AC-3 | Access Enforcement | `ansible_tower/roles/ansible_tower_rbac` | Ansible Tower |
 | AC-3 | Access Enforcement | `vmware/tasks/enforce_vsphere_rbac.yml`, `import_vsphere_permissions.yml` | VMware |
 | AC-5 | Separation of Duties | `ansible/roles/ans_ctrl_policy_guardrails` | AAP |
 | AC-5 | Separation of Duties | `ansible/playbooks/ans_ctrl__approvals.yml` | AAP |
@@ -156,7 +153,6 @@ applicable **DISA Security Technical Implementation Guide (STIG)** findings and
 | CM-2 | Baseline Configuration | `vmware/roles/cluster_baseline` | VMware |
 | CM-2 | Baseline Configuration | `arista/roles/arista_baseline_config` | Arista |
 | CM-2 | Baseline Configuration | `rhel/roles` | RHEL |
-| CM-2 | Baseline Configuration | `windows/roles/win_group_policy` | Windows |
 | CM-2 | Baseline Configuration | `kubernetes/playbook-cluster-hardening.yml` | Kubernetes |
 | CM-3 | Configuration Change Control | `ansible/playbooks/ans_ctrl__approvals.yml` | AAP |
 | CM-3 | Configuration Change Control | `ansible/roles/ans_content_qa_ci` | AAP |
@@ -169,11 +165,9 @@ applicable **DISA Security Technical Implementation Guide (STIG)** findings and
 | CM-6 | Configuration Settings | `cisco/roles/aci_security_hardening` (STIG Cat I/II/III, password/TLS/RBAC) | Cisco ACI |
 | CM-6 | Configuration Settings | `cisco/roles/ucs_security_hardening` (STIG Cat I/II/III) | Cisco UCS |
 | CM-6 | Configuration Settings | `rhel/roles` (hardening baseline) | RHEL |
-| CM-6 | Configuration Settings | `windows/roles/win_stig_hardening` | Windows |
 | CM-6 | Configuration Settings | `kubernetes/playbook-cluster-hardening.yml` | Kubernetes |
 | CM-6 | Configuration Settings | `ansible/playbooks/ans_core__ansible_cfg_enforce.yml` | AAP |
 | CM-7 | Least Functionality | `vmware/roles/vsphere_esxi_stig_hardening` (disable TSM/TSM-SSH) | VMware ESXi |
-| CM-7 | Least Functionality | `windows/roles/win_stig_hardening` | Windows |
 | CM-7 | Least Functionality | `rhel/roles` (disable unused services) | RHEL |
 | CM-7 | Least Functionality | `arista/roles/arista_acl_qos_security` (ACL hardening) | Arista |
 | CM-6 | Configuration Settings | `cisco/roles/sdwan_vmanage_deploy` (baseline system config), `cisco/roles/sdwan_vmanage_config` (STIG-embedded templates) | Cisco SD-WAN |
@@ -204,7 +198,6 @@ applicable **DISA Security Technical Implementation Guide (STIG)** findings and
 | CP-9 | System Backup | `netapp/roles` (SnapVault) | NetApp |
 | CP-9 | System Backup | `pure_storage/roles` (snapshots/protection) | Pure Storage |
 | CP-9 | System Backup | `vast/roles` (snapshot policies) | VAST Data |
-| CP-9 | System Backup | `windows/roles/win_backup` | Windows |
 | CP-10 | System Recovery | `veeam/roles` (SureBackup, instant recovery) | Veeam |
 | CP-10 | System Recovery | `cohesity/roles` (instant recovery) | Cohesity |
 | CP-10 | System Recovery | `ansible/playbooks/ans_ctrl__restore_sandbox.yml` | AAP |
@@ -217,7 +210,6 @@ applicable **DISA Security Technical Implementation Guide (STIG)** findings and
 | Control | Title | Implementing Roles / Task Files | Platform |
 |---------|-------|--------------------------------|----------|
 | IA-2 | Identification and Authentication (Users) | `ansible/roles/ans_access_sso_directory` (LDAP/SAML/OIDC) | AAP |
-| IA-2 | Identification and Authentication (Users) | `windows/roles/win_active_directory` | Windows |
 | IA-2 | Identification and Authentication (Users) | `cisco/roles` (ISE identity policy) | Cisco ISE |
 | IA-2(1) | MFA for Privileged Accounts | `ansible/roles/ans_ctrl_policy_guardrails` (`fourth_estate_mandatory_mfa`) | AAP |
 | IA-2(1) | MFA for Privileged Accounts | `cisco/roles` (ISE MFA) | Cisco ISE |
@@ -298,13 +290,11 @@ applicable **DISA Security Technical Implementation Guide (STIG)** findings and
 | SC-7 | Boundary Protection | `checkpoint/roles` | Check Point |
 | SC-7 | Boundary Protection | `fortinet/roles` | Fortinet |
 | SC-7 | Boundary Protection | `illumio/roles` (micro-segmentation) | Illumio |
-| SC-7 | Boundary Protection | `vmware/roles/nsx_t_security` | VMware NSX-T |
 | SC-7 | Boundary Protection | `arista/roles/arista_acl_qos_security` | Arista |
 | SC-7 | Boundary Protection | `f5_bigip/roles` (WAF/virtual servers) | F5 BIG-IP |
 | SC-7 | Boundary Protection | `cisco/roles/aci_security_hardening` (contract enforcement, EPG isolation) | Cisco ACI |
 | SC-7 | Boundary Protection | `cisco/roles/aci_tenant_config` (intra-EPG isolation, contracts) | Cisco ACI |
 | SC-7 | Boundary Protection | `cisco/roles/ise_anc__quarantine_rules` (adaptive network quarantine) | Cisco ISE |
-| SC-7 | Boundary Protection | `windows/roles/win_firewall` | Windows |
 | SC-7 | Boundary Protection | `vmware/roles/vsphere_esxi_stig_hardening` (firewall rulesets) | VMware ESXi |
 | SC-8 | Transmission Confidentiality and Integrity | `policy_as_code/policies/system_communications/cryptographic_protection.yml` | Policy as Code |
 | SC-8 | Transmission Confidentiality and Integrity | STIG findings V-230273, V-230274, V-230275, V-230276, V-230277 | RHEL 8 |
@@ -339,7 +329,6 @@ applicable **DISA Security Technical Implementation Guide (STIG)** findings and
 | Control | Title | Implementing Roles / Task Files | Platform |
 |---------|-------|--------------------------------|----------|
 | SI-2 | Flaw Remediation | `rhel/roles` (patching) | RHEL |
-| SI-2 | Flaw Remediation | `windows/roles/win_updates`, `win_wsus` | Windows |
 | SI-2 | Flaw Remediation | `vmware/roles/cluster_lifecycle_vlcm` | VMware |
 | SI-2 | Flaw Remediation | `openshift/roles` (patch management) | OpenShift |
 | SI-2 | Flaw Remediation | `ansible/roles/ans_ops_upgrade_window` | AAP |
@@ -661,7 +650,7 @@ Roles under `ansible/` and `ansible_tower/`
 | RHEL-08-010550 | Cat I | Privileged account auditing | `ans_ctrl__audit_export.yml` |
 | RHEL-08-020230 | Cat II | No shared credentials | `ans_core_secrets_identity` |
 | AC-2 | — | Account lifecycle management | `ans_access_sso_directory`, `ans_ctrl__orgs_teams.yml` |
-| AC-3 | — | Role-based access enforcement | `ans_ctrl__rbac_baseline.yml`, `ansible_tower_rbac` |
+| AC-3 | — | Role-based access enforcement | `ans_ctrl__rbac_baseline.yml` |
 | AC-5 | — | Separation of duties | `ans_ctrl__approvals.yml`, `ans_ctrl_policy_guardrails` |
 | AU-2 | — | Audit log collection | `ans_ctrl_backup_and_audit`, `ans_ctrl__audit_export.yml` |
 | CM-3 | — | Change control with approvals | `ans_ctrl__approvals.yml` |
@@ -699,7 +688,7 @@ control families for rapid lookup.
 | Platform Directory | Primary DISA STIG | NIST 800-53 Families | Key Roles / Task Files |
 |--------------------|-------------------|---------------------|------------------------|
 | `ansible/` | RHEL 8 App STIG | AC, AU, CM, IA, SA, SC, SI | `ans_access_sso_directory`, `ans_ctrl_backup_and_audit`, `ans_ctrl_policy_guardrails`, `ans_core_secrets_identity`, `ans_content_trust_and_lock`, `ans_core_runtime_baseline` |
-| `ansible_tower/` | RHEL 8 App STIG | AC, AU, CM, IA | `ansible_tower_rbac`, `ansible_tower_organizations`, `ansible_tower_config` |
+| `ansible_tower/` | RHEL 8 App STIG | AC, AU, CM, IA | `ansible_tower_config` |
 | `arista/` | Network Device STIG | AU, CM, CP, SC | `arista_acl_qos_security`, `arista_baseline_config`, `arista_backup_restore` |
 | `aws/` | DoD CC SRG / FedRAMP | AC, AU, CM, IA, SC, SI | IAM, VPC, EC2, EKS, S3 roles |
 | `azure/` | DoD CC SRG / FedRAMP | AC, AU, CM, IA, SC, SI | Azure AD, AKS, Key Vault, Sentinel roles |
@@ -779,16 +768,16 @@ the following NIST 800-171 requirements are addressed:
 |---------------------|-------------|----------------------|
 | 3.1.1 | Limit system access to authorized users | `ans_access_sso_directory`, `ans_ctrl__rbac_baseline.yml` |
 | 3.1.2 | Limit system access to authorized transactions | `ans_ctrl_policy_guardrails`, `ans_ctrl__approvals.yml` |
-| 3.1.3 | Control CUI flow | `illumio/roles`, `palo_alto/roles`, `vmware/roles/nsx_t_security` |
+| 3.1.3 | Control CUI flow | `illumio/roles`, `palo_alto/roles` |
 | 3.3.1 | Create and retain audit logs | `ans_ctrl_backup_and_audit`, `splunk/roles`, `elk_stack/roles` |
 | 3.3.2 | Ensure individual actions are traceable | `ans_ctrl__audit_export.yml`, `sciencelogic/roles` |
-| 3.5.2 | Authenticate organizational users | `ans_access_sso_directory`, `windows/roles/win_active_directory` |
+| 3.5.2 | Authenticate organizational users | `ans_access_sso_directory` |
 | 3.5.3 | MFA for local/network access to privileged accounts | `ans_ctrl_policy_guardrails` (mandatory MFA flag) |
 | 3.13.1 | Monitor, control, and protect communications | `palo_alto/roles`, `checkpoint/roles`, `fortinet/roles` |
-| 3.13.2 | Employ architectural designs for security | `vmware/roles/nsx_t_networking`, `illumio/roles` |
+| 3.13.2 | Employ architectural designs for security | `illumio/roles` |
 | 3.13.8 | Protect CUI in transit | `policy_as_code/policies/system_communications/cryptographic_protection.yml` |
 | 3.13.10 | Establish/manage cryptographic keys | `hashicorp_vault/roles`, `vmware/roles/vcenter_kms` |
-| 3.14.1 | Identify, report, and correct information flaws | `tenable/roles`, `rhel/roles`, `windows/roles/win_updates` |
+| 3.14.1 | Identify, report, and correct information flaws | `tenable/roles`, `rhel/roles` |
 | 3.14.2 | Protect against malicious code | `crowdstrike/roles`, `sentinelone/roles` |
 | 3.14.6 | Monitor systems for security alerts | `sciencelogic/roles`, `splunk/roles`, `dragos/roles` |
 

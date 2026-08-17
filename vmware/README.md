@@ -15,9 +15,6 @@ This directory contains **32 Ansible roles** for automating **VMware vSphere** a
 - Security baselines and STIG/compliance helpers
 
 ### NSX-T Software-Defined Networking (3 roles)
-- **nsx_t_networking** - NSX-T Manager deployment and configuration
-- **nsx_t_security** - Distributed firewall and security policies
-- **nsx_t_load_balancer** - NSX-T load balancer configuration
 
 Tip: run `ls -1 *.yml` in this folder to see available playbooks.
 

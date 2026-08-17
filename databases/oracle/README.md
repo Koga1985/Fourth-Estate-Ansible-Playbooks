@@ -5,20 +5,12 @@ This directory contains **8 Ansible roles** for automating **Oracle Database** m
 ## 📋 Roles
 
 ### Installation & Configuration (2 roles)
-- **oracle_install** - Oracle Database software installation
-- **oracle_database_create** - Database creation and configuration
 
 ### High Availability & DR (2 roles)
-- **oracle_data_guard** - Oracle Data Guard configuration
-- **oracle_rac** - Real Application Clusters setup
 
 ### Backup & Recovery (2 roles)
-- **oracle_rman** - RMAN backup and recovery
-- **oracle_flashback** - Flashback database configuration
 
 ### Security & Compliance (2 roles)
-- **oracle_security** - Security hardening and encryption
-- **oracle_audit** - Unified auditing configuration
 
 ## 🚀 Quick Start
 

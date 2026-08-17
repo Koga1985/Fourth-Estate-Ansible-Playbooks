@@ -9,16 +9,10 @@ This directory contains **8 Ansible roles** for automating **ServiceNow** integr
 
 ### Discovery & Updates (2 roles)
 - **servicenow_ci_discovery** - Automated CI discovery from infrastructure
-- **servicenow_ci_updates** - Configuration item synchronization
 
 ### ITSM Integration (3 roles)
-- **servicenow_incident_management** - Automated incident creation and updates
-- **servicenow_change_management** - Change request automation
-- **servicenow_asset_management** - Asset lifecycle management
 
 ### Integration & Reporting (2 roles)
-- **servicenow_integration** - API integration and webhooks
-- **servicenow_reporting** - Custom dashboard and report generation
 
 ## 🚀 Quick Start
 

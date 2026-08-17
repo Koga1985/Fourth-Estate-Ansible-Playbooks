@@ -11,16 +11,10 @@ This directory contains **10 Ansible roles** for automating **HashiCorp Vault** 
 
 ### Secrets Management (3 roles)
 - **vault_secrets_engine** - Secrets engines (KV, Transit, PKI)
-- **vault_database_secrets** - Dynamic database credentials
-- **vault_transit_encryption** - Encryption as a Service
 
 ### Access Control (2 roles)
-- **vault_auth_methods** - Authentication methods (LDAP, OIDC, AWS, Kubernetes)
-- **vault_policies** - Policy management and ACLs
 
 ### PKI & Auditing (2 roles)
-- **vault_pki** - PKI secrets engine and certificate management
-- **vault_audit_logging** - Audit device configuration
 
 ## 🚀 Quick Start (Drop-In Deployment)
 

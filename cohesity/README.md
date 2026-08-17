@@ -13,15 +13,10 @@ Comprehensive Cohesity automation covering cluster setup, data protection policy
 - **cohesity_cluster_config** - Cluster initialization, network configuration, and licensing
 
 ### Data Protection (2 roles)
-- **cohesity_protection_policies** - Protection policy creation and management
-- **cohesity_recovery** - Automated recovery workflows (VM, file, database)
 
 ### Storage & Archive (2 roles)
-- **cohesity_views** - NAS Views (SMB/NFS) provisioning and management
-- **cohesity_cloud_archive** - Cloud archive tier (AWS, Azure, Google Cloud) setup
 
 ### Agent Management (1 role)
-- **cohesity_agents** - Agent deployment and registration to protected sources
 
 ## 🚀 Quick Start
 

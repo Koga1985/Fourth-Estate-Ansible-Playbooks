@@ -11,7 +11,6 @@ Comprehensive AWS automation covering IAM, VPC networking, EC2 compute, EKS Kube
 ### Identity & Access Management (8 roles)
 - **aws_iam_users** - User account lifecycle management
 - **aws_iam_groups** - Group management and policies
-- **aws_iam_roles** - IAM role creation and trust policies
 - **aws_iam_policies** - Custom and managed policy attachment
 - **aws_iam_service_accounts** - Service account automation
 - **aws_organizations** - AWS Organizations and OU management
@@ -20,7 +19,6 @@ Comprehensive AWS automation covering IAM, VPC networking, EC2 compute, EKS Kube
 
 ### Networking (8 roles)
 - **aws_vpc** - VPC creation and management
-- **aws_subnets** - Public/private subnet configuration
 - **aws_route_tables** - Routing table management
 - **aws_nat_gateway** - NAT Gateway for private subnets
 - **aws_internet_gateway** - Internet Gateway configuration
@@ -29,7 +27,6 @@ Comprehensive AWS automation covering IAM, VPC networking, EC2 compute, EKS Kube
 - **aws_direct_connect** - Direct Connect configuration
 
 ### Compute (7 roles)
-- **aws_ec2_instances** - EC2 instance lifecycle
 - **aws_launch_templates** - Launch template management
 - **aws_autoscaling_groups** - Auto Scaling Groups
 - **aws_ami_management** - Custom AMI creation and sharing
@@ -53,7 +50,6 @@ Comprehensive AWS automation covering IAM, VPC networking, EC2 compute, EKS Kube
 - **aws_fsx** - FSx for Windows/Lustre
 
 ### Databases (5 roles)
-- **aws_rds** - RDS instance management (MySQL, PostgreSQL, etc.)
 - **aws_rds_aurora** - Aurora cluster management
 - **aws_dynamodb** - DynamoDB table management
 - **aws_elasticache** - ElastiCache (Redis, Memcached)
@@ -66,9 +62,7 @@ Comprehensive AWS automation covering IAM, VPC networking, EC2 compute, EKS Kube
 - **aws_step_functions** - Step Functions state machines
 
 ### Security & Compliance (8 roles)
-- **aws_security_groups** - Security group management
 - **aws_nacl** - Network ACL configuration
-- **aws_kms** - KMS key management and encryption
 - **aws_secrets_manager** - Secrets Manager integration
 - **aws_waf** - Web Application Firewall
 - **aws_guardduty** - GuardDuty threat detection
@@ -90,7 +84,6 @@ Comprehensive AWS automation covering IAM, VPC networking, EC2 compute, EKS Kube
 
 ### AWS GovCloud & Compliance (4 roles)
 - **aws_govcloud_setup** - GovCloud region configuration
-- **aws_fedramp_compliance** - FedRAMP baseline controls
 - **aws_nist_compliance** - NIST 800-53 implementation
 - **aws_hipaa_compliance** - HIPAA compliance automation
 
