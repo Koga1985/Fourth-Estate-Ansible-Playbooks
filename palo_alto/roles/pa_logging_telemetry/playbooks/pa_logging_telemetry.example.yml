@@ -295,3 +295,90 @@
               {{ fe_palo_alto_pa_logging_telemetry_pa_logging_telemetry_example_duration_seconds | default(0) }}s on {{ inventory_hostname }}.
           tags:
             - always
+  tasks:
+    - name: "palo_alto/pa_logging_telemetry/pa_logging_telemetry.example | Guarded execution with rescue and always handling"
+      block:
+
+        - name: "palo_alto/pa_logging_telemetry/pa_logging_telemetry.example | Flush notified handlers inside the guarded block"
+          ansible.builtin.meta: flush_handlers
+          tags:
+            - always
+
+      rescue:
+
+        - name: "palo_alto/pa_logging_telemetry/pa_logging_telemetry.example | Rescue | Capture the failing task and error detail"
+          ansible.builtin.set_fact:
+            fe_palo_alto_pa_logging_telemetry_pa_logging_telemetry_example_status: "failed"
+            fe_palo_alto_pa_logging_telemetry_pa_logging_telemetry_example_postflight_passed: false
+            fe_palo_alto_pa_logging_telemetry_pa_logging_telemetry_example_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+            fe_palo_alto_pa_logging_telemetry_pa_logging_telemetry_example_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+          tags:
+            - always
+            - rescue
+
+        - name: "palo_alto/pa_logging_telemetry/pa_logging_telemetry.example | Rescue | Report the failure"
+          ansible.builtin.debug:
+            msg: >-
+              palo_alto/pa_logging_telemetry/pa_logging_telemetry.example: FAILED at '{{ fe_palo_alto_pa_logging_telemetry_pa_logging_telemetry_example_failed_task }}' on
+              {{ inventory_hostname }} - {{ fe_palo_alto_pa_logging_telemetry_pa_logging_telemetry_example_error }}
+          tags:
+            - always
+            - rescue
+
+        - name: "palo_alto/pa_logging_telemetry/pa_logging_telemetry.example | Rescue | Re-raise the failure unless the caller opted to continue"
+          ansible.builtin.fail:
+            msg: >-
+              palo_alto/pa_logging_telemetry/pa_logging_telemetry.example failed at '{{ fe_palo_alto_pa_logging_telemetry_pa_logging_telemetry_example_failed_task }}': {{ fe_palo_alto_pa_logging_telemetry_pa_logging_telemetry_example_error }}
+          when: not (fe_validation_continue_on_error | default(false) | bool)
+          tags:
+            - always
+            - rescue
+
+      always:
+
+        - name: "palo_alto/pa_logging_telemetry/pa_logging_telemetry.example | Always | Compute the execution duration"
+          ansible.builtin.set_fact:
+            fe_palo_alto_pa_logging_telemetry_pa_logging_telemetry_example_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+            fe_palo_alto_pa_logging_telemetry_pa_logging_telemetry_example_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_palo_alto_pa_logging_telemetry_pa_logging_telemetry_example_start_epoch | default(0) | int) }}"
+          tags:
+            - always
+
+        - name: "palo_alto/pa_logging_telemetry/pa_logging_telemetry.example | Always | Publish the validation result with set_stats"
+          ansible.builtin.set_stats:
+            data:
+              fe_validation_results:
+                "palo_alto/pa_logging_telemetry/pa_logging_telemetry.example":
+                  component: "palo_alto/pa_logging_telemetry/pa_logging_telemetry.example"
+                  type: "playbook"
+                  platform: "palo_alto"
+                  host: "{{ inventory_hostname }}"
+                  status: "{{ fe_palo_alto_pa_logging_telemetry_pa_logging_telemetry_example_status | default('unknown') }}"
+                  preflight_passed: "{{ fe_palo_alto_pa_logging_telemetry_pa_logging_telemetry_example_preflight_passed | default(false) | bool }}"
+                  postflight_passed: "{{ fe_palo_alto_pa_logging_telemetry_pa_logging_telemetry_example_postflight_passed | default(false) | bool }}"
+                  started_at: "{{ fe_palo_alto_pa_logging_telemetry_pa_logging_telemetry_example_started_at | default('') }}"
+                  ended_at: "{{ fe_palo_alto_pa_logging_telemetry_pa_logging_telemetry_example_ended_at | default('') }}"
+                  duration_seconds: "{{ fe_palo_alto_pa_logging_telemetry_pa_logging_telemetry_example_duration_seconds | default(0) | int }}"
+                  failed_task: "{{ fe_palo_alto_pa_logging_telemetry_pa_logging_telemetry_example_failed_task | default('') }}"
+                  error: "{{ fe_palo_alto_pa_logging_telemetry_pa_logging_telemetry_example_error | default('') }}"
+                  check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+              fe_validation_executions: 1
+              fe_validation_succeeded: "{{ 1 if fe_palo_alto_pa_logging_telemetry_pa_logging_telemetry_example_status | default('') == 'succeeded' else 0 }}"
+              fe_validation_failed: "{{ 0 if fe_palo_alto_pa_logging_telemetry_pa_logging_telemetry_example_status | default('') == 'succeeded' else 1 }}"
+              fe_validation_duration_seconds: "{{ fe_palo_alto_pa_logging_telemetry_pa_logging_telemetry_example_duration_seconds | default(0) | int }}"
+              fe_validation_failed_components: >-
+                {{ [] if fe_palo_alto_pa_logging_telemetry_pa_logging_telemetry_example_status | default('') == 'succeeded' else ['palo_alto/pa_logging_telemetry/pa_logging_telemetry.example'] }}
+            aggregate: true
+            per_host: false
+          when:
+            - fe_palo_alto_pa_logging_telemetry_pa_logging_telemetry_example_status | default('') == 'failed'
+            - not (fe_palo_alto_pa_logging_telemetry_pa_logging_telemetry_example_stats_published | default(false) | bool)
+          tags:
+            - always
+
+        - name: "palo_alto/pa_logging_telemetry/pa_logging_telemetry.example | Always | Mark the validation statistics as published"
+          ansible.builtin.set_fact:
+            fe_palo_alto_pa_logging_telemetry_pa_logging_telemetry_example_stats_published: true
+          when:
+            - fe_palo_alto_pa_logging_telemetry_pa_logging_telemetry_example_status | default('') == 'failed'
+          tags:
+            - always
