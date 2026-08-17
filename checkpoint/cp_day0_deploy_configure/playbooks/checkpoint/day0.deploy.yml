@@ -289,3 +289,90 @@
               {{ fe_checkpoint_cp_day0_deploy_configure_checkpoint_day0_deploy_duration_seconds | default(0) }}s on {{ inventory_hostname }}.
           tags:
             - always
+  tasks:
+    - name: "checkpoint/cp_day0_deploy_configure/checkpoint/day0.deploy | Guarded execution with rescue and always handling"
+      block:
+
+        - name: "checkpoint/cp_day0_deploy_configure/checkpoint/day0.deploy | Flush notified handlers inside the guarded block"
+          ansible.builtin.meta: flush_handlers
+          tags:
+            - always
+
+      rescue:
+
+        - name: "checkpoint/cp_day0_deploy_configure/checkpoint/day0.deploy | Rescue | Capture the failing task and error detail"
+          ansible.builtin.set_fact:
+            fe_checkpoint_cp_day0_deploy_configure_checkpoint_day0_deploy_status: "failed"
+            fe_checkpoint_cp_day0_deploy_configure_checkpoint_day0_deploy_postflight_passed: false
+            fe_checkpoint_cp_day0_deploy_configure_checkpoint_day0_deploy_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+            fe_checkpoint_cp_day0_deploy_configure_checkpoint_day0_deploy_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+          tags:
+            - always
+            - rescue
+
+        - name: "checkpoint/cp_day0_deploy_configure/checkpoint/day0.deploy | Rescue | Report the failure"
+          ansible.builtin.debug:
+            msg: >-
+              checkpoint/cp_day0_deploy_configure/checkpoint/day0.deploy: FAILED at '{{ fe_checkpoint_cp_day0_deploy_configure_checkpoint_day0_deploy_failed_task }}' on
+              {{ inventory_hostname }} - {{ fe_checkpoint_cp_day0_deploy_configure_checkpoint_day0_deploy_error }}
+          tags:
+            - always
+            - rescue
+
+        - name: "checkpoint/cp_day0_deploy_configure/checkpoint/day0.deploy | Rescue | Re-raise the failure unless the caller opted to continue"
+          ansible.builtin.fail:
+            msg: >-
+              checkpoint/cp_day0_deploy_configure/checkpoint/day0.deploy failed at '{{ fe_checkpoint_cp_day0_deploy_configure_checkpoint_day0_deploy_failed_task }}': {{ fe_checkpoint_cp_day0_deploy_configure_checkpoint_day0_deploy_error }}
+          when: not (fe_validation_continue_on_error | default(false) | bool)
+          tags:
+            - always
+            - rescue
+
+      always:
+
+        - name: "checkpoint/cp_day0_deploy_configure/checkpoint/day0.deploy | Always | Compute the execution duration"
+          ansible.builtin.set_fact:
+            fe_checkpoint_cp_day0_deploy_configure_checkpoint_day0_deploy_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+            fe_checkpoint_cp_day0_deploy_configure_checkpoint_day0_deploy_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_checkpoint_cp_day0_deploy_configure_checkpoint_day0_deploy_start_epoch | default(0) | int) }}"
+          tags:
+            - always
+
+        - name: "checkpoint/cp_day0_deploy_configure/checkpoint/day0.deploy | Always | Publish the validation result with set_stats"
+          ansible.builtin.set_stats:
+            data:
+              fe_validation_results:
+                "checkpoint/cp_day0_deploy_configure/checkpoint/day0.deploy":
+                  component: "checkpoint/cp_day0_deploy_configure/checkpoint/day0.deploy"
+                  type: "playbook"
+                  platform: "checkpoint"
+                  host: "{{ inventory_hostname }}"
+                  status: "{{ fe_checkpoint_cp_day0_deploy_configure_checkpoint_day0_deploy_status | default('unknown') }}"
+                  preflight_passed: "{{ fe_checkpoint_cp_day0_deploy_configure_checkpoint_day0_deploy_preflight_passed | default(false) | bool }}"
+                  postflight_passed: "{{ fe_checkpoint_cp_day0_deploy_configure_checkpoint_day0_deploy_postflight_passed | default(false) | bool }}"
+                  started_at: "{{ fe_checkpoint_cp_day0_deploy_configure_checkpoint_day0_deploy_started_at | default('') }}"
+                  ended_at: "{{ fe_checkpoint_cp_day0_deploy_configure_checkpoint_day0_deploy_ended_at | default('') }}"
+                  duration_seconds: "{{ fe_checkpoint_cp_day0_deploy_configure_checkpoint_day0_deploy_duration_seconds | default(0) | int }}"
+                  failed_task: "{{ fe_checkpoint_cp_day0_deploy_configure_checkpoint_day0_deploy_failed_task | default('') }}"
+                  error: "{{ fe_checkpoint_cp_day0_deploy_configure_checkpoint_day0_deploy_error | default('') }}"
+                  check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+              fe_validation_executions: 1
+              fe_validation_succeeded: "{{ 1 if fe_checkpoint_cp_day0_deploy_configure_checkpoint_day0_deploy_status | default('') == 'succeeded' else 0 }}"
+              fe_validation_failed: "{{ 0 if fe_checkpoint_cp_day0_deploy_configure_checkpoint_day0_deploy_status | default('') == 'succeeded' else 1 }}"
+              fe_validation_duration_seconds: "{{ fe_checkpoint_cp_day0_deploy_configure_checkpoint_day0_deploy_duration_seconds | default(0) | int }}"
+              fe_validation_failed_components: >-
+                {{ [] if fe_checkpoint_cp_day0_deploy_configure_checkpoint_day0_deploy_status | default('') == 'succeeded' else ['checkpoint/cp_day0_deploy_configure/checkpoint/day0.deploy'] }}
+            aggregate: true
+            per_host: false
+          when:
+            - fe_checkpoint_cp_day0_deploy_configure_checkpoint_day0_deploy_status | default('') == 'failed'
+            - not (fe_checkpoint_cp_day0_deploy_configure_checkpoint_day0_deploy_stats_published | default(false) | bool)
+          tags:
+            - always
+
+        - name: "checkpoint/cp_day0_deploy_configure/checkpoint/day0.deploy | Always | Mark the validation statistics as published"
+          ansible.builtin.set_fact:
+            fe_checkpoint_cp_day0_deploy_configure_checkpoint_day0_deploy_stats_published: true
+          when:
+            - fe_checkpoint_cp_day0_deploy_configure_checkpoint_day0_deploy_status | default('') == 'failed'
+          tags:
+            - always

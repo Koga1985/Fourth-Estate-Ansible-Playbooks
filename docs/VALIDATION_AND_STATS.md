@@ -16,6 +16,7 @@ from CI.
 - [What was applied where](#what-was-applied-where)
 - [The task-file / role shape](#the-task-file--role-shape)
 - [The playbook shape](#the-playbook-shape)
+- [Handlers](#handlers)
 - [Published statistics](#published-statistics)
 - [Consuming the statistics](#consuming-the-statistics)
 - [Control variables](#control-variables)
@@ -37,10 +38,9 @@ from CI.
 
 Deliberately **not** wrapped:
 
-- **Handler files** (`*/roles/*/handlers/main.yml`). Handlers are dispatched
-  individually by `notify`; wrapping them in a block changes when and whether
-  they fire. Handler failures surface through the notifying task, which is
-  already inside a wrapper.
+- **Handler files** (`*/roles/*/handlers/main.yml`) — see
+  [Handlers](#handlers) below. The wrapper cannot be expressed on a handler at
+  all; handler failures are covered a different way.
 - **`defaults/`, `vars/`, `meta/`** and other non-task YAML — these are data,
   not task lists.
 
@@ -103,6 +103,92 @@ The record is published exactly once per play, guarded by a
 - preflight failed → published from the `pre_tasks` rescue,
 - `tasks` failed → published from the `tasks` always block,
 - otherwise → published from the `post_tasks` always block.
+
+---
+
+## Handlers
+
+Handler files are **not** wrapped, and cannot be. This section records why, and
+how handler failures are covered instead.
+
+### Why the wrapper cannot be applied to a handler
+
+A `handlers/main.yml` is not a task list — it is a **registry of individually
+addressable units**. `notify: restart splunk` resolves one handler by name and
+runs only that handler; the file is never executed as a sequence.
+
+Wrapping the file the way task files are wrapped is therefore **inert**. The
+handler name still resolves through the block, but:
+
+- the `always:` section never runs, so `set_stats` never publishes;
+- the `rescue:` never engages — a failing handler reports `rescued=0` and the
+  error propagates untouched;
+- the `Initialize validation state` task becomes a handler nobody notifies, so
+  every `fe_*` fact stays undefined.
+
+The obvious alternative — defining each handler *as* a named block with its own
+`rescue`/`always` — does not work either:
+
+```
+[ERROR]: The requested handler 'restart splunk' was not found in either the
+main handlers list nor in the listening handlers list
+```
+
+A named block is not registered as a notifiable handler. There is no way to
+express preflight/postflight-with-`set_stats` on a handler using
+`block`/`rescue`/`always`.
+
+### How handler failures are covered instead
+
+Handlers normally flush **after** the tasks section completes — that is, after
+the wrapper's `block`/`rescue`/`always` has already finished. A failing handler
+would fail the run (exit 2) but publish **no validation record at all**, because
+the wrapper had closed and `post_tasks` are skipped once the host fails.
+
+Every play therefore ends its guarded block with an explicit flush:
+
+```yaml
+tasks:
+  - name: "<component> | Guarded execution with rescue and always handling"
+    block:
+      # ... the original tasks ...
+      - name: "<component> | Flush notified handlers inside the guarded block"
+        ansible.builtin.meta: flush_handlers
+    rescue: ...
+    always: ...
+```
+
+Because the flush happens *inside* the block, a handler failure is captured,
+published and re-raised on exactly the same path as an ordinary task failure —
+with the handler named in `failed_task`:
+
+```json
+{
+  "status": "failed",
+  "failed_task": "simulated failing handler",
+  "error": "handler blew up"
+}
+```
+
+Roles notify handlers from inside the role, but Ansible flushes them at the end
+of the combined roles + tasks section — so this covers role handlers too.
+Roles-only plays (no `tasks:` of their own) were given a `tasks:` section whose
+guarded block contains just the flush, which is the same point in the play where
+their handlers would have flushed anyway.
+
+Applied to all 311 plays across the 274 playbooks: 204 had the flush appended to
+an existing guarded block, 107 roles-only plays gained a `tasks:` section.
+
+### Timing note
+
+For a play that already had `tasks:`, handlers now flush at the end of the block
+body instead of a few harness tasks later. Handlers already ran between `tasks`
+and `post_tasks`, so their position relative to your own tasks is unchanged; the
+run duration now includes handler execution time, which is more accurate.
+
+Handlers notified from `pre_tasks` still flush at the end of `pre_tasks`, which
+is outside the `tasks` wrapper. A handler that only ever fires from `pre_tasks`
+and fails will still fail the run without publishing a record.
 
 ---
 
@@ -270,3 +356,9 @@ The practical consequences:
 4. **A role failure skips that play's `post_tasks`.** Ansible removes the failed
    host, so the play-level record is not published for it — but the failing
    role published its own record, which is where the useful detail lives.
+
+5. **Handlers flush at the end of the guarded block.** See
+   [Handlers](#handlers). This is what brings a failing handler under the
+   capture/publish path; without it a handler failure fails the run silently as
+   far as the statistics are concerned. Handlers notified from `pre_tasks` are
+   still outside the wrapper.

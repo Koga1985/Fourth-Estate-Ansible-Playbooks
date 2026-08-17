@@ -527,6 +527,12 @@ reference.
 - **`always`** computes the duration and publishes the result, so statistics are
   emitted on the success *and* the failure path.
 
+Each play's guarded block ends with `meta: flush_handlers`, so a failing handler
+is captured and published on the same path as an ordinary task failure rather
+than escaping the wrapper. Handler files themselves are not wrapped — the
+pattern cannot be expressed on a handler; see the
+[Handlers](./docs/VALIDATION_AND_STATS.md#handlers) section for why.
+
 ```bash
 # See the published statistics on the console
 ANSIBLE_SHOW_CUSTOM_STATS=true ansible-playbook -i inventory site.yml
