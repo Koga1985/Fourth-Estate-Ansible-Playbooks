@@ -95,7 +95,7 @@ Each top-level directory focuses on a specific technology platform and contains 
 
 ### 🐧 Operating Systems (2 platforms)
 - **Red Hat Enterprise Linux** - Hardening, patching, audit logging, firewall, SELinux (6 roles)
-- **Microsoft Windows Server** - STIG hardening, Active Directory, Group Policy, DHCP/DNS, IIS (1 roles)
+- **Microsoft Windows Server** - Server 2022 DoD STIG hardening (1 role)
 
 ### 💾 Storage & Backup (6 platforms)
 - **Pure Storage** - FlashArray, FlashBlade, provisioning, protection (14 roles)
@@ -106,9 +106,9 @@ Each top-level directory focuses on a specific technology platform and contains 
 - **Splunk** - Log aggregation, forwarder, monitoring, security (6 roles)
 
 ### 🗄️ Database Platforms (3 platforms)
-- **PostgreSQL** - Installation, replication, pgPool, Barman backup, security (8 roles)
-- **MySQL/MariaDB** - Installation, replication, Galera cluster, XtraBackup (8 roles)
-- **Oracle Database** - Installation, Data Guard, RAC, RMAN, Flashback (8 roles)
+- **PostgreSQL** - Installation, configuration, replication, backup, restore (5 roles)
+- **MySQL/MariaDB** - no implemented roles (see docs/KNOWN_LIMITATIONS.md)
+- **Oracle Database** - no implemented roles (see docs/KNOWN_LIMITATIONS.md)
 
 ### 📊 Monitoring & Observability (4 platforms)
 - **ScienceLogic SL1** - Platform monitoring, RBA, powerflow, governance (33 roles)
@@ -123,7 +123,7 @@ Each top-level directory focuses on a specific technology platform and contains 
 ### 🔧 Enterprise Integration (3 platforms)
 - **F5 BIG-IP** - Load balancing, SSL, WAF, iRules, high availability (4 roles)
 - **ServiceNow** - CMDB integration, incident/change management, asset tracking (2 roles)
-- **Fortinet FortiGate** - Firewall, VPN, IPS/AV, high availability (1 roles)
+- **Fortinet FortiGate** - FortiGate system configuration (1 role)
 
 ### 🛡️ Endpoint Security (2 platforms)
 - **CrowdStrike** - EDR agent deployment, management, and monitoring
@@ -555,7 +555,12 @@ reference.
 
 Each play's guarded block ends with `meta: flush_handlers`, so a failing handler
 is captured and published on the same path as an ordinary task failure rather
-than escaping the wrapper. Handler files themselves are not wrapped — the
+than escaping the wrapper. A play's own `pre_tasks` get the same treatment.
+
+`callback_plugins/fe_validation.py` collects the same per-component record with
+no in-play tasks at all; see
+[the callback section](./docs/VALIDATION_AND_STATS.md#the-fe_validation-callback-plugin)
+for what it does and does not replace. Handler files themselves are not wrapped — the
 pattern cannot be expressed on a handler; see the
 [Handlers](./docs/VALIDATION_AND_STATS.md#handlers) section for why.
 

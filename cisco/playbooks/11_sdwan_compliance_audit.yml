@@ -169,54 +169,141 @@
               on {{ inventory_hostname }}.
           tags:
             - always
-    - name: Display audit banner
-      ansible.builtin.debug:
-        msg: |
-          ════════════════════════════════════════════════════════════════
-          SD-WAN DISA STIG COMPLIANCE AUDIT
-          ════════════════════════════════════════════════════════════════
-          STIG References:
-            - Cisco IOS XE SD-WAN Router NDM STIG V2R1
-            - Cisco SD-WAN vManage NDM STIG V1R1
-          Mode: READ ONLY — No changes will be made
-          ════════════════════════════════════════════════════════════════
+    - name: "cisco/11_sdwan_compliance_audit | Guarded pre_tasks with rescue and always handling"
+      block:
 
-    - name: Create audit artifacts directory
-      ansible.builtin.file:
-        path: "{{ sdwan_artifacts_dir }}"
-        state: directory
-        mode: '0750'
+        - name: Display audit banner
+          ansible.builtin.debug:
+            msg: |
+              ════════════════════════════════════════════════════════════════
+              SD-WAN DISA STIG COMPLIANCE AUDIT
+              ════════════════════════════════════════════════════════════════
+              STIG References:
+                - Cisco IOS XE SD-WAN Router NDM STIG V2R1
+                - Cisco SD-WAN vManage NDM STIG V1R1
+              Mode: READ ONLY — No changes will be made
+              ════════════════════════════════════════════════════════════════
 
-    - name: Authenticate to vManage
-      ansible.builtin.uri:
-        url: "https://{{ sdwan_vmanage_host }}:{{ sdwan_vmanage_port | default(443) }}/j_security_check"
-        method: POST
-        body_format: form-urlencoded
-        body:
-          j_username: "{{ sdwan_vmanage_username }}"
-          j_password: "{{ sdwan_vmanage_password }}"
-        validate_certs: "{{ sdwan_vmanage_verify_ssl | default(true) }}"
-        status_code: [200, 302]
-      register: sdwan_audit_auth
-      no_log: true
+        - name: Create audit artifacts directory
+          ansible.builtin.file:
+            path: "{{ sdwan_artifacts_dir }}"
+            state: directory
+            mode: '0750'
 
-    - name: Set session and CSRF facts
-      ansible.builtin.set_fact:
-        sdwan_session_cookie: "{{ sdwan_audit_auth.cookies_string }}"
-      no_log: true
+        - name: Authenticate to vManage
+          ansible.builtin.uri:
+            url: "https://{{ sdwan_vmanage_host }}:{{ sdwan_vmanage_port | default(443) }}/j_security_check"
+            method: POST
+            body_format: form-urlencoded
+            body:
+              j_username: "{{ sdwan_vmanage_username }}"
+              j_password: "{{ sdwan_vmanage_password }}"
+            validate_certs: "{{ sdwan_vmanage_verify_ssl | default(true) }}"
+            status_code: [200, 302]
+          register: sdwan_audit_auth
+          no_log: true
 
-    - name: Get CSRF token
-      ansible.builtin.uri:
-        url: "https://{{ sdwan_vmanage_host }}:{{ sdwan_vmanage_port | default(443) }}/dataservice/client/token"
-        method: GET
-        headers:
-          Cookie: "{{ sdwan_session_cookie }}"
-        validate_certs: "{{ sdwan_vmanage_verify_ssl | default(true) }}"
-      register: sdwan_audit_csrf
+        - name: Set session and CSRF facts
+          ansible.builtin.set_fact:
+            sdwan_session_cookie: "{{ sdwan_audit_auth.cookies_string }}"
+          no_log: true
 
-    - name: Set CSRF token
-      ansible.builtin.set_fact:
-        sdwan_csrf_token: "{{ sdwan_audit_csrf.json }}"
+        - name: Get CSRF token
+          ansible.builtin.uri:
+            url: "https://{{ sdwan_vmanage_host }}:{{ sdwan_vmanage_port | default(443) }}/dataservice/client/token"
+            method: GET
+            headers:
+              Cookie: "{{ sdwan_session_cookie }}"
+            validate_certs: "{{ sdwan_vmanage_verify_ssl | default(true) }}"
+          register: sdwan_audit_csrf
+
+        - name: Set CSRF token
+          ansible.builtin.set_fact:
+            sdwan_csrf_token: "{{ sdwan_audit_csrf.json }}"
+
+        - name: "cisco/11_sdwan_compliance_audit | Flush notified handlers inside the guarded block"
+          ansible.builtin.meta: flush_handlers
+          tags:
+            - always
+
+      rescue:
+
+        - name: "cisco/11_sdwan_compliance_audit | Rescue | Capture the failing task and error detail"
+          ansible.builtin.set_fact:
+            fe_cisco_11_sdwan_compliance_audit_status: "failed"
+            fe_cisco_11_sdwan_compliance_audit_postflight_passed: false
+            fe_cisco_11_sdwan_compliance_audit_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+            fe_cisco_11_sdwan_compliance_audit_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+          tags:
+            - always
+            - rescue
+
+        - name: "cisco/11_sdwan_compliance_audit | Rescue | Report the failure"
+          ansible.builtin.debug:
+            msg: >-
+              cisco/11_sdwan_compliance_audit: FAILED at '{{ fe_cisco_11_sdwan_compliance_audit_failed_task }}' on
+              {{ inventory_hostname }} - {{ fe_cisco_11_sdwan_compliance_audit_error }}
+          tags:
+            - always
+            - rescue
+
+        - name: "cisco/11_sdwan_compliance_audit | Rescue | Re-raise the failure unless the caller opted to continue"
+          ansible.builtin.fail:
+            msg: >-
+              cisco/11_sdwan_compliance_audit failed at '{{ fe_cisco_11_sdwan_compliance_audit_failed_task }}': {{ fe_cisco_11_sdwan_compliance_audit_error }}
+          when: not (fe_validation_continue_on_error | default(false) | bool)
+          tags:
+            - always
+            - rescue
+
+      always:
+
+        - name: "cisco/11_sdwan_compliance_audit | Always | Compute the execution duration"
+          ansible.builtin.set_fact:
+            fe_cisco_11_sdwan_compliance_audit_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+            fe_cisco_11_sdwan_compliance_audit_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_cisco_11_sdwan_compliance_audit_start_epoch | default(0) | int) }}"
+          tags:
+            - always
+
+        - name: "cisco/11_sdwan_compliance_audit | Always | Publish the validation result with set_stats"
+          ansible.builtin.set_stats:
+            data:
+              fe_validation_results:
+                "cisco/11_sdwan_compliance_audit":
+                  component: "cisco/11_sdwan_compliance_audit"
+                  type: "playbook"
+                  platform: "cisco"
+                  host: "{{ inventory_hostname }}"
+                  status: "{{ fe_cisco_11_sdwan_compliance_audit_status | default('unknown') }}"
+                  preflight_passed: "{{ fe_cisco_11_sdwan_compliance_audit_preflight_passed | default(false) | bool }}"
+                  postflight_passed: "{{ fe_cisco_11_sdwan_compliance_audit_postflight_passed | default(false) | bool }}"
+                  started_at: "{{ fe_cisco_11_sdwan_compliance_audit_started_at | default('') }}"
+                  ended_at: "{{ fe_cisco_11_sdwan_compliance_audit_ended_at | default('') }}"
+                  duration_seconds: "{{ fe_cisco_11_sdwan_compliance_audit_duration_seconds | default(0) | int }}"
+                  failed_task: "{{ fe_cisco_11_sdwan_compliance_audit_failed_task | default('') }}"
+                  error: "{{ fe_cisco_11_sdwan_compliance_audit_error | default('') }}"
+                  check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+              fe_validation_executions: 1
+              fe_validation_succeeded: "{{ 1 if fe_cisco_11_sdwan_compliance_audit_status | default('') == 'succeeded' else 0 }}"
+              fe_validation_failed: "{{ 0 if fe_cisco_11_sdwan_compliance_audit_status | default('') == 'succeeded' else 1 }}"
+              fe_validation_duration_seconds: "{{ fe_cisco_11_sdwan_compliance_audit_duration_seconds | default(0) | int }}"
+              fe_validation_failed_components: >-
+                {{ [] if fe_cisco_11_sdwan_compliance_audit_status | default('') == 'succeeded' else ['cisco/11_sdwan_compliance_audit'] }}
+            aggregate: true
+            per_host: false
+          when:
+            - fe_cisco_11_sdwan_compliance_audit_status | default('') == 'failed'
+            - not (fe_cisco_11_sdwan_compliance_audit_stats_published | default(false) | bool)
+          tags:
+            - always
+
+        - name: "cisco/11_sdwan_compliance_audit | Always | Mark the validation statistics as published"
+          ansible.builtin.set_fact:
+            fe_cisco_11_sdwan_compliance_audit_stats_published: true
+          when:
+            - fe_cisco_11_sdwan_compliance_audit_status | default('') == 'failed'
+          tags:
+            - always
 
   tasks:
     # ---- CISC-ND-000080 : DoD Login Banner (AC-8) ----

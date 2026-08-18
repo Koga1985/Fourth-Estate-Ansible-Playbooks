@@ -19,6 +19,7 @@ from CI.
 - [Handlers](#handlers)
 - [Published statistics](#published-statistics)
 - [Consuming the statistics](#consuming-the-statistics)
+- [The fe_validation callback plugin](#the-fe_validation-callback-plugin)
 - [Control variables](#control-variables)
 - [Adding component-specific preflight checks](#adding-component-specific-preflight-checks)
 - [Tag behaviour](#tag-behaviour)
@@ -186,9 +187,27 @@ body instead of a few harness tasks later. Handlers already ran between `tasks`
 and `post_tasks`, so their position relative to your own tasks is unchanged; the
 run duration now includes handler execution time, which is more accurate.
 
-Handlers notified from `pre_tasks` still flush at the end of `pre_tasks`, which
-is outside the `tasks` wrapper. A handler that only ever fires from `pre_tasks`
-and fails will still fail the run without publishing a record.
+`pre_tasks` are covered too. A play's own `pre_tasks` entries (everything after
+the harness's preflight block) are wrapped in the same guarded shape, ending
+with their own `meta: flush_handlers`:
+
+```yaml
+pre_tasks:
+  - name: "<component> | Preflight validation"        # harness
+    ...
+  - name: "<component> | Guarded pre_tasks with rescue and always handling"
+    block:
+      # ... the play's own pre_tasks ...
+      - name: "<component> | Flush notified handlers inside the guarded block"
+        ansible.builtin.meta: flush_handlers
+    rescue: ...
+    always: ...
+```
+
+This closed two gaps at once: a handler notified from `pre_tasks` now fails
+inside the wrapper, and a failure in one of the play's own `pre_tasks` is now
+captured and published instead of aborting the play silently. Applied to 104
+plays covering 173 original `pre_tasks` entries.
 
 ---
 
@@ -281,6 +300,61 @@ variables:
 
 ---
 
+## The fe_validation callback plugin
+
+`callback_plugins/fe_validation.py` collects the same per-component record with
+**no in-play tasks at all**, by watching callback events. Enable it with
+environment variables:
+
+```bash
+ANSIBLE_CALLBACK_PLUGINS=./callback_plugins \
+ANSIBLE_CALLBACKS_ENABLED=fe_validation \
+ansible-playbook -i inventory site.yml
+```
+
+or copy `ansible.cfg.example` to `ansible.cfg`. It prints a summary and writes
+`fe_validation_report.json`:
+
+```
+FE VALIDATION ******************************************************************
+2 components, 1 succeeded, 1 failed, 2.039s total
+  failed       0.00s  cloud_policy/cloud_computing_srg_assessment  (ok=0 changed=0 failed=1 skipped=0)
+             failed at 'cloud_computing_srg_assessment : TEMP explode': simulated failure
+  succeeded    0.00s  cloud_policy/cloud_computing_srg_assessment/run  (ok=1 changed=0 failed=0 skipped=0)
+```
+
+It derives component ids from each task's source file, so they match the
+in-play harness exactly. Running both together on the same playbook produces
+identical key sets, types, statuses and counters.
+
+### What it does *not* replace
+
+**It cannot feed AWX/AAP.** Only `set_stats` does that: AAP builds job artifacts
+and workflow variables from the `set_stats` events in the event stream. A
+callback calling `stats.set_custom_stats()` is accepted but never surfaces --
+the stdout callback's stats hook has already run by then. This was tested, not
+assumed.
+
+So the two are complementary:
+
+| | in-play `set_stats` | `fe_validation` callback |
+|---|---|---|
+| Feeds AWX/AAP artifacts and workflow vars | yes | **no** |
+| Costs tasks in the play | yes | **no** |
+| Covers components the harness does not wrap (handlers, external roles) | no | **yes** |
+| Per-task ok/changed/failed/skipped counts | no | **yes** |
+| Works with no changes to any file | no | **yes** |
+
+### What it does not remove
+
+It does not shrink the in-play harness. The `set_stats` and bookkeeping tasks
+are roughly 2 of the ~11 tasks each wrapper adds; the rest is the preflight and
+postflight validation itself, which has to run in the play to gate execution.
+Use the callback when you want the data without the AAP integration, or
+alongside `set_stats` when you want both.
+
+---
+
 ## Control variables
 
 | Variable | Default | Effect |
@@ -360,5 +434,5 @@ The practical consequences:
 5. **Handlers flush at the end of the guarded block.** See
    [Handlers](#handlers). This is what brings a failing handler under the
    capture/publish path; without it a handler failure fails the run silently as
-   far as the statistics are concerned. Handlers notified from `pre_tasks` are
-   still outside the wrapper.
+   far as the statistics are concerned. `pre_tasks` are covered by their own
+   guarded block with the same flush.
