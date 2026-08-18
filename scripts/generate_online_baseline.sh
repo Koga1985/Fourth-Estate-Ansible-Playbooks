@@ -36,11 +36,31 @@ if ! ansible-galaxy collection list >/dev/null 2>&1; then
 fi
 
 echo "==> Installing declared collections from every requirements.yml"
+# A requirements file may carry a "# automation-hub-only: <collections>" line
+# to declare that it depends on collections with no stable community-Galaxy
+# release (Red Hat Automation Hub only). Install failures for those files are
+# expected on a Galaxy-only machine: their modules stay unresolvable, the
+# resulting unknown-module findings are baselined once, and the gate still
+# ratchets everything else. Any OTHER install failure aborts, because its
+# findings would be install artifacts rather than repository defects.
 failed_reqs=()
+expected_failures=()
 while read -r req; do
   echo "    -- $req"
-  ansible-galaxy collection install -r "$req" || failed_reqs+=("$req")
+  if ! ansible-galaxy collection install -r "$req"; then
+    if grep -q '^# automation-hub-only:' "$req"; then
+      expected_failures+=("$req")
+    else
+      failed_reqs+=("$req")
+    fi
+  fi
 done < <(find . -path ./.git -prune -o -name 'requirements.yml' -print | sort)
+
+if [ "${#expected_failures[@]}" -gt 0 ]; then
+  echo ""
+  echo "Expected failures (marked automation-hub-only, findings will be baselined):"
+  printf '    %s\n' "${expected_failures[@]}"
+fi
 
 if [ "${#failed_reqs[@]}" -gt 0 ]; then
   echo "" >&2
@@ -48,7 +68,8 @@ if [ "${#failed_reqs[@]}" -gt 0 ]; then
   printf '    %s\n' "${failed_reqs[@]}" >&2
   echo "The baseline would record findings caused by the missing collections" >&2
   echo "rather than by the repository, so it is not being written. Fix the" >&2
-  echo "installs and re-run." >&2
+  echo "installs and re-run (or mark a file automation-hub-only if its" >&2
+  echo "collection genuinely has no stable community-Galaxy release)." >&2
   exit 1
 fi
 
