@@ -11,6 +11,7 @@ not, and how to add coverage.
 - [Molecule coverage](#molecule-coverage)
 - [Which roles are onboarded, and why only those](#which-roles-are-onboarded-and-why-only-those)
 - [Adding a role to the molecule gate](#adding-a-role-to-the-molecule-gate)
+- [Promoting the Galaxy-enabled lint gate](#promoting-the-galaxy-enabled-lint-gate)
 - [What is still not tested](#what-is-still-not-tested)
 
 ---
@@ -27,11 +28,11 @@ Every one of these blocks a merge.
 | `ansible-lint --offline` | No new lint violation against the ratcheted baseline | no |
 | `ansible-playbook --syntax-check` | The core-only playbooks parse | no |
 | `molecule test` | Onboarded roles parse, run, and are idempotent | no |
+| `ansible-lint` with collections | Modules resolve in their real collections | yes (blocking once baselined) |
 
-An informational job additionally installs the declared collections and runs
-the full `ansible-lint` and `--syntax-check`. It is not blocking because it
-depends on Galaxy reachability — see
-[VALIDATION_AND_STATS.md](./VALIDATION_AND_STATS.md) and the CI file comments.
+A sixth job, `ansible-lint with collections`, installs the declared collections
+and becomes blocking the moment its baseline is committed — see
+[Promoting the Galaxy-enabled lint gate](#promoting-the-galaxy-enabled-lint-gate).
 
 ---
 
@@ -133,6 +134,56 @@ First" at the top, and until now nothing checked it.
 
 CI discovers scenarios automatically by looking for `managed: false` in any
 `molecule.yml`, so there is no list to update.
+
+---
+
+## Promoting the Galaxy-enabled lint gate
+
+### The problem
+
+The required `ansible-lint` gate runs `--offline` with no collections
+installed. In that mode `syntax-check[unknown-module]` fires for **every**
+non-builtin module, so ~269 of those findings sit in `.ansible-lint-ignore`
+permanently. The rule can never catch what it is named after: a module that
+genuinely does not exist, or a typo in an FQCN.
+
+`scripts/check_collections.py` covers half of that offline — every collection
+called must be installable from a `requirements.yml`. The other half, "does this
+module exist inside that collection", needs the collections actually installed.
+
+### The promotion
+
+The `ansible-lint-online` CI job already installs the collections. It ratchets
+against its **own** baseline, `.ansible-lint-ignore-online`, and switches itself
+from informational to blocking the moment that file is committed. **No workflow
+edit is required.**
+
+On a machine that can reach `galaxy.ansible.com`:
+
+```bash
+pip install ansible-core==2.19.11 ansible-lint==26.6.0
+./scripts/generate_online_baseline.sh
+git add .ansible-lint-ignore-online && git commit -m "Baseline ansible-lint with collections installed"
+```
+
+The script refuses to write a baseline if any `requirements.yml` fails to
+install, because the result would record missing-collection artifacts instead of
+real findings.
+
+### What to expect
+
+The online baseline will be **smaller and more meaningful** than the offline
+one. Diff the two: every `syntax-check[unknown-module]` entry that disappears
+was an offline artifact, and every one that remains is a module that does not
+exist in the installed collection — a real defect worth fixing rather than
+baselining.
+
+> This procedure has not been executed. The environment this work was done in
+> blocks `galaxy.ansible.com` (403 on CONNECT), so the collections could not be
+> installed and the baseline could not be generated. The job's blocking command
+> was verified by running the identical `ansible-lint -i <file> <dirs>`
+> invocation against a stand-in baseline: it passes when the baseline covers the
+> findings and fails when it does not.
 
 ---
 
