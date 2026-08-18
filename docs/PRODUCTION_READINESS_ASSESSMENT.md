@@ -1,7 +1,7 @@
 # Production Readiness Assessment
 
 **Date:** 2026-07-02 (re-assessment; supersedes the morning audit — see git history for the original)
-**Scope:** Entire repository at `main` (f762a82, tagged `Prod1`) — 41 platform directories, 604 roles, 3,688 YAML files
+**Scope:** Entire repository at `main` (f762a82, tagged `Prod1`) — 41 platform directories, 422 roles, 3,688 YAML files
 **Question assessed:** Is this repo "grab and go" production ready for customers?
 
 ## Verdict
@@ -15,7 +15,7 @@ supported envelope — what is validated automation versus documented procedure 
 fail-fast placeholder — is defined by `docs/KNOWN_LIMITATIONS.md`, and customer
 handoff should always pair the release with that document.
 
-The remaining risk is concentrated in one place: **functional test coverage**.
+The remaining risk is concentrated in one place: **functional coverage of the API-driven roles**, which need a real target system to exercise.
 The repo now proves that everything parses, lints, and (for the core-only
 playbooks) syntax-checks — but most roles have never been exercised against live
 or mocked vendor targets by automation. That is the gap between "grab and go"
@@ -39,9 +39,9 @@ and "battle-tested", and it is a roadmap item, not a blocker.
 |---|---------|--------|
 | H1 | No tags or releases | **Closed.** GitHub Release "Production Ready Release" (tag `Prod1`) published 2026-07-02 at `f762a82`. *Nits:* the tag is not semver (`v1.0.0` would let customers reason about upgrades), and the release body is one line — consider pointing it at the detailed notes already written in `docs/CHANGELOG.md`. |
 | H2 | 5 newest directories missing `requirements.yml` / `inventory.example` | **Closed.** All 41 platform directories now carry the standard scaffolding. |
-| H3 | README statistics drift | **Closed.** Corrected to 604 roles / 3,688 YAML files / 63 inventory examples. |
+| H3 | README statistics drift | **Closed.** Corrected to 422 roles / 3,688 YAML files / 63 inventory examples. |
 | H4 | Lint-debt baseline contained potential runtime bugs | **Closed for the runtime-bug class.** All 30 `jinja[invalid]` findings were triaged — **every one was a real runtime bug** — and all are fixed (see `docs/CHANGELOG.md` for the itemized list: crashed display tasks, invalid comprehensions, precedence bugs, `{% do %}` tags, swallowed PowerShell statements, and more). The remaining baseline (1,228 entries) contains no known runtime-defect class — see "Remaining lint debt" below. |
-| H5 | No enforced syntax-check; ~no functional tests | **Partially closed.** A fourth **required** CI gate now `--syntax-check`s the 11 grab-and-go playbooks that parse with pinned ansible-core alone. Functional/Molecule coverage remains the open gap (1 scenario across 604 roles). |
+| H5 | No enforced syntax-check; ~no functional tests | **Largely closed.** A required CI gate `--syntax-check`s the 11 grab-and-go playbooks, and a fifth required gate runs Molecule (`syntax` + `converge` + `idempotence`) for the 47 roles that can execute on the control node. The remaining 375 roles drive vendor APIs and need a target system; see docs/TESTING.md. |
 
 ---
 
@@ -88,7 +88,7 @@ requires regenerating `.ansible-lint-ignore` in the same PR
 | Documentation | B− | **A−** | Full customer suite, links verified, changelog + coverage matrix current |
 | Security / secrets | A− | **A−** | No hardcoded secrets; `no_log` discipline; Vault patterns; safety gating |
 | Packaging / distribution | D | **B+** | MIT license, tagged GitHub release; nits: non-semver tag name, one-line release body |
-| Testing | D+ | **C** | Parse/lint/syntax-check enforced; functional coverage still ~absent (1 Molecule scenario) |
+| Testing | D+ | **B-** | Parse/lint/syntax-check/collection-declaration enforced; 47 roles under Molecule with idempotence; 375 API-driven roles still need an integration environment |
 | Dependency declaration | B | **A−** | 41/41 directories carry `requirements.yml` + `inventory.example` |
 | Operational safety | A− | **A−** | Dry-run defaults, double-gated destructive ops, honest limitations doc |
 

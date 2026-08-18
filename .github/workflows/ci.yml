@@ -125,15 +125,65 @@ jobs:
           exit $fail
 
   # ---------------------------------------------------------------------------
-  # INFORMATIONAL: full ansible-lint + ansible-playbook --syntax-check with the
-  # declared collections installed. Not blocking (continue-on-error) because it
-  # depends on Galaxy reachability and a fully resolved roles_path. Promote to a
-  # required gate once findings are triaged on a Galaxy-enabled runner.
+  # ENFORCED GATE 4: molecule, for the roles that can run on the control node.
+  # Delegated scenarios -- no container or VM -- so this needs no Docker and is
+  # runner-agnostic. Only roles that make no system changes are onboarded (see
+  # docs/TESTING.md); the sequence is syntax + converge + idempotence, and
+  # idempotence is the part that earns its keep.
   # ---------------------------------------------------------------------------
-  ansible-syntax-check:
-    name: ansible-lint + syntax-check (informational)
+  molecule:
+    name: molecule, control-node roles (required)
     runs-on: ubuntu-latest
-    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install ansible-core + molecule (pinned)
+        run: pip install --quiet ansible-core==2.19.11 molecule==26.8.0
+
+      # Only delegated scenarios (managed: false) run here. A scenario using a
+      # container driver needs that driver's plugin and a daemon, so it is out
+      # of scope for this gate; kubernetes/roles/k8s-cluster-hardening keeps its
+      # own docker-driver scenario for local use.
+      - name: Run every delegated molecule scenario
+        run: |
+          set -o pipefail
+          fail=0; total=0
+          while read -r cfg; do
+            rd=$(dirname "$(dirname "$cfg")")
+            rp=$(dirname "$rd")
+            total=$((total+1))
+            echo "::group::molecule ${rd}"
+            if ! (cd "$rd" && ANSIBLE_ROLES_PATH="${GITHUB_WORKSPACE}/${rp}" \
+                  molecule test -s default); then
+              echo "::error file=${cfg}::molecule failed for ${rd}"
+              fail=$((fail+1))
+            fi
+            echo "::endgroup::"
+          done < <(grep -rl 'managed: false' --include=molecule.yml . | sort)
+          echo "molecule scenarios: ${total}, failed: ${fail}"
+          exit $fail
+
+  # ---------------------------------------------------------------------------
+  # PROMOTABLE GATE: ansible-lint with the declared collections installed.
+  #
+  # The required ansible-lint job above runs --offline with no collections, so
+  # syntax-check[unknown-module] fires for every non-builtin module and those
+  # findings are baselined permanently in .ansible-lint-ignore. The rule can
+  # therefore never catch a module that genuinely does not exist.
+  #
+  # This job installs the collections, which makes the rule meaningful. It
+  # ratchets against its OWN baseline, .ansible-lint-ignore-online, and turns
+  # itself into a blocking gate the moment that file is committed -- no edit to
+  # this workflow is needed. Generate it on a Galaxy-enabled machine with
+  # ./scripts/generate_online_baseline.sh (see docs/TESTING.md).
+  # ---------------------------------------------------------------------------
+  ansible-lint-online:
+    name: ansible-lint with collections (blocking once baselined)
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
@@ -144,26 +194,55 @@ jobs:
       - name: Install ansible-core + ansible-lint (pinned)
         run: pip install --quiet ansible-core==2.19.11 ansible-lint==26.6.0
 
-      - name: Install declared collections (best-effort)
+      - name: Is the online baseline committed?
+        id: baseline
         run: |
-          # Install from every requirements.yml so FQCN modules resolve.
-          # Best-effort: a single unreachable collection should not abort the job.
-          find . -path ./.git -prune -o -name 'requirements.yml' -print | while read -r req; do
-            echo "::group::ansible-galaxy install -r $req"
-            ansible-galaxy collection install -r "$req" || true
-            echo "::endgroup::"
-          done
+          if [ -f .ansible-lint-ignore-online ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          fi
 
-      - name: Full ansible-lint (with collections)
+      - name: Install declared collections
+        id: collections
+        continue-on-error: true
+        run: |
+          missing=0
+          while read -r req; do
+            echo "::group::ansible-galaxy install -r $req"
+            ansible-galaxy collection install -r "$req" || missing=$((missing+1))
+            echo "::endgroup::"
+          done < <(find . -path ./.git -prune -o -name 'requirements.yml' -print | sort)
+          echo "missing=$missing" >> "$GITHUB_OUTPUT"
+          echo "requirements files that failed to install: $missing"
+
+      # Blocking path: baseline committed and every collection installed, so a
+      # finding is about the repository rather than about a missing collection.
+      - name: ansible-lint with collections (ratcheted, blocking)
+        if: steps.baseline.outputs.present == 'true' && steps.collections.outputs.missing == '0'
+        run: |
+          dirs=$(ls -d */ | grep -vE '^(docs|\.vscode|scripts)/' | tr -d '/' | tr '\n' ' ')
+          ansible-lint -i .ansible-lint-ignore-online $dirs
+
+      # Baseline committed but Galaxy was unreachable: report, do not fail, as
+      # the findings would be install artifacts.
+      - name: Galaxy unreachable, skipping the blocking check
+        if: steps.baseline.outputs.present == 'true' && steps.collections.outputs.missing != '0'
+        run: |
+          echo "::warning::${{ steps.collections.outputs.missing }} requirements file(s) failed to install; skipping the blocking lint because findings would be install artifacts, not repository defects."
+
+      # Not yet baselined: informational only, and says exactly how to promote.
+      - name: Informational run (no online baseline yet)
+        if: steps.baseline.outputs.present != 'true'
         run: |
           dirs=$(ls -d */ | grep -vE '^(docs|\.vscode|scripts)/' | tr -d '/' | tr '\n' ' ')
           ansible-lint $dirs || true
+          echo ""
+          echo "::notice::This job is informational because .ansible-lint-ignore-online is not committed. Run ./scripts/generate_online_baseline.sh on a machine that can reach galaxy.ansible.com and commit the result to make this a blocking gate."
 
-      - name: Syntax-check discoverable playbooks
+      - name: Syntax-check discoverable playbooks (informational)
+        continue-on-error: true
         run: |
-          # A "playbook" here = any *.yml whose top level is a list of plays
-          # (has a 'hosts:' key). Syntax-check each; report failures but do not
-          # abort (missing collections on a restricted runner are expected).
           shopt -s globstar nullglob
           fail=0
           for pb in **/*.yml; do

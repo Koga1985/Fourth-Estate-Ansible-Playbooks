@@ -166,26 +166,113 @@
               on {{ inventory_hostname }}.
           tags:
             - always
-    - name: Display Phase 4 banner
-      ansible.builtin.debug:
-        msg: |
-          ════════════════════════════════════════════════════════════════
-          PHASE 4: Monitoring Setup
-          ════════════════════════════════════════════════════════════════
-          Configuring:
-            ✓ SNMP v2c/v3
-            ✓ SNMP trap destinations
-            ✓ Call Home for proactive monitoring
-            ✓ System health checks
-            ✓ Power/thermal monitoring
-            ✓ Compliance monitoring
-          ════════════════════════════════════════════════════════════════
+    - name: "cisco/05_ucs_phase4_monitoring | Guarded pre_tasks with rescue and always handling"
+      block:
 
-    - name: Create Phase 4 artifacts directory
-      ansible.builtin.file:
-        path: "{{ ucs_artifacts_dir }}"
-        state: directory
-        mode: '0750'
+        - name: Display Phase 4 banner
+          ansible.builtin.debug:
+            msg: |
+              ════════════════════════════════════════════════════════════════
+              PHASE 4: Monitoring Setup
+              ════════════════════════════════════════════════════════════════
+              Configuring:
+                ✓ SNMP v2c/v3
+                ✓ SNMP trap destinations
+                ✓ Call Home for proactive monitoring
+                ✓ System health checks
+                ✓ Power/thermal monitoring
+                ✓ Compliance monitoring
+              ════════════════════════════════════════════════════════════════
+
+        - name: Create Phase 4 artifacts directory
+          ansible.builtin.file:
+            path: "{{ ucs_artifacts_dir }}"
+            state: directory
+            mode: '0750'
+
+        - name: "cisco/05_ucs_phase4_monitoring | Flush notified handlers inside the guarded block"
+          ansible.builtin.meta: flush_handlers
+          tags:
+            - always
+
+      rescue:
+
+        - name: "cisco/05_ucs_phase4_monitoring | Rescue | Capture the failing task and error detail"
+          ansible.builtin.set_fact:
+            fe_cisco_05_ucs_phase4_monitoring_status: "failed"
+            fe_cisco_05_ucs_phase4_monitoring_postflight_passed: false
+            fe_cisco_05_ucs_phase4_monitoring_failed_task: "{{ ansible_failed_task.name | default('unknown task') }}"
+            fe_cisco_05_ucs_phase4_monitoring_error: "{{ ansible_failed_result.msg | default('no error detail reported') }}"
+          tags:
+            - always
+            - rescue
+
+        - name: "cisco/05_ucs_phase4_monitoring | Rescue | Report the failure"
+          ansible.builtin.debug:
+            msg: >-
+              cisco/05_ucs_phase4_monitoring: FAILED at '{{ fe_cisco_05_ucs_phase4_monitoring_failed_task }}' on
+              {{ inventory_hostname }} - {{ fe_cisco_05_ucs_phase4_monitoring_error }}
+          tags:
+            - always
+            - rescue
+
+        - name: "cisco/05_ucs_phase4_monitoring | Rescue | Re-raise the failure unless the caller opted to continue"
+          ansible.builtin.fail:
+            msg: >-
+              cisco/05_ucs_phase4_monitoring failed at '{{ fe_cisco_05_ucs_phase4_monitoring_failed_task }}': {{ fe_cisco_05_ucs_phase4_monitoring_error }}
+          when: not (fe_validation_continue_on_error | default(false) | bool)
+          tags:
+            - always
+            - rescue
+
+      always:
+
+        - name: "cisco/05_ucs_phase4_monitoring | Always | Compute the execution duration"
+          ansible.builtin.set_fact:
+            fe_cisco_05_ucs_phase4_monitoring_ended_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+            fe_cisco_05_ucs_phase4_monitoring_duration_seconds: "{{ (now(fmt='%s') | int) - (fe_cisco_05_ucs_phase4_monitoring_start_epoch | default(0) | int) }}"
+          tags:
+            - always
+
+        - name: "cisco/05_ucs_phase4_monitoring | Always | Publish the validation result with set_stats"
+          ansible.builtin.set_stats:
+            data:
+              fe_validation_results:
+                "cisco/05_ucs_phase4_monitoring":
+                  component: "cisco/05_ucs_phase4_monitoring"
+                  type: "playbook"
+                  platform: "cisco"
+                  host: "{{ inventory_hostname }}"
+                  status: "{{ fe_cisco_05_ucs_phase4_monitoring_status | default('unknown') }}"
+                  preflight_passed: "{{ fe_cisco_05_ucs_phase4_monitoring_preflight_passed | default(false) | bool }}"
+                  postflight_passed: "{{ fe_cisco_05_ucs_phase4_monitoring_postflight_passed | default(false) | bool }}"
+                  started_at: "{{ fe_cisco_05_ucs_phase4_monitoring_started_at | default('') }}"
+                  ended_at: "{{ fe_cisco_05_ucs_phase4_monitoring_ended_at | default('') }}"
+                  duration_seconds: "{{ fe_cisco_05_ucs_phase4_monitoring_duration_seconds | default(0) | int }}"
+                  failed_task: "{{ fe_cisco_05_ucs_phase4_monitoring_failed_task | default('') }}"
+                  error: "{{ fe_cisco_05_ucs_phase4_monitoring_error | default('') }}"
+                  check_mode: "{{ ansible_check_mode | default(false) | bool }}"
+              fe_validation_executions: 1
+              fe_validation_succeeded: "{{ 1 if fe_cisco_05_ucs_phase4_monitoring_status | default('') == 'succeeded' else 0 }}"
+              fe_validation_failed: "{{ 0 if fe_cisco_05_ucs_phase4_monitoring_status | default('') == 'succeeded' else 1 }}"
+              fe_validation_duration_seconds: "{{ fe_cisco_05_ucs_phase4_monitoring_duration_seconds | default(0) | int }}"
+              fe_validation_failed_components: >-
+                {{ [] if fe_cisco_05_ucs_phase4_monitoring_status | default('') == 'succeeded' else ['cisco/05_ucs_phase4_monitoring'] }}
+            aggregate: true
+            per_host: false
+          when:
+            - fe_cisco_05_ucs_phase4_monitoring_status | default('') == 'failed'
+            - not (fe_cisco_05_ucs_phase4_monitoring_stats_published | default(false) | bool)
+          tags:
+            - always
+
+        - name: "cisco/05_ucs_phase4_monitoring | Always | Mark the validation statistics as published"
+          ansible.builtin.set_fact:
+            fe_cisco_05_ucs_phase4_monitoring_stats_published: true
+          when:
+            - fe_cisco_05_ucs_phase4_monitoring_status | default('') == 'failed'
+          tags:
+            - always
 
   tasks:
     - name: "cisco/05_ucs_phase4_monitoring | Guarded execution with rescue and always handling"
