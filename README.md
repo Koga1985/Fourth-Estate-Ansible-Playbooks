@@ -1,6 +1,6 @@
 # Fourth Estate Ansible Playbooks
 
-An enterprise-grade collection of **422 roles** and **3,162 YAML files** for infrastructure automation across **41 technology platforms** with emphasis on **DoD STIG, NIST 800-53, NIST 800-171, FedRAMP, and FISMA compliance**.
+An enterprise-grade collection of **421 roles** and **3,345 YAML files** for infrastructure automation across **41 technology platforms** with emphasis on **DoD STIG, NIST 800-53, NIST 800-171, FedRAMP, and FISMA compliance**.
 
 > **New:** 21 dedicated DoD STIG / SRG roles were added covering Cisco network
 > devices (IOS XE L2, NX-OS, ASA, FTD, ACI Router, ISE), RHEL 9, Windows Server
@@ -14,16 +14,16 @@ This repository provides production-ready Ansible automation for network infrast
 
 ## 📊 Repository Statistics
 
-- **Total Roles:** 422
-- **Total YAML Files:** 3,162
-- **README Documentation Files:** 506
+- **Total Roles:** 421
+- **Total YAML Files:** 3,345
+- **README Documentation Files:** 505
 - **Technology Platforms:** 41
 - **Dedicated DoD STIG / SRG roles:** 21 (see [STIG_COVERAGE_MATRIX.md](./docs/STIG_COVERAGE_MATRIX.md))
 - **Compliance Frameworks:** DoD STIG, DoD Cloud Computing SRG, NIST 800-53 Rev 5, NIST 800-171, FedRAMP, FISMA, CIS Benchmarks
 - **Cloud Platforms:** 4 (AWS, Azure, GCP, VMware vSphere)
 - **Database Platforms:** 5 (PostgreSQL, MySQL, Oracle, IBM DB2, Cloud Databases)
 - **Jinja2 Templates:** 291
-- **Inventory Examples:** 63
+- **Inventory Examples:** 61
 
 > **Note:** 155 roles that contained no tasks were removed, along with the 120
 > playbook invocations that called them. They had the full role layout (README,
@@ -63,7 +63,7 @@ This repository provides production-ready Ansible automation for network infrast
 
 This repository provides enterprise-grade Ansible automation for organizations requiring:
 
-- **Multi-platform infrastructure automation** across 37 technology platforms
+- **Multi-platform infrastructure automation** across 41 technology platforms
 - **Security compliance** with DoD STIG and NIST 800-53/800-171 standards
 - **Fourth Estate operations** with specialized roles for free press/media infrastructure
 - **Production-ready automation** including Day-0/Day-1 deployment, monitoring, backup, and disaster recovery

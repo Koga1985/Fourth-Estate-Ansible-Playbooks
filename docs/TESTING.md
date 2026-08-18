@@ -84,7 +84,7 @@ only if it passes two filters:
    So a role qualifies only if every task uses `ansible.builtin`,
    `ansible.posix` or `community.general`, avoids state-changing modules
    (`package`, `service`, `user`, `lineinfile`, `command`, `shell`, …), and
-   writes only under its `artifacts_dir` or `/tmp`. 105 of 422 roles pass this.
+   writes only under its `artifacts_dir` or `/tmp`. 105 of 421 roles pass this.
 
 2. **Actually runs clean with no credentials.** Each of those 105 was executed
    twice and kept only if the first run reported `failed=0` and the second
@@ -191,7 +191,7 @@ baselining.
 
 Being explicit about this matters more than the coverage number.
 
-- **375 of 422 roles have no functional test.** Most drive a vendor API and
+- **373 of 421 roles have no functional test.** Most drive a vendor API and
   cannot run without a real endpoint and credentials.
 - **No role is tested against a real target.** Nothing here proves that
   `cisco.ise` or `azure.azcollection` calls do the right thing on real kit;
