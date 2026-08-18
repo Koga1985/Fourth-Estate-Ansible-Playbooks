@@ -39,9 +39,9 @@ and "battle-tested", and it is a roadmap item, not a blocker.
 |---|---------|--------|
 | H1 | No tags or releases | **Closed.** GitHub Release "Production Ready Release" (tag `Prod1`) published 2026-07-02 at `f762a82`. *Nits:* the tag is not semver (`v1.0.0` would let customers reason about upgrades), and the release body is one line — consider pointing it at the detailed notes already written in `docs/CHANGELOG.md`. |
 | H2 | 5 newest directories missing `requirements.yml` / `inventory.example` | **Closed.** All 41 platform directories now carry the standard scaffolding. |
-| H3 | README statistics drift | **Closed.** Corrected to 422 roles / 3,688 YAML files / 63 inventory examples. |
+| H3 | README statistics drift | **Closed.** Corrected to 422 roles / 3,688 YAML files / 63 inventory examples. *Figures since changed:* 155 empty roles were removed and Molecule scenarios added, so the README now reads 421 roles / 3,345 YAML files / 61 inventory examples. The numbers above are the state at `f762a82`. |
 | H4 | Lint-debt baseline contained potential runtime bugs | **Closed for the runtime-bug class.** All 30 `jinja[invalid]` findings were triaged — **every one was a real runtime bug** — and all are fixed (see `docs/CHANGELOG.md` for the itemized list: crashed display tasks, invalid comprehensions, precedence bugs, `{% do %}` tags, swallowed PowerShell statements, and more). The remaining baseline (1,228 entries) contains no known runtime-defect class — see "Remaining lint debt" below. |
-| H5 | No enforced syntax-check; ~no functional tests | **Largely closed.** A required CI gate `--syntax-check`s the 11 grab-and-go playbooks, and a fifth required gate runs Molecule (`syntax` + `converge` + `idempotence`) for the 47 roles that can execute on the control node. The remaining 375 roles drive vendor APIs and need a target system; see docs/TESTING.md. |
+| H5 | No enforced syntax-check; ~no functional tests | **Largely closed.** A required CI gate `--syntax-check`s the 11 grab-and-go playbooks, and a fifth required gate runs Molecule (`syntax` + `converge` + `idempotence`) for the 47 roles that can execute on the control node. The remaining 373 roles drive vendor APIs and need a target system; see docs/TESTING.md. |
 
 ---
 
