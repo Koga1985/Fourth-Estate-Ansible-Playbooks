@@ -21,6 +21,18 @@ going forward), with this section pasted into the release body.
   (`scripts/check_collections.py`; 34 collections, 0 gaps).
 - Root meta files: `CONTRIBUTING.md`, `SECURITY.md`, `.github/CODEOWNERS`,
   issue and pull request templates.
+- **Galaxy-enabled ansible-lint gate promoted to blocking**:
+  `.ansible-lint-ignore-online` (952 entries) generated and committed, so
+  the "ansible-lint with collections" CI job now ratchets and blocks —
+  `syntax-check[unknown-module]` is finally meaningful. Added the
+  dispatchable `generate-online-baseline` workflow that regenerates the
+  baseline on a Galaxy-reachable runner (re-run it whenever the pinned
+  toolchain changes).
+- `# automation-hub-only:` marker for requirements files whose collections
+  have no stable community-Galaxy release (currently
+  `ansible/requirements.yml` / `ansible.controller`): the baseline script
+  and the online lint job treat their install failure as expected instead
+  of aborting, while unmarked failures still abort.
 
 ### Changed
 - **Removed 155 roles with empty `tasks/main.yml`** and the 120 playbook
@@ -35,6 +47,16 @@ going forward), with this section pasted into the release body.
   to clear Node deprecation warnings.
 
 ### Fixed
+- **Three `requirements.yml` declarations that were never installable from
+  community Galaxy** (flushed out by the first baseline-generation run —
+  the CI collection-install step had been silently failing on them):
+  `openshift/` declared the Automation-Hub-only `redhat.openshift >=2.3.0`
+  without using it (removed; `community.okd` stays); `servicenow/` pinned
+  the deprecated `servicenow.servicenow` at `>=2.0.0`, a version line that
+  never existed (relaxed to `>=1.0.0`, where its `snow_record` modules
+  live); `ansible/` pins `ansible.controller >=4.5.0`, which is correct
+  for Automation Hub customers and now carries the `automation-hub-only`
+  marker instead of a broken community install expectation.
 - Molecule CI job derived role paths with the wrong number of `dirname` calls.
 - Removed an orphaned duplicate role; corrected repository statistics.
 - Testing docs no longer claim API-driven roles are unvalidated — customer

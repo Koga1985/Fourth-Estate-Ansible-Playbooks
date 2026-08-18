@@ -218,6 +218,11 @@ jobs:
             echo "present=false" >> "$GITHUB_OUTPUT"
           fi
 
+      # A requirements file may carry a "# automation-hub-only: <collections>"
+      # line to declare that its collection has no stable community-Galaxy release
+      # (Red Hat Automation Hub only, e.g. ansible.controller). Install
+      # failures for those files are expected here and do not count as
+      # missing -- their unknown-module findings live in the online baseline.
       - name: Install declared collections
         id: collections
         continue-on-error: true
@@ -225,11 +230,17 @@ jobs:
           missing=0
           while read -r req; do
             echo "::group::ansible-galaxy install -r $req"
-            ansible-galaxy collection install -r "$req" || missing=$((missing+1))
+            if ! ansible-galaxy collection install -r "$req"; then
+              if grep -q '^# automation-hub-only:' "$req"; then
+                echo "expected failure (automation-hub-only): $req"
+              else
+                missing=$((missing+1))
+              fi
+            fi
             echo "::endgroup::"
           done < <(find . -path ./.git -prune -o -name 'requirements.yml' -print | sort)
           echo "missing=$missing" >> "$GITHUB_OUTPUT"
-          echo "requirements files that failed to install: $missing"
+          echo "requirements files that failed to install unexpectedly: $missing"
 
       # Blocking path: baseline committed and every collection installed, so a
       # finding is about the repository rather than about a missing collection.
