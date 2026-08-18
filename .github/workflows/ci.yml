@@ -153,12 +153,27 @@ jobs:
           set -o pipefail
           fail=0; total=0
           while read -r cfg; do
-            rd=$(dirname "$(dirname "$cfg")")
+            # Strip from "/molecule/" onward to get the role directory. Counting
+            # dirname calls is fragile: the path is
+            # <role>/molecule/<scenario>/molecule.yml, so it needs three, and
+            # getting it wrong cd's into the molecule directory where molecule
+            # finds no scenario at all.
+            cfg="${cfg#./}"
+            rd="${cfg%%/molecule/*}"
             rp=$(dirname "$rd")
+            scenario=$(basename "$(dirname "$cfg")")
+
+            # Fail loudly rather than silently mis-running if the layout moves.
+            if [ ! -d "${rd}/tasks" ]; then
+              echo "::error file=${cfg}::derived role dir '${rd}' has no tasks/ - path derivation is wrong"
+              fail=$((fail+1))
+              continue
+            fi
+
             total=$((total+1))
-            echo "::group::molecule ${rd}"
+            echo "::group::molecule ${rd} (${scenario})"
             if ! (cd "$rd" && ANSIBLE_ROLES_PATH="${GITHUB_WORKSPACE}/${rp}" \
-                  molecule test -s default); then
+                  molecule test -s "$scenario"); then
               echo "::error file=${cfg}::molecule failed for ${rd}"
               fail=$((fail+1))
             fi
