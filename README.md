@@ -57,6 +57,7 @@ This repository provides production-ready Ansible automation for network infrast
 - [**DISA STIG & NIST 800-53 Compliance Mapping**](./docs/COMPLIANCE_MAPPING.md)
 - [**STIG / SRG Coverage Matrix**](./docs/STIG_COVERAGE_MATRIX.md)
 - [**Preflight/Postflight Validation & Run Statistics**](./docs/VALIDATION_AND_STATS.md)
+- [**Testing**](./docs/TESTING.md)
 
 ## Repository Purpose
 
@@ -618,6 +619,25 @@ For playbooks that can make breaking changes:
 - **Certificate updates** - Verify validity dates and trust chains
 
 ### Testing Strategy
+
+CI runs six blocking gates on every push; see **[docs/TESTING.md](./docs/TESTING.md)**
+for what each one proves and what is still untested.
+
+47 roles carry a molecule scenario that runs `syntax` + `converge` +
+**`idempotence`** against the control node — no container or VM needed:
+
+```bash
+pip install ansible-core==2.19.11 molecule==26.8.0
+cd cloud_policy/roles/cloud_computing_srg_assessment
+ANSIBLE_ROLES_PATH=$PWD/../ molecule test -s default
+```
+
+Only roles that make no system changes are onboarded, because a delegated
+scenario executes the role for real on the runner. The remaining roles drive a
+vendor API and cannot run without a target system and credentials —
+docs/TESTING.md states this plainly rather than implying broader coverage.
+
+Manual promotion path for a change:
 
 ```bash
 # 1. Syntax check
