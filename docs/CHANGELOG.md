@@ -3,9 +3,50 @@
 All notable changes to the Fourth Estate Ansible Playbooks are documented here.
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 
-## [v1.0.0] — 2026-07-02 — First tagged release
+## [Unreleased]
 
-First versioned, customer-consumable release. See
+Everything below has landed on `main` since the `Prod1` release and is not yet
+in any tagged release. Recommended next release: `v1.1.0` (adopting semver
+going forward), with this section pasted into the release body.
+
+### Added
+- **Preflight/postflight validation on every customer-facing playbook**: a
+  shared validation wrapper (covering `pre_tasks` and handler failures) plus
+  the `fe_validation` callback plugin, emitting per-run statistics via
+  `set_stats`. See [VALIDATION_AND_STATS.md](./VALIDATION_AND_STATS.md).
+- **Molecule coverage for the 47 roles that can run on the control node**
+  (delegated driver; `syntax` + `converge` + `idempotence`), enforced as a
+  required CI gate. See [TESTING.md](./TESTING.md).
+- **CI gate: collections in use must be declared in a `requirements.yml`**
+  (`scripts/check_collections.py`; 34 collections, 0 gaps).
+- Root meta files: `CONTRIBUTING.md`, `SECURITY.md`, `.github/CODEOWNERS`,
+  issue and pull request templates.
+
+### Changed
+- **Removed 155 roles with empty `tasks/main.yml`** and the 120 playbook
+  invocations that called them — each such invocation silently performed no
+  changes. Repository statistics corrected accordingly (now 421 roles /
+  3,345 YAML files / 61 inventory examples).
+- Repository layout: standalone plays live under `playbooks/` directories;
+  task files remain under `tasks/`.
+- yamllint now also enforces `truthy` (true/false spellings) and consistent
+  indentation; collection declaration gaps closed.
+- CI workflow actions bumped (`actions/checkout@v5`, `actions/setup-python@v6`)
+  to clear Node deprecation warnings.
+
+### Fixed
+- Molecule CI job derived role paths with the wrong number of `dirname` calls.
+- Removed an orphaned duplicate role; corrected repository statistics.
+- Testing docs no longer claim API-driven roles are unvalidated — customer
+  production use is real (post-merge) validation; the docs now describe that
+  gap accurately.
+
+## [Prod1] — 2026-07-02 — First tagged release
+
+First tagged, customer-consumable release — GitHub tag **`Prod1`**
+("Production Ready Release", commit `f762a82`). This entry was originally
+titled "v1.0.0"; the actual published tag is `Prod1`, and semver tags are
+adopted from the next release onward. See
 [PRODUCTION_READINESS_ASSESSMENT.md](./PRODUCTION_READINESS_ASSESSMENT.md) for
 the audit this release closes out.
 
@@ -97,7 +138,7 @@ requested benchmark to its role/status.
 ### Notes
 - Repository totals at this expansion: **41 platforms**. (The role/YAML counts
   originally published in this entry were later found inaccurate and corrected
-  to **604 roles** / **3,688 YAML files** in the v1.0.0 entry above.)
+  to **604 roles** / **3,688 YAML files** in the `Prod1` entry above.)
 - All new YAML passes the CI gate (`scripts/check_yaml.py` + `yamllint`). The
   localhost-executable assessment roles (`ndm_srg_assessment`,
   `cloud_computing_srg_assessment`, `app_sec_dev_stig`, the six `ibm_zos/*`
