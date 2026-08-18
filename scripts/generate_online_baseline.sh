@@ -36,17 +36,19 @@ if ! ansible-galaxy collection list >/dev/null 2>&1; then
 fi
 
 echo "==> Installing declared collections from every requirements.yml"
-missing=0
+failed_reqs=()
 while read -r req; do
   echo "    -- $req"
-  ansible-galaxy collection install -r "$req" || missing=$((missing + 1))
+  ansible-galaxy collection install -r "$req" || failed_reqs+=("$req")
 done < <(find . -path ./.git -prune -o -name 'requirements.yml' -print | sort)
 
-if [ "$missing" -gt 0 ]; then
+if [ "${#failed_reqs[@]}" -gt 0 ]; then
   echo "" >&2
-  echo "$missing requirements file(s) failed to install. The baseline would" >&2
-  echo "record findings caused by the missing collections rather than by the" >&2
-  echo "repository, so it is not being written. Fix the installs and re-run." >&2
+  echo "${#failed_reqs[@]} requirements file(s) failed to install:" >&2
+  printf '    %s\n' "${failed_reqs[@]}" >&2
+  echo "The baseline would record findings caused by the missing collections" >&2
+  echo "rather than by the repository, so it is not being written. Fix the" >&2
+  echo "installs and re-run." >&2
   exit 1
 fi
 
