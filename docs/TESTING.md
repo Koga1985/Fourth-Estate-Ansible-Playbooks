@@ -12,7 +12,7 @@ not, and how to add coverage.
 - [Which roles are onboarded, and why only those](#which-roles-are-onboarded-and-why-only-those)
 - [Adding a role to the molecule gate](#adding-a-role-to-the-molecule-gate)
 - [Promoting the Galaxy-enabled lint gate](#promoting-the-galaxy-enabled-lint-gate)
-- [What is still not tested](#what-is-still-not-tested)
+- [What automated testing does and does not cover](#what-automated-testing-does-and-does-not-cover)
 
 ---
 
@@ -187,18 +187,44 @@ baselining.
 
 ---
 
-## What is still not tested
+## What automated testing does and does not cover
 
 Being explicit about this matters more than the coverage number.
 
-- **373 of 421 roles have no functional test.** Most drive a vendor API and
-  cannot run without a real endpoint and credentials.
-- **No role is tested against a real target.** Nothing here proves that
-  `cisco.ise` or `azure.azcollection` calls do the right thing on real kit;
-  that needs an integration environment this repository does not define.
+### Production use is real validation, of a different kind
+
+Fourth Estate customers run these playbooks against real infrastructure. That is
+genuine evidence — real vendor systems, real configurations, at real scale, and
+it exercises behaviour no lab reproduces faithfully.
+
+It is not interchangeable with a test gate, because the two answer different
+questions:
+
+| | Production use | CI gate |
+|---|---|---|
+| Validates | the version customers are running | the commit in a pull request |
+| Tells you | after deployment | before merge |
+| Covers | whichever roles those customers use | exactly the 48 with a scenario |
+| A regression appears as | a customer incident | a red check |
+
+So the honest word for the other 373 roles is not *untested* — it is
+**unguarded**. A change merged today is not protected by a customer's successful
+run last month, and a regression in a role that production depends on reaches a
+customer before it reaches anyone here.
+
+### The concrete gaps
+
+- **373 of 421 roles have no automated test.** Most drive a vendor API and
+  cannot run in CI without an endpoint and credentials, so nothing catches a
+  regression in them before merge.
+- **This repository does not record which roles are in production use.** That
+  matters more than it sounds: without it there is no way to tell a change to a
+  heavily-relied-on role from a change to one nobody runs, and no way to
+  prioritise where an integration test would actually pay for itself.
 - **Container-driver scenarios.** `kubernetes/roles/k8s-cluster-hardening`
   keeps a Docker-driver scenario for local use. It is not in the gate, because
   it needs a driver plugin and a daemon.
 - **A passing molecule run is not a correctness proof.** It proves the role
   parses, completes its no-op path, and is idempotent. It does not prove the
-  changes it would make with `apply_changes: true` are right.
+  changes it would make with `apply_changes: true` are right — that is a
+  compliance-scan question, not a molecule question.
