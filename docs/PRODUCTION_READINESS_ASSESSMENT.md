@@ -60,21 +60,26 @@ assessments.
 | ansible-lint `--offline`, pinned toolchain, ratcheting baseline | ✅ green (~29 min) | required |
 | syntax-check, 11 core-only playbooks, pinned ansible-core | ✅ green | required |
 | Molecule (`syntax` + `converge` + `idempotence`), 47 delegated scenarios | ✅ green (~8 min) | required |
-| ansible-lint with Galaxy collections | ✅ green (informational path) | **not yet blocking** — see below |
+| ansible-lint with Galaxy collections, ratcheted against `.ansible-lint-ignore-online` | ✅ green | **blocking** (promoted 2026-08-18) |
 
 Determinism note: the lint gates pin `ansible-core==2.19.11` /
 `ansible-lint==26.6.0`. Bumping the pins requires regenerating
 `.ansible-lint-ignore` in the same PR, as documented in `.ansible-lint` and
 the workflow.
 
-**Galaxy-enabled gate is armed but not promoted:** the job is designed to
-become blocking the moment `.ansible-lint-ignore-online` is committed, and
-that file does not exist yet — on the verified run its blocking step was
-skipped and only the informational lint ran. Running
-`./scripts/generate_online_baseline.sh` on a Galaxy-reachable machine and
-committing the result promotes it with no workflow edit. Until then, the
+**Galaxy-enabled gate is promoted.** `.ansible-lint-ignore-online` (952
+entries) was generated on a GitHub runner by the dispatchable
+`generate-online-baseline` workflow and committed, which turns the
+"ansible-lint with collections" job into a blocking, ratcheting gate — the
 `syntax-check[unknown-module]` class (a module that genuinely doesn't exist)
-has no blocking check.
+is now checked. Getting there also flushed out that three `requirements.yml`
+declarations had never been installable from community Galaxy (see the
+changelog); one of them is structural: `ansible.controller` ships stable
+builds only from Red Hat Automation Hub, so `ansible/requirements.yml`
+carries a documented `# automation-hub-only:` marker that the baseline
+script and the CI job treat as an expected install failure — its
+unknown-module findings are baselined, and any unmarked install failure
+still aborts.
 
 ## Changes since the 2026-07-02 assessment
 
@@ -123,12 +128,21 @@ has no blocking check.
 - ~~Changelog naming~~: first-release entry now matches the actual `Prod1`
   tag.
 
+**Quick wins — closed after this assessment's first pass**
+- ~~M5 — Promote the Galaxy lint gate~~: `.ansible-lint-ignore-online`
+  generated and committed via the `generate-online-baseline` workflow; the
+  gate is blocking. Three never-installable `requirements.yml` declarations
+  were fixed in the process and the Automation-Hub-only exception is now
+  explicit (see "Current CI posture").
+
 **Medium priority**
 - **M2 — CI runtime:** the offline lint gate runs ~29 minutes as one job;
   shard by platform directory (matrix) to speed feedback and localize
   failures.
-- **M5 — Promote the Galaxy lint gate:** generate and commit
-  `.ansible-lint-ignore-online` (see above).
+- **M6 — Online-baseline triage:** the online baseline's 101 baselined
+  `syntax-check[unknown-module]` entries are mostly the documented
+  `ansible.controller` set, but the remainder deserves a pass — any entry
+  that isn't hub-only is a module customers cannot install.
 - **M4 — Placeholder features:** OT firmware ops, Illumio PCE clustering, SL1
   HA remain fail-fast placeholders (documented in `KNOWN_LIMITATIONS.md`
   §13–14). Keep the sales/handoff message aligned.
