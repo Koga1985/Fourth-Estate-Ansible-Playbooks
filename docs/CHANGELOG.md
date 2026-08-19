@@ -3,11 +3,11 @@
 All notable changes to the Fourth Estate Ansible Playbooks are documented here.
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 
-## [Unreleased]
+## [1.1.0] — 2026-08-19
 
-Everything below has landed on `main` since the `Prod1` release and is not yet
-in any tagged release. Recommended next release: `v1.1.0` (adopting semver
-going forward), with this section pasted into the release body.
+Everything that landed on `main` since the `Prod1` release. Published as
+[GitHub release `1.1.0`](https://github.com/Koga1985/Fourth-Estate-Ansible-Playbooks/releases/tag/1.1.0)
+— the first semver-tagged release.
 
 ### Added
 - **Preflight/postflight validation on every customer-facing playbook**: a

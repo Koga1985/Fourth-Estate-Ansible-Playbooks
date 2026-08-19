@@ -18,13 +18,13 @@ documented procedure or fail-fast placeholder — is still defined by
 `docs/KNOWN_LIMITATIONS.md`, and customer handoff should always pair a release
 with that document.
 
-Two risks lead the list now:
+The leading risks, updated after release `1.1.0` (2026-08-19):
 
-1. **Release drift.** The only published release (`Prod1`, 2026-07-02) is 26
-   commits and ~3,500 changed files behind `main` — customers pinned to it are
-   missing the empty-role purge, the validation framework, and the Molecule
-   coverage. Cutting `v1.1.0` from the current green head is the single
-   highest-value action available.
+1. **Release drift — resolved.** Release `1.1.0` (2026-08-19) is the first
+   semver tag and captures everything since `Prod1`: the empty-role purge,
+   the validation framework, the Molecule gate, the promoted online lint
+   gate, and the meta/doc work. Customers should pin to `1.1.0`; `Prod1`
+   remains only as the historical snapshot.
 2. **Functional coverage of the API-driven roles** (unchanged): ~374 of the
    421 roles drive vendor APIs and need a real target system to exercise.
    CI proves everything parses, lints, and (where core-only) syntax-checks;
@@ -107,20 +107,17 @@ still aborts.
 | Code hygiene / lint | A− | **A−** | Baseline shrunk ~10%; empty-role class eliminated; stats verified accurate |
 | Documentation | A− | **A−** | Suite current; changelog release-name mismatch fixed in this pass |
 | Security / secrets | A− | **A−** | No hardcoded secrets; `no_log` discipline; Vault patterns; `SECURITY.md` added |
-| Packaging / distribution | B+ | **C+** | Downgraded on release drift: the only tag is 26 commits behind `main` |
+| Packaging / distribution | B+ | **A−** | Semver release `1.1.0` current with `main`, changelog-backed release body; drift resolved |
 | Testing | B− | **B** | Molecule idempotence gate live for 47 roles; ~374 API-driven roles still need an integration environment |
 | Dependency declaration | A− | **A** | Declaration now CI-enforced, 0 gaps |
 | Operational safety | A− | **A** | Validation wrapper + run statistics on every playbook, on top of dry-run defaults and double-gated destructive ops |
 
 ## Open items
 
-**Now (blocking the "grab and go" story, not the code)**
-- **R1 — Cut a release.** Tag `v1.1.0` (adopting semver) from the current
-  green head and paste the `[Unreleased]` section of `docs/CHANGELOG.md` into
-  the release body. Everything since `Prod1` is otherwise invisible to
-  customers.
-
 **Quick wins — closed in this pass**
+- ~~R1 — Cut a release~~: release `1.1.0` published 2026-08-19 — the first
+  semver-tagged release, closing the drift behind `Prod1`. Customers should
+  pin to it.
 - ~~M1 — Root meta files~~: `CONTRIBUTING.md`, `SECURITY.md`,
   `.github/CODEOWNERS`, issue + PR templates added.
 - ~~M3 — Actions deprecations~~: bumped to `actions/checkout@v5` /
@@ -167,9 +164,9 @@ What a customer gets today:
   changelog, contribution and security policy — all links verified
 - ✅ Safety defaults: `apply_changes: false` everywhere, double-gated
   destructive operations, OT-specific safeguards, run validation + statistics
-- ⚠️ **Pin to a tagged release, not `main`** — and note the current tag
-  (`Prod1`) predates the validation framework and empty-role purge; a fresh
-  release is the open action R1
+- ⚠️ **Pin to a tagged release, not `main`** — the current release is
+  `1.1.0` (2026-08-19), which includes the validation framework, empty-role
+  purge, and the six-gate CI; `Prod1` is historical
 - ⚠️ Read `docs/KNOWN_LIMITATIONS.md` first — it defines the supported
   envelope, the not-yet-validated areas, and the fail-fast placeholders
 - ⚠️ Functional validation in a lab remains the customer's first step for any
