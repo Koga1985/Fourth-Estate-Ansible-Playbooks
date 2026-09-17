@@ -324,9 +324,20 @@ control host, where they persist.
 
 ### How evidence is delivered
 
-Roles that produce a compliance report republish it through `set_stats` under
-the `fe_evidence` key, which AAP persists as a job artifact and passes to
-downstream workflow nodes:
+**90 components** that write a compliance, STIG, audit, checklist, findings or
+scorecard artifact republish it through `set_stats` under the `fe_evidence` key,
+which AAP persists as a job artifact and passes to downstream workflow nodes.
+
+The scope is evidence, not every file written to an `artifacts_dir`. Around 720
+files write *something* there, but most of those are progress markers such as
+`phase4_complete.txt`, which no auditor wants and which would only bloat the job
+artifacts. A site qualifies when the filename it writes names compliance
+evidence.
+
+Each block is inlined at the site that produces the artifact, in the same way
+the validation wrapper is inlined, and it inherits the tags of the tasks that
+wrote the report — so a `--tags compliance` run that produces evidence also
+publishes it.
 
 ```json
 {
@@ -347,6 +358,10 @@ downstream workflow nodes:
 
 The on-disk file is still written, so nothing changes for command-line use.
 `fe_evidence` is a *second* copy that survives the container.
+
+Keys are full component ids, the same ones `fe_validation_results` uses, so a
+run that produces evidence from several components merges them into one
+dictionary rather than overwriting.
 
 ### Control variables
 
