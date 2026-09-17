@@ -19,6 +19,7 @@ from CI.
 - [Handlers](#handlers)
 - [Published statistics](#published-statistics)
 - [Consuming the statistics](#consuming-the-statistics)
+- [Compliance evidence delivery](#compliance-evidence-delivery)
 - [The fe_validation callback plugin](#the-fe_validation-callback-plugin)
 - [Control variables](#control-variables)
 - [Adding component-specific preflight checks](#adding-component-specific-preflight-checks)
@@ -297,6 +298,84 @@ variables:
         mode: "0640"
         content: "{{ fe_validation_results | default({}) | to_nice_json }}"
 ```
+
+---
+
+## Compliance evidence delivery
+
+The statistics above answer *"did this run work?"*. They are **not** the
+compliance evidence. Roles that assess or harden a system also write a report
+artifact — typically `<something>_compliance_<epoch>.json` plus a human-readable
+summary — into a per-platform `*_artifacts_dir`, which defaults to a path under
+`/tmp`.
+
+### The problem that creates under Automation Platform
+
+Under AWX / Ansible Automation Platform the playbook runs inside an
+execution-environment container. **That container's filesystem is destroyed when
+the job ends.** A report written to `/tmp/<platform>-artifacts` therefore does
+not outlive the run, and AAP collects nothing from the container filesystem
+except the job's stdout and its `set_stats` artifacts.
+
+The practical consequence: the run reports success, the statistics show the
+component passed, and the evidence an auditor would actually ask for is gone.
+Running from the command line is unaffected — the files are simply left on the
+control host, where they persist.
+
+### How evidence is delivered
+
+Roles that produce a compliance report republish it through `set_stats` under
+the `fe_evidence` key, which AAP persists as a job artifact and passes to
+downstream workflow nodes:
+
+```json
+{
+  "fe_evidence": {
+    "cisco/sdwan_security_hardening": {
+      "component": "cisco/sdwan_security_hardening",
+      "platform": "cisco",
+      "collected_at": "2026-09-17T17:58:18Z",
+      "source_dir": "/tmp/sdwan-artifacts",
+      "files": {
+        "sdwan_stig_compliance_1789667898.json": "{ ... the report ... }",
+        "sdwan_stig_summary_1789667898.txt": "Cisco SD-WAN STIG Compliance Report\n..."
+      }
+    }
+  }
+}
+```
+
+The on-disk file is still written, so nothing changes for command-line use.
+`fe_evidence` is a *second* copy that survives the container.
+
+### Control variables
+
+| Variable | Default | Meaning |
+|----------|---------|---------|
+| `fe_evidence_publish` | `true` | Publish report artifacts into the job artifacts. Set `false` to leave the on-disk file as the only copy. |
+| `fe_evidence_max_bytes` | `65536` | Per-file ceiling on what is published. A larger artifact is left on disk and **reported as skipped**, never silently dropped. |
+
+### Who can read it
+
+Job artifacts are readable by anyone with job-read permission on the template,
+and they are passed to downstream workflow nodes. That is a wider audience than
+the `0640` file this supplements.
+
+These reports carry STIG control status and configuration posture — which
+controls are configured, password-policy numbers, whether telnet is disabled,
+the managed host's name. They do **not** carry credentials, and no task that
+handles a credential publishes evidence. If your threat model makes posture data
+too sensitive for job artifacts, set `fe_evidence_publish=false` and arrange
+collection another way; under AAP the alternative to publishing is losing the
+evidence, not storing it somewhere safer.
+
+### If an artifact is too large
+
+Raise `fe_evidence_max_bytes`, or collect that file another way — mount a
+volume into the execution environment via a container group and point the
+platform's `*_artifacts_dir` at it, or push the artifact to external storage
+from within the play. The run will tell you exactly which file exceeded the
+budget and where it was left.
 
 ---
 
