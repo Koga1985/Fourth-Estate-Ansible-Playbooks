@@ -152,10 +152,12 @@
         path: /etc/elasticsearch/.setup_passwords_complete
       register: setup_passwords_done
 
+    # The generated passwords are captured in memory only (no /tmp copy) and
+    # no_log keeps them out of stdout, the controller job history, and any
+    # forwarded log aggregation.
     - name: Run setup-passwords auto
       shell: |
-        echo "y" | /usr/share/elasticsearch/bin/elasticsearch-setup-passwords auto > /tmp/elasticsearch_passwords.txt 2>&1
-        touch /etc/elasticsearch/.setup_passwords_complete
+        echo "y" | /usr/share/elasticsearch/bin/elasticsearch-setup-passwords auto
       args:
         creates: /etc/elasticsearch/.setup_passwords_complete
       when:
@@ -163,12 +165,26 @@
         - not setup_passwords_done.stat.exists
         - elasticsearch_security_auto_configure | bool
       register: setup_passwords_output
-      no_log: false
+      no_log: true
 
     - name: Save generated passwords
       copy:
         content: "{{ setup_passwords_output.stdout }}"
         dest: "/etc/elasticsearch/initial_passwords_{{ ansible_date_time.epoch }}.txt"
+        owner: root
+        group: root
+        mode: '0600'
+      when:
+        - setup_passwords_output is defined
+        - setup_passwords_output.changed
+      no_log: true
+
+    # Marker is only written after setup-passwords succeeded, so a failed run
+    # is retried instead of being silently skipped forever.
+    - name: Mark setup-passwords as complete
+      file:
+        path: /etc/elasticsearch/.setup_passwords_complete
+        state: touch
         owner: root
         group: root
         mode: '0600'

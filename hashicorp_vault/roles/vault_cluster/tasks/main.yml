@@ -102,7 +102,7 @@
     - name: Wait for Vault to be responsive
       ansible.builtin.uri:
         url: "{{ vault_api_addr }}/v1/sys/health"
-        validate_certs: false
+        validate_certs: "{{ vault_validate_certs | default(true) }}"
         status_code: [200, 429, 472, 473, 501, 503]
       register: vault_health
       retries: 12
@@ -114,7 +114,7 @@
       ansible.builtin.uri:
         url: "{{ vault_api_addr }}/v1/sys/init"
         method: GET
-        validate_certs: false
+        validate_certs: "{{ vault_validate_certs | default(true) }}"
       register: vault_init_status
       tags: [vault, cluster, init]
 
@@ -138,7 +138,7 @@
               recovery_shares: "{{ vault_init_recovery_shares if vault_auto_unseal else omit }}"
               recovery_threshold: "{{ vault_init_recovery_threshold if vault_auto_unseal else omit }}"
               recovery_pgp_keys: "{{ vault_init_recovery_pgp_keys if vault_auto_unseal else [] }}"
-            validate_certs: false
+            validate_certs: "{{ vault_validate_certs | default(true) }}"
           register: vault_init_result
           no_log: true
 
@@ -175,7 +175,7 @@
             body_format: json
             body:
               key: "{{ item }}"
-            validate_certs: false
+            validate_certs: "{{ vault_validate_certs | default(true) }}"
           loop: "{{ vault_unseal_keys[:vault_init_secret_threshold] }}"
           no_log: true
           register: unseal_result
@@ -183,7 +183,7 @@
         - name: Verify Vault is unsealed
           ansible.builtin.uri:
             url: "{{ vault_api_addr }}/v1/sys/health"
-            validate_certs: false
+            validate_certs: "{{ vault_validate_certs | default(true) }}"
           register: vault_health_after_unseal
 
       tags: [vault, cluster, unseal]
@@ -203,7 +203,7 @@
               leader_api_addr: "{{ vault_join_leader_api_addr }}"
               leader_ca_cert: "{{ lookup('file', vault_join_leader_ca_cert) if vault_join_leader_ca_cert else omit }}"
               retry: true
-            validate_certs: false
+            validate_certs: "{{ vault_validate_certs | default(true) }}"
           register: raft_join_result
           retries: "{{ vault_join_retry_attempts }}"
           delay: "{{ vault_join_retry_interval }}"
@@ -232,7 +232,7 @@
               max_trailing_logs: 1000
               min_quorum: 3
               server_stabilization_time: "10s"
-            validate_certs: false
+            validate_certs: "{{ vault_validate_certs | default(true) }}"
           when: vault_root_token is defined
 
       tags: [vault, cluster, autopilot]
@@ -241,7 +241,7 @@
       ansible.builtin.uri:
         url: "{{ vault_api_addr }}/v1/sys/leader"
         method: GET
-        validate_certs: false
+        validate_certs: "{{ vault_validate_certs | default(true) }}"
       register: vault_leader_status
       tags: [vault, cluster, status]
 
@@ -260,7 +260,7 @@
         method: GET
         headers:
           X-Vault-Token: "{{ vault_root_token }}"
-        validate_certs: false
+        validate_certs: "{{ vault_validate_certs | default(true) }}"
       register: raft_peers
       when:
         - vault_is_cluster_primary | bool
@@ -292,7 +292,7 @@
             body_format: json
             body:
               primary_cluster_addr: "{{ vault_replication_primary_cluster_addr }}"
-            validate_certs: false
+            validate_certs: "{{ vault_validate_certs | default(true) }}"
           when: vault_root_token is defined
 
         - name: Generate secondary token
@@ -304,7 +304,7 @@
             body_format: json
             body:
               id: "{{ vault_cluster_name }}-secondary"
-            validate_certs: false
+            validate_certs: "{{ vault_validate_certs | default(true) }}"
           register: secondary_token_result
           when: vault_root_token is defined
           no_log: true
@@ -327,7 +327,7 @@
             body:
               token: "{{ vault_replication_secondary_token }}"
               primary_api_addr: "{{ vault_replication_primary_cluster_addr }}"
-            validate_certs: false
+            validate_certs: "{{ vault_validate_certs | default(true) }}"
           no_log: true
 
       tags: [vault, cluster, replication]
@@ -347,7 +347,7 @@
             body_format: json
             body:
               primary_cluster_addr: "{{ vault_dr_primary_cluster_addr }}"
-            validate_certs: false
+            validate_certs: "{{ vault_validate_certs | default(true) }}"
           when:
             - vault_is_cluster_primary | bool
             - vault_root_token is defined
