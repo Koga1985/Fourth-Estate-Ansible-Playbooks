@@ -25,7 +25,7 @@ Every one of these blocks a merge.
 | `scripts/check_yaml.py` | Every YAML file parses | no |
 | `yamllint -c .yamllint` | No duplicate keys, no `yes`/`no` booleans, sequences indented | no |
 | `scripts/check_collections.py` | Every collection called is installable from a `requirements.yml` | no |
-| `scripts/check_jinja_filters.py` | Every Jinja expression parses and every filter/test it uses exists | no |
+| `scripts/check_jinja_filters.py` | Every Jinja expression parses, its filters/tests exist, and it renders the value it claims | no |
 | `ansible-lint --offline` | No new lint violation against the ratcheted baseline | no |
 | `ansible-playbook --syntax-check` | The core-only playbooks parse | no |
 | `molecule test` | Onboarded roles parse, run, and are idempotent | no |
@@ -64,6 +64,35 @@ Known-broken expressions are tracked in `.jinja-check-ignore` with the reason
 each one needs a human decision rather than a mechanical fix. New breakage fails
 the build, and the gate reports a baselined entry that no longer has findings so
 a stale entry cannot hide.
+
+#### Two expressions that parse but render the wrong thing
+
+The gate also checks two mistakes that parsing cannot catch, because the
+expression is well-formed and its filters exist — it simply produces the wrong
+output. Both were found by rendering every template in the repository, and both
+are recognisable from the AST, which makes them cheap to enforce rather than
+remember.
+
+| Flagged | Why | Fix |
+|---------|-----|-----|
+| `{{ x \| bool }}` in a `.json.j2` | `bool` renders Python's `True`/`False`, capitalised, which is not valid JSON | `{{ x \| bool \| lower }}` |
+| `{{ environment \| ... }}` | `environment` is a play/task keyword, always defined, so `default()` never fires and the value renders as `[]` | use `fourth_estate_environment` |
+
+Both checks are deliberately narrow, so a finding is always a real defect:
+
+- `| bool` is flagged only in a `.json.j2`, and only as the **outermost** filter.
+  `| bool | lower` is the fix, not a finding. `| bool` in a YAML template is fine,
+  because YAML accepts `True`. Append `| lower` rather than dropping `| bool`:
+  the coercion still matters, so a value of `yes` renders `true` where `| lower`
+  alone would emit the literal `yes` and break the document.
+- A keyword is flagged only when read as a **bare name the template does not bind
+  itself**. `prometheus_external_labels.environment` is an attribute of another
+  variable, and `{% for environment in ... %}{{ environment }}{% endfor %}` is the
+  loop's own variable; neither is a finding.
+
+Only keywords that are useless to read are listed. Magic variables that are
+normal to read — `hostvars`, `groups`, `inventory_hostname`, `role_name`, `omit`
+— are deliberately absent, because reading those is correct Ansible.
 
 ---
 

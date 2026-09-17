@@ -48,16 +48,23 @@ jobs:
         run: python3 scripts/check_collections.py .
 
   # ---------------------------------------------------------------------------
-  # ENFORCED GATE 2: every Jinja expression must parse, and every filter and
-  # test it uses must exist. Nothing else here proves that: a broken expression
-  # is valid YAML, passes yamllint, passes ansible-lint and passes
-  # --syntax-check, then fails at run time on the customer's machine. Five such
-  # expressions shipped before this gate existed (| splitlines, | enumerate,
-  # | all, a pipe into a variable, and doubled {{ }} braces in an embedded
-  # script) -- all in code paths molecule cannot reach, because they sit behind
-  # apply_changes, behind credential preflights, or in a playbook that is not a
-  # role. Deterministic and offline: it parses and probes, never renders, so it
-  # cannot execute a lookup. Known-broken expressions are tracked in
+  # ENFORCED GATE 2: every Jinja expression must parse, every filter and test it
+  # uses must exist, and it must render the value it claims. Nothing else here
+  # proves that: a broken expression is valid YAML, passes yamllint, passes
+  # ansible-lint and passes --syntax-check, then fails at run time on the
+  # customer's machine. Five such expressions shipped before this gate existed
+  # (| splitlines, | enumerate, | all, a pipe into a variable, and doubled {{ }}
+  # braces in an embedded script) -- all in code paths molecule cannot reach,
+  # because they sit behind apply_changes, behind credential preflights, or in a
+  # playbook that is not a role.
+  #
+  # It also rejects two expressions that parse but render the wrong thing:
+  # `| bool` in a JSON template (Python's True/False is not valid JSON) and a
+  # read of `environment`, a play keyword that is always defined, so default()
+  # never fires and the value renders as []. See docs/TESTING.md.
+  #
+  # Deterministic and offline: it parses and probes, never renders, so it cannot
+  # execute a lookup. Known-broken expressions are tracked in
   # .jinja-check-ignore; new ones fail the build.
   # ---------------------------------------------------------------------------
   jinja:
