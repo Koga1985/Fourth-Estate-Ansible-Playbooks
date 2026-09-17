@@ -1,0 +1,42 @@
+# Baseline for scripts/check_jinja_filters.py, in the same spirit as
+# .ansible-lint-ignore: the gate blocks NEW breakage while these known-broken
+# expressions are tracked.
+#
+# Every entry here is a REAL BUG -- an expression that cannot be rendered, so
+# the task fails the moment it runs. They are listed rather than fixed because
+# each needs a decision about intent that cannot be made safely from the
+# expression alone, and each sits in a code path that changes production
+# infrastructure. Fixing one blind risks generating a syntactically valid but
+# behaviourally wrong change to a vCenter.
+#
+# Format: <path> <short reason>. Remove the line when the expression is fixed;
+# the gate reports a baselined path that no longer has findings, so a stale
+# entry cannot hide.
+
+vmware/roles/host_profiles_enforce/tasks/main.yml doubled-braces-in-powershell
+# An 80-line PowerCLI script passed to ansible.builtin.command, where literal
+# PowerShell braces are written {{ }} -- which escapes braces in Python's
+# str.format, not in Jinja. Jinja reads them as expression delimiters and fails
+# on the shell syntax inside. It cannot be fixed mechanically because genuine
+# Jinja and literal PowerShell braces interleave, including
+# `ForEach-Object {{ Get-VMHost -Name \$_ }}` (a PowerShell scriptblock that
+# looks exactly like a Jinja expression) and
+# `{{ '{{ attach_to_cluster }}' }}` (a scriptblock wrapping a real expression).
+# Recommended fix: move the script to templates/<name>.ps1.j2 so the PowerShell
+# is authored as PowerShell, with only the handful of real substitutions left as
+# Jinja, or parameterise it and pass values as arguments instead of
+# interpolating them.
+
+vmware/tasks/find_all_vsphere_snapshots.yml jmespath-syntax-inside-jinja
+# `(.[].snapshots | default([]))` is JMESPath, not Jinja: `.[]` is not valid
+# Jinja syntax. The surrounding map('combine', ...) builds a per-VM snapshot
+# report, but the intended output shape cannot be recovered from the expression.
+# Needs someone who knows the report consumers to restate it.
+
+vmware/tasks/vds_portgroups_enforce_and_migrate.yml lambda-and-unsupported-argument
+# `items2dict(key_name=..., value_name=..., value_func=lambda l: l)` is wrong
+# twice: Jinja has no lambda, and items2dict takes no value_func. The same file
+# also has a '#' comment inside a {{ }} expression, which Jinja treats as a
+# parse error rather than a comment. This feeds vmware_guest_network, which
+# migrates VM NICs, so the correct grouping must be confirmed before it is
+# rewritten.
