@@ -1,0 +1,45 @@
+---
+# ansible-builder definition (schema v3) for the Fourth Estate execution
+# environment. One image, built from this file, runs every playbook in this
+# repository with a pinned, identical toolchain -- so the same repo tag
+# behaves the same way in every agency's Automation Platform.
+#
+# Build:            ./build.sh   (wraps ansible-builder; prefers the lock file)
+# Pin collections:  ./generate-lock.sh   (on a machine with Galaxy access)
+# Docs:             ./README.md
+
+version: 3
+
+images:
+  base_image:
+    # AAP subscribers (the expected consumers of this repo): use the minimal
+    # EE base that matches your Automation Platform release.
+    name: registry.redhat.io/ansible-automation-platform-25/ee-minimal-rhel9:latest
+    # No Red Hat registry entitlement? Swap in the community base instead:
+    # name: quay.io/ansible/community-ee-base:latest
+
+dependencies:
+  ansible_core:
+    # Matches the ansible-core pin used by this repository's CI, so the EE
+    # runs the same interpreter the content was validated against.
+    package_pip: ansible-core==2.19.11
+  ansible_runner:
+    package_pip: ansible-runner
+  # build.sh copies either requirements.yml (version floors) or
+  # requirements-lock.yml (exact pins) into the build context under this name.
+  galaxy: requirements.yml
+  python: requirements.txt
+  system: bindep.txt
+
+options:
+  # Both ee-minimal-rhel9 and community-ee-base are microdnf-based images.
+  package_manager_path: /usr/bin/microdnf
+
+additional_build_steps:
+  append_final:
+    # Record what this image was built from, so a running job can prove
+    # which content revision and EE definition produced it.
+    - RUN pip3 check || true
+    - LABEL org.opencontainers.image.title="fourth-estate-ee"
+    - LABEL org.opencontainers.image.description="Execution environment for Fourth-Estate-Ansible-Playbooks"
+    - LABEL org.opencontainers.image.source="https://github.com/Koga1985/Fourth-Estate-Ansible-Playbooks"

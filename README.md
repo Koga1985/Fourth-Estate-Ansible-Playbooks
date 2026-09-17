@@ -658,18 +658,37 @@ ansible-playbook playbook.yml
 
 ## Execution Environments & dependencies
 
-For reproducible runs and CI, build or use an Execution Environment (EE) that includes required collections and Python packages. Maintain a `requirements.yml` or `collections/requirements.yml` for Ansible Galaxy collections and a `requirements.txt` or `pyproject.toml` for Python packages.
+This repository ships a ready-to-build **[Execution Environment](./execution_environment/README.md)**
+(`execution_environment/`) — one container image that can run any playbook here,
+with a pinned toolchain:
 
-Example `collections/requirements.yml`:
-
-```yaml
-- name: paloaltonetworks.panos
-  version: 2.0.0
-- name: purestorage.flasharray
-  version: 1.0.0
+```bash
+pip install ansible-builder>=3.0
+cd execution_environment
+./generate-lock.sh          # optional: resolve version floors to exact pins
+./build.sh                  # -> fourth-estate-ee:latest
 ```
 
-Build/pull this into your EE or run `ansible-galaxy collection install -r collections/requirements.yml` on the control host.
+`execution_environment/requirements.yml` is the union of all 79 platform
+`requirements.yml` files (58 collections), merged to the highest declared
+version floor. Running `generate-lock.sh` turns those floors into exact pins so
+every environment builds an identical collection set — the recommended setting
+for production, and the repository's main supply-chain control. See the
+[EE README](./execution_environment/README.md) for base-image options,
+Automation Hub collections, and registering the image in Automation Controller.
+
+If you are not using an EE, install a single platform's collections directly on
+the control host:
+
+```bash
+ansible-galaxy collection install -r palo_alto/requirements.yml
+```
+
+> **Running from Automation Platform?** Pin the AAP *project* to a release tag
+> rather than `main`. A project tracking `main` with *Update Revision on Launch*
+> enabled turns every commit in this repository into an immediate change in your
+> control plane. Review [`docs/CHANGELOG.md`](./docs/CHANGELOG.md) before moving
+> the pin.
 
 ## Credentials and secrets
 

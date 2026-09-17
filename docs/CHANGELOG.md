@@ -3,6 +3,47 @@
 All notable changes to the Fourth Estate Ansible Playbooks are documented here.
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Security
+- **Elasticsearch superuser passwords no longer leak.**
+  `elasticsearch_security` ran `elasticsearch-setup-passwords auto` with
+  `no_log: false`, so every generated superuser password reached stdout — and
+  under Automation Platform, the controller database, the job-history UI, and
+  any forwarded log aggregation. It also redirected the same passwords to
+  `/tmp/elasticsearch_passwords.txt`, which persisted at default permissions.
+  That redirect additionally left `stdout` empty, so the follow-on "Save
+  generated passwords" task wrote an empty file. Passwords are now captured in
+  memory under `no_log: true`, the `/tmp` copy is gone, and the completion
+  marker is written only after a successful run so a failure is retried rather
+  than skipped forever.
+- **Pure Storage API tokens no longer leak.**
+  `pure_flasharray_config` looped a `debug` task over `api_tokens.results` with
+  `no_log: false` and no loop label, printing each created API client's token
+  in the task output. The loop now labels on the client name only.
+- **TLS certificate validation defaults to on (141 sites, 100 files).**
+  Every hardcoded `validate_certs: false` became either a documented variable
+  with a secure default (`"{{ <role>_validate_certs | default(true) }}"`) or a
+  `true` default in `defaults/main.yml`. Bootstrap against self-signed
+  endpoints is still supported — it is now an explicit, per-run opt-out rather
+  than the shipped default. The worst cases were the HashiCorp Vault
+  initialization call (which returns the root token and unseal keys) and the
+  Illumio PCE verification tasks (which send the admin password with
+  `force_basic_auth`).
+
+### Added
+- **Execution Environment (`execution_environment/`)**: an ansible-builder v3
+  definition that builds one image capable of running any playbook in this
+  repository. `requirements.yml` there is the union of all 79 platform
+  requirements files (58 collections) merged to the highest declared version
+  floor; `generate-lock.sh` resolves those floors into exact pins
+  (`requirements-lock.yml`) so every environment builds an identical
+  collection set, and `build.sh` prefers the lock when present. Includes
+  `requirements.txt` (WinRM/Kerberos/network transports), `bindep.txt`, and a
+  README covering base-image choice, the two Automation-Hub-only collections,
+  and registering the image in Automation Controller.
+- README guidance to pin AAP *projects* to a release tag rather than `main`.
+
 ## [1.1.0] — 2026-08-19
 
 Everything that landed on `main` since the `Prod1` release. Published as
