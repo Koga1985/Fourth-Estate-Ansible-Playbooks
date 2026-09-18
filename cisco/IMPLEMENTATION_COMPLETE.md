@@ -239,11 +239,11 @@ collections:
 # In Ansible Vault (vault.yml)
 vault_ise_hostname: "ise.example.com"
 vault_ise_username: "admin"
-vault_ise_password: "SecurePassword123!"
+vault_ise_password: "CHANGE_ME"
 
 vault_ucs_hostname: "ucsm.example.com"
 vault_ucs_username: "admin"
-vault_ucs_password: "SecurePassword123!"
+vault_ucs_password: "CHANGE_ME"
 
 vault_fourth_estate_contact: "security@fourthestate.gov"
 vault_siem_endpoint: "https://siem.example.com"

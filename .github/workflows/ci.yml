@@ -84,7 +84,72 @@ jobs:
         run: python3 scripts/check_jinja_filters.py .
 
   # ---------------------------------------------------------------------------
-  # ENFORCED GATE 3: the execution environment composes, per platform.
+  # ENFORCED GATE 3: no credential reaches the repository.
+  #
+  # The counterpart to the no_log work: that stopped credentials leaking into
+  # job OUTPUT, this stops one being committed as SOURCE. Nothing checked for
+  # that before.
+  #
+  # gitleaks' built-in rules look for high-entropy provider tokens -- AWS keys,
+  # GitHub PATs. Run here they find nothing, which is correct but is not the
+  # shape a secret would take in an Ansible repository. The realistic leak is an
+  # ordinary password typed into a vars block, with no entropy signature at all:
+  #
+  #     ansible_password: Summer2024!
+  #
+  # .gitleaks.toml keeps every default rule and adds the rules that catch that,
+  # with allowlists for the indirection this repo already uses ({{ vault_x }},
+  # lookup(), CHANGE_ME). Known findings are baseline-ratcheted in
+  # .gitleaks-baseline.json, the same way .ansible-lint-ignore and
+  # .jinja-check-ignore work: everything currently in history is recorded, and
+  # anything NEW fails the build.
+  #
+  # History matters as much as the working tree -- a credential committed once
+  # and deleted later is still in the objects -- so this scans every ref, which
+  # is why the checkout needs fetch-depth 0.
+  # ---------------------------------------------------------------------------
+  secrets:
+    name: No committed credentials (required)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0   # gitleaks needs full history, not a shallow clone
+
+      - name: Install gitleaks (pinned)
+        run: |
+          set -euo pipefail
+          version=8.28.0
+          curl -sSfL -o /tmp/gitleaks.tar.gz \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${version}/gitleaks_${version}_linux_x64.tar.gz"
+          tar -xzf /tmp/gitleaks.tar.gz -C /tmp gitleaks
+          sudo install -m 0755 /tmp/gitleaks /usr/local/bin/gitleaks
+          gitleaks version
+
+      - name: Scan every ref's history
+        run: |
+          gitleaks git . --log-opts="--all" \
+            --config .gitleaks.toml \
+            --baseline-path .gitleaks-baseline.json \
+            --redact --verbose --no-banner
+
+      - name: Scan the working tree
+        run: |
+          gitleaks dir . \
+            --config .gitleaks.toml \
+            --baseline-path .gitleaks-baseline.json \
+            --redact --verbose --no-banner
+
+      # A gate that detects nothing passes quietly forever. This plants a
+      # credential of each shape the custom rules exist for and asserts every
+      # one is caught, and plants the indirection this repo uses and asserts
+      # none is -- so a change to .gitleaks.toml that blinds the rules, or makes
+      # them too broad, fails here rather than years later.
+      - name: The rules still detect what they are for
+        run: ./scripts/check_secret_gate.sh
+
+  # ---------------------------------------------------------------------------
+  # ENFORCED GATE 4: the execution environment composes, per platform.
   #
   # Customers take one platform directory, not the whole repository, so
   # execution_environment/build.sh --platform <name> builds an image carrying
@@ -160,7 +225,7 @@ jobs:
           [ "$fail" -eq 0 ]
 
   # ---------------------------------------------------------------------------
-  # ENFORCED GATE 4: ansible-lint (deterministic, --offline, PINNED toolchain).
+  # ENFORCED GATE 5: ansible-lint (deterministic, --offline, PINNED toolchain).
   # Uses .ansible-lint (profile + documented skips) and the .ansible-lint-ignore
   # baseline so the current tree passes and any NEW violation fails the build.
   # --offline keeps results identical regardless of Ansible Galaxy availability,
@@ -192,7 +257,7 @@ jobs:
           ansible-lint --offline $dirs
 
   # ---------------------------------------------------------------------------
-  # ENFORCED GATE 5: ansible-playbook --syntax-check for the grab-and-go
+  # ENFORCED GATE 6: ansible-playbook --syntax-check for the grab-and-go
   # playbooks that resolve with ansible-core alone (no Galaxy collections
   # needed at parse time). Deterministic on any runner. Add new entries here
   # as more playbooks become collection-free at parse time.
@@ -237,7 +302,7 @@ jobs:
           exit $fail
 
   # ---------------------------------------------------------------------------
-  # ENFORCED GATE 6: molecule, for the roles that can run on the control node.
+  # ENFORCED GATE 7: molecule, for the roles that can run on the control node.
   # Delegated scenarios -- no container or VM -- so this needs no Docker and is
   # runner-agnostic. Only roles that make no system changes are onboarded (see
   # docs/TESTING.md); the sequence is syntax + converge + idempotence, and
