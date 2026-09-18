@@ -93,6 +93,7 @@
         status_code: 200
         validate_certs: "{{ claroty.verify_ssl | default(true) }}"
       register: alerts
+      no_log: true
     - copy:
         dest: "{{ artifacts_dir }}/xdome_alerts.csv"
         mode: "0644"
@@ -113,6 +114,7 @@
         status_code: [200,201,202]
         validate_certs: "{{ forward.verify_ssl | default(true) }}"
       when: forward.enabled | bool and forward.type == 'http'
+      no_log: true
     - uri:
         url: "{{ claroty.base_url }}/v1/assets/{{ item.asset.id }}/tags"
         method: POST
@@ -124,6 +126,7 @@
       when: hooks.tag_asset | bool
       loop: "{{ alerts.json.items | default([]) | selectattr('severity','in',['high','critical']) | list }}"
       loop_control: { label: "{{ item.asset.name | default(item.asset.id) }}" }
+      no_log: true
     - uri:
         url: "https://{{ hooks.ticketing.instance }}/api/now/table/{{ hooks.ticketing.table }}"
         method: POST
@@ -143,6 +146,7 @@
       when: hooks.raise_ticket | bool and hooks.ticketing.system == 'servicenow'
       loop: "{{ alerts.json.items | default([]) | selectattr('severity','in',['high','critical']) | list }}"
       loop_control: { label: "{{ item.id }}" }
+      no_log: true
     - uri:
         url: "https://{{ hooks.ticketing.instance }}/rest/api/2/issue"
         method: POST
@@ -163,6 +167,7 @@
 
     # ----------------------------- postflight -------------------
 
+      no_log: true
     - name: "claroty/claroty_xdome_alerts_siem | Postflight | Verify the guarded body ran after a passing preflight"
       ansible.builtin.assert:
         that:
