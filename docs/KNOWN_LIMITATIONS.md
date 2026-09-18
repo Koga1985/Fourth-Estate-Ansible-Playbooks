@@ -19,6 +19,9 @@ This document describes known limitations, operational constraints, and caveats 
 11. [STIG and Compliance Caveats](#11-stig-and-compliance-caveats)
 12. [Python and Collection Dependencies](#12-python-and-collection-dependencies)
 13. [Network and Connectivity Requirements](#13-network-and-connectivity-requirements)
+14. [Advanced Features Not Yet Implemented](#14-advanced-features-not-yet-implemented)
+15. [Templates Requiring Site Review](#15-templates-requiring-site-review)
+16. [Credentials on a Command Line](#16-credentials-on-a-command-line)
 
 ---
 
@@ -48,7 +51,7 @@ consequence is that several platforms have little or no automation:
 
 | Platform | Roles remaining | Status |
 |----------|-----------------|--------|
-| Ansible Tower / AAP | 0 | `site.yml` performs no changes and says so |
+| Ansible Tower / AAP | 5 | controller configuration as code; does not install AAP itself |
 | MySQL / MariaDB | 0 | `site.yml` performs no changes and says so |
 | Oracle Database | 0 | `site.yml` performs no changes and says so |
 | Windows Server | 1 | only `win_server2022_stig`, which `site.yml` does not invoke -- run it directly |
@@ -320,3 +323,97 @@ at render time if unset, rather than deploying an incomplete configuration:
 | `kubernetes/k8s-cluster-hardening` | `rsyslog-kubernetes.conf` | `k8s_rsyslog_remote` (optional) |
 | `illumio/illumio_pce_install` | `cluster_peers.yml`, `pce_environment`, `illumio_cli_config`, `pce-ctl` wrapper | PCE topology / FQDN / install paths |
 | `sciencelogic/sl1_platform_install` | `install_config_db` | `sl1_db_server.*` |
+
+---
+
+## 16. Credentials on a Command Line
+
+`no_log: true` covers credentials passed to a module as arguments — the whole
+`uri` header class this repository swept. It does **not** cover two cases that
+still exist here. Both are documented rather than silently patched, because the
+fix in each case depends on a vendor interface this repository cannot verify.
+
+### What was measured
+
+A secret was passed three ways to a task on a live run, and every process on the
+box was inspected while it executed:
+
+| How the secret is passed | Visible in a process command line | Visible in a process environment | Suppressed by `no_log` |
+|---|---|---|---|
+| Interpolated into the command | 1 process | — | Result only, not the command |
+| Ansible `environment:` keyword | 2 processes | 3 processes | **No** |
+| `args: stdin:` | none | none | n/a |
+
+Two results are worth reading twice.
+
+**`environment:` is worse than the command line, not better.** Ansible
+implements it by prefixing the remote command with `VAR=value python3
+AnsiballZ_….py`, so the secret lands on two shell command lines *and* in the
+environment of three descendant processes.
+
+**`no_log` does not protect a secret passed via `environment:`.** At `-vvv` the
+connection plugin prints its `EXEC /bin/sh -c 'VAR=value …'` line before the
+module runs, and `no_log` suppresses only the module's result. Verified: a task
+with `no_log: true` and an `environment:` secret still prints it at `-vvv`.
+
+`stdin` is the only one of the three that keeps a secret off every command line,
+but it works only when the invoked program reads the secret from stdin. It is
+not a fix for a vendor CLI that accepts the secret only as a flag.
+
+### Case 1 — vendor CLIs that take a secret only as a flag
+
+| Location | Credential | Runs on |
+|---|---|---|
+| `sciencelogic/sl1_platform_install` `40_database_server.yml`, `50_all_in_one.yml` | `--db-root-password`, `--admin-password` | the SL1 server |
+| `crowdstrike/falcon_sensor_install` `install_linux.yml` | `falconctl --provisioning-token=` | each managed node |
+| `vmware/` — 13 PowerCLI tasks | `Connect-VIServer -Password` | the control node / execution environment |
+
+All carry `no_log: true`, so nothing reaches the job output or the Automation
+Platform job record. The command line remains readable through `ps` on the host
+running the command for as long as the command runs.
+
+The 13 vmware tasks run under `hosts: localhost`, so that host is the execution
+environment container — created for one job and destroyed with it. The
+ScienceLogic and CrowdStrike tasks run on managed nodes, where the process table
+is shared with whoever else is on the box. Treat those two as the ones that
+matter.
+
+`no_log` costs diagnostics on these tasks, and the vmware PowerCLI ones are the
+expensive case: a failure now prints only the censored placeholder instead of the
+PowerShell error. Registered results are unaffected — `cap_cmd.stdout` and its
+equivalents still reach the tasks that parse them — so reports still build. To
+debug a failing PowerCLI task, set `no_log: false` on that one task in a
+non-production run, and set it back.
+
+Fixes, none applied here:
+
+- **ScienceLogic.** Both installers already receive the same passwords through
+  their `--config` file, which is written at mode `0600` — the flags duplicate a
+  secret that is already delivered safely. Drop the flags once the installer's
+  config format is confirmed against the real package. That format is not
+  verified today (see the header of `templates/install_config_db.j2`), which is
+  why the duplication has not been removed on assumption.
+- **CrowdStrike.** `falconctl` accepts the provisioning token only as a flag.
+  There is no fix short of a vendor change.
+- **vmware.** This repository authors the PowerShell, so the password can be
+  read from stdin: add `$pw = [Console]::In.ReadLine();` at the top of the
+  `-Command` body, use `-Password $pw`, and pass `stdin: "{{ vcenter_password }}"`
+  under `args:`. It needs testing against a live vCenter, which CI here cannot do.
+
+### Case 2 — secrets passed through `environment:`
+
+| Location | Credential | Has `no_log` |
+|---|---|---|
+| `databases/postgresql/postgresql_replication` `main.yml` | `PGPASSWORD` for `pg_basebackup` | yes — and it does not help |
+| `illumio/illumio_pce_install` `install_pce.yml` | `ILLUMIO_PCE_ADMIN_PASSWORD` for `install.sh` | no |
+
+`PGPASSWORD` is the idiomatic way to drive `pg_basebackup`, and the idiomatic
+fix is a `.pgpass` file at mode `0600` in the `postgres` user's home, which the
+client reads with no environment variable and no flag.
+
+For the Illumio PCE installer, the admin password is not among the keys its
+`install_config.json` carries, so the environment variable is currently the only
+channel. Whether `install.sh` will read it from stdin instead is a question for
+the vendor's documentation. No `no_log` was added there deliberately: it would
+not close the `-vvv` exposure, and a `no_log` that does not protect what a reader
+assumes it protects is worse than none.

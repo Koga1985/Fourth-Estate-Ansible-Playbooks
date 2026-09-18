@@ -30,27 +30,75 @@
   any_errors_fatal: true
 
   vars:
-    deploy_install: false
+    # Dry run by default, like every other playbook here. Nothing on the
+    # controller changes until this is true; the roles still write their plans.
+    apply_changes: false
+
+    aap_artifacts_dir: "/tmp/aap-artifacts"
+
+    # Which parts of the controller configuration this run owns. Turn one off
+    # when another team owns that part, or to apply the configuration in
+    # stages.
     deploy_organizations: true
-    deploy_inventories: true
+    deploy_credentials: true
     deploy_projects: true
     deploy_templates: true
     deploy_workflows: true
-    deploy_rbac: true
 
   tasks:
     - name: "ansible_tower/site | Guarded execution with rescue and always handling"
       block:
 
-        - name: Display deployment summary
+        - name: Ensure the artifacts directory exists
+          ansible.builtin.file:
+            path: "{{ aap_artifacts_dir }}"
+            state: directory
+            mode: "0750"
+          tags: ['always']
+
+        - name: Report what this run will do
           ansible.builtin.debug:
             msg:
-              - "=== Ansible Tower: NO AUTOMATION IMPLEMENTED ==="
-              - "This playbook performed no changes."
-              - "Every ansible_tower role was an empty placeholder and has been"
-              - "removed; nothing here configures {{ tower_hostname | default('the Tower host') }} yet."
-              - "See docs/KNOWN_LIMITATIONS.md before relying on this platform."
+              - "Controller: {{ aap_controller_host | default('<aap_controller_host unset>') }}"
+              - >-
+                Mode: {{ apply_changes | bool | ternary('APPLY - the controller will be changed',
+                'DRY RUN - plans are written, nothing is changed') }}
+              - "Plans and evidence: {{ aap_artifacts_dir }}/"
+              - "Set apply_changes=true to apply."
           tags: ['always']
+
+        # Ordered by dependency: a job template cannot reference a project that
+        # does not exist yet, and a workflow node cannot reference a job
+        # template that does not exist yet.
+        - name: Organizations, teams and role bindings
+          ansible.builtin.include_role:
+            name: aap_controller_organizations
+          when: deploy_organizations | bool
+          tags: ['organizations', 'rbac']
+
+        - name: Credential types and credentials
+          ansible.builtin.include_role:
+            name: aap_controller_credentials
+          when: deploy_credentials | bool
+          tags: ['credentials']
+
+        - name: Projects, inventories and execution environments
+          ansible.builtin.include_role:
+            name: aap_controller_projects
+          when: deploy_projects | bool
+          tags: ['projects', 'inventories']
+
+        - name: Job templates and surveys
+          ansible.builtin.include_role:
+            name: aap_controller_job_templates
+          when: deploy_templates | bool
+          tags: ['job_templates']
+
+        - name: Workflows with approval nodes
+          ansible.builtin.include_role:
+            name: aap_controller_workflows
+          when: deploy_workflows | bool
+          tags: ['workflows']
 
         - name: "ansible_tower/site | Flush notified handlers inside the guarded block"
           ansible.builtin.meta: flush_handlers

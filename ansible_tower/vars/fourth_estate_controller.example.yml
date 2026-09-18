@@ -1,0 +1,264 @@
+---
+# Worked controller configuration for this repository.
+#
+# Copy to ansible_tower/vars/fourth_estate_controller.yml, edit the names and
+# hosts to match your environment, and run:
+#
+#   ansible-playbook ansible_tower/site.yml \
+#     -e @ansible_tower/vars/fourth_estate_controller.yml \
+#     -e @group_vars/all/vault.yml --ask-vault-pass
+#
+# That is a dry run. It writes the plans under aap_artifacts_dir and changes
+# nothing. Read them, then add -e apply_changes=true.
+#
+# Every playbook path below exists in this repository and is exercised by CI.
+# Every job template exposes apply_changes, because the roles that read these
+# definitions refuse to plan one that does not -- see
+# roles/aap_controller_job_templates/README.md.
+
+# ---------------------------------------------------------------------------
+# Access
+# ---------------------------------------------------------------------------
+aap_organizations:
+  - name: "Fourth Estate"
+    description: "Newsroom infrastructure automation"
+    max_hosts: 0
+
+aap_teams:
+  - name: "Compliance"
+    organization: "Fourth Estate"
+    description: "Runs assessments and reads evidence; cannot apply"
+  - name: "Platform Engineering"
+    organization: "Fourth Estate"
+    description: "Applies hardening baselines during a maintenance window"
+
+# Read this as the access model, because that is what it is. Compliance may
+# launch the assess templates and nothing else. Only Platform Engineering may
+# approve a workflow, which is what stands between an assessment and a change.
+aap_roles:
+  - team: "Compliance"
+    organization: "Fourth Estate"
+    role: execute
+    job_templates:
+      - "RHEL 9 STIG - assess"
+      - "Cloud Computing SRG - assess"
+      - "NDM SRG - assess"
+      - "z/OS RACF STIG - assess"
+
+  - team: "Platform Engineering"
+    organization: "Fourth Estate"
+    role: execute
+    job_templates:
+      - "RHEL 9 STIG - assess"
+      - "RHEL 9 STIG - apply"
+
+  - team: "Platform Engineering"
+    organization: "Fourth Estate"
+    role: approval
+    workflow_job_templates:
+      - "RHEL 9 STIG - assess, approve, apply"
+
+# ---------------------------------------------------------------------------
+# Credentials
+# ---------------------------------------------------------------------------
+# A custom type is what lets an operator launch a template against a vendor API
+# without ever seeing the secret: the controller injects it at launch. The
+# {% raw %} blocks matter -- those braces are for the controller to expand when
+# it injects the credential, not for Ansible to expand when it reads this file.
+aap_credential_types:
+  - name: "Cisco ISE API"
+    kind: cloud
+    description: "Hostname and account for the Cisco ISE ERS/OpenAPI"
+    inputs:
+      fields:
+        - id: ise_hostname
+          type: string
+          label: "ISE hostname"
+        - id: ise_username
+          type: string
+          label: "ISE username"
+        - id: ise_password
+          type: string
+          label: "ISE password"
+          secret: true
+      required:
+        - ise_hostname
+        - ise_username
+        - ise_password
+    injectors:
+      extra_vars:
+        ise_hostname: "{% raw %}{{ ise_hostname }}{% endraw %}"
+        ise_username: "{% raw %}{{ ise_username }}{% endraw %}"
+        ise_password: "{% raw %}{{ ise_password }}{% endraw %}"
+
+  - name: "Infoblox NIOS API"
+    kind: cloud
+    description: "Grid master and account for the Infoblox WAPI"
+    inputs:
+      fields:
+        - id: nios_host
+          type: string
+          label: "NIOS grid master"
+        - id: nios_username
+          type: string
+          label: "NIOS username"
+        - id: nios_password
+          type: string
+          label: "NIOS password"
+          secret: true
+      required:
+        - nios_host
+        - nios_username
+        - nios_password
+    injectors:
+      extra_vars:
+        nios_host: "{% raw %}{{ nios_host }}{% endraw %}"
+        nios_username: "{% raw %}{{ nios_username }}{% endraw %}"
+        nios_password: "{% raw %}{{ nios_password }}{% endraw %}"
+
+# ---------------------------------------------------------------------------
+# Content
+# ---------------------------------------------------------------------------
+aap_execution_environments:
+  - name: "Fourth Estate EE"
+    # Build this from execution_environment/ and push it to a registry the
+    # controller can pull from. Pin the tag; "latest" defeats the point.
+    image: "registry.example.mil/fourth-estate-ee:1.1.0"
+    pull: missing
+
+aap_projects:
+  - name: "Fourth Estate Playbooks"
+    organization: "Fourth Estate"
+    scm_type: git
+    scm_url: "https://github.com/Koga1985/Fourth-Estate-Ansible-Playbooks.git"
+    # A release tag, not a branch. Tracking a branch turns every commit into an
+    # immediate change in this control plane, and the role refuses to plan it.
+    scm_branch: "1.1.0"
+    scm_update_on_launch: false
+    scm_clean: true
+    default_environment: "Fourth Estate EE"
+
+aap_inventories:
+  - name: "RHEL Servers"
+    organization: "Fourth Estate"
+    description: "RHEL 8/9 hosts in scope for the STIG baseline"
+
+# ---------------------------------------------------------------------------
+# Job templates
+# ---------------------------------------------------------------------------
+# The assess/apply pair is deliberate. They run the same content with the gate
+# in opposite positions, so "assess" cannot change anything even if launched by
+# mistake, and "apply" is a separate object that RBAC can restrict.
+aap_job_templates:
+  - name: "RHEL 9 STIG - assess"
+    job_type: run
+    organization: "Fourth Estate"
+    project: "Fourth Estate Playbooks"
+    playbook: "rhel/playbooks/compliance-check.yml"
+    inventory: "RHEL Servers"
+    execution_environment: "Fourth Estate EE"
+    ask_limit_on_launch: true
+    extra_vars:
+      apply_changes: false
+
+  - name: "RHEL 9 STIG - apply"
+    job_type: run
+    organization: "Fourth Estate"
+    project: "Fourth Estate Playbooks"
+    playbook: "rhel/playbooks/system-hardening.yml"
+    inventory: "RHEL Servers"
+    execution_environment: "Fourth Estate EE"
+    ask_limit_on_launch: true
+    survey_enabled: true
+    survey_spec:
+      name: "RHEL 9 STIG apply"
+      description: "Applies the RHEL 9 STIG baseline to the hosts in the chosen limit"
+      spec:
+        - question_name: "Apply changes? Leave false to rehearse the apply as a dry run."
+          question_description: >-
+            Every role in this repository defaults to a dry run. Setting this to
+            true changes the target hosts.
+          variable: apply_changes
+          type: multiplechoice
+          choices:
+            - "false"
+            - "true"
+          default: "false"
+          required: true
+        - question_name: "Reboot hosts if the baseline requires it"
+          variable: allow_reboot
+          type: multiplechoice
+          choices:
+            - "false"
+            - "true"
+          default: "false"
+          required: true
+
+  - name: "Cloud Computing SRG - assess"
+    job_type: run
+    organization: "Fourth Estate"
+    project: "Fourth Estate Playbooks"
+    playbook: "cloud_policy/roles/cloud_computing_srg_assessment/playbooks/run.yml"
+    inventory: "RHEL Servers"
+    execution_environment: "Fourth Estate EE"
+    extra_vars:
+      apply_changes: false
+
+  - name: "NDM SRG - assess"
+    job_type: run
+    organization: "Fourth Estate"
+    project: "Fourth Estate Playbooks"
+    playbook: "network_policy/roles/ndm_srg_assessment/playbooks/run.yml"
+    inventory: "RHEL Servers"
+    execution_environment: "Fourth Estate EE"
+    extra_vars:
+      apply_changes: false
+
+  - name: "z/OS RACF STIG - assess"
+    job_type: run
+    organization: "Fourth Estate"
+    project: "Fourth Estate Playbooks"
+    playbook: "ibm_zos/roles/zos_racf_stig/playbooks/run.yml"
+    inventory: "RHEL Servers"
+    execution_environment: "Fourth Estate EE"
+    extra_vars:
+      apply_changes: false
+
+# ---------------------------------------------------------------------------
+# Workflows
+# ---------------------------------------------------------------------------
+# This is the control AAP offers that the command line cannot: the approval and
+# the person who gave it are recorded by the controller, not asserted by a
+# variable. The assess node publishes its findings as job artifacts under
+# fe_evidence, so the approver reads the evidence in the same place they
+# approve.
+aap_workflows:
+  - name: "RHEL 9 STIG - assess, approve, apply"
+    organization: "Fourth Estate"
+    description: >-
+      Assess the RHEL 9 STIG baseline, pause for a recorded human approval,
+      then apply it.
+    ask_limit_on_launch: true
+    simplified_workflow_nodes:
+      - identifier: assess
+        unified_job_template: "RHEL 9 STIG - assess"
+        extra_data:
+          apply_changes: false
+        success_nodes:
+          - approve
+
+      - identifier: approve
+        approval_node:
+          name: "Approve applying the RHEL 9 STIG baseline"
+          description: >-
+            The assess job has finished. Read its evidence in this job's
+            artifacts before approving. Approving applies the baseline to every
+            host in the limit chosen at launch.
+          timeout: 86400
+        success_nodes:
+          - apply
+
+      - identifier: apply
+        unified_job_template: "RHEL 9 STIG - apply"
+        extra_data:
+          apply_changes: true

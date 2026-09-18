@@ -21,6 +21,67 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
   `pure_flasharray_config` looped a `debug` task over `api_tokens.results` with
   `no_log: false` and no loop label, printing each created API client's token
   in the task output. The loop now labels on the client name only.
+- **Vendor API credentials no longer reach verbose output (550 tasks, 311 files).**
+  Roles under `operational_technology/`, `claroty/`, `dragos/`, `pure_storage/`,
+  `cohesity/`, `cisco/`, `sciencelogic/`, `tenable/`, `ansible/`, `veeam/`,
+  `hashicorp_vault/`, `illumio/`, `crowdstrike/`, `infoblox/`, `azure/` and
+  `sentinelone/` passed session cookies, CSRF tokens, API keys and bearer
+  tokens in `ansible.builtin.uri` and `get_url` headers, bodies and URLs
+  without `no_log`. Ansible prints a module's invocation arguments at `-vvv`, so
+  raising verbosity to debug an API call published the credential with it — and
+  under Automation Platform that output is the controller's job record, which
+  outlives the run and is readable by anyone with access to the job. Each of
+  those tasks now sets `no_log: true`.
+
+  Measured on one task before and after the change, with a canary token and a
+  live endpoint: the token appears in the result's
+  `invocation.module_args.headers` at `-vvv`, and at no lower verbosity. So the
+  exposure was real but bounded — it needed someone to raise verbosity, which is
+  exactly what an operator does when an API call misbehaves.
+
+  Two SD-WAN tasks in `sdwan_security_hardening` explicitly set `no_log: false`
+  while sending a vManage session cookie; neither was overriding an enclosing
+  block, so the setting bought nothing and cost the cookie. Both are now `true`.
+
+  This changes only what is displayed. `no_log` does not affect execution, and
+  registered results still carry their full data for later tasks to read.
+- **Credentials on a command line no longer reach job output (16 tasks).**
+  Sixteen `command` and `shell` tasks interpolated a credential
+  into the command they ran: the ScienceLogic installers' `--db-root-password`
+  and `--admin-password`, `falconctl --provisioning-token`, and
+  `Connect-VIServer -Password` in thirteen vmware PowerCLI tasks. All now carry
+  `no_log: true`.
+
+  This class is more severe than the `uri` header class above, and in a way that
+  is easy to get backwards. Measured on the CrowdStrike task before and after:
+
+  | verbosity | before | after |
+  |-----------|--------|-------|
+  | default   | 1      | 0     |
+  | `-vvv`    | 2      | 0     |
+
+  A failing `command` puts the whole command string in its `cmd` field, and that
+  field is part of the failure message printed at **default** verbosity. No `-vvv`
+  required. Under Automation Platform, every failed run of those tasks wrote the
+  credential into the controller's job record.
+
+  What `no_log` does **not** cover is now documented in
+  [`KNOWN_LIMITATIONS.md` section 16](KNOWN_LIMITATIONS.md#16-credentials-on-a-command-line),
+  together with the measurements behind it: a command line stays readable through
+  `ps` while the command runs; Ansible's `environment:` keyword is *worse* than a
+  command line rather than better, putting the secret on two command lines and in
+  three process environments; and `no_log` does not suppress an `environment:`
+  secret at all, because the connection plugin prints its `EXEC` line before the
+  module runs. Two tasks that pass a secret that way — `PGPASSWORD` for
+  `pg_basebackup` and `ILLUMIO_PCE_ADMIN_PASSWORD` for the PCE installer — are
+  recorded there rather than given a `no_log` that would not protect them.
+
+- **Two `no_log: true` keys that never did anything are gone.**
+  One sat in `policy_as_code/inventory/example.yml`, where `no_log` is not an
+  inventory keyword; the other was an element of a `specs` list item in a vmware
+  playbook, which is data passed to a role, not a key on a task. Both read as
+  protection that was not there. The vmware one is replaced by a real `no_log`
+  on the task that actually runs the credential.
 - **TLS certificate validation defaults to on (141 sites, 100 files).**
   Every hardcoded `validate_certs: false` became either a documented variable
   with a secure default (`"{{ <role>_validate_certs | default(true) }}"`) or a
@@ -32,6 +93,42 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
   `force_basic_auth`).
 
 ### Added
+- **Automation Platform controller as code (`ansible_tower/`, 5 roles)**: the
+  directory named after the platform most customers consume this repository
+  through had no working automation at all -- its README advertised 8 roles that
+  the empty-role purge had removed, and `site.yml` said so and did nothing.
+  It now declares a controller's organizations, teams and role bindings;
+  credential types and credentials; projects, inventories and execution
+  environments; job templates and surveys; and workflow job templates.
+
+  Three preflight checks encode the safeguards that were easiest to lose in
+  translation from the command line to a controller, each with a documented
+  waiver:
+  - a project must be pinned to a tag, not tracking a branch, because a project
+    tracking `main` with *Update Revision on Launch* turns every commit here
+    into an immediate change in that control plane
+    (`aap_allow_branch_tracking`);
+  - a job template must expose `apply_changes` on its survey or in its extra
+    vars, since every playbook here defaults to a dry run and a template that
+    hides the gate removes the safeguard from the operator
+    (`aap_allow_template_without_apply_gate`);
+  - a workflow must carry an approval node, which is the control AAP offers that
+    the command line cannot: the pause and the person who approved it are
+    recorded in the controller's own audit log, where `apply_changes` is only an
+    assertion (`aap_allow_workflow_without_approval`).
+
+  Every role is dry run by default and writes its plan on every run, including a
+  dry run. Secrets never reach a plan: user passwords and credential `inputs`
+  are dropped before the file is built rather than redacted afterwards, and the
+  credential apply task runs under `no_log`. The plans are published through
+  `set_stats` under `fe_evidence`, so they survive an execution-environment
+  container like the rest of the repository's compliance evidence.
+
+  `vars/fourth_estate_controller.example.yml` is a worked configuration against
+  real playbook paths in this repository: an assess/apply template pair,
+  credential types for the Cisco ISE and Infoblox APIs, and an
+  assess/approve/apply workflow.
+
 - **Execution Environment (`execution_environment/`)**: an ansible-builder v3
   definition that builds one image capable of running any playbook in this
   repository. `requirements.yml` there is the union of all 79 platform
