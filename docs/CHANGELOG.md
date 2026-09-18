@@ -45,6 +45,43 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 
   This changes only what is displayed. `no_log` does not affect execution, and
   registered results still carry their full data for later tasks to read.
+- **Credentials on a command line no longer reach job output (16 tasks).**
+  Sixteen `command` and `shell` tasks interpolated a credential
+  into the command they ran: the ScienceLogic installers' `--db-root-password`
+  and `--admin-password`, `falconctl --provisioning-token`, and
+  `Connect-VIServer -Password` in thirteen vmware PowerCLI tasks. All now carry
+  `no_log: true`.
+
+  This class is more severe than the `uri` header class above, and in a way that
+  is easy to get backwards. Measured on the CrowdStrike task before and after:
+
+  | verbosity | before | after |
+  |-----------|--------|-------|
+  | default   | 1      | 0     |
+  | `-vvv`    | 2      | 0     |
+
+  A failing `command` puts the whole command string in its `cmd` field, and that
+  field is part of the failure message printed at **default** verbosity. No `-vvv`
+  required. Under Automation Platform, every failed run of those tasks wrote the
+  credential into the controller's job record.
+
+  What `no_log` does **not** cover is now documented in
+  [`KNOWN_LIMITATIONS.md` section 16](KNOWN_LIMITATIONS.md#16-credentials-on-a-command-line),
+  together with the measurements behind it: a command line stays readable through
+  `ps` while the command runs; Ansible's `environment:` keyword is *worse* than a
+  command line rather than better, putting the secret on two command lines and in
+  three process environments; and `no_log` does not suppress an `environment:`
+  secret at all, because the connection plugin prints its `EXEC` line before the
+  module runs. Two tasks that pass a secret that way — `PGPASSWORD` for
+  `pg_basebackup` and `ILLUMIO_PCE_ADMIN_PASSWORD` for the PCE installer — are
+  recorded there rather than given a `no_log` that would not protect them.
+
+- **Two `no_log: true` keys that never did anything are gone.**
+  One sat in `policy_as_code/inventory/example.yml`, where `no_log` is not an
+  inventory keyword; the other was an element of a `specs` list item in a vmware
+  playbook, which is data passed to a role, not a key on a task. Both read as
+  protection that was not there. The vmware one is replaced by a real `no_log`
+  on the task that actually runs the credential.
 - **TLS certificate validation defaults to on (141 sites, 100 files).**
   Every hardcoded `validate_certs: false` became either a documented variable
   with a secure default (`"{{ <role>_validate_certs | default(true) }}"`) or a
