@@ -84,7 +84,83 @@ jobs:
         run: python3 scripts/check_jinja_filters.py .
 
   # ---------------------------------------------------------------------------
-  # ENFORCED GATE 3: ansible-lint (deterministic, --offline, PINNED toolchain).
+  # ENFORCED GATE 3: the execution environment composes, per platform.
+  #
+  # Customers take one platform directory, not the whole repository, so
+  # execution_environment/build.sh --platform <name> builds an image carrying
+  # only that platform's collections. Two things can rot silently:
+  #
+  #   1. execution_environment/requirements.yml (the --all union) drifts from
+  #      the platform requirements.yml files it is composed from, so an EE built
+  #      from it is missing a collection a role needs.
+  #   2. A platform's requirements.yml stops producing a valid ansible-builder
+  #      definition, which is only discovered when someone tries to build it.
+  #
+  # This checks both without network access: the composition is pure YAML
+  # merging, and 'ansible-builder create' writes a build context without
+  # pulling a base image or contacting Galaxy.
+  # ---------------------------------------------------------------------------
+  execution-environment:
+    name: EE requirements compose (required)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install ansible-builder + PyYAML
+        run: pip install --quiet "ansible-builder>=3.0" pyyaml
+
+      - name: The committed union matches what the platform files compose to
+        run: |
+          set -euo pipefail
+          cd execution_environment
+          ./compose-requirements.py --all -o /tmp/union-composed.yml
+          python3 - <<'PYEOF'
+          import sys, yaml
+          committed = yaml.safe_load(open("requirements.yml"))["collections"]
+          composed = yaml.safe_load(open("/tmp/union-composed.yml"))["collections"]
+          a = {c["name"]: c.get("version") for c in committed}
+          b = {c["name"]: c.get("version") for c in composed}
+          if a == b:
+              print("requirements.yml matches the composition (%d collections)" % len(a))
+              sys.exit(0)
+          print("execution_environment/requirements.yml is out of date.")
+          print("Regenerate it:  cd execution_environment && ./compose-requirements.py --all -o requirements.yml")
+          for name in sorted(set(b) - set(a)):
+              print("  missing from the union:      %s %s" % (name, b[name] or ""))
+          for name in sorted(set(a) - set(b)):
+              print("  in the union but undeclared: %s %s" % (name, a[name] or ""))
+          for name in sorted(n for n in set(a) & set(b) if a[n] != b[n]):
+              print("  floor differs:               %s committed=%s composed=%s" % (name, a[name], b[name]))
+          sys.exit(1)
+          PYEOF
+
+      - name: Every platform composes to a valid execution environment
+        run: |
+          set -euo pipefail
+          cd execution_environment
+          fail=0
+          for platform in $(./compose-requirements.py --list | awk '{print $1}'); do
+            ctx="$(mktemp -d)"
+            cp execution-environment.yml requirements.txt bindep.txt "$ctx/"
+            if ./compose-requirements.py --platform "$platform" -o "$ctx/requirements.yml" \
+               && ansible-builder create --file "$ctx/execution-environment.yml" \
+                                         --context "$ctx/context" >/dev/null; then
+              echo "  ok   $platform ($(grep -c '^  - name:' "$ctx/requirements.yml" || true) collections)"
+            else
+              echo "  FAIL $platform"
+              fail=$((fail+1))
+            fi
+            rm -rf "$ctx"
+          done
+          echo "Platforms that failed to compose: $fail"
+          [ "$fail" -eq 0 ]
+
+  # ---------------------------------------------------------------------------
+  # ENFORCED GATE 4: ansible-lint (deterministic, --offline, PINNED toolchain).
   # Uses .ansible-lint (profile + documented skips) and the .ansible-lint-ignore
   # baseline so the current tree passes and any NEW violation fails the build.
   # --offline keeps results identical regardless of Ansible Galaxy availability,
@@ -116,7 +192,7 @@ jobs:
           ansible-lint --offline $dirs
 
   # ---------------------------------------------------------------------------
-  # ENFORCED GATE 4: ansible-playbook --syntax-check for the grab-and-go
+  # ENFORCED GATE 5: ansible-playbook --syntax-check for the grab-and-go
   # playbooks that resolve with ansible-core alone (no Galaxy collections
   # needed at parse time). Deterministic on any runner. Add new entries here
   # as more playbooks become collection-free at parse time.
@@ -161,7 +237,7 @@ jobs:
           exit $fail
 
   # ---------------------------------------------------------------------------
-  # ENFORCED GATE 5: molecule, for the roles that can run on the control node.
+  # ENFORCED GATE 6: molecule, for the roles that can run on the control node.
   # Delegated scenarios -- no container or VM -- so this needs no Docker and is
   # runner-agnostic. Only roles that make no system changes are onboarded (see
   # docs/TESTING.md); the sequence is syntax + converge + idempotence, and
