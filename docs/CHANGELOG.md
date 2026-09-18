@@ -21,15 +21,23 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
   `pure_flasharray_config` looped a `debug` task over `api_tokens.results` with
   `no_log: false` and no loop label, printing each created API client's token
   in the task output. The loop now labels on the client name only.
-- **Vendor API credentials no longer reach verbose output (465 tasks, 264 files).**
+- **Vendor API credentials no longer reach verbose output (550 tasks, 311 files).**
   Roles under `operational_technology/`, `claroty/`, `dragos/`, `pure_storage/`,
-  `cohesity/` and `cisco/` passed session cookies, CSRF tokens, API keys and
-  bearer tokens in `ansible.builtin.uri` and `get_url` headers, bodies and URLs
+  `cohesity/`, `cisco/`, `sciencelogic/`, `tenable/`, `ansible/`, `veeam/`,
+  `hashicorp_vault/`, `illumio/`, `crowdstrike/`, `infoblox/`, `azure/` and
+  `sentinelone/` passed session cookies, CSRF tokens, API keys and bearer
+  tokens in `ansible.builtin.uri` and `get_url` headers, bodies and URLs
   without `no_log`. Ansible prints a module's invocation arguments at `-vvv`, so
   raising verbosity to debug an API call published the credential with it — and
   under Automation Platform that output is the controller's job record, which
   outlives the run and is readable by anyone with access to the job. Each of
   those tasks now sets `no_log: true`.
+
+  Measured on one task before and after the change, with a canary token and a
+  live endpoint: the token appears in the result's
+  `invocation.module_args.headers` at `-vvv`, and at no lower verbosity. So the
+  exposure was real but bounded — it needed someone to raise verbosity, which is
+  exactly what an operator does when an API call misbehaves.
 
   Two SD-WAN tasks in `sdwan_security_hardening` explicitly set `no_log: false`
   while sending a vManage session cookie; neither was overriding an enclosing
