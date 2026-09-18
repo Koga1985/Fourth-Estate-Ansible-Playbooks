@@ -48,7 +48,7 @@ consequence is that several platforms have little or no automation:
 
 | Platform | Roles remaining | Status |
 |----------|-----------------|--------|
-| Ansible Tower / AAP | 0 | `site.yml` performs no changes and says so |
+| Ansible Tower / AAP | 5 | controller configuration as code; does not install AAP itself |
 | MySQL / MariaDB | 0 | `site.yml` performs no changes and says so |
 | Oracle Database | 0 | `site.yml` performs no changes and says so |
 | Windows Server | 1 | only `win_server2022_stig`, which `site.yml` does not invoke -- run it directly |

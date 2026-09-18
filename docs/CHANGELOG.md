@@ -32,6 +32,42 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
   `force_basic_auth`).
 
 ### Added
+- **Automation Platform controller as code (`ansible_tower/`, 5 roles)**: the
+  directory named after the platform most customers consume this repository
+  through had no working automation at all -- its README advertised 8 roles that
+  the empty-role purge had removed, and `site.yml` said so and did nothing.
+  It now declares a controller's organizations, teams and role bindings;
+  credential types and credentials; projects, inventories and execution
+  environments; job templates and surveys; and workflow job templates.
+
+  Three preflight checks encode the safeguards that were easiest to lose in
+  translation from the command line to a controller, each with a documented
+  waiver:
+  - a project must be pinned to a tag, not tracking a branch, because a project
+    tracking `main` with *Update Revision on Launch* turns every commit here
+    into an immediate change in that control plane
+    (`aap_allow_branch_tracking`);
+  - a job template must expose `apply_changes` on its survey or in its extra
+    vars, since every playbook here defaults to a dry run and a template that
+    hides the gate removes the safeguard from the operator
+    (`aap_allow_template_without_apply_gate`);
+  - a workflow must carry an approval node, which is the control AAP offers that
+    the command line cannot: the pause and the person who approved it are
+    recorded in the controller's own audit log, where `apply_changes` is only an
+    assertion (`aap_allow_workflow_without_approval`).
+
+  Every role is dry run by default and writes its plan on every run, including a
+  dry run. Secrets never reach a plan: user passwords and credential `inputs`
+  are dropped before the file is built rather than redacted afterwards, and the
+  credential apply task runs under `no_log`. The plans are published through
+  `set_stats` under `fe_evidence`, so they survive an execution-environment
+  container like the rest of the repository's compliance evidence.
+
+  `vars/fourth_estate_controller.example.yml` is a worked configuration against
+  real playbook paths in this repository: an assess/apply template pair,
+  credential types for the Cisco ISE and Infoblox APIs, and an
+  assess/approve/apply workflow.
+
 - **Execution Environment (`execution_environment/`)**: an ansible-builder v3
   definition that builds one image capable of running any playbook in this
   repository. `requirements.yml` there is the union of all 79 platform

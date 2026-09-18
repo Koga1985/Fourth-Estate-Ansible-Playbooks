@@ -1,6 +1,6 @@
 # Fourth Estate Ansible Playbooks
 
-An enterprise-grade collection of **421 roles** and **3,345 YAML files** for infrastructure automation across **41 technology platforms** with emphasis on **DoD STIG, NIST 800-53, NIST 800-171, FedRAMP, and FISMA compliance**.
+An enterprise-grade collection of **426 roles** and **3,372 YAML files** for infrastructure automation across **41 technology platforms** with emphasis on **DoD STIG, NIST 800-53, NIST 800-171, FedRAMP, and FISMA compliance**.
 
 > **New:** 21 dedicated DoD STIG / SRG roles were added covering Cisco network
 > devices (IOS XE L2, NX-OS, ASA, FTD, ACI Router, ISE), RHEL 9, Windows Server
@@ -14,8 +14,8 @@ This repository provides production-ready Ansible automation for network infrast
 
 ## 📊 Repository Statistics
 
-- **Total Roles:** 421
-- **Total YAML Files:** 3,345
+- **Total Roles:** 426
+- **Total YAML Files:** 3,372
 - **README Documentation Files:** 505
 - **Technology Platforms:** 41
 - **Dedicated DoD STIG / SRG roles:** 21 (see [STIG_COVERAGE_MATRIX.md](./docs/STIG_COVERAGE_MATRIX.md))
@@ -132,7 +132,7 @@ Each top-level directory focuses on a specific technology platform and contains 
 
 ### 🤖 Infrastructure Automation (2 platforms)
 - **Ansible Automation Platform** - Controller, AAP components, CI/CD, inventory, secrets (17 roles)
-- **Ansible Tower/AAP** - Installation, organizations, workflows, RBAC (8 roles)
+- **Ansible Tower/AAP** - Controller configuration as code: organizations, credentials, projects, job templates, approval workflows (5 roles)
 
 ### 🏭 Operational Technology (1 platform)
 - **OT/ICS** - Firewall, IDPS, logging, firmware, compliance (24 roles)
@@ -165,7 +165,7 @@ Fourth-Estate-Ansible-Playbooks/
 │   ├── roles/
 │   └── tasks/
 │
-├── ansible_tower/                 # Ansible Tower / AAP (8 roles)
+├── ansible_tower/                 # Ansible Tower / AAP (5 roles)
 │   ├── README.md
 │   └── roles/
 │
