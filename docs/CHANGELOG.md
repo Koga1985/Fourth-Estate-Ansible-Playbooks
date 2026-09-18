@@ -21,6 +21,22 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
   `pure_flasharray_config` looped a `debug` task over `api_tokens.results` with
   `no_log: false` and no loop label, printing each created API client's token
   in the task output. The loop now labels on the client name only.
+- **Vendor API credentials no longer reach verbose output (465 tasks, 264 files).**
+  Roles under `operational_technology/`, `claroty/`, `dragos/`, `pure_storage/`,
+  `cohesity/` and `cisco/` passed session cookies, CSRF tokens, API keys and
+  bearer tokens in `ansible.builtin.uri` and `get_url` headers, bodies and URLs
+  without `no_log`. Ansible prints a module's invocation arguments at `-vvv`, so
+  raising verbosity to debug an API call published the credential with it — and
+  under Automation Platform that output is the controller's job record, which
+  outlives the run and is readable by anyone with access to the job. Each of
+  those tasks now sets `no_log: true`.
+
+  Two SD-WAN tasks in `sdwan_security_hardening` explicitly set `no_log: false`
+  while sending a vManage session cookie; neither was overriding an enclosing
+  block, so the setting bought nothing and cost the cookie. Both are now `true`.
+
+  This changes only what is displayed. `no_log` does not affect execution, and
+  registered results still carry their full data for later tasks to read.
 - **TLS certificate validation defaults to on (141 sites, 100 files).**
   Every hardcoded `validate_certs: false` became either a documented variable
   with a secure default (`"{{ <role>_validate_certs | default(true) }}"`) or a
