@@ -111,6 +111,84 @@
           cert,not_after,subject
           {{ _certs.stdout }}
 
+    # --------------------------- evidence delivery --------------------------
+    # Writing the report to artifacts_dir is not delivery. Under Ansible
+    # Automation Platform the playbook runs inside an execution-environment
+    # container that is destroyed when the job ends, so a file left on that
+    # filesystem is gone before anyone can read it. Republishing the report
+    # through set_stats puts it in the job artifacts, which AAP persists and
+    # passes to downstream workflow nodes.
+    #
+    # These reports carry compliance status and configuration posture, not
+    # credentials. Job artifacts are visible to anyone with job-read
+    # permission, which is wider than the file this supplements -- set
+    # fe_evidence_publish=false to keep the file as the only copy.
+    # See docs/VALIDATION_AND_STATS.md#compliance-evidence-delivery.
+
+    - name: "operational_technology/ot_pki_trust__expiry_report | Evidence | Locate the generated artifacts"
+      ansible.builtin.find:
+        paths: "{{ artifacts_dir }}"
+        patterns: "pki_expiry_report.csv"
+        file_type: file
+      register: fe_evidence_found
+      changed_when: false
+      failed_when: false
+      when: fe_evidence_publish | default(true) | bool
+      tags: [report, artifact, evidence]
+
+    - name: "operational_technology/ot_pki_trust__expiry_report | Evidence | Read the artifacts within the size budget"
+      ansible.builtin.slurp:
+        src: "{{ item.path }}"
+      register: fe_evidence_read
+      loop: "{{ fe_evidence_found.files | default([]) | sort(attribute='path') }}"
+      loop_control:
+        label: "{{ item.path | basename }}"
+      when:
+        - fe_evidence_publish | default(true) | bool
+        - item.size | int <= (fe_evidence_max_bytes | default(65536) | int)
+      tags: [report, artifact, evidence]
+
+    # An artifact too large to publish must not vanish silently: say so, so the
+    # operator knows the job artifacts are not the complete record.
+    - name: "operational_technology/ot_pki_trust__expiry_report | Evidence | Warn about artifacts that exceeded the size budget"
+      ansible.builtin.debug:
+        msg: >-
+          Evidence artifact {{ item.path | basename }} is {{ item.size }} bytes,
+          over the {{ fe_evidence_max_bytes | default(65536) }}-byte budget, and was NOT
+          published to the job artifacts. It exists only at {{ item.path }}, which does
+          not survive an execution-environment container. Raise fe_evidence_max_bytes
+          or collect this file another way.
+      loop: "{{ fe_evidence_found.files | default([]) | sort(attribute='path') }}"
+      loop_control:
+        label: "{{ item.path | basename }}"
+      when:
+        - fe_evidence_publish | default(true) | bool
+        - item.size | int > (fe_evidence_max_bytes | default(65536) | int)
+      tags: [report, artifact, evidence]
+
+    - name: "operational_technology/ot_pki_trust__expiry_report | Evidence | Publish the artifacts as job artifacts"
+      ansible.builtin.set_stats:
+        data:
+          fe_evidence:
+            "operational_technology/ot_pki_trust__expiry_report":
+              component: "operational_technology/ot_pki_trust__expiry_report"
+              platform: "operational_technology"
+              collected_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+              source_dir: "{{ artifacts_dir }}"
+              files: >-
+                {{ dict(fe_evidence_read.results | default([])
+                        | rejectattr('skipped', 'defined')
+                        | map(attribute='item.path') | map('basename') | list
+                        | zip(fe_evidence_read.results | default([])
+                              | rejectattr('skipped', 'defined')
+                              | map(attribute='content') | map('b64decode') | list)) }}
+        aggregate: true
+        per_host: false
+      when:
+        - fe_evidence_publish | default(true) | bool
+        - fe_evidence_read.results | default([]) | rejectattr('skipped', 'defined') | list | length > 0
+      tags: [report, artifact, evidence]
+
     # ----------------------------- postflight -------------------
 
     - name: "operational_technology/ot_pki_trust__expiry_report | Postflight | Verify the guarded body ran after a passing preflight"

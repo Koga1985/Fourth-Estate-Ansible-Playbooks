@@ -48,7 +48,43 @@ jobs:
         run: python3 scripts/check_collections.py .
 
   # ---------------------------------------------------------------------------
-  # ENFORCED GATE 2: ansible-lint (deterministic, --offline, PINNED toolchain).
+  # ENFORCED GATE 2: every Jinja expression must parse, every filter and test it
+  # uses must exist, and it must render the value it claims. Nothing else here
+  # proves that: a broken expression is valid YAML, passes yamllint, passes
+  # ansible-lint and passes --syntax-check, then fails at run time on the
+  # customer's machine. Five such expressions shipped before this gate existed
+  # (| splitlines, | enumerate, | all, a pipe into a variable, and doubled {{ }}
+  # braces in an embedded script) -- all in code paths molecule cannot reach,
+  # because they sit behind apply_changes, behind credential preflights, or in a
+  # playbook that is not a role.
+  #
+  # It also rejects two expressions that parse but render the wrong thing:
+  # `| bool` in a JSON template (Python's True/False is not valid JSON) and a
+  # read of `environment`, a play keyword that is always defined, so default()
+  # never fires and the value renders as []. See docs/TESTING.md.
+  #
+  # Deterministic and offline: it parses and probes, never renders, so it cannot
+  # execute a lookup. Known-broken expressions are tracked in
+  # .jinja-check-ignore; new ones fail the build.
+  # ---------------------------------------------------------------------------
+  jinja:
+    name: Jinja expressions parse (required)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install ansible-core + PyYAML (pinned)
+        run: pip install --quiet ansible-core==2.19.11 pyyaml
+
+      - name: Every Jinja expression parses and its filters resolve
+        run: python3 scripts/check_jinja_filters.py .
+
+  # ---------------------------------------------------------------------------
+  # ENFORCED GATE 3: ansible-lint (deterministic, --offline, PINNED toolchain).
   # Uses .ansible-lint (profile + documented skips) and the .ansible-lint-ignore
   # baseline so the current tree passes and any NEW violation fails the build.
   # --offline keeps results identical regardless of Ansible Galaxy availability,
@@ -80,7 +116,7 @@ jobs:
           ansible-lint --offline $dirs
 
   # ---------------------------------------------------------------------------
-  # ENFORCED GATE 3: ansible-playbook --syntax-check for the grab-and-go
+  # ENFORCED GATE 4: ansible-playbook --syntax-check for the grab-and-go
   # playbooks that resolve with ansible-core alone (no Galaxy collections
   # needed at parse time). Deterministic on any runner. Add new entries here
   # as more playbooks become collection-free at parse time.
@@ -125,7 +161,7 @@ jobs:
           exit $fail
 
   # ---------------------------------------------------------------------------
-  # ENFORCED GATE 4: molecule, for the roles that can run on the control node.
+  # ENFORCED GATE 5: molecule, for the roles that can run on the control node.
   # Delegated scenarios -- no container or VM -- so this needs no Docker and is
   # runner-agnostic. Only roles that make no system changes are onboarded (see
   # docs/TESTING.md); the sequence is syntax + converge + idempotence, and

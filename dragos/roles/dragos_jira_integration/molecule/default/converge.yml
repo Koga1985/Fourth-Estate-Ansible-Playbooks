@@ -1,0 +1,66 @@
+---
+# Same shape, and the same reason, as the dragos_vulnerability_mgmt scenario:
+# jira_issues.yml parsed its findings CSV with `| splitlines`, which is not a
+# Jinja filter, so the task always raised "No filter named 'splitlines'" and no
+# gate ever rendered it.
+#
+# Unlike ticket_create.yml, the issue-creating task here has no `when` gate --
+# it loops over _lines[1:]. A header-only fixture therefore leaves that loop
+# empty, so the parsing runs and no Jira call is attempted. The fixture is
+# written as vuln_findings.csv (not vuln_worklist_high.csv) so the _csv_path
+# fallback is exercised too: that expression picks the worklist when it exists
+# and falls back to the findings file when it does not.
+- name: Converge
+  hosts: all
+  gather_facts: false
+  vars:
+    apply_changes: false
+    artifacts_dir: "/tmp/dragos-jira-molecule"
+  tasks:
+    - name: Create the fixture artifacts directory
+      ansible.builtin.file:
+        path: "{{ artifacts_dir }}"
+        state: directory
+        mode: '0750'
+
+    - name: Write a header-only fixture findings CSV
+      ansible.builtin.copy:
+        dest: "{{ artifacts_dir }}/vuln_findings.csv"
+        mode: '0640'
+        content: |
+          cve,asset,cvss,risk
+
+    - name: Run the jira_issues task file
+      ansible.builtin.include_role:
+        name: dragos_jira_integration
+        tasks_from: jira_issues
+
+    - name: Assert the fallback path and the parse both worked
+      ansible.builtin.assert:
+        that:
+          - _csv_path is defined
+          # No worklist file exists, so the fallback branch must be chosen.
+          - _csv_path.endswith('vuln_findings.csv')
+          - _lines is defined
+          - _lines | length == 1
+          - _lines[0] == 'cve,asset,cvss,risk'
+          # With only a header the issue loop must have nothing to iterate, which
+          # is what keeps this scenario off the network.
+          - _lines[1:] | length == 0
+        fail_msg: >-
+          The findings CSV did not parse as expected:
+          path={{ _csv_path | default('<undefined>') }}
+          lines={{ _lines | default('<undefined>') }}
+        success_msg: "Findings CSV resolved to {{ _csv_path }} and parsed into {{ _lines | length }} line."
+
+    - name: Assert the validation harness reported success
+      ansible.builtin.assert:
+        that:
+          - fe_dragos_dragos_jira_integration_jira_issues_preflight_passed | bool
+          - fe_dragos_dragos_jira_integration_jira_issues_postflight_passed | bool
+          - fe_dragos_dragos_jira_integration_jira_issues_status == 'succeeded'
+        fail_msg: >-
+          dragos_jira_integration/jira_issues did not complete cleanly:
+          status={{ fe_dragos_dragos_jira_integration_jira_issues_status | default('unset') }}
+          failed_task={{ fe_dragos_dragos_jira_integration_jira_issues_failed_task | default('') }}
+        success_msg: "jira_issues completed and the validation harness reported success."
