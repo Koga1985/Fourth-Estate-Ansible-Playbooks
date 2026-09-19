@@ -76,6 +76,46 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
   `pg_basebackup` and `ILLUMIO_PCE_ADMIN_PASSWORD` for the PCE installer — are
   recorded there rather than given a `no_log` that would not protect them.
 
+- **Vault unseal keys and the root token no longer land in plaintext on the Vault node.**
+  `vault_cluster` initialised a cluster and wrote the unseal (or recovery)
+  shares and the initial root token to one file on the Vault server, mitigated
+  by a `debug` task telling the operator to remove it by hand. Splitting a key
+  into shares only protects anything if the shares end up in different hands;
+  one file on the cluster gives that up, and `mode: 0600` does not help against
+  a backup, a snapshot, or root on that host.
+
+  The role now refuses to initialise unless Vault will PGP-encrypt every share
+  and the root token to their holders — `vault_init_recovery_pgp_keys` under an
+  auto-unseal seal, `vault_init_pgp_keys` under Shamir, plus
+  `vault_init_root_token_pgp_key`. The refusal is a preflight, deliberately:
+  failing after initialisation would leave a live Vault whose only copy of the
+  shares sat in a `no_log` register nobody can read. Set
+  `vault_allow_plaintext_key_material: true` to accept plaintext on a cluster
+  you are willing to lose.
+
+  Two bugs surfaced while fixing it, both worse than the exposure:
+
+  - **The keys were never written at all.** The save was guarded by
+    `when: vault_init_result is changed`, and `ansible.builtin.uri` reports
+    `changed: false` for a successful POST — measured, not assumed. So the
+    shares and root token were returned, held in a `no_log` register, and
+    discarded when the play ended, leaving a cluster that could never be
+    unsealed — while the next task printed "Unseal keys and root token saved to:
+    /etc/vault.d/vault-init-keys.json", naming a file it had just skipped
+    creating. Confirmed by running the previous version against a stub Vault:
+    the initialize call goes out, no file appears, the message claims otherwise.
+    The guard now tests the response for key material, and a response carrying
+    none fails loudly.
+  - **PGP was never actually requested.** `pgp_keys: "{{ vault_init_pgp_keys |
+    default(omit) }}"` with a default of `[]` sends `pgp_keys: []`, because
+    `default(omit)` only fires when a variable is *undefined*, not when it is
+    empty. An operator who set nothing got plaintext; the `omit` was decorative.
+
+- **The same `is changed` guard is fixed in two other roles.** A scan for the
+  pattern found `elasticsearch_security` never writing down the API keys it had
+  just created in Elasticsearch, and `vast_config` never waiting for an Active
+  Directory join to finish before configuring SMB against it.
+
 - **Two `no_log: true` keys that never did anything are gone.**
   One sat in `policy_as_code/inventory/example.yml`, where `no_log` is not an
   inventory keyword; the other was an element of a `specs` list item in a vmware

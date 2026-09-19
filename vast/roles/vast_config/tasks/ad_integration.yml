@@ -169,7 +169,13 @@
       retries: 30
       delay: 10
       delegate_to: localhost
-      when: vast_ad_join_result is changed
+      # Not 'vast_ad_join_result is changed': ansible.builtin.uri reports
+      # changed=False for a successful POST, so this wait never ran and the SMB
+      # configuration below proceeded against a cluster that had not finished
+      # joining. Gate on the join task having actually run and been accepted.
+      when:
+        - not (vast_ad_join_result.skipped | default(false))
+        - (vast_ad_join_result.status | default(0) | int) in [200, 202]
       tags:
         - ad
         - domain_join

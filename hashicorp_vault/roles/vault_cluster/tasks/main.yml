@@ -124,6 +124,72 @@
         - not vault_init_status.json.initialized
         - vault_init_required | bool
       block:
+        # Which share list applies depends on the seal. A Shamir-sealed Vault
+        # returns unseal shares (pgp_keys); an auto-unsealed one returns
+        # recovery shares (recovery_pgp_keys). Either is enough to take the
+        # cluster, so either must be encrypted -- and so must the root token,
+        # which on its own is full access.
+        - name: Determine whether the initialization response will be encrypted
+          ansible.builtin.set_fact:
+            vault_init_share_pgp_keys: >-
+              {{ (vault_init_recovery_pgp_keys if vault_auto_unseal | bool
+                  else vault_init_pgp_keys) | default([]) }}
+            vault_init_expected_shares: >-
+              {{ (vault_init_recovery_shares if vault_auto_unseal | bool
+                  else vault_init_secret_shares) | int }}
+          tags: [vault, cluster, init]
+
+        - name: Determine whether the initialization response will be encrypted (continued)
+          ansible.builtin.set_fact:
+            vault_init_material_encrypted: >-
+              {{ (vault_init_share_pgp_keys | length) > 0
+                 and (vault_init_root_token_pgp_key | default('') | length) > 0 }}
+          tags: [vault, cluster, init]
+
+        # This gate runs BEFORE the init call, deliberately. Failing after it
+        # would leave a live, initialized Vault whose only copy of the keys is
+        # in a no_log task result nobody can read -- an unrecoverable cluster.
+        - name: Refuse to initialize unless the keys come back encrypted
+          ansible.builtin.assert:
+            that:
+              - vault_init_material_encrypted | bool or vault_allow_plaintext_key_material | bool
+            fail_msg: >-
+              Refusing to initialize {{ vault_cluster_name }}: Vault would return the
+              {{ 'recovery' if vault_auto_unseal | bool else 'unseal' }} key shares and the
+              initial root token in plaintext, and this role would write all of them to
+              one file on this Vault node. That is the whole cluster in one place, and
+              file permissions do not protect it from a backup, a snapshot, or root on
+              this host. Set
+              {{ 'vault_init_recovery_pgp_keys' if vault_auto_unseal | bool else 'vault_init_pgp_keys' }}
+              to one PGP public key per share and vault_init_root_token_pgp_key to one
+              more, so each share is readable only by its holder -- see
+              defaults/main.yml. To accept plaintext anyway, on a cluster you are
+              willing to lose, set vault_allow_plaintext_key_material=true.
+            success_msg: >-
+              {{ vault_cluster_name }}: initialization key material will be
+              {{ 'PGP-encrypted per holder' if vault_init_material_encrypted | bool
+                 else 'PLAINTEXT (vault_allow_plaintext_key_material was set)' }}.
+            quiet: true
+          tags: [vault, cluster, init]
+
+        # Vault rejects a share count that does not match the number of keys, and
+        # does so after generating the master key. Catching it here keeps that
+        # failure out of the window where a partially-initialized cluster is
+        # possible.
+        - name: Verify one PGP key was supplied per share
+          ansible.builtin.assert:
+            that:
+              - (vault_init_share_pgp_keys | length) == (vault_init_expected_shares | int)
+            fail_msg: >-
+              {{ vault_cluster_name }}: Vault needs exactly one PGP public key per share.
+              {{ 'vault_init_recovery_pgp_keys' if vault_auto_unseal | bool else 'vault_init_pgp_keys' }}
+              has {{ vault_init_share_pgp_keys | length }} key(s) but
+              {{ 'vault_init_recovery_shares' if vault_auto_unseal | bool else 'vault_init_secret_shares' }}
+              is {{ vault_init_expected_shares }}.
+            quiet: true
+          when: vault_init_material_encrypted | bool
+          tags: [vault, cluster, init]
+
         - name: Initialize Vault
           ansible.builtin.uri:
             url: "{{ vault_api_addr }}/v1/sys/init"
@@ -132,33 +198,101 @@
             body:
               secret_shares: "{{ vault_init_secret_shares }}"
               secret_threshold: "{{ vault_init_secret_threshold }}"
-              pgp_keys: "{{ vault_init_pgp_keys | default(omit) }}"
-              root_token_pgp_key: "{{ vault_init_root_token_pgp_key | default(omit) }}"
-              stored_shares: "{{ vault_init_stored_shares if vault_auto_unseal else omit }}"
-              recovery_shares: "{{ vault_init_recovery_shares if vault_auto_unseal else omit }}"
-              recovery_threshold: "{{ vault_init_recovery_threshold if vault_auto_unseal else omit }}"
-              recovery_pgp_keys: "{{ vault_init_recovery_pgp_keys if vault_auto_unseal else [] }}"
+              # An empty list or string is a defined value, so default(omit)
+              # never fired here: Vault was being sent pgp_keys: [] and
+              # root_token_pgp_key: "" and answering in plaintext even when the
+              # caller believed encryption was configured. Test emptiness.
+              pgp_keys: >-
+                {{ vault_init_pgp_keys if (not vault_auto_unseal | bool)
+                   and (vault_init_pgp_keys | default([]) | length) > 0 else omit }}
+              root_token_pgp_key: >-
+                {{ vault_init_root_token_pgp_key
+                   if (vault_init_root_token_pgp_key | default('') | length) > 0 else omit }}
+              stored_shares: "{{ vault_init_stored_shares if vault_auto_unseal | bool else omit }}"
+              recovery_shares: "{{ vault_init_recovery_shares if vault_auto_unseal | bool else omit }}"
+              recovery_threshold: "{{ vault_init_recovery_threshold if vault_auto_unseal | bool else omit }}"
+              recovery_pgp_keys: >-
+                {{ vault_init_recovery_pgp_keys if vault_auto_unseal | bool
+                   and (vault_init_recovery_pgp_keys | default([]) | length) > 0 else omit }}
             validate_certs: "{{ vault_validate_certs | default(true) }}"
           register: vault_init_result
           no_log: true
 
-        - name: Save Vault initialization keys (SECURE THIS!)
+        # ansible.builtin.uri does not infer 'changed' from a successful POST --
+        # it reports changed=False for a 200. The guard on the save task used to
+        # be 'when: vault_init_result is changed', so it never fired: the shares
+        # and root token were returned, held only in a no_log register, and
+        # discarded when the play ended. That initialises a Vault nobody can
+        # ever unseal. Gate on the response instead.
+        - name: Record whether initialization returned key material
+          ansible.builtin.set_fact:
+            vault_init_succeeded: >-
+              {{ (vault_init_result.status | default(0) | int) == 200
+                 and (vault_init_result.json is defined) }}
+          no_log: true
+
+        - name: Fail loudly if initialization returned nothing to save
+          ansible.builtin.assert:
+            that:
+              - vault_init_succeeded | bool
+            fail_msg: >-
+              {{ vault_cluster_name }}: the initialize call returned
+              HTTP {{ vault_init_result.status | default('no status') }} with no JSON body,
+              so there is no key material to save. This Vault may now be initialized with
+              shares that were never recorded. Check its seal status before retrying --
+              re-initializing an already-initialized Vault is not possible, and a cluster
+              whose shares were lost cannot be unsealed.
+            quiet: true
+
+        # Safe to leave on the node when every share and the root token are
+        # PGP-encrypted: the file is ciphertext that no single holder can open.
+        - name: Save the PGP-encrypted initialization response
           ansible.builtin.copy:
             content: "{{ vault_init_result.json | to_nice_json }}"
-            dest: "{{ vault_config_path }}/vault-init-keys.json"
+            dest: "{{ vault_init_keys_dest }}"
             owner: "{{ vault_user }}"
             group: "{{ vault_group }}"
             mode: '0600'
-          when: vault_init_result is changed
+          when:
+            - vault_init_succeeded | bool
+            - vault_init_material_encrypted | bool
           no_log: true
 
-        - name: Display initialization warning
+        - name: Save the plaintext initialization response (explicitly permitted)
+          ansible.builtin.copy:
+            content: "{{ vault_init_result.json | to_nice_json }}"
+            dest: "{{ vault_init_keys_dest }}"
+            owner: "{{ vault_user }}"
+            group: "{{ vault_group }}"
+            mode: '0600'
+          when:
+            - vault_init_succeeded | bool
+            - not vault_init_material_encrypted | bool
+            - vault_allow_plaintext_key_material | bool
+          no_log: true
+
+        # The two messages are YAML folded scalars in vars, not Jinja string
+        # literals spanning lines: a multi-line literal inside {{ }} keeps its
+        # newlines and prints them as \n.
+        - name: Report what was written and what it means
+          vars:
+            vault_init_msg_encrypted: >-
+              {{ vault_cluster_name }} initialized. Every share and the root token are
+              PGP-encrypted to their holders, so {{ vault_init_keys_dest }} holds
+              ciphertext only. Distribute each block to its holder and confirm each one
+              can decrypt it before you rely on this cluster.
+            vault_init_msg_plaintext: >-
+              {{ vault_cluster_name }} initialized WITH PLAINTEXT KEY MATERIAL, because
+              vault_allow_plaintext_key_material was set. {{ vault_init_keys_dest }} now
+              holds every unseal or recovery share and the root token together: it is the
+              whole cluster in one file, on the cluster. Move it off this host, split the
+              shares between their holders, and delete it. Until then this node is a
+              single point of total compromise.
           ansible.builtin.debug:
-            msg:
-              - "CRITICAL: Vault has been initialized"
-              - "Unseal keys and root token saved to: {{ vault_config_path }}/vault-init-keys.json"
-              - "IMMEDIATELY secure this file and remove from server!"
-              - "Store in a secure location (HSM, encrypted storage, etc.)"
+            msg: >-
+              {{ vault_init_msg_encrypted if vault_init_material_encrypted | bool
+                 else vault_init_msg_plaintext }}
+          when: vault_init_succeeded | bool
 
       tags: [vault, cluster, init]
 
