@@ -188,52 +188,37 @@
     ##############################################################################
     # 3) Migrate VM NICs to target dvPortGroups (no power-off)
     ##############################################################################
-    - name: Build per-VM networks payload
-      ansible.builtin.set_fact:
-        _vm_network_map: >-
-          {{
-            vm_nic_migrations
-            | groupby('vm')
-            | items2dict(
-                key_name='key',
-                value_name='value',
-                value_func=lambda l: l
-              )
-          }}
-
+    # community.vmware.vmware_guest_network operates on ONE NIC per task: 'name'
+    # is the VM, 'mac_address' or 'label' picks the NIC, 'network_name' is the
+    # destination, and 'switch' is required when that destination is a
+    # dvPortGroup. There is no 'networks' parameter -- it was removed in
+    # community.vmware 2.0 and this file requires >= 4.0.0.
+    #
+    # What was here before could not run and could not even render: it grouped
+    # vm_nic_migrations by VM to build a 'networks' list the module no longer
+    # accepts, using items2dict(value_func=lambda l: l) -- items2dict has no
+    # value_func and Jinja has no lambda -- while both the module argument and
+    # the vars block referenced an 'item2' that no loop ever defined, a '#'
+    # comment sat inside a {{ }} expression, and the task carried vars_prompt,
+    # which is a play keyword rather than a task one. Per-NIC calls need no
+    # grouping, so the whole payload-building step is gone.
     - name: Migrate VM NICs to new dvPortGroups
       community.vmware.vmware_guest_network:
         hostname: "{{ vcenter_hostname }}"
         username: "{{ vcenter_username }}"
         password: "{{ vcenter_password }}"
         validate_certs: "{{ vcenter_validate_certs }}"
-        name: "{{ item.key }}"             # VM name
+        name: "{{ item.vm }}"
+        switch: "{{ dvs_name }}"
+        network_name: "{{ item.dest_portgroup }}"
+        mac_address: "{{ item.id_value if item.id_method == 'mac' else omit }}"
+        label: "{{ item.id_value if item.id_method != 'mac' else omit }}"
         state: present
-        networks: >-
-          {{
-            item.value | map('extract', {
-              'mac': 'id_value' if (item2.id_method == 'mac') else None
-            })
-          }}
       no_log: true
-      vars:
-        # Build the "networks" structure expected by vmware_guest_network
-        networks: >-
-          {{
-            item.value
-            | map('combine', {
-                'name': item2.dest_portgroup,
-                # selector: choose mac or label to target the correct NIC
-                (item2.id_method == 'mac') | ternary('mac', 'label'):
-                  item2.id_value
-              })
-            | list
-          }}
-      with_items: "{{ _vm_network_map | dict2items }}"
+      loop: "{{ vm_nic_migrations }}"
       loop_control:
-        label: "{{ item.key }}"
+        label: "{{ item.vm }}: {{ item.id_value }} -> {{ item.dest_portgroup }}"
       delegate_to: localhost
-      vars_prompt: []
 
     # ----------------------------- postflight -------------------
 

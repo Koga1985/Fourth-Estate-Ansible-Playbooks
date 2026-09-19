@@ -76,6 +76,43 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
   `pg_basebackup` and `ILLUMIO_PCE_ADMIN_PASSWORD` for the PCE installer — are
   recorded there rather than given a `no_log` that would not protect them.
 
+- **The three expressions the Jinja gate had baselined are fixed; the baseline is
+  now empty.** Each was a real bug — an expression that fails the moment its task
+  runs — held back because intent could not be read off the expression alone. In
+  every case the intent turned out to be recoverable from something else, and in
+  two of the three the rendering failure was hiding a second, worse defect.
+
+  - **`vmware/roles/host_profiles_enforce`** carried a PowerCLI script whose every
+    literal PowerShell brace was written `{{ }}` and every `$` escaped as `\$` —
+    Python `str.format` escaping, which means nothing to Jinja, so the task could
+    not render. `vmware/tasks/host_profiles_enforce.yml` holds the same script,
+    written correctly, and already passed the gate; the role's copy is now that
+    copy. The role version had also acquired `#` comments, which are worse than
+    cosmetic here: `>-` folds each paragraph onto one line, so a `#` comments out
+    every statement after it. The ported script renders to brace-balanced
+    PowerShell with no comments, verified by rendering it.
+
+  - **`vmware/tasks/find_all_vsphere_snapshots.yml`** read `snapshots` off each
+    `vmware_guest_snapshot_info` result. The module returns `guest_snapshots`, a
+    dict holding `snapshots` and `current_snapshot` — checked against
+    community.vmware 5.10.0. So every VM came back `null` and the "VMs that
+    actually have snapshots" filter emptied the report: a snapshot audit that
+    always reported none. Demonstrated both ways with the module's documented
+    return shape. The `map('combine', ...)` that could not render was JMESPath
+    syntax inside Jinja and was redundant anyway.
+
+  - **`vmware/tasks/vds_portgroups_enforce_and_migrate.yml`** built a `networks`
+    list for `vmware_guest_network` — a parameter removed in community.vmware
+    2.0, where this directory requires >= 4.0.0 — by grouping migrations per VM
+    with `items2dict(value_func=lambda l: l)`, which has no `value_func` and no
+    lambda. Both the module argument and the vars block referenced an `item2` no
+    loop defined, a `#` comment sat inside a `{{ }}`, and the task carried
+    `vars_prompt`, a play keyword. It now calls the module once per NIC, which is
+    its actual interface, with `mac_address` or `label` selecting the NIC per
+    `id_method`. Every parameter was validated against the real argument spec,
+    including `switch`, which the module requires for a dvPortGroup destination
+    and the original never set.
+
 - **Vault unseal keys and the root token no longer land in plaintext on the Vault node.**
   `vault_cluster` initialised a cluster and wrote the unseal (or recovery)
   shares and the initial root token to one file on the Vault server, mitigated

@@ -127,20 +127,19 @@
 
     - name: Normalize snapshot data into a flat list
       ansible.builtin.set_fact:
+        # community.vmware.vmware_guest_snapshot_info registers its payload under
+        # 'guest_snapshots', a dict holding 'snapshots' and 'current_snapshot'.
+        # This read 'snapshots' off the result directly, which is always
+        # undefined -- so every VM came back with a null and the "VMs that
+        # actually have snapshots" filter below emptied the report on every run.
+        #
+        # The map('combine', ...) that followed was JMESPath syntax ('.[]')
+        # inside a Jinja expression and could not render at all. json_query
+        # already produces the {vm, snapshots} shape the rest of this file
+        # consumes, so there is nothing left for it to do.
         snapshot_report: >-
-          {{
-            snapshot_info_results.results
-            | json_query('[].{vm:item, snapshots: snapshots}')
-            | map('combine', {
-                'snapshots': (
-                  (.[].snapshots | default([]))
-                )
-              }) | list
-          }}
-      vars:
-        # helper to flatten nested snapshot trees, if present
-        # you can keep it simple if your environment doesn’t use nested trees
-        # For complex trees, consider a custom filter; here we keep native structures.
+          {{ snapshot_info_results.results
+             | community.general.json_query('[].{vm: item, snapshots: guest_snapshots.snapshots}') }}
       tags: [snapshots]
 
     - name: Filter to VMs that actually have snapshots
