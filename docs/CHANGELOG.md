@@ -76,6 +76,33 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
   `pg_basebackup` and `ILLUMIO_PCE_ADMIN_PASSWORD` for the PCE installer — are
   recorded there rather than given a `no_log` that would not protect them.
 
+- **Six handlers that could never fire now do.** `notify` only triggers on a
+  changed result, and `ansible.builtin.uri` reports `changed: false` for a
+  successful write, so every handler notified by a `uri` task was dead:
+
+  | Role | What silently never happened |
+  |------|------------------------------|
+  | `sciencelogic/sl1_platform_config` | performance tuning applied, `Restart SL1 services` never fired, so it never took effect |
+  | `vast/vast_config` (AD, LDAP) | integration configured, connectivity never verified |
+  | `servicenow/servicenow_cmdb_config` | `cmdb configuration changed` never fired |
+  | `cisco/cybervision_center_deploy` ×2 | deployment-complete handlers never fired |
+
+  Each task now registers its result and sets `changed_when` on the status codes
+  it already declares as success. Demonstrated end to end against a stub API on
+  the real task file: before, the task reports `ok` and the handler does not run;
+  after, it reports `changed` and the handler runs.
+
+  The trade-off is deliberate: these tasks now report `changed` on every run that
+  reaches them, because the APIs are written to blind rather than read-compared
+  first. They sit behind `apply_changes`, `not dry_run`, or a "is this configured
+  at all" guard, so they do not run unprompted — and a task that overreports a
+  change is a smaller problem than a handler that never runs.
+
+  A seventh candidate was **not** a bug. `hashicorp_vault/vault_install`
+  notifies `restart vault` from a `get_url` task, and `get_url` is properly
+  idempotent — measured at `changed: true` on first download and `false` when the
+  file is already present and identical. It was left alone.
+
 - **The three expressions the Jinja gate had baselined are fixed; the baseline is
   now empty.** Each was a real bug — an expression that fails the moment its task
   runs — held back because intent could not be read off the expression alone. In
