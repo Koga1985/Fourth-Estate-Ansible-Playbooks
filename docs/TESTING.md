@@ -26,14 +26,65 @@ Every one of these blocks a merge.
 | `yamllint -c .yamllint` | No duplicate keys, no `yes`/`no` booleans, sequences indented | no |
 | `scripts/check_collections.py` | Every collection called is installable from a `requirements.yml` | no |
 | `scripts/check_jinja_filters.py` | Every Jinja expression parses, its filters/tests exist, and it renders the value it claims | no |
+| `gitleaks` | No credential in the working tree or in any ref's history | yes (downloads the pinned binary) |
+| `compose-requirements.py` + `ansible-builder create` | Every platform's execution environment composes; the committed union has not drifted | no |
 | `ansible-lint --offline` | No new lint violation against the ratcheted baseline | no |
 | `ansible-playbook --syntax-check` | The core-only playbooks parse | no |
 | `molecule test` | Onboarded roles parse, run, and are idempotent | no |
 | `ansible-lint` with collections | Modules resolve in their real collections | yes (blocking once baselined) |
 
-A seventh job, `ansible-lint with collections`, installs the declared collections
+A final job, `ansible-lint with collections`, installs the declared collections
 and becomes blocking the moment its baseline is committed — see
 [Promoting the Galaxy-enabled lint gate](#promoting-the-galaxy-enabled-lint-gate).
+
+### Why the secret gate needed its own rules
+
+`gitleaks` with default rules finds nothing in this repository, and that is a
+correct result — there is no AWS key or GitHub token here. It is also not the
+shape a secret would take in an Ansible repository. What would actually get
+committed is an ordinary password typed into a `vars` block:
+
+```yaml
+ansible_password: Summer2024!
+```
+
+No entropy signature, no provider prefix, nothing a default rule looks for.
+`.gitleaks.toml` keeps every default rule and adds two of its own: a
+credential-shaped key assigned a literal value, and an `ansible-vault` password
+file committed by accident.
+
+The rules only work because of what they *don't* fire on. Allowlists cover the
+indirection this repository already uses — `{{ vault_x_password }}`, `lookup()`,
+`$ANSIBLE_VAULT`, and the `CHANGE_ME` placeholder that all 36
+`vault.yml.example` files share — plus values that name something rather than
+being it (`password: secret_access_key`, `update_password: on_create`). Getting
+that balance right took measurement, not judgement: the first draft produced 152
+findings, every one a false positive, and a later draft silently missed any
+password containing an `@` because the email allowlist was too loose.
+
+Both scans matter. The working tree is the obvious one; every ref's history is
+the one that finds a credential committed in March and deleted in April, which
+is still in the objects and still valid. That is why the CI checkout uses
+`fetch-depth: 0`.
+
+Findings that already exist are recorded in `.gitleaks-baseline.json`, the same
+ratchet as `.ansible-lint-ignore` and `.jinja-check-ignore`: what is there today
+does not fail the build, anything new does. The eight baselined entries are
+documentation placeholders in `cisco/IMPLEMENTATION_COMPLETE.md` and
+`vast/vars/vault.yml.example` as they stood in older commits — the working-tree
+copies have since been normalised to `CHANGE_ME`. Regenerate the baseline only
+to record a finding you have confirmed is not a secret:
+
+```bash
+gitleaks git . --log-opts="--all" --config .gitleaks.toml \
+  --report-format json --report-path .gitleaks-baseline.json --exit-code 0
+```
+
+A detection gate has a failure mode the others do not: it can go blind and still
+pass, quietly, forever. So the job ends by planting a credential of each shape
+the custom rules exist for, asserting all five are caught, and deleting them. A
+change to `.gitleaks.toml` that silences a rule fails there, with a message
+saying so, rather than years later.
 
 ### Why the Jinja gate exists separately
 

@@ -76,6 +76,110 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
   `pg_basebackup` and `ILLUMIO_PCE_ADMIN_PASSWORD` for the PCE installer — are
   recorded there rather than given a `no_log` that would not protect them.
 
+- **Six handlers that could never fire now do.** `notify` only triggers on a
+  changed result, and `ansible.builtin.uri` reports `changed: false` for a
+  successful write, so every handler notified by a `uri` task was dead:
+
+  | Role | What silently never happened |
+  |------|------------------------------|
+  | `sciencelogic/sl1_platform_config` | performance tuning applied, `Restart SL1 services` never fired, so it never took effect |
+  | `vast/vast_config` (AD, LDAP) | integration configured, connectivity never verified |
+  | `servicenow/servicenow_cmdb_config` | `cmdb configuration changed` never fired |
+  | `cisco/cybervision_center_deploy` ×2 | deployment-complete handlers never fired |
+
+  Each task now registers its result and sets `changed_when` on the status codes
+  it already declares as success. Demonstrated end to end against a stub API on
+  the real task file: before, the task reports `ok` and the handler does not run;
+  after, it reports `changed` and the handler runs.
+
+  The trade-off is deliberate: these tasks now report `changed` on every run that
+  reaches them, because the APIs are written to blind rather than read-compared
+  first. They sit behind `apply_changes`, `not dry_run`, or a "is this configured
+  at all" guard, so they do not run unprompted — and a task that overreports a
+  change is a smaller problem than a handler that never runs.
+
+  A seventh candidate was **not** a bug. `hashicorp_vault/vault_install`
+  notifies `restart vault` from a `get_url` task, and `get_url` is properly
+  idempotent — measured at `changed: true` on first download and `false` when the
+  file is already present and identical. It was left alone.
+
+- **The three expressions the Jinja gate had baselined are fixed; the baseline is
+  now empty.** Each was a real bug — an expression that fails the moment its task
+  runs — held back because intent could not be read off the expression alone. In
+  every case the intent turned out to be recoverable from something else, and in
+  two of the three the rendering failure was hiding a second, worse defect.
+
+  - **`vmware/roles/host_profiles_enforce`** carried a PowerCLI script whose every
+    literal PowerShell brace was written `{{ }}` and every `$` escaped as `\$` —
+    Python `str.format` escaping, which means nothing to Jinja, so the task could
+    not render. `vmware/tasks/host_profiles_enforce.yml` holds the same script,
+    written correctly, and already passed the gate; the role's copy is now that
+    copy. The role version had also acquired `#` comments, which are worse than
+    cosmetic here: `>-` folds each paragraph onto one line, so a `#` comments out
+    every statement after it. The ported script renders to brace-balanced
+    PowerShell with no comments, verified by rendering it.
+
+  - **`vmware/tasks/find_all_vsphere_snapshots.yml`** read `snapshots` off each
+    `vmware_guest_snapshot_info` result. The module returns `guest_snapshots`, a
+    dict holding `snapshots` and `current_snapshot` — checked against
+    community.vmware 5.10.0. So every VM came back `null` and the "VMs that
+    actually have snapshots" filter emptied the report: a snapshot audit that
+    always reported none. Demonstrated both ways with the module's documented
+    return shape. The `map('combine', ...)` that could not render was JMESPath
+    syntax inside Jinja and was redundant anyway.
+
+  - **`vmware/tasks/vds_portgroups_enforce_and_migrate.yml`** built a `networks`
+    list for `vmware_guest_network` — a parameter removed in community.vmware
+    2.0, where this directory requires >= 4.0.0 — by grouping migrations per VM
+    with `items2dict(value_func=lambda l: l)`, which has no `value_func` and no
+    lambda. Both the module argument and the vars block referenced an `item2` no
+    loop defined, a `#` comment sat inside a `{{ }}`, and the task carried
+    `vars_prompt`, a play keyword. It now calls the module once per NIC, which is
+    its actual interface, with `mac_address` or `label` selecting the NIC per
+    `id_method`. Every parameter was validated against the real argument spec,
+    including `switch`, which the module requires for a dvPortGroup destination
+    and the original never set.
+
+- **Vault unseal keys and the root token no longer land in plaintext on the Vault node.**
+  `vault_cluster` initialised a cluster and wrote the unseal (or recovery)
+  shares and the initial root token to one file on the Vault server, mitigated
+  by a `debug` task telling the operator to remove it by hand. Splitting a key
+  into shares only protects anything if the shares end up in different hands;
+  one file on the cluster gives that up, and `mode: 0600` does not help against
+  a backup, a snapshot, or root on that host.
+
+  The role now refuses to initialise unless Vault will PGP-encrypt every share
+  and the root token to their holders — `vault_init_recovery_pgp_keys` under an
+  auto-unseal seal, `vault_init_pgp_keys` under Shamir, plus
+  `vault_init_root_token_pgp_key`. The refusal is a preflight, deliberately:
+  failing after initialisation would leave a live Vault whose only copy of the
+  shares sat in a `no_log` register nobody can read. Set
+  `vault_allow_plaintext_key_material: true` to accept plaintext on a cluster
+  you are willing to lose.
+
+  Two bugs surfaced while fixing it, both worse than the exposure:
+
+  - **The keys were never written at all.** The save was guarded by
+    `when: vault_init_result is changed`, and `ansible.builtin.uri` reports
+    `changed: false` for a successful POST — measured, not assumed. So the
+    shares and root token were returned, held in a `no_log` register, and
+    discarded when the play ended, leaving a cluster that could never be
+    unsealed — while the next task printed "Unseal keys and root token saved to:
+    /etc/vault.d/vault-init-keys.json", naming a file it had just skipped
+    creating. Confirmed by running the previous version against a stub Vault:
+    the initialize call goes out, no file appears, the message claims otherwise.
+    The guard now tests the response for key material, and a response carrying
+    none fails loudly.
+  - **PGP was never actually requested.** `pgp_keys: "{{ vault_init_pgp_keys |
+    default(omit) }}"` with a default of `[]` sends `pgp_keys: []`, because
+    `default(omit)` only fires when a variable is *undefined*, not when it is
+    empty. An operator who set nothing got plaintext; the `omit` was decorative.
+
+- **The same `is changed` guard is fixed in two other roles.** A scan for the
+  pattern found `elasticsearch_security` never writing down the API keys it had
+  just created in Elasticsearch, and `vast_config` never waiting for an Active
+  Directory join to finish before configuring SMB against it.
+
 - **Two `no_log: true` keys that never did anything are gone.**
   One sat in `policy_as_code/inventory/example.yml`, where `no_log` is not an
   inventory keyword; the other was an element of a `specs` list item in a vmware

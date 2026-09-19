@@ -129,8 +129,8 @@ all:
 ansible-vault create inventory/group_vars/all/vault.yml
 
 # Add passwords
-vault_cisco_password: YourSecurePassword
-vault_ucs_password: YourSecurePassword
+vault_cisco_password: CHANGE_ME
+vault_ucs_password: CHANGE_ME
 ```
 
 ---

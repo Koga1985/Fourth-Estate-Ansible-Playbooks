@@ -1,0 +1,140 @@
+# gitleaks configuration for Fourth Estate Ansible Playbooks.
+#
+# Why this file exists rather than bare defaults: gitleaks' built-in rules look
+# for high-entropy provider tokens -- AWS keys, GitHub PATs, Stripe keys. Run
+# against this repository they find nothing, and that is a correct result. But
+# it is not the shape a secret would take here. The realistic leak in an Ansible
+# repository is an ordinary password typed into a vars block or an inventory
+# file, with no entropy signature at all:
+#
+#     ansible_password: Summer2024!
+#
+# The extend below keeps every default rule, and adds the rules that cover that.
+#
+# Run locally exactly as CI does:
+#   gitleaks git . --log-opts="--all"   # every ref's history
+#   gitleaks dir .                      # the working tree
+#
+# A finding that is genuinely not a secret belongs in an allowlist here, with a
+# comment saying why -- not in a --no-verify commit.
+
+title = "Fourth Estate Ansible Playbooks"
+
+[extend]
+useDefault = true
+
+# ---------------------------------------------------------------------------
+# Global allowlist: the placeholder and indirection conventions this repository
+# already follows. Each entry exists because the repo uses it deliberately, not
+# to quiet a finding that was real.
+# ---------------------------------------------------------------------------
+[[allowlists]]
+description = "Indirection and documented placeholders, not secrets"
+regexTarget = "line"
+regexes = [
+  # A Jinja reference: the value lives in Vault or Controller, not here.
+  '''\{\{[^}]*\}\}''',
+  # A lookup plugin: env vars, files, or a secrets manager at run time.
+  '''lookup\s*\(''',
+  # An ansible-vault encrypted value or file.
+  '''\$ANSIBLE_VAULT''',
+  '''!vault\s*\|''',
+  # The placeholder every vault.yml.example in this repo uses (83 occurrences).
+  '''CHANGE[_-]?ME''',
+  '''REPLACE[_-]?ME''',
+  '''YOUR[_-]''',
+  '''<[A-Za-z0-9_ -]+>''',
+  # A key set to a flag, a count, a duration or an enum -- password_required:
+  # true, token_ttl: 3600, password_hash_algorithm: sha512. 286 lines in this
+  # repo match a secret-shaped key name this way and none is a secret.
+  '''(?i):\s*["']?(true|false|yes|no|none|null|omit|\[\]|\{\})["']?\s*(#.*)?$''',
+  '''(?i):\s*["']?\d+["']?\s*(#.*)?$''',
+  # Documentation hostnames reserved for examples (RFC 2606).
+  '''example\.(com|org|net|mil)''',
+]
+
+[[allowlists]]
+description = "Paths that are documentation or fixtures by definition"
+paths = [
+  '''\.gitleaks\.toml$''',
+  # Test fixtures. Their values are deliberately fake ("test-token-12345") and
+  # a reader expects to see them inline; a real credential does not belong here
+  # either, but the cost of a finding is higher than the risk.
+  '''(^|/)tests?/''',
+  '''(^|/)test_[^/]*\.ya?ml$''',
+  # The gate's own test. It plants a credential of each shape the rules cover
+  # and asserts each is found -- so this file is SUPPOSED to contain them, and
+  # the gate correctly flagged them when they lived inline in ci.yml. This is
+  # the one allowlist entry that hides real-looking credentials, which is why it
+  # names a single file rather than a directory.
+  '''(^|/)scripts/check_secret_gate\.sh$''',
+  '''(^|/)docs/.*\.md$''',
+  '''(^|/)README\.md$''',
+  '''(^|/)CHANGELOG\.md$''',
+]
+
+# ---------------------------------------------------------------------------
+# Rule 1: a credential-shaped key assigned a literal value.
+#
+# This is the rule that matters here. It fires on a quoted or bare literal and
+# is silenced by the allowlist above when the value is a Jinja reference, a
+# lookup, a vault blob, a documented placeholder, or a flag/number.
+# ---------------------------------------------------------------------------
+[[rules]]
+id = "ansible-hardcoded-secret"
+description = "A password, token, key or secret assigned a literal value in YAML/INI"
+# Intra-line whitespace is [ \t], never \s: under (?m), \s matches newlines, so
+# a trailing \s*(#.*)?$ greedily swallowed blank lines to reach the next comment
+# line. That made Match span lines and defeated every $-anchored allowlist below.
+regex = '''(?im)^[ \t]*[a-z0-9_.-]*(password|passwd|secret|token|api[_-]?key|apikey|private[_-]?key|passphrase|community)[ \t]*[:=][ \t]*["']?([^"'\s{#][^"'\n#]{3,})["']?[ \t]*(#.*)?$'''
+secretGroup = 2
+tags = ["ansible", "hardcoded-credential"]
+keywords = ["password", "passwd", "secret", "token", "api_key", "apikey", "private_key", "passphrase", "credential", "community"]
+
+[[rules.allowlists]]
+description = "Values that name something rather than being something"
+regexTarget = "match"
+regexes = [
+  # An absolute or explicitly-relative path, not a secret: private_key_path,
+  # token_file, *_key: /etc/ssl/... Anchored at the start of the value, because
+  # a bare '/' anywhere would also allowlist a password like 'Ab/cdef'.
+  '''[:=]\s*["']?(/|~/|\./|\.\./)[A-Za-z0-9_./-]*["']?\s*$''',
+  # A reference to another variable by name (vault_x_password: vault_x_pw).
+  '''[:=]\s*["']?(vault|lookup|item|omit)[_.]''',
+  # An algorithm, a mode or a state, not a credential. Every value here was
+  # produced by running this rule over the repository and reading the match:
+  # password_hash: sha512, update_password: on_create, admin_ssh_password:
+  # enable (a FortiGate feature toggle), reuse_password: disable.
+  '''(?i)[:=]\s*["']?(sha\d*|scram-[a-z0-9-]+|md5|bcrypt|pbkdf2[a-z0-9_-]*|argon2[a-z0-9]*|aes[0-9-]*|on_create|always|never|enable|disable|enabled|disabled|present|absent|auto|kube-system)["']?\s*$''',
+  # A value that names something rather than being it: an identifier in
+  # lower_snake or kebab-case with no digits and no punctuation beyond _ and -.
+  # In this repo these are field names inside a credential-type definition
+  # (password: secret_access_key), Kubernetes object names
+  # (velero_aws_credentials_secret: cloud-credentials) and Jinja variable names
+  # passed as arguments (domainadminpassword=ad_domain_password). This is the
+  # one allowlist that trades a little recall for usability: a password that is
+  # itself pure lowercase letters with an underscore would be missed. None of
+  # the canary passwords in docs/TESTING.md match it, and a real credential that
+  # shape is weak enough to fail a STIG password policy anyway.
+  '''[:=]\s*["']?[a-z][a-z_-]{2,40}["']?,?\s*$''',
+  # Explicitly scrubbed.
+  '''(?i)[:=]\s*["']?(redacted|removed|omitted|scrubbed)["']?\s*$''',
+  # A URL or an email address.
+  '''[:=]\s*["']?(https?|ldaps?|smtps?)://''',
+  # An email address. The domain must carry a dot and the value must end there:
+  # without that, this allowlisted every password containing an '@', which is
+  # most of them. 'P@ssw0rd-Winter' is a secret; 'security@example.com' is not.
+  '''[:=]\s*["']?[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+["']?\s*$''',
+]
+
+# ---------------------------------------------------------------------------
+# Rule 2: an ansible-vault password file committed by accident.
+#
+# The file that decrypts every vault in the repository. Its content is a single
+# line with no structure, so it is matched by name rather than by shape.
+# ---------------------------------------------------------------------------
+[[rules]]
+id = "ansible-vault-password-file"
+description = "A file that looks like an ansible-vault password file"
+path = '''(^|/)(\.?vault[-_]?pass(word)?(\.txt)?|\.vault_pass)$'''
+tags = ["ansible", "vault"]

@@ -34,6 +34,49 @@ vault_init_recovery_shares: 5
 vault_init_recovery_threshold: 3
 vault_init_recovery_pgp_keys: []
 
+# ---------------------------------------------------------------------------
+# Custody of the material Vault returns at initialization
+# ---------------------------------------------------------------------------
+# Initializing a Vault returns the unseal (or recovery) key shares and the
+# initial root token. Together they are the entire cluster: whoever holds them
+# can unseal it and read every secret in it. Splitting the key into shares only
+# protects anything if the shares end up in different hands -- writing them all
+# to one file on the Vault node itself gives that up completely, and file mode
+# 0600 does not help when the threat is a backup, a snapshot, or root on that
+# host.
+#
+# Vault will encrypt each share to a different person's public key, so no single
+# file and no single person ever holds usable material. Supply one PGP public
+# key per share -- base64 of the key, or a keybase:<user> reference -- and one
+# for the root token:
+#
+#   # Shamir seal (vault_auto_unseal: false)
+#   vault_init_pgp_keys:
+#     - keybase:alice
+#     - keybase:bob
+#     - keybase:carol
+#     - keybase:dave
+#     - keybase:erin
+#
+#   # Auto-unseal seal (vault_auto_unseal: true, the default here)
+#   vault_init_recovery_pgp_keys:
+#     - keybase:alice
+#     ...
+#
+#   vault_init_root_token_pgp_key: keybase:security-officer
+#
+# The number of keys must equal the share count for the seal in use.
+#
+# Without them Vault returns everything in plaintext, and this role refuses to
+# initialize at all rather than write that to the Vault node. Setting the
+# override below restores the old behaviour: appropriate for a lab you are about
+# to destroy, never for a cluster that will hold real secrets.
+vault_allow_plaintext_key_material: false
+
+# Where the initialization response is written on the Vault node. It is written
+# only when PGP-encrypted, or when the override above is set.
+vault_init_keys_dest: "{{ vault_config_path | default('/etc/vault.d') }}/vault-init-keys.json"
+
 # Unseal configuration
 vault_unseal_keys: []  # Populated after init
 vault_auto_unseal: true
