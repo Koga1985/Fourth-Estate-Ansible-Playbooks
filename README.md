@@ -40,6 +40,7 @@ This repository provides production-ready Ansible automation for network infrast
 - [Repository Purpose](#repository-purpose)
 - [Supported Technologies](#supported-technologies)
 - [Repository Layout](#repository-layout)
+- [Taking One Platform](#taking-one-platform)
 - [Key Features](#key-features)
 - [Policy as Code Framework](#policy-as-code-framework)
 - [Conventions and Best Practices](#conventions-and-best-practices)
@@ -151,6 +152,50 @@ Each top-level directory focuses on a specific technology platform and contains 
 
 ### 📋 Special Frameworks (1 framework)
 - **Policy as Code** - NIST 800-53 and DoD STIG compliance automation
+
+## Taking One Platform
+
+Most sites do not take this repository whole. They take the directory for the
+platform they run — `cohesity/`, or `pure_storage/`, or `cisco/` — and copy it
+into their own environment. That is the supported way to use this, and each
+platform directory is self-contained: its own `requirements.yml`, `site.yml`,
+`inventory.example` and `vault.yml.example`.
+
+A copied directory needs to stay traceable back to where it came from, because
+the question that matters after a security fix ships is *which version am I
+running, and is there a newer one?* Every platform directory therefore carries
+a **`VERSION.yml`**:
+
+```yaml
+platform: cohesity
+release: "1.1.0"
+commit: 0bd6c41463b4f2536ebf426e67d3088b1ffb6610
+stamped: "2026-09-19T01:10:38Z"
+
+repository: https://github.com/Koga1985/Fourth-Estate-Ansible-Playbooks
+documentation: https://github.com/Koga1985/Fourth-Estate-Ansible-Playbooks/tree/1.1.0/docs
+check_for_updates: https://github.com/Koga1985/Fourth-Estate-Ansible-Playbooks/releases
+```
+
+It is generated, not hand-edited. Cutting a release stamps it into all 44
+platform directories:
+
+```bash
+./scripts/stamp_platform_versions.py --release 1.2.0
+git add '*/VERSION.yml' && git commit -m "Stamp platform versions for 1.2.0"
+git tag 1.2.0
+```
+
+CI fails the build if a platform directory is missing its marker or names the
+wrong directory, so a new platform cannot ship untraceable.
+
+### Documentation references from inside a platform directory
+
+The shared documents live in `docs/`, which a single-platform copy does not
+include. References from inside a platform directory therefore name the
+document rather than a path that would not resolve — `VALIDATION_AND_STATS.md`,
+not `docs/VALIDATION_AND_STATS.md` — and `VERSION.yml` carries the link to the
+documentation for the exact release you hold.
 
 ## Repository Layout
 

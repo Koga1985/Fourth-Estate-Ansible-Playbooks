@@ -76,6 +76,39 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
   `pg_basebackup` and `ILLUMIO_PCE_ADMIN_PASSWORD` for the PCE installer — are
   recorded there rather than given a `no_log` that would not protect them.
 
+- **A copied platform directory can now say which release it came from.**
+  Sites take one directory — `cohesity/`, `pure_storage/`, `cisco/` — not the
+  repository. Once copied, nothing in it recorded where it came from, so the
+  question that matters after a security fix ships had no answer: *which version
+  am I running, and is there a newer one?*
+
+  Every platform directory now carries a generated `VERSION.yml` naming the
+  release, the commit, when it was stamped, and links to the documentation,
+  changelog and known limitations **for that release**.
+  `scripts/stamp_platform_versions.py --release <version>` writes all 44 when
+  cutting a release; `--check` is a CI gate that fails if one is missing or
+  names the wrong directory, so a new platform cannot ship untraceable.
+
+  44, not 41: `databases/` is a container, and `db2`, `mysql`, `oracle` and
+  `postgresql` under it are each separately runnable with their own
+  `requirements.yml` and `site.yml`. A customer takes `databases/postgresql`,
+  never `databases`.
+
+- **Documentation references from inside a platform directory now resolve.**
+  2,133 references across 2,027 files pointed at `docs/…`, a path that does not
+  exist in a single-platform copy — and did not resolve from inside a platform
+  directory even in the full repository. They now name the document
+  (`VALIDATION_AND_STATS.md`), with `VERSION.yml` carrying the link to the docs
+  for the release in hand.
+
+  Almost all of these were comment prose; verified by parsing all 2,024 changed
+  YAML files against the previous revision, which showed only two differing.
+  Those two were deliberate: in `databases/mysql` and `databases/oracle` the
+  reference sits in a `debug` message shown to an operator being told the
+  platform does nothing, so it became a full URL rather than a bare filename.
+  Four genuine markdown links in `execution_environment/` and `ansible_tower/`
+  became absolute URLs for the same reason.
+
 - **Six handlers that could never fire now do.** `notify` only triggers on a
   changed result, and `ansible.builtin.uri` reports `changed: false` for a
   successful write, so every handler notified by a `uri` task was dead:

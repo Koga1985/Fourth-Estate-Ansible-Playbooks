@@ -42,7 +42,7 @@ Declares an Automation Controller's projects, inventories and execution environm
 
 A project that tracks `main` with *Update Revision on Launch* enabled turns every commit in the content repository into an immediate change in the control plane. The preflight therefore rejects a project whose `scm_branch` is `main`, `master`, `devel` or `development` unless `aap_allow_branch_tracking` is set, which makes accepting that risk a deliberate, reviewable act rather than a default.
 
-Pin to a tag, and review [`docs/CHANGELOG.md`](../../../docs/CHANGELOG.md) before moving the pin.
+Pin to a tag, and review [`CHANGELOG.md`](https://github.com/Koga1985/Fourth-Estate-Ansible-Playbooks/blob/main/docs/CHANGELOG.md) before moving the pin.
 
 ## Example Playbook
 
