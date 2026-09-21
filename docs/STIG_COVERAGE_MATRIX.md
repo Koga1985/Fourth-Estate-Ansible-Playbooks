@@ -31,11 +31,11 @@ production-ready" Ansible playbooks against what exists in this repository.
 | 8 | **Network Device Management SRG (V5R3)** | ✅ Delivered | `network_policy/roles/ndm_srg_assessment` — consolidated evidence/checklist mapping `SRG-APP-*-NDM-*` to the device STIG artifacts. |
 | 9 | **Red Hat Enterprise Linux 9 STIG (V2R6)** | ✅ Delivered | `rhel/roles/rhel9_stig` — `RHEL-09-*` CAT I/II/III via `ansible.builtin`/`ansible.posix`. (Existing `rhel-hardening` targets RHEL 8.) |
 | 10 | **Red Hat OpenShift Container Platform 4.x STIG (V2R4)** | ✅ Delivered | `openshift/roles/ocp_stig_profile` — consolidated `CNTR-OS-*` profile (audit, encryption-at-rest, TLS profile, OAuth tokens, self-provisioner, PSA restricted, default-deny netpol). Complemented by existing `ocp_audit_config`, `ocp_psa_enforce`, `ocp_rbac_baseline`, `ocp_scc_legacy_mgmt`, `ocp_network_policies_baseline`. |
-| 11 | **Microsoft Windows Server 2022 STIG (V2R6)** | ✅ Delivered | `windows/roles/win_server2022_stig` — `WN22-*` account/audit/registry via `ansible.windows`. (Legacy `win_stig_hardening` retained.) |
+| 11 | **Microsoft Windows Server 2022 STIG (V2R6)** | ✅ Delivered | `windows/roles/win_server2022_stig` — `WN22-*` account/audit/registry via `ansible.windows`. (A legacy `win_stig_hardening` role was removed in the empty-role purge; it is not retained.) |
 | 12 | **Active Directory Domain STIG** | ✅ Delivered | `windows/roles/win_server2022_stig` (AD controls, `win_is_domain_controller=true`) + existing `win_active_directory`. |
 | 13 | **Microsoft Windows Server DNS STIG** | ✅ Delivered | `windows/roles/win_server2022_stig` (DNS controls, `win_is_dns_server=true`, `WDNS-*`) + existing `win_dhcp_dns`. |
 | 14 | **Application Server SRG (V4R4)** | ✅ Delivered | `app_web_server/roles/tomcat_app_server_srg` — `SRG-APP-*-AS-*` (Tomcat; fork for JBoss/WebLogic). |
-| 15 | **Web Server SRG** | ✅ Delivered | `app_web_server/roles/apache_web_server_srg` — `SRG-APP-*-WSR-*` (Apache; IIS via `windows/roles/win_iis`). |
+| 15 | **Web Server SRG** | ✅ Delivered | `app_web_server/roles/apache_web_server_srg` — `SRG-APP-*-WSR-*` (Apache only; there is no IIS role). |
 | 16 | **Application Security & Development STIG (V6R4)** | ✅ Delivered | `policy_as_code/roles/app_sec_dev_stig` — `APSC-DV-*` CI/CD gate (secret/SAST/SCA/IaC scanners → evidence, optional build-fail). |
 | 17 | **Network Infrastructure Policy STIG (V10R7)** | ✅ Delivered | `network_policy/roles/ndm_srg_assessment` — `NET-*` architecture controls + evidence rollup. |
 | 18 | **Cloud Computing SRG** | ✅ Delivered | `cloud_policy/roles/cloud_computing_srg_assessment` — CC SRG/FedRAMP families mapped to `aws_*`/`azure_*`/`gcp_*` roles + IL2–IL6 + evidence. |

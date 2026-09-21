@@ -76,6 +76,58 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
   `pg_basebackup` and `ILLUMIO_PCE_ADMIN_PASSWORD` for the PCE installer — are
   recorded there rather than given a `no_log` that would not protect them.
 
+- **MySQL and Oracle removed, and the compliance claims that outlived them.**
+  `databases/mysql/` and `databases/oracle/` each held a `site.yml` — 1,449 and
+  1,435 lines — that announced "NO AUTOMATION IMPLEMENTED" and changed nothing.
+  Neither ever had a `roles/` directory. No customer ran either, so both are
+  gone. Removing them dropped `oracle.oci` from the execution environment's
+  collection union, which the EE drift gate caught on the next run; the union is
+  regenerated at 57 collections.
+
+  The serious part was what documented them. `COMPLIANCE_MAPPING.md` — the
+  document an agency reads to decide what this repository covers — listed
+  **MySQL STIG V2R2 and Oracle STIG V2R4 findings by control ID** against
+  `databases/mysql/roles` and `databases/oracle/roles`, directories that never
+  existed. Those sections are removed, with a note saying what they claimed.
+
+  The same audit found three vCenter roles cited as implementing controls while
+  containing only the validation harness and no vCenter API call at all:
+
+  | Cited as | Role | Reality |
+  |----------|------|---------|
+  | NIST SC-12, SC-28; STIG VMCH-06-000010 Cat II | `vmware/roles/vcenter_kms` | harness only |
+  | NIST SC-17 | `vmware/roles/vcenter_certificates` | harness only |
+  | NIST CM-8 | `vmware/roles/vcenter_tags` | harness only |
+
+  Each citation now says **not implemented** rather than implying coverage.
+  Four more references named roles that do not exist at all —
+  `ansible_tower_config`, `arista_baseline_config`, `windows/roles/win_stig_hardening`
+  and `windows/roles/win_iis` — and are corrected to the roles that do.
+
+- **The claim that repository statistics are "verified in CI" is now true.**
+  It was not: `yamllint` and a YAML parse check verify that YAML parses and say
+  nothing about role counts, platform counts or compliance coverage.
+  `scripts/check_docs_claims.py` is now a CI gate that checks the README's role
+  total, the `KNOWN_LIMITATIONS.md` per-platform counts, and every platform path
+  and `<platform>/roles/<name>` reference in `COMPLIANCE_MAPPING.md`,
+  `CUSTOMER_QUICK_START.md` and `STIG_COVERAGE_MATRIX.md`. A control cannot be
+  mapped to a role that does not exist, and a platform cannot be documented as
+  covered while holding no roles.
+
+  It found 10 problems on its first run against the tree it was written for,
+  and two more after its role-name rule was tightened from bare identifiers to
+  unambiguous paths.
+
+  A note on a wrong turn: this began from an apparent finding that
+  `KNOWN_LIMITATIONS.md` understated three platforms — azure documented as 7
+  roles where `ls azure/roles` shows 15. The document was right and the count
+  was wrong. Eight of those fifteen directories have no `tasks/` at all: they
+  are carcasses left by the empty-role purge, which removed `tasks/main.yml`
+  and the playbook invocations but not the surrounding `README.md`, `defaults`,
+  `handlers`, `meta` and `templates`. Seventeen such shells exist repo-wide
+  (azure 8, vmware 7, fortinet 1, prometheus_grafana 1). They are left in place
+  pending a decision, and are the reason a naive count disagrees with the docs.
+
 - **A copied platform directory can now say which release it came from.**
   Sites take one directory — `cohesity/`, `pure_storage/`, `cisco/` — not the
   repository. Once copied, nothing in it recorded where it came from, so the
