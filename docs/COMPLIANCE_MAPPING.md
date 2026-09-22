@@ -37,8 +37,6 @@ applicable **DISA Security Technical Implementation Guide (STIG)** findings and
    - [Arista EOS Network Device STIG](#arista-eos-network-device-stig)
    - [Palo Alto Networks STIG V2R2](#palo-alto-networks-stig-v2r2)
    - [PostgreSQL STIG V2R1](#postgresql-stig-v2r1)
-   - [MySQL/MariaDB STIG V2R2](#mysqlmariadb-stig-v2r2)
-   - [Oracle Database STIG V2R4](#oracle-database-stig-v2r4)
    - [Ansible Automation Platform / RHEL Application STIG](#ansible-automation-platform--rhel-application-stig)
    - [OT/ICS Systems STIG](#otics-systems-stig)
 4. [Per-Platform Quick Reference](#per-platform-quick-reference)
@@ -151,7 +149,7 @@ applicable **DISA Security Technical Implementation Guide (STIG)** findings and
 |---------|-------|--------------------------------|----------|
 | CM-2 | Baseline Configuration | `ansible/roles/ans_core_runtime_baseline` | AAP |
 | CM-2 | Baseline Configuration | `vmware/roles/cluster_baseline` | VMware |
-| CM-2 | Baseline Configuration | `arista/roles/arista_baseline_config` | Arista |
+| CM-2 | Baseline Configuration | `arista/roles/arista_platform_baseline` | Arista |
 | CM-2 | Baseline Configuration | `rhel/roles` | RHEL |
 | CM-2 | Baseline Configuration | `kubernetes/playbook-cluster-hardening.yml` | Kubernetes |
 | CM-3 | Configuration Change Control | `ansible/playbooks/ans_ctrl__approvals.yml` | AAP |
@@ -175,7 +173,7 @@ applicable **DISA Security Technical Implementation Guide (STIG)** findings and
 | CM-8 | System Component Inventory | `servicenow/roles` (CMDB integration) | ServiceNow |
 | CM-8 | System Component Inventory | `ansible/roles/ans_core_inventory_hygiene` | AAP |
 | CM-8 | System Component Inventory | `vmware/tasks/vsphere_vm_info.yml` | VMware |
-| CM-8 | System Component Inventory | `vmware/roles/vcenter_tags` | VMware |
+| CM-8 | System Component Inventory | `vmware/roles/vcenter_tags` — **not implemented** | VMware |
 | CM-9 | Configuration Management Plan | `policy_as_code/` | Policy as Code |
 | CM-10 | Software Usage Restrictions | `ansible/roles/ans_content_trust_and_lock` (collection signing/lock) | AAP |
 | CM-11 | User-Installed Software | `ansible/playbooks/ans_content__allowlist.yml` | AAP |
@@ -211,7 +209,7 @@ applicable **DISA Security Technical Implementation Guide (STIG)** findings and
 |---------|-------|--------------------------------|----------|
 | IA-2 | Identification and Authentication (Users) | `ansible/roles/ans_access_sso_directory` (LDAP/SAML/OIDC) | AAP |
 | IA-2 | Identification and Authentication (Users) | `cisco/roles` (ISE identity policy) | Cisco ISE |
-| IA-2(1) | MFA for Privileged Accounts | `ansible/roles/ans_ctrl_policy_guardrails` (`fourth_estate_mandatory_mfa`) | AAP |
+| IA-2(1) | MFA for Privileged Accounts | `ansible/roles/ans_ctrl_policy_guardrails`, via its `fourth_estate_mandatory_mfa` variable | AAP |
 | IA-2(1) | MFA for Privileged Accounts | `cisco/roles` (ISE MFA) | Cisco ISE |
 | IA-3 | Device Identification | `cisco/roles` (ISE device profiling) | Cisco ISE |
 | IA-3 | Device Identification | `infoblox/roles` (DHCP/DNS device identity) | Infoblox |
@@ -303,19 +301,19 @@ applicable **DISA Security Technical Implementation Guide (STIG)** findings and
 | SC-8 | Transmission Confidentiality and Integrity | `vmware/roles/vsphere_vm_stig_hardening` | VMware VM |
 | SC-8 | Transmission Confidentiality and Integrity | `arista/roles/arista_acl_qos_security` | Arista |
 | SC-12 | Cryptographic Key Establishment and Management | `hashicorp_vault/roles` (PKI, key management) | HashiCorp Vault |
-| SC-12 | Cryptographic Key Establishment and Management | `vmware/roles/vcenter_kms` | VMware |
+| SC-12 | Cryptographic Key Establishment and Management | `vmware/roles/vcenter_kms` — **not implemented** | VMware |
 | SC-12 | Cryptographic Key Establishment and Management | `ansible/playbooks/ans_secrets__vault_rotate.yml` | AAP |
 | SC-13 | Cryptographic Protection | `policy_as_code/policies/system_communications/cryptographic_protection.yml` | Policy as Code |
 | SC-13 | Cryptographic Protection | `ansible/roles/ans_core_runtime_baseline` (FIPS mode) | AAP |
 | SC-13 | Cryptographic Protection | `hashicorp_vault/roles` | HashiCorp Vault |
-| SC-17 | Public Key Infrastructure Certificates | `vmware/roles/vcenter_certificates` | VMware |
+| SC-17 | Public Key Infrastructure Certificates | `vmware/roles/vcenter_certificates` — **not implemented** | VMware |
 | SC-17 | Public Key Infrastructure Certificates | `hashicorp_vault/roles` (PKI) | HashiCorp Vault |
 | SC-28 | Protection of Information at Rest | `vmware/tasks/enforce_vm_encryption.yml` | VMware |
-| SC-28 | Protection of Information at Rest | `vmware/roles/vcenter_kms` | VMware |
+| SC-28 | Protection of Information at Rest | `vmware/roles/vcenter_kms` — **not implemented** | VMware |
 | SC-28 | Protection of Information at Rest | `hashicorp_vault/roles` | HashiCorp Vault |
 | SC-28 | Protection of Information at Rest | `pure_storage/roles` (array-level encryption) | Pure Storage |
 | SC-28 | Protection of Information at Rest | `netapp/roles` (volume encryption) | NetApp |
-| SC-28 | Protection of Information at Rest | `databases/postgresql`, `databases/mysql`, `databases/oracle` (TDE) | Databases |
+| SC-28 | Protection of Information at Rest | `databases/postgresql` | Databases |
 | SC-8 | Transmission Confidentiality | `cisco/roles/sdwan_security_hardening` (CISC-ND-001440 — TLS 1.2+, disable HTTP; CISC-ND-000090 — SNMPv3 authPriv; CISC-ND-001400 — SSH v2; IPSec AES-256-GCM) | Cisco SD-WAN |
 | SC-8(1) | Cryptographic Protection | `cisco/roles/sdwan_security_hardening` (tasks/encryption.yml — FIPS cipher suites, DH group 14+) | Cisco SD-WAN |
 | SC-13 | Cryptographic Protection (FIPS) | `cisco/roles/sdwan_security_hardening` (tasks/encryption.yml — FIPS 140-2 mode enabled on vManage) | Cisco SD-WAN |
@@ -370,11 +368,14 @@ Role: `vmware/roles/vsphere_esxi_stig_hardening`
 | ESXI-67-000007 | Cat II | Configure firewall rulesets | `Configure firewall rulesets` |
 | ESXI-67-000008 | Cat II | Apply advanced host configuration | `Apply advanced host configuration (bulk)` |
 
-Role: `vmware/roles/vcenter_certificates`
-- Implements certificate rotation, PKI trust chain enforcement.
+Role: `vmware/roles/vcenter_certificates` — **not implemented**
+- Intended for certificate rotation and PKI trust chain enforcement. The
+  directory holds a README and a playbook that runs the validation harness and
+  nothing else: no `community.vmware` module is called. Do not rely on it.
 
-Role: `vmware/roles/vcenter_kms`
-- Implements KMS-based encryption key management for vSAN and VM encryption.
+Role: `vmware/roles/vcenter_kms` — **not implemented**
+- Intended for KMS-based encryption key management for vSAN and VM encryption.
+  Same shape: harness only, no vCenter API call. Do not rely on it.
 
 ---
 
@@ -389,7 +390,7 @@ Role: `vmware/roles/vsphere_vm_stig_hardening`
 | VMCH-06-000004 | Cat II | Limit console connections |
 | VMCH-06-000007 | Cat II | Disable logging to host |
 | VMCH-06-000009 | Cat II | Restrict VM-to-host communication |
-| VMCH-06-000010 | Cat II | Enable VM encryption (with vcenter_kms) |
+| VMCH-06-000010 | Cat II | Enable VM encryption — `vcenter_kms` is **not implemented**; use `vmware/tasks/enforce_vm_encryption.yml` |
 
 Supporting roles: `vmware/tasks/enforce_vm_encryption.yml`
 
@@ -442,7 +443,7 @@ Policy as Code: `policy_as_code/policies/`
 
 ### Microsoft Windows Server STIG V2R8
 
-Role: `windows/roles/win_stig_hardening`
+Role: `windows/roles/win_server2022_stig`
 Supporting roles: `win_group_policy`, `win_active_directory`, `win_firewall`, `win_user_management`
 
 | STIG Finding | Severity | Description |
@@ -558,7 +559,7 @@ Applies to vEdge (Viptela OS) and cEdge (IOS XE) routers. Settings are pushed vi
 
 ### Arista EOS Network Device STIG
 
-Roles: `arista/roles/arista_acl_qos_security`, `arista/roles/arista_baseline_config`, `arista/roles/arista_backup_restore`
+Roles: `arista/roles/arista_acl_qos_security`, `arista/roles/arista_platform_baseline`, `arista/roles/arista_backup_restore`
 
 | STIG Finding | Severity | Description | Implementing Role |
 |-------------|----------|-------------|------------------|
@@ -608,36 +609,17 @@ Roles: `databases/postgresql/roles`
 
 ---
 
-### MySQL/MariaDB STIG V2R2
+### MySQL/MariaDB and Oracle Database — removed
 
-Roles: `databases/mysql/roles`
+These sections previously listed MySQL STIG V2R2 and Oracle STIG V2R4 findings
+against `databases/mysql/roles` and `databases/oracle/roles`. Neither directory
+ever contained automation: both held a `site.yml` that announced "NO AUTOMATION
+IMPLEMENTED" and changed nothing, and neither had a `roles/` directory at all.
+Listing STIG findings against them claimed coverage that did not exist.
 
-| STIG Finding | Severity | Description |
-|-------------|----------|-------------|
-| MYS8-00-000100 | Cat II | Enable audit log plugin |
-| MYS8-00-000200 | Cat I | Disable anonymous user |
-| MYS8-00-000300 | Cat I | Remove test database |
-| MYS8-00-000400 | Cat II | Require SSL for connections |
-| MYS8-00-000500 | Cat II | Restrict FILE privilege |
-| MYS8-00-000600 | Cat II | Disable LOCAL INFILE |
-| MYS8-00-000700 | Cat II | Set appropriate password policy |
-
----
-
-### Oracle Database STIG V2R4
-
-Roles: `databases/oracle/roles`
-
-| STIG Finding | Severity | Description |
-|-------------|----------|-------------|
-| O112-C2-019000 | Cat I | Enable Oracle Unified Auditing |
-| O112-C2-019100 | Cat II | Audit privileged account use |
-| O112-C2-016700 | Cat I | Restrict DBA role assignment |
-| O112-C2-016800 | Cat II | Revoke PUBLIC execute privileges |
-| O112-C2-012400 | Cat II | Enable Transparent Data Encryption |
-| O112-C2-012500 | Cat II | Enforce SSL for remote connections |
-| O112-C2-013600 | Cat II | Set FAILED_LOGIN_ATTEMPTS |
-| O112-C2-013700 | Cat II | Set PASSWORD_LIFE_TIME profile |
+Both platform directories have been removed. `scripts/check_docs_claims.py`
+now fails the build if this document names a platform path or role that does
+not exist, so a coverage claim cannot outlive its implementation again.
 
 ---
 
@@ -688,7 +670,7 @@ control families for rapid lookup.
 | Platform Directory | Primary DISA STIG | NIST 800-53 Families | Key Roles / Task Files |
 |--------------------|-------------------|---------------------|------------------------|
 | `ansible/` | RHEL 8 App STIG | AC, AU, CM, IA, SA, SC, SI | `ans_access_sso_directory`, `ans_ctrl_backup_and_audit`, `ans_ctrl_policy_guardrails`, `ans_core_secrets_identity`, `ans_content_trust_and_lock`, `ans_core_runtime_baseline` |
-| `ansible_tower/` | RHEL 8 App STIG | AC, AU, CM, IA | `ansible_tower_config` |
+| `ansible_tower/` | RHEL 8 App STIG | AC, AU, CM, IA | `aap_controller_organizations`, `aap_controller_credentials`, `aap_controller_projects`, `aap_controller_job_templates`, `aap_controller_workflows` |
 | `arista/` | Network Device STIG | AU, CM, CP, SC | `arista_acl_qos_security`, `arista_baseline_config`, `arista_backup_restore` |
 | `aws/` | DoD CC SRG / FedRAMP | AC, AU, CM, IA, SC, SI | IAM, VPC, EC2, EKS, S3 roles |
 | `azure/` | DoD CC SRG / FedRAMP | AC, AU, CM, IA, SC, SI | Azure AD, AKS, Key Vault, Sentinel roles |
@@ -698,8 +680,6 @@ control families for rapid lookup.
 | `cohesity/` | General App STIG | CP, SC | Cluster config, protection, recovery roles |
 | `crowdstrike/` | Endpoint Security | RA, SI | EDR deployment, policy management |
 | `databases/postgresql/` | PostgreSQL STIG V2R1 | AC, AU, IA, SC | Install, replication, audit, security roles |
-| `databases/mysql/` | MySQL STIG V2R2 | AC, AU, IA, SC | Install, Galera, backup, security roles |
-| `databases/oracle/` | Oracle STIG V2R4 | AC, AU, IA, SC | Install, Data Guard, RMAN, security roles |
 | `dragos/` | ICS STIG | AU, IR, RA, SI | Threat detection, inventory, topology roles |
 | `elk_stack/` | General App STIG | AU, IR, SI | Elasticsearch, Logstash, Kibana, Filebeat |
 | `f5_bigip/` | F5 BIG-IP STIG | AC, AU, SC, SI | Load balancing, SSL, WAF, HA roles |
@@ -776,7 +756,7 @@ the following NIST 800-171 requirements are addressed:
 | 3.13.1 | Monitor, control, and protect communications | `palo_alto/roles`, `checkpoint/roles`, `fortinet/roles` |
 | 3.13.2 | Employ architectural designs for security | `illumio/roles` |
 | 3.13.8 | Protect CUI in transit | `policy_as_code/policies/system_communications/cryptographic_protection.yml` |
-| 3.13.10 | Establish/manage cryptographic keys | `hashicorp_vault/roles`, `vmware/roles/vcenter_kms` |
+| 3.13.10 | Establish/manage cryptographic keys | `hashicorp_vault/roles` (`vmware/roles/vcenter_kms` is **not implemented**) |
 | 3.14.1 | Identify, report, and correct information flaws | `tenable/roles`, `rhel/roles` |
 | 3.14.2 | Protect against malicious code | `crowdstrike/roles`, `sentinelone/roles` |
 | 3.14.6 | Monitor systems for security alerts | `sciencelogic/roles`, `splunk/roles`, `dragos/roles` |

@@ -155,7 +155,7 @@ Two related settings matter as much as the EE itself:
 - **Pin the project to a release tag, not `main`.** A project tracking `main`
   with *Update Revision on Launch* enabled turns every commit here into an
   immediate change in your control plane. Pin to a tag and review
-  [`docs/CHANGELOG.md`](../docs/CHANGELOG.md) before moving it.
+  [`docs/CHANGELOG.md`](https://github.com/Koga1985/Fourth-Estate-Ansible-Playbooks/blob/main/docs/CHANGELOG.md) before moving it.
 - **Credentials belong in Controller**, injected at launch — not in inventory
   files or `vars`. See [Credentials and secrets](../README.md#credentials-and-secrets).
 

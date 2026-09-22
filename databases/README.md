@@ -10,30 +10,23 @@ Enterprise database automation with emphasis on high availability, disaster reco
 
 | Platform | Roles | Key Features |
 |----------|-------|-------------|
-| **PostgreSQL** | 9 | Installation, streaming replication, PgPool-II, Barman backup, pgAudit, restore |
-| **MySQL/MariaDB** | 8 | Installation, master-replica replication, Galera cluster, XtraBackup |
-| **Oracle Database** | 8 | Installation, Data Guard, RAC, RMAN, Flashback, unified auditing |
+| **PostgreSQL** | 5 | Installation, streaming replication, PgPool-II, Barman backup, pgAudit, restore |
+| **IBM DB2** | 1 | DB2 V10.5 STIG hardening |
+
+MySQL / MariaDB and Oracle Database were removed: both directories held a
+`site.yml` that announced "NO AUTOMATION IMPLEMENTED" and changed nothing, and
+neither ever had a `roles/` directory.
 
 ## Directory Structure
 
 ```
 databases/
 ├── README.md              # This file
-├── postgresql/            # PostgreSQL automation (8 roles)
+├── postgresql/            # PostgreSQL automation (5 roles)
 │   ├── README.md
 │   ├── roles/
 │   ├── site.yml
 │   └── requirements.yml
-├── mysql/                 # MySQL/MariaDB automation (8 roles)
-│   ├── README.md
-│   ├── roles/
-│   ├── site.yml
-│   └── requirements.yml
-└── oracle/                # Oracle Database automation (8 roles)
-    ├── README.md
-    ├── roles/
-    ├── site.yml
-    └── requirements.yml
 ```
 
 ## 🚀 Quick Start (Drop-In Deployment)
@@ -47,14 +40,7 @@ ansible-galaxy collection install -r requirements.yml
 cp inventory.example inventory
 ansible-playbook -i inventory site.yml --ask-vault-pass
 
-# MySQL/MariaDB
-cd databases/mysql
-ansible-galaxy collection install -r requirements.yml
-cp inventory.example inventory
-ansible-playbook -i inventory site.yml --ask-vault-pass
-
-# Oracle Database
-cd databases/oracle
+# IBM DB2
 ansible-galaxy collection install -r requirements.yml
 cp inventory.example inventory
 ansible-playbook -i inventory site.yml --ask-vault-pass
@@ -66,10 +52,7 @@ ansible-playbook -i inventory site.yml --ask-vault-pass
 # Deploy only PostgreSQL replication
 ansible-playbook -i inventory site.yml --tags replication
 
-# Deploy only MySQL security hardening
-ansible-playbook -i inventory site.yml --tags security
-
-# Deploy only Oracle backup (RMAN)
+# Deploy only PostgreSQL backup
 ansible-playbook -i inventory site.yml --tags backup
 ```
 
@@ -77,9 +60,9 @@ ansible-playbook -i inventory site.yml --tags backup
 
 All database roles implement:
 
-- **Encryption at rest** - TDE (Oracle), pgcrypto (PostgreSQL), data-at-rest encryption (MySQL)
+- **Encryption at rest** - pgcrypto (PostgreSQL)
 - **Encryption in transit** - TLS/SSL for all client connections
-- **Audit logging** - pgAudit, MySQL Audit Plugin, Oracle Unified Auditing
+- **Audit logging** - pgAudit (PostgreSQL), DB2 audit facility
 - **Access control** - Role-based access, least privilege, password policies
 - **Backup encryption** - Encrypted backups with key management
 - **NIST 800-53 controls** - AC, AU, IA, SC control families
@@ -89,8 +72,6 @@ All database roles implement:
 See each platform's README for detailed documentation:
 
 - [PostgreSQL README](postgresql/README.md)
-- [MySQL/MariaDB README](mysql/README.md)
-- [Oracle Database README](oracle/README.md)
 
 ---
 

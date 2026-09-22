@@ -56,7 +56,7 @@ The reason to drive this repository from AAP rather than a shell is the approval
 
 `apply_changes` is the right control at the command line, but it is a variable — an assertion. An approval node is a pause the controller records, together with the person who approved it, in its own audit log. For a DoD STIG or FedRAMP audience that is evidence.
 
-The assess node publishes its findings as job artifacts under `fe_evidence` (see [`docs/VALIDATION_AND_STATS.md`](../docs/VALIDATION_AND_STATS.md#compliance-evidence-delivery)), so the approver reads the evidence in the same place they approve.
+The assess node publishes its findings as job artifacts under `fe_evidence` (see [`VALIDATION_AND_STATS.md`](https://github.com/Koga1985/Fourth-Estate-Ansible-Playbooks/blob/main/docs/VALIDATION_AND_STATS.md#compliance-evidence-delivery)), so the approver reads the evidence in the same place they approve.
 
 ## Dry run by default
 

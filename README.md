@@ -15,15 +15,15 @@ This repository provides production-ready Ansible automation for network infrast
 ## 📊 Repository Statistics
 
 - **Total Roles:** 426
-- **Total YAML Files:** 3,372
-- **README Documentation Files:** 505
-- **Technology Platforms:** 41
+- **Total YAML Files:** ~3,410 (approximate; not gate-checked)
+- **README Documentation Files:** ~509 (approximate; not gate-checked)
+- **Technology Platforms:** 42
 - **Dedicated DoD STIG / SRG roles:** 21 (see [STIG_COVERAGE_MATRIX.md](./docs/STIG_COVERAGE_MATRIX.md))
 - **Compliance Frameworks:** DoD STIG, DoD Cloud Computing SRG, NIST 800-53 Rev 5, NIST 800-171, FedRAMP, FISMA, CIS Benchmarks
 - **Cloud Platforms:** 4 (AWS, Azure, GCP, VMware vSphere)
-- **Database Platforms:** 5 (PostgreSQL, MySQL, Oracle, IBM DB2, Cloud Databases)
-- **Jinja2 Templates:** 291
-- **Inventory Examples:** 61
+- **Database Platforms:** 2 (PostgreSQL, IBM DB2)
+- **Jinja2 Templates:** ~291 (approximate; not gate-checked)
+- **Inventory Examples:** ~60 (approximate; not gate-checked)
 
 > **Note:** 155 roles that contained no tasks were removed, along with the 120
 > playbook invocations that called them. They had the full role layout (README,
@@ -31,8 +31,13 @@ This repository provides production-ready Ansible automation for network infrast
 > invoked one silently performed no changes. The counts above reflect roles that
 > actually do something.
 >
-> Repository statistics are verified in CI (`yamllint` + a YAML parse check over all
-> files). See [`PRODUCTION_READINESS_ASSESSMENT.md`](./docs/PRODUCTION_READINESS_ASSESSMENT.md)
+> The role count, and the platform, role and coverage claims in
+> `KNOWN_LIMITATIONS.md`, `COMPLIANCE_MAPPING.md`, `CUSTOMER_QUICK_START.md` and
+> `STIG_COVERAGE_MATRIX.md`, are verified in CI by
+> [`scripts/check_docs_claims.py`](./scripts/check_docs_claims.py): a control
+> cannot be mapped to a role that does not exist, and a platform cannot be
+> documented as covered while holding no roles. See
+> [`PRODUCTION_READINESS_ASSESSMENT.md`](./docs/PRODUCTION_READINESS_ASSESSMENT.md)
 > for the current validation status and known follow-ups.
 
 ## Table of Contents
@@ -40,6 +45,7 @@ This repository provides production-ready Ansible automation for network infrast
 - [Repository Purpose](#repository-purpose)
 - [Supported Technologies](#supported-technologies)
 - [Repository Layout](#repository-layout)
+- [Taking One Platform](#taking-one-platform)
 - [Key Features](#key-features)
 - [Policy as Code Framework](#policy-as-code-framework)
 - [Conventions and Best Practices](#conventions-and-best-practices)
@@ -106,10 +112,9 @@ Each top-level directory focuses on a specific technology platform and contains 
 - **Cohesity** - Cluster config, protection policies, recovery, cloud archive (2 roles)
 - **Splunk** - Log aggregation, forwarder, monitoring, security (6 roles)
 
-### 🗄️ Database Platforms (3 platforms)
+### 🗄️ Database Platforms (2 platforms)
 - **PostgreSQL** - Installation, configuration, replication, backup, restore (5 roles)
-- **MySQL/MariaDB** - no implemented roles (see docs/KNOWN_LIMITATIONS.md)
-- **Oracle Database** - no implemented roles (see docs/KNOWN_LIMITATIONS.md)
+- **IBM DB2** - DB2 V10.5 STIG (1 role)
 
 ### 📊 Monitoring & Observability (4 platforms)
 - **ScienceLogic SL1** - Platform monitoring, RBA, powerflow, governance (33 roles)
@@ -151,6 +156,50 @@ Each top-level directory focuses on a specific technology platform and contains 
 
 ### 📋 Special Frameworks (1 framework)
 - **Policy as Code** - NIST 800-53 and DoD STIG compliance automation
+
+## Taking One Platform
+
+Most sites do not take this repository whole. They take the directory for the
+platform they run — `cohesity/`, or `pure_storage/`, or `cisco/` — and copy it
+into their own environment. That is the supported way to use this, and each
+platform directory is self-contained: its own `requirements.yml`, `site.yml`,
+`inventory.example` and `vault.yml.example`.
+
+A copied directory needs to stay traceable back to where it came from, because
+the question that matters after a security fix ships is *which version am I
+running, and is there a newer one?* Every platform directory therefore carries
+a **`VERSION.yml`**:
+
+```yaml
+platform: cohesity
+release: "1.1.0"
+commit: 0bd6c41463b4f2536ebf426e67d3088b1ffb6610
+stamped: "2026-09-19T01:10:38Z"
+
+repository: https://github.com/Koga1985/Fourth-Estate-Ansible-Playbooks
+documentation: https://github.com/Koga1985/Fourth-Estate-Ansible-Playbooks/tree/1.1.0/docs
+check_for_updates: https://github.com/Koga1985/Fourth-Estate-Ansible-Playbooks/releases
+```
+
+It is generated, not hand-edited. Cutting a release stamps it into all 44
+platform directories:
+
+```bash
+./scripts/stamp_platform_versions.py --release 1.2.0
+git add '*/VERSION.yml' && git commit -m "Stamp platform versions for 1.2.0"
+git tag 1.2.0
+```
+
+CI fails the build if a platform directory is missing its marker or names the
+wrong directory, so a new platform cannot ship untraceable.
+
+### Documentation references from inside a platform directory
+
+The shared documents live in `docs/`, which a single-platform copy does not
+include. References from inside a platform directory therefore name the
+document rather than a path that would not resolve — `VALIDATION_AND_STATS.md`,
+not `docs/VALIDATION_AND_STATS.md` — and `VERSION.yml` carries the link to the
+documentation for the exact release you hold.
 
 ## Repository Layout
 
@@ -251,9 +300,7 @@ Fourth-Estate-Ansible-Playbooks/
 │
 ├── databases/                     # Database platforms
 │   ├── README.md
-│   ├── postgresql/                # PostgreSQL (8 roles)
-│   ├── mysql/                     # MySQL/MariaDB (8 roles)
-│   ├── oracle/                    # Oracle Database (8 roles)
+│   ├── postgresql/                # PostgreSQL (5 roles)
 │   └── db2/                       # IBM DB2 V10.5 STIG (1 role: db2_stig)
 │
 ├── dragos/                        # Dragos OT monitoring (12 roles)
@@ -971,7 +1018,7 @@ Consult official vendor documentation:
 This repository was built in four content phases and subsequently hardened for production customer delivery:
 
 - **Phase 1** - Added AWS (40+ roles), Windows Server (20+ roles), VMware NSX-T (8 roles), plus enhanced Veeam and Cohesity from task-only to full roles
-- **Phase 2** - Added Azure (30+ roles), database platforms (PostgreSQL, MySQL, Oracle), NetApp ONTAP, Fortinet FortiGate, Prometheus/Grafana, ELK Stack, and expanded Policy as Code to 8 NIST control families
+- **Phase 2** - Added Azure, database platforms (PostgreSQL; MySQL and Oracle were later removed as empty), NetApp ONTAP, Fortinet FortiGate, Prometheus/Grafana, ELK Stack, and expanded Policy as Code to 8 NIST control families
 - **Phase 3** - Added F5 BIG-IP, Tenable Security Center, ServiceNow CMDB, HashiCorp Vault, and Ansible Tower/AAP to complete the enterprise automation suite
 - **Security hardening (March 2026)** - Added `no_log: true` to 954 credential-handling tasks, `changed_when` correctness to all query tasks, `any_errors_fatal: true` to all plays, and comprehensive customer documentation (CUSTOMER_QUICK_START, KNOWN_LIMITATIONS, TROUBLESHOOTING, CHANGELOG)
 - **STIG/SRG expansion (June 2026)** - Added 21 dedicated DoD STIG / SRG roles across 5 new platform areas (`app_web_server/`, `network_policy/`, `cloud_policy/`, `ibm_zos/`, `databases/db2/`): Cisco network devices, RHEL 9, Windows Server 2022/AD/DNS, OpenShift 4.x, IBM DB2, App/Web Server SRGs, Application Security & Development STIG, NDM & Cloud Computing SRG assessments, and the IBM z/OS family. All safe-by-default with per-host evidence artifacts. See [STIG_COVERAGE_MATRIX.md](./docs/STIG_COVERAGE_MATRIX.md) and [CHANGELOG.md](./docs/CHANGELOG.md).

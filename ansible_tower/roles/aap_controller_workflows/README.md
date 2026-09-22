@@ -68,7 +68,7 @@ aap_workflows:
           apply_changes: true
 ```
 
-The assess node publishes its findings as job artifacts under `fe_evidence` (see [`docs/VALIDATION_AND_STATS.md`](../../../docs/VALIDATION_AND_STATS.md#compliance-evidence-delivery)), so the approver has the evidence in front of them rather than having to go and find it.
+The assess node publishes its findings as job artifacts under `fe_evidence` (see [`VALIDATION_AND_STATS.md`](https://github.com/Koga1985/Fourth-Estate-Ansible-Playbooks/blob/main/docs/VALIDATION_AND_STATS.md#compliance-evidence-delivery)), so the approver has the evidence in front of them rather than having to go and find it.
 
 ## Example Playbook
 

@@ -77,8 +77,6 @@ Each platform is independent. Pick one to start.
 | Cohesity | `cohesity/` | [cohesity/README.md](../cohesity/README.md) |
 | **Database Platforms** | | |
 | PostgreSQL | `databases/postgresql/` | [databases/postgresql/README.md](../databases/postgresql/README.md) |
-| MySQL / MariaDB | `databases/mysql/` | [databases/mysql/README.md](../databases/mysql/README.md) |
-| Oracle Database | `databases/oracle/` | [databases/oracle/README.md](../databases/oracle/README.md) |
 | **Monitoring & Logging** | | |
 | Splunk | `splunk/` | [splunk/README.md](../splunk/README.md) |
 | ELK Stack | `elk_stack/` | [elk_stack/README.md](../elk_stack/README.md) |

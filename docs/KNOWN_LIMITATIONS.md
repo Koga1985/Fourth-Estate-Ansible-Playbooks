@@ -52,14 +52,18 @@ consequence is that several platforms have little or no automation:
 | Platform | Roles remaining | Status |
 |----------|-----------------|--------|
 | Ansible Tower / AAP | 5 | controller configuration as code; does not install AAP itself |
-| MySQL / MariaDB | 0 | `site.yml` performs no changes and says so |
-| Oracle Database | 0 | `site.yml` performs no changes and says so |
 | Windows Server | 1 | only `win_server2022_stig`, which `site.yml` does not invoke -- run it directly |
 | Fortinet FortiGate | 1 | |
 | Cohesity, ServiceNow, Prometheus/Grafana | 2 each | |
 | NetApp ONTAP, Veeam, ELK Stack | 3 each | |
 | Tenable, HashiCorp Vault, F5 BIG-IP | 4 each | |
 | Microsoft Azure | 7 | reduced from a claimed 46 |
+
+MySQL / MariaDB and Oracle Database are no longer listed because the
+directories have been removed. Each held a `site.yml` that announced "NO
+AUTOMATION IMPLEMENTED" and changed nothing, and `COMPLIANCE_MAPPING.md`
+listed STIG findings against `roles/` directories they never had. No customer
+ran either.
 
 Do not assume a platform directory implies working automation. Check the
 platform README and the roles that actually exist before planning work around

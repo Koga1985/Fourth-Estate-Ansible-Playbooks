@@ -27,6 +27,8 @@ Every one of these blocks a merge.
 | `scripts/check_collections.py` | Every collection called is installable from a `requirements.yml` | no |
 | `scripts/check_jinja_filters.py` | Every Jinja expression parses, its filters/tests exist, and it renders the value it claims | no |
 | `gitleaks` | No credential in the working tree or in any ref's history | yes (downloads the pinned binary) |
+| `stamp_platform_versions.py --check` | Every platform directory carries a valid `VERSION.yml`, so a copied directory stays traceable to a release | no |
+| `check_docs_claims.py` | No documented platform, role or compliance control is mapped to something that does not exist | no |
 | `compose-requirements.py` + `ansible-builder create` | Every platform's execution environment composes; the committed union has not drifted | no |
 | `ansible-lint --offline` | No new lint violation against the ratcheted baseline | no |
 | `ansible-playbook --syntax-check` | The core-only playbooks parse | no |
